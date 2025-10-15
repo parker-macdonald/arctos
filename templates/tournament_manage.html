@@ -1,0 +1,143 @@
+{% extends "base.html" %}
+
+{% block title %}{{ tournament.name }} - Management{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <h1>{{ tournament.name }} - Management</h1>
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item"><a href="/{{ tournament.url }}">{{ tournament.name }}</a></li>
+                <li class="breadcrumb-item active">Management</li>
+            </ol>
+        </nav>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Team Registrations</h5>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-striped">
+                        <thead>
+                            <tr>
+                                <th>Team Name</th>
+                                <th>Status</th>
+                                <th>Registration Date</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for team_data in team_registrations %}
+                            <tr>
+                                <td>
+                                    <a href="/teams/{{ team_data.registration.team }}" class="text-decoration-none">
+                                        <strong>{{ team_data.registration.pseudonym }}</strong>
+                                    </a>
+                                </td>
+                                <td>
+                                    <span class="badge {% if team_data.registration.status == 'CONFIRMED' %}bg-success{% elif team_data.registration.status == 'CANCELLED' %}bg-danger{% else %}bg-warning{% endif %}">
+                                        {{ team_data.registration.status }}
+                                    </span>
+                                </td>
+                                <td>{{ team_data.registration.registered_at.strftime('%Y-%m-%d') }}</td>
+                                <td>
+                                    {% if team_data.registration.status == 'CONFIRMED' %}
+                                    <form method="POST" action="/{{ tournament.url }}/deregister-any-team" class="d-inline">
+                                        <input type="hidden" name="team_id" value="{{ team_data.registration.team }}">
+                                        <button type="submit" class="btn btn-sm btn-outline-danger" onclick="return confirm('Are you sure you want to deregister this team? This will also deregister all their players.')">Deregister</button>
+                                    </form>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mt-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Player Registrations</h5>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-striped">
+                        <thead>
+                            <tr>
+                                <th>Player Name</th>
+                                <th>Team</th>
+                                <th>Jersey</th>
+                                <th>Status</th>
+                                <th>Registration Date</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for player_data in players_with_registrations %}
+                            <tr>
+                                <td>
+                                    <a href="/players/{{ player_data.registration.player }}" class="text-decoration-none">
+                                        <strong>{{ player_data.player.name }}</strong>
+                                    </a>
+                                </td>
+                                <td>
+                                    {% if player_data.registration.team %}
+                                        <a href="/teams/{{ player_data.registration.team }}" class="text-decoration-none">
+                                            {{ player_data.team.name if player_data.team else player_data.registration.team }}
+                                        </a>
+                                    {% else %}
+                                        <span class="text-muted">Unattached</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if player_data.registration.jersey_name and player_data.registration.jersey_number %}
+                                        #{{ player_data.registration.jersey_number }} {{ player_data.registration.jersey_name }}
+                                    {% elif player_data.registration.jersey_name %}
+                                        {{ player_data.registration.jersey_name }}
+                                    {% elif player_data.registration.jersey_number %}
+                                        #{{ player_data.registration.jersey_number }}
+                                    {% else %}
+                                        <span class="text-muted">No jersey info</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <span class="badge {% if player_data.registration.status == 'CONFIRMED' %}bg-success{% elif player_data.registration.status == 'CANCELLED' %}bg-danger{% elif player_data.registration.status == 'PENDING_TEAM_APPROVAL' %}bg-warning{% else %}bg-secondary{% endif %}">
+                                        {{ player_data.registration.status }}
+                                    </span>
+                                </td>
+                                <td>{{ player_data.registration.registered_at.strftime('%Y-%m-%d') }}</td>
+                                <td>
+                                    {% if player_data.registration.status in ['PENDING_TEAM_APPROVAL', 'CONFIRMED'] %}
+                                    <form method="POST" action="/{{ tournament.url }}/deregister-any-player" class="d-inline">
+                                        <input type="hidden" name="player_id" value="{{ player_data.registration.player }}">
+                                        <button type="submit" class="btn btn-sm btn-outline-danger" onclick="return confirm('Are you sure you want to deregister this player?')">Deregister</button>
+                                    </form>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mt-3">
+    <div class="col-12">
+        <a href="/{{ tournament.url }}" class="btn btn-outline-secondary">Back to Tournament</a>
+    </div>
+</div>
+{% endblock %}

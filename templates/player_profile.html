@@ -29,8 +29,17 @@
                 {% endif %}
                 <p><strong>Username:</strong> @{{ player.id }}</p>
                 <p><strong>Display Name:</strong> {{ player.name }}</p>
+                {% if player.location %}
+                <p><strong>Location:</strong> {{ player.location }}</p>
+                {% endif %}
                 {% if current_user.is_authenticated and current_user.id == player.id and player.phone %}
                 <p><strong>Phone:</strong> {{ player.phone }}</p>
+                {% endif %}
+                {% if player.bio %}
+                <div class="mt-3">
+                    <h6><strong>Bio:</strong></h6>
+                    <p>{{ player.bio }}</p>
+                </div>
                 {% endif %}
             </div>
         </div>
@@ -64,7 +73,16 @@
                                             Unattached
                                         {% endif %}
                                     </td>
-                                    <td>{{ reg.jersey or '-' }}</td>
+                                    <td>
+                                        {% if reg.jersey_name %}
+                                            {{ reg.jersey_name }}
+                                            {% if reg.jersey_number %}
+                                                #{{ reg.jersey_number }}
+                                            {% endif %}
+                                        {% else %}
+                                            -
+                                        {% endif %}
+                                    </td>
                                     <td>
                                         <span class="badge 
                                             {% if reg.status == 'CONFIRMED' %}bg-success
@@ -96,19 +114,27 @@
                             <tr>
                                 <th>Date</th>
                                 <th>Description</th>
-                                <th>Active</th>
+                                <th>Status</th>
+                                <th>Public</th>
                             </tr>
                         </thead>
                         <tbody>
                             {% for injury in injuries %}
                             <tr>
-                                <td>{{ injury.stamp.strftime('%Y-%m-%d %H:%M') }}</td>
+                                <td>{{ injury.stamp.strftime('%Y-%m-%d') }}</td>
                                 <td>{{ injury.message }}</td>
                                 <td>
-                                    {% if injury.show %}
+                                    {% if injury.active %}
                                         <span class="badge bg-warning">Active</span>
                                     {% else %}
-                                        <span class="badge bg-secondary">Inactive</span>
+                                        <span class="badge bg-success">Healed</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if injury.show %}
+                                        <span class="badge bg-info">Public</span>
+                                    {% else %}
+                                        <span class="badge bg-secondary">Private</span>
                                     {% endif %}
                                 </td>
                             </tr>
@@ -135,22 +161,12 @@
         {% if current_user.is_authenticated and current_user.id == player.id %}
         <div class="card mt-3">
             <div class="card-header">
-                <h5 class="mb-0">Team Invitations</h5>
-            </div>
-            <div class="card-body">
-                <p class="text-muted">You'll see team invitations here when teams invite you to tournaments.</p>
-                <a href="#" class="btn btn-outline-primary">View Invitations</a>
-            </div>
-        </div>
-        
-        <div class="card mt-3">
-            <div class="card-header">
                 <h5 class="mb-0">Actions</h5>
             </div>
             <div class="card-body">
                 <div class="d-grid gap-2">
                     <a href="/players/{{ player.id }}/edit" class="btn btn-primary">Edit Profile</a>
-                    <a href="#" class="btn btn-outline-primary">Add Injury</a>
+                    <a href="/players/{{ player.id }}/add-injury" class="btn btn-outline-primary">Add Injury</a>
                 </div>
             </div>
         </div>
@@ -158,3 +174,4 @@
     </div>
 </div>
 {% endblock %}
+

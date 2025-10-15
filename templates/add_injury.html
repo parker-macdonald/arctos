@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+
+{% block title %}Add Injury{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <h1>Add Injury</h1>
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item"><a href="/players/{{ player_id }}">Player Profile</a></li>
+                <li class="breadcrumb-item active">Add Injury</li>
+            </ol>
+        </nav>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Injury Details</h5>
+            </div>
+            <div class="card-body">
+                <form method="POST">
+                    <div class="mb-3">
+                        <label for="message" class="form-label">Injury Description</label>
+                        <textarea class="form-control" id="message" name="message" rows="4" required 
+                                  placeholder="Describe the injury, affected body parts, severity, etc."></textarea>
+                        <div class="form-text">Provide details about the injury for medical and safety purposes.</div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="injury_date" class="form-label">Injury Date</label>
+                        <input type="date" class="form-control" id="injury_date" name="injury_date" required>
+                        <div class="form-text">When did this injury occur?</div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="active" name="active" checked>
+                            <label class="form-check-label" for="active">
+                                <strong>Active Injury</strong>
+                            </label>
+                            <div class="form-text">Check if this injury is currently affecting your ability to play or requires ongoing treatment.</div>
+                        </div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="show" name="show" checked>
+                            <label class="form-check-label" for="show">
+                                <strong>Public Visibility</strong>
+                            </label>
+                            <div class="form-text">Allow other players and teams to see this injury on your profile.</div>
+                        </div>
+                    </div>
+                    
+                    <div class="d-grid gap-2 d-md-flex justify-content-md-end">
+                        <a href="/players/{{ player_id }}" class="btn btn-outline-secondary">Cancel</a>
+                        <button type="submit" class="btn btn-primary">Add Injury</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Injury Guidelines</h5>
+            </div>
+            <div class="card-body">
+                <h6>Active vs Healed</h6>
+                <p><strong>Active:</strong> Injury is currently affecting your play or requires ongoing treatment.</p>
+                <p><strong>Healed:</strong> Injury has recovered and no longer affects your ability to play.</p>
+                
+                <h6 class="mt-3">Public vs Private</h6>
+                <p><strong>Public:</strong> Other players and teams can see this injury on your profile.</p>
+                <p><strong>Private:</strong> Only you can see this injury information.</p>
+                
+                <div class="alert alert-info mt-3">
+                    <small><strong>Note:</strong> Injury information helps teams make informed decisions about player safety and tournament participation.</small>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

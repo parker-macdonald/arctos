@@ -6,7 +6,13 @@
 <div class="row">
     <div class="col-12">
         <h1>{{ tournament.name }}</h1>
-        <p class="lead">{{ tournament.location or 'Location TBA' }} • {{ tournament.dates.strftime('%B %d, %Y') }}</p>
+        <p class="lead">{{ tournament.location or 'Location TBA' }} • 
+            {% if tournament.end_date and tournament.end_date != tournament.start_date %}
+                {{ tournament.start_date.strftime('%B %d, %Y') }} - {{ tournament.end_date.strftime('%B %d, %Y') }}
+            {% else %}
+                {{ tournament.start_date.strftime('%B %d, %Y') }}
+            {% endif %}
+        </p>
     </div>
 </div>
 
@@ -37,9 +43,52 @@
                     <a href="/{{ tournament.url }}/bracket" class="btn btn-outline-primary">Bracket</a>
                     <a href="/{{ tournament.url }}/results" class="btn btn-outline-primary">Results</a>
                     <a href="/{{ tournament.url }}/register" class="btn btn-success">Register</a>
+                    
+                    {% if current_user.is_authenticated and tournament.registration_open %}
+                        {% if current_user.__class__.__name__ == 'Team' %}
+                            {% set team_registered = false %}
+                            {% for team_data in teams_with_counts %}
+                                {% if team_data.team_registration.team == current_user.id %}
+                                    {% set team_registered = true %}
+                                {% endif %}
+                            {% endfor %}
+                            {% if team_registered %}
+                                <a href="/{{ tournament.url }}/invitations" class="btn btn-outline-info">View Invitations</a>
+                                <form method="POST" action="/{{ tournament.url }}/deregister-team" class="d-inline">
+                                    <button type="submit" class="btn btn-outline-danger" onclick="return confirm('Are you sure you want to deregister your team? This will also deregister all your players.')">Deregister Team</button>
+                                </form>
+                            {% endif %}
+                        {% elif current_user.__class__.__name__ == 'Player' %}
+                            {% set player_registered = false %}
+                            {% for player_data in unattached_players %}
+                                {% if player_data.registration.player == current_user.id %}
+                                    {% set player_registered = true %}
+                                {% endif %}
+                            {% endfor %}
+                            {% if player_registered %}
+                                <form method="POST" action="/{{ tournament.url }}/deregister-player" class="d-inline">
+                                    <button type="submit" class="btn btn-outline-danger" onclick="return confirm('Are you sure you want to deregister from this tournament?')">Deregister Player</button>
+                                </form>
+                            {% endif %}
+                        {% endif %}
+                    {% elif current_user.is_authenticated and not tournament.registration_open %}
+                        <div class="alert alert-warning mt-2">
+                            <small>Registration changes are locked. You can no longer deregister.</small>
+                        </div>
+                    {% endif %}
                     {% if current_user.is_authenticated %}
-                    <a href="/{{ tournament.url }}/settings" class="btn btn-outline-secondary">Settings</a>
-                    <a href="/{{ tournament.url }}/setup" class="btn btn-outline-secondary">Setup</a>
+                        {% set is_to = false %}
+                        {% if current_user.__class__.__name__ == 'Player' or current_user.__class__.__name__ == 'Team' %}
+                            {% set to_entry = to_entries|selectattr('user_id', 'equalto', current_user.id)|selectattr('user_type', 'equalto', current_user.__class__.__name__.lower())|selectattr('event', 'equalto', tournament.url)|first %}
+                            {% if to_entry %}
+                                {% set is_to = true %}
+                            {% endif %}
+                        {% endif %}
+                        {% if is_to %}
+                        <a href="/{{ tournament.url }}/settings" class="btn btn-outline-secondary">Settings</a>
+                        <a href="/{{ tournament.url }}/setup" class="btn btn-outline-secondary">Setup</a>
+                        <a href="/{{ tournament.url }}/manage" class="btn btn-outline-warning">Manage</a>
+                        {% endif %}
                     {% endif %}
                 </div>
             </div>
@@ -62,4 +111,99 @@
         {% endif %}
     </div>
 </div>
+
+{% if teams_with_counts %}
+<div class="row mt-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Registered Teams ({{ teams_with_counts|length }})</h5>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-striped">
+                        <thead>
+                            <tr>
+                                <th>Team Name</th>
+                                <th>Players</th>
+                                <th>Registration Date</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for team_data in teams_with_counts %}
+                            <tr>
+                                <td>
+                                    <a href="/teams/{{ team_data.team_registration.team }}" class="text-decoration-none">
+                                        <strong>{{ team_data.team_registration.pseudonym }}</strong>
+                                    </a>
+                                </td>
+                                <td>
+                                    <span class="badge bg-primary">{{ team_data.player_count }}</span>
+                                    {% if tournament.max_team_size %}
+                                    / {{ tournament.max_team_size }}
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {{ team_data.team_registration.registered_at.strftime('%Y-%m-%d') }}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% if unattached_players %}
+<div class="row mt-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Unattached Players ({{ unattached_players|length }})</h5>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-striped">
+                        <thead>
+                            <tr>
+                                <th>Player Name</th>
+                                <th>Jersey</th>
+                                <th>Registration Date</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for player_data in unattached_players %}
+                            <tr>
+                                <td>
+                                    <a href="/players/{{ player_data.registration.player }}" class="text-decoration-none">
+                                        <strong>{{ player_data.player.name }}</strong>
+                                    </a>
+                                </td>
+                                <td>
+                                    {% if player_data.registration.jersey_name and player_data.registration.jersey_number %}
+                                        #{{ player_data.registration.jersey_number }} {{ player_data.registration.jersey_name }}
+                                    {% elif player_data.registration.jersey_name %}
+                                        {{ player_data.registration.jersey_name }}
+                                    {% elif player_data.registration.jersey_number %}
+                                        #{{ player_data.registration.jersey_number }}
+                                    {% else %}
+                                        <span class="text-muted">No jersey info</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {{ player_data.registration.registered_at.strftime('%Y-%m-%d') }}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
 {% endblock %}

@@ -18,7 +18,9 @@ class Player(UserMixin, db.Model):
     name = db.Column(db.String(100), nullable=False)
     pw_hash = db.Column(db.String(255), nullable=False)
     phone = db.Column(db.String(20))
-    profile_photo = db.Column(db.String(255))  # Path to uploaded photo
+    profile_photo = db.Column(db.String(255))
+    bio = db.Column(db.Text)
+    location = db.Column(db.String(100))  # Path to uploaded photo
     
     def set_password(self, password):
         self.pw_hash = generate_password_hash(password)
@@ -55,24 +57,28 @@ class Injury(db.Model):
     message = db.Column(db.Text, nullable=False)
     stamp = db.Column(db.DateTime, default=datetime.utcnow)
     show = db.Column(db.Boolean, default=True)
+    active = db.Column(db.Boolean, default=True)
 
 class Tournament(db.Model):
     __tablename__ = 'tournaments'
     
     url = db.Column(db.String(100), primary_key=True)
     name = db.Column(db.String(200), nullable=False)
-    dates = db.Column(db.DateTime, nullable=False)
+    start_date = db.Column(db.DateTime, nullable=False)
+    end_date = db.Column(db.DateTime, nullable=True)
     location = db.Column(db.String(200))
     num_fields = db.Column(db.Integer, default=1)
     n_max_teams = db.Column(db.Integer)
-    max_team_size = db.Column(db.Integer)
+    max_team_size_roster = db.Column(db.Integer)  # Maximum players on team roster
+    max_team_size_field = db.Column(db.Integer)   # Maximum players on field at once
     max_field_size = db.Column(db.Integer)
     team_reg_fee = db.Column(db.Float, default=0.0)
     player_reg_fee = db.Column(db.Float, default=0.0)
     payment_info = db.Column(db.Text)
     published = db.Column(db.Boolean, default=False)
+    registration_open = db.Column(db.Boolean, default=False)
     about = db.Column(db.Text)
-    admin_password = db.Column(db.String(255))
+    terms_link = db.Column(db.String(500))
 
 class TO(db.Model):
     __tablename__ = 'tos'
@@ -82,24 +88,35 @@ class TO(db.Model):
     user_type = db.Column(db.String(10), nullable=False)  # 'player' or 'team'
     event = db.Column(db.String(100), db.ForeignKey('tournaments.url'), nullable=False)
 
-class Registration(db.Model):
-    __tablename__ = 'registrations'
+class TeamRegistration(db.Model):
+    __tablename__ = 'team_registrations'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    event = db.Column(db.String(100), db.ForeignKey('tournaments.url'), nullable=False)
+    team = db.Column(db.String(50), db.ForeignKey('teams.id'), nullable=False)
+    pseudonym = db.Column(db.String(100), nullable=False)  # Team name for this tournament
+    status = db.Column(db.String(20), default='CONFIRMED')  # CONFIRMED, CANCELLED
+    registered_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+class PlayerRegistration(db.Model):
+    __tablename__ = 'player_registrations'
     
     id = db.Column(db.Integer, primary_key=True)
     event = db.Column(db.String(100), db.ForeignKey('tournaments.url'), nullable=False)
     player = db.Column(db.String(50), db.ForeignKey('players.id'), nullable=False)
-    pseudonym = db.Column(db.String(100))
-    jersey = db.Column(db.String(10))
-    team = db.Column(db.String(50), db.ForeignKey('teams.id'))
-    status = db.Column(db.String(20), default='SENT')  # SENT, CONFIRMED
+    team = db.Column(db.String(50), db.ForeignKey('teams.id'), nullable=True)  # null for unattached
+    jersey_number = db.Column(db.String(10))
+    jersey_name = db.Column(db.String(100))  # Player name for this tournament
+    status = db.Column(db.String(20), default='PENDING_TEAM_APPROVAL')  # PENDING_TEAM_APPROVAL, CONFIRMED, REJECTED
+    registered_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 class TeamInvitation(db.Model):
     __tablename__ = 'team_invitations'
     
     id = db.Column(db.Integer, primary_key=True)
     event = db.Column(db.String(100), db.ForeignKey('tournaments.url'), nullable=False)
-    team = db.Column(db.String(50), db.ForeignKey('teams.id'), nullable=True)
-    player = db.Column(db.String(50), db.ForeignKey('players.id'), nullable=True)
+    team = db.Column(db.String(50), db.ForeignKey('teams.id'), nullable=False)
+    player = db.Column(db.String(50), db.ForeignKey('players.id'), nullable=False)
     status = db.Column(db.String(20), default='PENDING')  # PENDING, ACCEPTED, DECLINED
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 

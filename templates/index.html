@@ -21,7 +21,12 @@
                         <div class="card-body">
                             <h5 class="card-title">{{ tournament.name }}</h5>
                             <p class="card-text">
-                                <i class="fas fa-calendar"></i> {{ tournament.dates.strftime('%B %d, %Y') }}<br>
+                                <i class="fas fa-calendar"></i> 
+                                {% if tournament.end_date and tournament.end_date != tournament.start_date %}
+                                    {{ tournament.start_date.strftime('%B %d, %Y') }} - {{ tournament.end_date.strftime('%B %d, %Y') }}
+                                {% else %}
+                                    {{ tournament.start_date.strftime('%B %d, %Y') }}
+                                {% endif %}<br>
                                 <i class="fas fa-map-marker-alt"></i> {{ tournament.location or 'TBA' }}
                             </p>
                             <div class="d-flex justify-content-between">
@@ -53,7 +58,12 @@
                     <div class="card-body">
                         <h5 class="card-title">{{ tournament.name }}</h5>
                         <p class="card-text">
-                            <i class="fas fa-calendar"></i> {{ tournament.dates.strftime('%B %d, %Y') }}<br>
+                            <i class="fas fa-calendar"></i> 
+                            {% if tournament.end_date and tournament.end_date != tournament.start_date %}
+                                {{ tournament.start_date.strftime('%B %d, %Y') }} - {{ tournament.end_date.strftime('%B %d, %Y') }}
+                            {% else %}
+                                {{ tournament.start_date.strftime('%B %d, %Y') }}
+                            {% endif %}<br>
                             <i class="fas fa-map-marker-alt"></i> {{ tournament.location or 'TBA' }}
                             {% if not tournament.published %}
                             <br><span class="badge bg-warning">Not Published</span>

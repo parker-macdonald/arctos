@@ -49,27 +49,31 @@
                 <h5 class="mb-0">Tournament Registrations</h5>
             </div>
             <div class="card-body">
-                {% if registrations %}
+                {% if team_registrations %}
                     <div class="table-responsive">
                         <table class="table table-striped">
                             <thead>
                                 <tr>
                                     <th>Tournament</th>
+                                    <th>Team Name</th>
                                     <th>Date</th>
                                     <th>Status</th>
                                     <th>Actions</th>
                                 </tr>
                             </thead>
                             <tbody>
-                                {% for reg in registrations %}
+                                {% for reg in team_registrations %}
                                 <tr>
                                     <td>
                                         <a href="/{{ reg.event }}">{{ reg.event }}</a>
                                     </td>
                                     <td>
+                                        <strong>{{ reg.pseudonym }}</strong>
+                                    </td>
+                                    <td>
                                         {% set tournament = tournaments|selectattr('url', 'equalto', reg.event)|first %}
                                         {% if tournament %}
-                                            {{ tournament.dates.strftime('%Y-%m-%d') }}
+                                            {{ tournament.start_date.strftime('%Y-%m-%d') }}
                                         {% else %}
                                             TBA
                                         {% endif %}
@@ -84,7 +88,7 @@
                                     </td>
                                     <td>
                                         {% if current_user.is_authenticated and current_user.id == team.id %}
-                                        <a href="/{{ reg.event }}/invite-players" class="btn btn-sm btn-outline-primary">Invite Players</a>
+                                        <a href="/{{ reg.event }}/invitations" class="btn btn-sm btn-outline-primary">View Invitations</a>
                                         {% endif %}
                                     </td>
                                 </tr>
@@ -97,6 +101,42 @@
                 {% endif %}
             </div>
         </div>
+        
+        {% if current_user.is_authenticated and current_user.id == team.id and tournament_players %}
+        <div class="card mt-3">
+            <div class="card-header">
+                <h5 class="mb-0">Team Members by Tournament</h5>
+            </div>
+            <div class="card-body">
+                {% for tournament_url, players in tournament_players.items() %}
+                <div class="mb-3">
+                    <h6><a href="/{{ tournament_url }}">{{ tournament_url }}</a></h6>
+                    {% if players %}
+                        <div class="row">
+                            {% for player_reg in players %}
+                            <div class="col-md-6 mb-2">
+                                <div class="card card-body py-2">
+                                    <div class="d-flex justify-content-between align-items-center">
+                                        <div>
+                                            <strong>{{ player_reg.jersey_name }}</strong>
+                                            {% if player_reg.jersey_number %}
+                                            <span class="text-muted">#{{ player_reg.jersey_number }}</span>
+                                            {% endif %}
+                                        </div>
+                                        <small class="text-muted">{{ player_reg.player }}</small>
+                                    </div>
+                                </div>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    {% else %}
+                        <p class="text-muted">No players registered yet.</p>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
 
     </div>
 

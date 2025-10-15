@@ -41,9 +41,16 @@
                     <div class="row">
                         <div class="col-md-6">
                             <div class="mb-3">
-                                <label for="dates" class="form-label">Date</label>
-                                <input type="date" class="form-control" id="dates" name="dates" 
-                                       value="{{ tournament.dates.strftime('%Y-%m-%d') if tournament.dates else '' }}">
+                                <label for="start_date" class="form-label">Start Date</label>
+                                <input type="date" class="form-control" id="start_date" name="start_date" 
+                                       value="{{ tournament.start_date.strftime('%Y-%m-%d') if tournament.start_date else '' }}" required>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="end_date" class="form-label">End Date</label>
+                                <input type="date" class="form-control" id="end_date" name="end_date" 
+                                       value="{{ tournament.end_date.strftime('%Y-%m-%d') if tournament.end_date else '' }}">
                             </div>
                         </div>
                         <div class="col-md-6">
@@ -65,9 +72,21 @@
                         </div>
                         <div class="col-md-6">
                             <div class="mb-3">
-                                <label for="max_team_size" class="form-label">Max Team Size</label>
-                                <input type="number" class="form-control" id="max_team_size" name="max_team_size" 
-                                       value="{{ tournament.max_team_size or '' }}" min="1">
+                                <label for="max_team_size_roster" class="form-label">Max Team Size (Roster)</label>
+                                <input type="number" class="form-control" id="max_team_size_roster" name="max_team_size_roster" 
+                                       value="{{ tournament.max_team_size_roster or '' }}" min="1">
+                                <div class="form-text">Maximum players on team roster</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="max_team_size_field" class="form-label">Max Team Size (Field)</label>
+                                <input type="number" class="form-control" id="max_team_size_field" name="max_team_size_field" 
+                                       value="{{ tournament.max_team_size_field or '' }}" min="1">
+                                <div class="form-text">Maximum players on field at once</div>
                             </div>
                         </div>
                     </div>
@@ -101,11 +120,28 @@
                     </div>
 
                     <div class="mb-3">
+                        <label for="terms_link" class="form-label">Terms and Conditions Link</label>
+                        <input type="url" class="form-control" id="terms_link" name="terms_link" 
+                               value="{{ tournament.terms_link or '' }}" placeholder="https://example.com/terms">
+                        <div class="form-text">Optional - Link to tournament terms and conditions</div>
+                    </div>
+
+                    <div class="mb-3">
                         <div class="form-check">
                             <input class="form-check-input" type="checkbox" id="published" name="published" 
                                    {% if tournament.published %}checked{% endif %}>
                             <label class="form-check-label" for="published">
                                 Published (visible to public)
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="registration_open" name="registration_open" 
+                                   {% if tournament.registration_open %}checked{% endif %}>
+                            <label class="form-check-label" for="registration_open">
+                                Registration Open
                             </label>
                         </div>
                     </div>

@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+
+{% block title %}{{ tournament.name }} - {{ team_registration.pseudonym }} Invitations{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <h1>{{ tournament.name }} - {{ team_registration.pseudonym }} Invitations</h1>
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item"><a href="/{{ tournament.url }}">{{ tournament.name }}</a></li>
+                <li class="breadcrumb-item active">Invitations</li>
+            </ol>
+        </nav>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Pending Invitations</h5>
+            </div>
+            <div class="card-body">
+                {% if invitations %}
+                    <div class="alert alert-info">
+                        <strong>Current Team Size:</strong> {{ current_team_size }}
+                        {% if tournament.max_team_size %}
+                        / {{ tournament.max_team_size }} (max)
+                        {% endif %}
+                    </div>
+                    
+                    <div class="table-responsive">
+                        <table class="table table-striped">
+                            <thead>
+                                <tr>
+                                    <th>Player</th>
+                                    <th>Jersey Name</th>
+                                    <th>Jersey Number</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for invitation in invitations %}
+                                <tr>
+                                    <td>
+                                        <a href="/players/{{ invitation.player }}">{{ invitation.player }}</a>
+                                    </td>
+                                    <td>
+                                        {% set player_reg = player_registrations|selectattr('player', 'equalto', invitation.player)|first %}
+                                        {{ player_reg.jersey_name if player_reg else 'N/A' }}
+                                    </td>
+                                    <td>
+                                        {{ player_reg.jersey_number if player_reg else 'N/A' }}
+                                    </td>
+                                    <td>
+                                        <div class="btn-group" role="group">
+                                            <form method="POST" action="/{{ tournament.url }}/invitation/{{ invitation.id }}/accept" style="display: inline;">
+                                                <button type="submit" class="btn btn-success btn-sm" 
+                                                        {% if tournament.max_team_size and current_team_size >= tournament.max_team_size %}disabled{% endif %}>
+                                                    Accept
+                                                </button>
+                                            </form>
+                                            <form method="POST" action="/{{ tournament.url }}/invitation/{{ invitation.id }}/decline" style="display: inline;">
+                                                <button type="submit" class="btn btn-danger btn-sm">Decline</button>
+                                            </form>
+                                        </div>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                {% else %}
+                    <p class="text-muted">No pending invitations.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Team Information</h5>
+            </div>
+            <div class="card-body">
+                <p><strong>Tournament:</strong> {{ tournament.name }}</p>
+                <p><strong>Current Team Size:</strong> {{ current_team_size }}</p>
+                {% if tournament.max_team_size %}
+                <p><strong>Maximum Team Size:</strong> {{ tournament.max_team_size }}</p>
+                {% endif %}
+            </div>
+        </div>
+        
+        <div class="card mt-3">
+            <div class="card-header">
+                <h5 class="mb-0">Quick Actions</h5>
+            </div>
+            <div class="card-body">
+                <div class="d-grid gap-2">
+                    <a href="/{{ tournament.url }}" class="btn btn-outline-primary">Back to Tournament</a>
+                    <a href="/{{ tournament.url }}/schedule" class="btn btn-outline-primary">View Schedule</a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

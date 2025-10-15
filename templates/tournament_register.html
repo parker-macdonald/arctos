@@ -15,58 +15,65 @@
     </div>
 </div>
 
+{% if not tournament.registration_open %}
+<div class="row">
+    <div class="col-12">
+        <div class="alert alert-warning">
+            <h4>Registration Closed</h4>
+            <p>Registration is not currently open for this tournament.</p>
+        </div>
+    </div>
+</div>
+{% else %}
+
 <div class="row">
     <div class="col-md-8">
+        {% if not current_user.is_authenticated %}
+        <div class="alert alert-warning">
+            <h4>Login Required</h4>
+            <p>You need to be logged in to register for this tournament.</p>
+            <div class="d-flex gap-2">
+                <a href="{{ url_for('login', type='player') }}" class="btn btn-primary">Login as Player</a>
+                <a href="{{ url_for('login', type='team') }}" class="btn btn-outline-primary">Login as Team</a>
+            </div>
+        </div>
+        {% else %}
+        
+        {% if current_user.__class__.__name__ == 'Player' %}
+        <!-- Player Registration -->
         <div class="card">
             <div class="card-header">
-                <h5 class="mb-0">Tournament Registration</h5>
+                <h5 class="mb-0">Player Registration</h5>
             </div>
             <div class="card-body">
-                {% if not current_user.is_authenticated %}
-                <div class="alert alert-warning">
-                    <h4>Login Required</h4>
-                    <p>You need to be logged in to register for this tournament.</p>
-                    <div class="d-flex gap-2">
-                        <a href="{{ url_for('login', type='player') }}" class="btn btn-primary">Login as Player</a>
-                        <a href="{{ url_for('login', type='team') }}" class="btn btn-outline-primary">Login as Team</a>
-                    </div>
-                </div>
-                {% else %}
-                <form method="POST" action="/{{ tournament.url }}/register">
-                    <input type="hidden" name="user_type" value="{{ current_user.__class__.__name__.lower() }}">
-                    
-                    {% if current_user.__class__.__name__ == 'Player' %}
+                <form method="POST" action="/{{ tournament.url }}/register-player">
                     <div class="mb-3">
-                        <label for="jersey" class="form-label">Jersey Number</label>
-                        <input type="text" class="form-control" id="jersey" name="jersey" required>
+                        <label for="jersey_name" class="form-label">Jersey Name</label>
+                        <input type="text" class="form-control" id="jersey_name" name="jersey_name" required>
+                        <div class="form-text">Your name for this tournament</div>
                     </div>
                     
                     <div class="mb-3">
-                        <label for="team" class="form-label">Team (Optional)</label>
+                        <label for="jersey_number" class="form-label">Jersey Number</label>
+                        <input type="text" class="form-control" id="jersey_number" name="jersey_number">
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="team" class="form-label">Team</label>
                         <select class="form-select" id="team" name="team">
                             <option value="">Register as unattached player</option>
-                            {% for team in teams %}
-                            <option value="{{ team.id }}">{{ team.name }}</option>
+                            {% for team_data in registered_teams %}
+                            <option value="{{ team_data.team.id }}">{{ team_data.pseudonym }}</option>
                             {% endfor %}
                         </select>
+                        <div class="form-text">If you select a team, they will need to approve your request</div>
                     </div>
-                    {% else %}
-                    <div class="mb-3">
-                        <label for="team_size" class="form-label">Expected Team Size</label>
-                        <input type="number" class="form-control" id="team_size" name="team_size" min="1" required>
-                    </div>
-                    {% endif %}
 
-                    {% if tournament.team_reg_fee or tournament.player_reg_fee %}
+                    {% if tournament.player_reg_fee %}
                     <div class="mb-3">
                         <div class="alert alert-info">
-                            <h6>Registration Fees</h6>
-                            {% if tournament.team_reg_fee %}
-                            <p><strong>Team Registration:</strong> ${{ "%.2f"|format(tournament.team_reg_fee) }}</p>
-                            {% endif %}
-                            {% if tournament.player_reg_fee %}
+                            <h6>Registration Fee</h6>
                             <p><strong>Player Registration:</strong> ${{ "%.2f"|format(tournament.player_reg_fee) }}</p>
-                            {% endif %}
                         </div>
                     </div>
                     {% endif %}
@@ -75,18 +82,68 @@
                         <div class="form-check">
                             <input class="form-check-input" type="checkbox" id="agree_terms" name="agree_terms" required>
                             <label class="form-check-label" for="agree_terms">
-                                I agree to the tournament terms and conditions
+                                I agree to the 
+                                {% if tournament.terms_link %}
+                                    <a href="{{ tournament.terms_link }}" target="_blank" class="text-decoration-none">tournament terms and conditions</a>
+                                {% else %}
+                                    tournament terms and conditions
+                                {% endif %}
                             </label>
                         </div>
                     </div>
 
                     <div class="d-grid">
-                        <button type="submit" class="btn btn-primary">Register for Tournament</button>
+                        <button type="submit" class="btn btn-primary">Register as Player</button>
                     </div>
                 </form>
-                {% endif %}
             </div>
         </div>
+        
+        {% elif current_user.__class__.__name__ == 'Team' %}
+        <!-- Team Registration -->
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Team Registration</h5>
+            </div>
+            <div class="card-body">
+                <form method="POST" action="/{{ tournament.url }}/register-team">
+                    <div class="mb-3">
+                        <label for="pseudonym" class="form-label">Team Name for This Tournament</label>
+                        <input type="text" class="form-control" id="pseudonym" name="pseudonym" required>
+                        <div class="form-text">This is how your team will be referred to in this tournament</div>
+                    </div>
+
+                    {% if tournament.team_reg_fee %}
+                    <div class="mb-3">
+                        <div class="alert alert-info">
+                            <h6>Registration Fee</h6>
+                            <p><strong>Team Registration:</strong> ${{ "%.2f"|format(tournament.team_reg_fee) }}</p>
+                        </div>
+                    </div>
+                    {% endif %}
+
+                    <div class="mb-3">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="agree_terms" name="agree_terms" required>
+                            <label class="form-check-label" for="agree_terms">
+                                I agree to the 
+                                {% if tournament.terms_link %}
+                                    <a href="{{ tournament.terms_link }}" target="_blank" class="text-decoration-none">tournament terms and conditions</a>
+                                {% else %}
+                                    tournament terms and conditions
+                                {% endif %}
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="d-grid">
+                        <button type="submit" class="btn btn-primary">Register Team</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+        {% endif %}
+        {% endif %}
     </div>
 
     <div class="col-md-4">
@@ -95,7 +152,13 @@
                 <h5 class="mb-0">Tournament Information</h5>
             </div>
             <div class="card-body">
-                <p><strong>Date:</strong> {{ tournament.dates.strftime('%B %d, %Y') if tournament.dates else 'TBA' }}</p>
+                <p><strong>Date:</strong> 
+                    {% if tournament.end_date and tournament.end_date != tournament.start_date %}
+                        {{ tournament.start_date.strftime('%B %d, %Y') }} - {{ tournament.end_date.strftime('%B %d, %Y') }}
+                    {% else %}
+                        {{ tournament.start_date.strftime('%B %d, %Y') if tournament.start_date else 'TBA' }}
+                    {% endif %}
+                </p>
                 <p><strong>Location:</strong> {{ tournament.location or 'TBA' }}</p>
                 <p><strong>Fields:</strong> {{ tournament.num_fields or 1 }}</p>
                 {% if tournament.n_max_teams %}
@@ -119,4 +182,5 @@
         {% endif %}
     </div>
 </div>
+{% endif %}
 {% endblock %}

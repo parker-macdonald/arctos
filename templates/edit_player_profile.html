@@ -31,7 +31,19 @@
                     <div class="mb-3">
                         <label for="phone" class="form-label">Phone Number</label>
                         <input type="text" class="form-control" id="phone" name="phone" value="{{ player.phone or '' }}">
-                        <div class="form-text">Optional - for notifications</div>
+                        <div class="form-text">Optional - for notifications (not public)</div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="location" class="form-label">Location</label>
+                        <input type="text" class="form-control" id="location" name="location" value="{{ player.location or '' }}" placeholder="e.g., Seattle, WA">
+                        <div class="form-text">Optional - your general location</div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="bio" class="form-label">Bio</label>
+                        <textarea class="form-control" id="bio" name="bio" rows="3" placeholder="Tell us about yourself...">{{ player.bio or '' }}</textarea>
+                        <div class="form-text">Optional - a brief description about yourself</div>
                     </div>
                     
                     <div class="d-grid gap-2">
