@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+
+{% block title %}{{ tournament.name }} - TO Site{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <h1>{{ tournament.name }}</h1>
+        <p class="lead">{{ tournament.location or 'Location TBA' }} • {{ tournament.dates.strftime('%B %d, %Y') }}</p>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Tournament Information</h5>
+            </div>
+            <div class="card-body">
+                {% if tournament.about %}
+                    {{ tournament.about|safe }}
+                {% else %}
+                    <p>Tournament details coming soon!</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Quick Links</h5>
+            </div>
+            <div class="card-body">
+                <div class="d-grid gap-2">
+                    <a href="/{{ tournament.url }}/schedule" class="btn btn-primary">Schedule</a>
+                    <a href="/{{ tournament.url }}/bracket" class="btn btn-outline-primary">Bracket</a>
+                    <a href="/{{ tournament.url }}/results" class="btn btn-outline-primary">Results</a>
+                    <a href="/{{ tournament.url }}/register" class="btn btn-success">Register</a>
+                    {% if current_user.is_authenticated %}
+                    <a href="/{{ tournament.url }}/settings" class="btn btn-outline-secondary">Settings</a>
+                    <a href="/{{ tournament.url }}/setup" class="btn btn-outline-secondary">Setup</a>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        
+        {% if tournament.team_reg_fee or tournament.player_reg_fee %}
+        <div class="card mt-3">
+            <div class="card-header">
+                <h5 class="mb-0">Registration Fees</h5>
+            </div>
+            <div class="card-body">
+                {% if tournament.team_reg_fee %}
+                <p><strong>Team Registration:</strong> ${{ "%.2f"|format(tournament.team_reg_fee) }}</p>
+                {% endif %}
+                {% if tournament.player_reg_fee %}
+                <p><strong>Player Registration:</strong> ${{ "%.2f"|format(tournament.player_reg_fee) }}</p>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+
+{% block title %}Edit {{ match.name }} - {{ tournament.name }}{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <h1>Edit Match: {{ match.name }}</h1>
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item"><a href="/{{ tournament.url }}">{{ tournament.name }}</a></li>
+                <li class="breadcrumb-item"><a href="/{{ tournament.url }}/setup">Setup</a></li>
+                <li class="breadcrumb-item active">Edit Match</li>
+            </ol>
+        </nav>
+    </div>
+</div>
+
+<div class="row justify-content-center">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Match Details</h5>
+            </div>
+            <div class="card-body">
+                <form method="POST" action="/{{ tournament.url }}/update-match">
+                    <input type="hidden" name="match_id" value="{{ match.uuid }}">
+                    
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="match_name" class="form-label">Match Name</label>
+                                <input type="text" class="form-control" id="match_name" name="match_name" value="{{ match.name }}" required>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="field" class="form-label">Field</label>
+                                <select class="form-select" id="field" name="field">
+                                    <option value="">Select Field</option>
+                                    {% for field in fields %}
+                                    <option value="{{ field.name }}" {% if match.field == field.name %}selected{% endif %}>{{ field.name }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="start_time" class="form-label">Start Time</label>
+                                <input type="datetime-local" class="form-control" id="start_time" name="start_time" 
+                                       value="{{ match.nominal_start_time.strftime('%Y-%m-%dT%H:%M') if match.nominal_start_time else '' }}">
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="length" class="form-label">Length (minutes)</label>
+                                <input type="number" class="form-control" id="length" name="length" value="{{ match.nominal_length or 60 }}" min="1">
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="dynamic" class="form-label">Scheduling</label>
+                                <select class="form-select" id="dynamic" name="dynamic">
+                                    <option value="true" {% if match.dynamic %}selected{% endif %}>Dynamic (can start early if previous match ends)</option>
+                                    <option value="false" {% if not match.dynamic %}selected{% endif %}>Static (starts at scheduled time)</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="refs" class="form-label">Referees</label>
+                                <input type="text" class="form-control" id="refs" name="refs" value="{{ match.refs_initial or '' }}" placeholder="Comma-separated referee names">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="team1" class="form-label">Team 1</label>
+                                <input type="text" class="form-control" id="team1" name="team1" value="{{ match.team1_initial or '' }}" placeholder="Team name or tag">
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="team2" class="form-label">Team 2</label>
+                                <input type="text" class="form-control" id="team2" name="team2" value="{{ match.team2_initial or '' }}" placeholder="Team name or tag">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="match_type" class="form-label">Match Type</label>
+                                <select class="form-select" id="match_type" name="match_type">
+                                    <option value="SETS" {% if match.type == 'SETS' %}selected{% endif %}>Sets</option>
+                                    <option value="STONES" {% if match.type == 'STONES' %}selected{% endif %}>Stones</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="nsets" class="form-label">Number of Sets</label>
+                                <input type="number" class="form-control" id="nsets" name="nsets" value="{{ match.nsets or 3 }}" min="1">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="d-grid gap-2">
+                        <button type="submit" class="btn btn-primary">Update Match</button>
+                        <a href="/{{ tournament.url }}/setup" class="btn btn-outline-secondary">Cancel</a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

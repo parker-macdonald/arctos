@@ -1,0 +1,153 @@
+{% extends "base.html" %}
+
+{% block title %}{{ tournament.name }} Settings{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <h1>{{ tournament.name }} - Settings</h1>
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item"><a href="/{{ tournament.url }}">{{ tournament.name }}</a></li>
+                <li class="breadcrumb-item active">Settings</li>
+            </ol>
+        </nav>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Tournament Information</h5>
+            </div>
+            <div class="card-body">
+                <form method="POST" action="/{{ tournament.url }}/update-settings">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="name" class="form-label">Tournament Name</label>
+                                <input type="text" class="form-control" id="name" name="name" value="{{ tournament.name }}" required>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="location" class="form-label">Location</label>
+                                <input type="text" class="form-control" id="location" name="location" value="{{ tournament.location or '' }}">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="dates" class="form-label">Date</label>
+                                <input type="date" class="form-control" id="dates" name="dates" 
+                                       value="{{ tournament.dates.strftime('%Y-%m-%d') if tournament.dates else '' }}">
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="num_fields" class="form-label">Number of Fields</label>
+                                <input type="number" class="form-control" id="num_fields" name="num_fields" 
+                                       value="{{ tournament.num_fields or 1 }}" min="1">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="n_max_teams" class="form-label">Max Teams</label>
+                                <input type="number" class="form-control" id="n_max_teams" name="n_max_teams" 
+                                       value="{{ tournament.n_max_teams or '' }}" min="1">
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="max_team_size" class="form-label">Max Team Size</label>
+                                <input type="number" class="form-control" id="max_team_size" name="max_team_size" 
+                                       value="{{ tournament.max_team_size or '' }}" min="1">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="team_reg_fee" class="form-label">Team Registration Fee</label>
+                                <div class="input-group">
+                                    <span class="input-group-text">$</span>
+                                    <input type="number" class="form-control" id="team_reg_fee" name="team_reg_fee" 
+                                           value="{{ tournament.team_reg_fee or 0 }}" step="0.01" min="0">
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="player_reg_fee" class="form-label">Player Registration Fee</label>
+                                <div class="input-group">
+                                    <span class="input-group-text">$</span>
+                                    <input type="number" class="form-control" id="player_reg_fee" name="player_reg_fee" 
+                                           value="{{ tournament.player_reg_fee or 0 }}" step="0.01" min="0">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="about" class="form-label">About</label>
+                        <textarea class="form-control" id="about" name="about" rows="4">{{ tournament.about or '' }}</textarea>
+                    </div>
+
+                    <div class="mb-3">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="published" name="published" 
+                                   {% if tournament.published %}checked{% endif %}>
+                            <label class="form-check-label" for="published">
+                                Published (visible to public)
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="d-grid">
+                        <button type="submit" class="btn btn-primary">Update Settings</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Quick Actions</h5>
+            </div>
+            <div class="card-body">
+                <div class="d-grid gap-2">
+                    <a href="/{{ tournament.url }}/setup" class="btn btn-primary">Setup Matches</a>
+                    <a href="/{{ tournament.url }}/schedule" class="btn btn-outline-primary">View Schedule</a>
+                    <a href="/{{ tournament.url }}/register" class="btn btn-outline-primary">Registration</a>
+                </div>
+            </div>
+        </div>
+
+        <div class="card mt-3">
+            <div class="card-header">
+                <h5 class="mb-0">Tournament Status</h5>
+            </div>
+            <div class="card-body">
+                <p><strong>Published:</strong> 
+                    {% if tournament.published %}
+                        <span class="badge bg-success">Yes</span>
+                    {% else %}
+                        <span class="badge bg-warning">No</span>
+                    {% endif %}
+                </p>
+                <p><strong>Fields:</strong> {{ tournament.num_fields or 1 }}</p>
+                <p><strong>Max Teams:</strong> {{ tournament.n_max_teams or 'Unlimited' }}</p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

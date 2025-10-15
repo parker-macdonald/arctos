@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+
+{% block title %}Players - TO Site{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <h1>Players</h1>
+        <p class="lead">Browse all registered players</p>
+        
+        <div class="row mb-3">
+            <div class="col-md-6">
+                <form method="GET" class="d-flex">
+                    <input type="text" class="form-control me-2" name="search" placeholder="Search players..." value="{{ request.args.get('search', '') }}">
+                    <button type="submit" class="btn btn-outline-primary">Search</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    {% if players %}
+        {% for player in players %}
+        <div class="col-md-6 col-lg-4 mb-4">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">{{ player.name }}</h5>
+                    <p class="card-text">
+                        <i class="fas fa-user"></i> @{{ player.id }}
+                    </p>
+                    <a href="/players/{{ player.id }}" class="btn btn-primary">View Profile</a>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    {% else %}
+        <div class="col-12">
+            <div class="alert alert-info">
+                <h4>No players registered yet</h4>
+                <p>Be the first to register as a player!</p>
+                <a href="{{ url_for('register', type='player') }}" class="btn btn-primary">Register Player</a>
+            </div>
+        </div>
+    {% endif %}
+</div>
+{% endblock %}

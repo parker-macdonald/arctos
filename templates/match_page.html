@@ -1,0 +1,182 @@
+{% extends "base.html" %}
+
+{% block title %}{{ match.name }} - {{ tournament.name }}{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <h1>{{ match.name }}</h1>
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item"><a href="/{{ tournament.url }}">{{ tournament.name }}</a></li>
+                <li class="breadcrumb-item"><a href="/{{ tournament.url }}/schedule">Schedule</a></li>
+                <li class="breadcrumb-item active">{{ match.name }}</li>
+            </ol>
+        </nav>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Match Information</h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-6">
+                        <h6>Team 1</h6>
+                        <p>
+                            {% if match.team1 %}
+                                {{ match.team1 }}
+                            {% else %}
+                                {{ match.team1_initial or 'TBA' }}
+                            {% endif %}
+                        </p>
+                    </div>
+                    <div class="col-md-6">
+                        <h6>Team 2</h6>
+                        <p>
+                            {% if match.team2 %}
+                                {{ match.team2 }}
+                            {% else %}
+                                {{ match.team2_initial or 'TBA' }}
+                            {% endif %}
+                        </p>
+                    </div>
+                </div>
+                
+                <div class="row">
+                    <div class="col-md-4">
+                        <h6>Start Time</h6>
+                        <p>
+                            {% if match.nominal_start_time %}
+                                {{ match.nominal_start_time.strftime('%H:%M') }}
+                            {% else %}
+                                TBA
+                            {% endif %}
+                        </p>
+                    </div>
+                    <div class="col-md-4">
+                        <h6>Field</h6>
+                        <p>{{ match.field or 'TBA' }}</p>
+                    </div>
+                    <div class="col-md-4">
+                        <h6>Status</h6>
+                        <p>
+                            <span class="badge 
+                                {% if match.status == 'NOT_STARTED' %}bg-secondary
+                                {% elif match.status == 'IN_PROGRESS' %}bg-warning
+                                {% elif match.status == 'COMPLETED' %}bg-success
+                                {% endif %}">
+                                {{ match.status.replace('_', ' ').title() }}
+                            </span>
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        {% if match.status == 'IN_PROGRESS' or match.status == 'COMPLETED' %}
+        <div class="card mt-3">
+            <div class="card-header">
+                <h5 class="mb-0">Live Score</h5>
+            </div>
+            <div class="card-body">
+                {% if points %}
+                    <div class="table-responsive">
+                        <table class="table table-sm">
+                            <thead>
+                                <tr>
+                                    <th>Point</th>
+                                    <th>Winner</th>
+                                    <th>Length</th>
+                                    <th>Stones</th>
+                                    <th>Rerun</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for point in points %}
+                                <tr>
+                                    <td>{{ loop.index }}</td>
+                                    <td>
+                                        {% if point.winner == 'TEAM1' %}
+                                            Team 1
+                                        {% elif point.winner == 'TEAM2' %}
+                                            Team 2
+                                        {% else %}
+                                            -
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if point.length %}
+                                            {{ point.length }}
+                                        {% else %}
+                                            -
+                                        {% endif %}
+                                    </td>
+                                    <td>{{ point.nstones or 0 }}</td>
+                                    <td>
+                                        {% if point.rerolled %}
+                                            <span class="badge bg-warning">Yes</span>
+                                        {% else %}
+                                            <span class="badge bg-success">No</span>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                {% else %}
+                    <p class="text-muted">No points recorded yet.</p>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+    </div>
+    
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Match Details</h5>
+            </div>
+            <div class="card-body">
+                <p><strong>Type:</strong> {{ match.type }}</p>
+                {% if match.type == 'SETS' %}
+                    <p><strong>Sets:</strong> {{ match.nsets or 'TBA' }}</p>
+                {% elif match.type == 'STONES' %}
+                    <p><strong>Stones per Set:</strong> {{ match.nstonesperset or 'TBA' }}</p>
+                {% endif %}
+                <p><strong>Length:</strong> {{ match.nominal_length or 'TBA' }} minutes</p>
+                
+                {% if match.refs %}
+                <p><strong>Refs:</strong> {{ match.refs }}</p>
+                {% endif %}
+            </div>
+        </div>
+        
+        {% if match.status == 'NOT_STARTED' %}
+        <div class="card mt-3">
+            <div class="card-body text-center">
+                <p class="text-muted">Match has not started yet.</p>
+            </div>
+        </div>
+        {% elif match.status == 'IN_PROGRESS' %}
+        <div class="card mt-3">
+            <div class="card-body text-center">
+                <p class="text-warning">Match is in progress!</p>
+                <p class="text-muted">Live updates will appear here.</p>
+            </div>
+        </div>
+        {% elif match.status == 'COMPLETED' %}
+        <div class="card mt-3">
+            <div class="card-body text-center">
+                <p class="text-success">Match completed!</p>
+                <p class="text-muted">Final results are shown above.</p>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

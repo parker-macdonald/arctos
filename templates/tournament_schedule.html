@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+
+{% block title %}{{ tournament.name }} Schedule - TO Site{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <h1>{{ tournament.name }} - Schedule</h1>
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item"><a href="/{{ tournament.url }}">{{ tournament.name }}</a></li>
+                <li class="breadcrumb-item active">Schedule</li>
+            </ol>
+        </nav>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-12">
+        {% if matches %}
+            <div class="table-responsive">
+                <table class="table table-striped">
+                    <thead>
+                        <tr>
+                            <th>Match</th>
+                            <th>Time</th>
+                            <th>Field</th>
+                            <th>Team 1</th>
+                            <th>Team 2</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for match in matches %}
+                        <tr>
+                            <td>{{ match.name }}</td>
+                            <td>
+                                {% if match.nominal_start_time %}
+                                    {{ match.nominal_start_time.strftime('%H:%M') }}
+                                {% else %}
+                                    TBA
+                                {% endif %}
+                            </td>
+                            <td>{{ match.field or 'TBA' }}</td>
+                            <td>
+                                {% if match.team1 %}
+                                    {{ match.team1 }}
+                                {% else %}
+                                    {{ match.team1_initial or 'TBA' }}
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if match.team2 %}
+                                    {{ match.team2 }}
+                                {% else %}
+                                    {{ match.team2_initial or 'TBA' }}
+                                {% endif %}
+                            </td>
+                            <td>
+                                <span class="badge 
+                                    {% if match.status == 'NOT_STARTED' %}bg-secondary
+                                    {% elif match.status == 'IN_PROGRESS' %}bg-warning
+                                    {% elif match.status == 'COMPLETED' %}bg-success
+                                    {% endif %}">
+                                    {{ match.status.replace('_', ' ').title() }}
+                                </span>
+                            </td>
+                            <td>
+                                <a href="/{{ tournament.url }}/match?id={{ match.uuid }}" class="btn btn-sm btn-outline-primary">View</a>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% else %}
+            <div class="alert alert-info">
+                <h4>No matches scheduled yet</h4>
+                <p>The tournament schedule will be posted here once it's available.</p>
+            </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

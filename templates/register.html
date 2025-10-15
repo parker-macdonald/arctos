@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+
+{% block title %}Register - TO Site{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h3 class="mb-0">Register as {{ user_type.title() }}</h3>
+            </div>
+            <div class="card-body">
+                <form method="POST">
+                    <input type="hidden" name="user_type" value="{{ user_type }}">
+                    
+                    <div class="mb-3">
+                        <label for="username" class="form-label">Username</label>
+                        <input type="text" class="form-control" id="username" name="username" required>
+                        <div class="form-text">This will be your unique identifier</div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="name" class="form-label">Display Name</label>
+                        <input type="text" class="form-control" id="name" name="name" required>
+                        <div class="form-text">Your public display name</div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="password" class="form-label">Password</label>
+                        <input type="password" class="form-control" id="password" name="password" required>
+                    </div>
+                    
+                    <div class="d-grid">
+                        <button type="submit" class="btn btn-primary">Register</button>
+                    </div>
+                </form>
+                
+                <hr>
+                <div class="text-center">
+                    <p>Already have an account? <a href="{{ url_for('login', type=user_type) }}">Login here</a></p>
+                    <p>Or register as a <a href="{{ url_for('register', type='player' if user_type == 'team' else 'team') }}">{{ 'player' if user_type == 'team' else 'team' }}</a></p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

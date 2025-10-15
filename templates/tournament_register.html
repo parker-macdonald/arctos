@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+
+{% block title %}{{ tournament.name }} Registration{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <h1>{{ tournament.name }} - Registration</h1>
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item"><a href="/{{ tournament.url }}">{{ tournament.name }}</a></li>
+                <li class="breadcrumb-item active">Registration</li>
+            </ol>
+        </nav>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Tournament Registration</h5>
+            </div>
+            <div class="card-body">
+                {% if not current_user.is_authenticated %}
+                <div class="alert alert-warning">
+                    <h4>Login Required</h4>
+                    <p>You need to be logged in to register for this tournament.</p>
+                    <div class="d-flex gap-2">
+                        <a href="{{ url_for('login', type='player') }}" class="btn btn-primary">Login as Player</a>
+                        <a href="{{ url_for('login', type='team') }}" class="btn btn-outline-primary">Login as Team</a>
+                    </div>
+                </div>
+                {% else %}
+                <form method="POST" action="/{{ tournament.url }}/register">
+                    <input type="hidden" name="user_type" value="{{ current_user.__class__.__name__.lower() }}">
+                    
+                    {% if current_user.__class__.__name__ == 'Player' %}
+                    <div class="mb-3">
+                        <label for="jersey" class="form-label">Jersey Number</label>
+                        <input type="text" class="form-control" id="jersey" name="jersey" required>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="team" class="form-label">Team (Optional)</label>
+                        <select class="form-select" id="team" name="team">
+                            <option value="">Register as unattached player</option>
+                            {% for team in teams %}
+                            <option value="{{ team.id }}">{{ team.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    {% else %}
+                    <div class="mb-3">
+                        <label for="team_size" class="form-label">Expected Team Size</label>
+                        <input type="number" class="form-control" id="team_size" name="team_size" min="1" required>
+                    </div>
+                    {% endif %}
+
+                    {% if tournament.team_reg_fee or tournament.player_reg_fee %}
+                    <div class="mb-3">
+                        <div class="alert alert-info">
+                            <h6>Registration Fees</h6>
+                            {% if tournament.team_reg_fee %}
+                            <p><strong>Team Registration:</strong> ${{ "%.2f"|format(tournament.team_reg_fee) }}</p>
+                            {% endif %}
+                            {% if tournament.player_reg_fee %}
+                            <p><strong>Player Registration:</strong> ${{ "%.2f"|format(tournament.player_reg_fee) }}</p>
+                            {% endif %}
+                        </div>
+                    </div>
+                    {% endif %}
+
+                    <div class="mb-3">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="agree_terms" name="agree_terms" required>
+                            <label class="form-check-label" for="agree_terms">
+                                I agree to the tournament terms and conditions
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="d-grid">
+                        <button type="submit" class="btn btn-primary">Register for Tournament</button>
+                    </div>
+                </form>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Tournament Information</h5>
+            </div>
+            <div class="card-body">
+                <p><strong>Date:</strong> {{ tournament.dates.strftime('%B %d, %Y') if tournament.dates else 'TBA' }}</p>
+                <p><strong>Location:</strong> {{ tournament.location or 'TBA' }}</p>
+                <p><strong>Fields:</strong> {{ tournament.num_fields or 1 }}</p>
+                {% if tournament.n_max_teams %}
+                <p><strong>Max Teams:</strong> {{ tournament.n_max_teams }}</p>
+                {% endif %}
+                {% if tournament.max_team_size %}
+                <p><strong>Max Team Size:</strong> {{ tournament.max_team_size }}</p>
+                {% endif %}
+            </div>
+        </div>
+
+        {% if tournament.about %}
+        <div class="card mt-3">
+            <div class="card-header">
+                <h5 class="mb-0">About</h5>
+            </div>
+            <div class="card-body">
+                {{ tournament.about|safe }}
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

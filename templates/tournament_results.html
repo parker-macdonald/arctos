@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+
+{% block title %}{{ tournament.name }} Results - TO Site{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <h1>{{ tournament.name }} - Results</h1>
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item"><a href="/{{ tournament.url }}">{{ tournament.name }}</a></li>
+                <li class="breadcrumb-item active">Results</li>
+            </ol>
+        </nav>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-12">
+        {% if matches %}
+            <div class="table-responsive">
+                <table class="table table-striped">
+                    <thead>
+                        <tr>
+                            <th>Match</th>
+                            <th>Field</th>
+                            <th>Team 1</th>
+                            <th>Team 2</th>
+                            <th>Result</th>
+                            <th>Details</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for match in matches %}
+                        <tr>
+                            <td>{{ match.name }}</td>
+                            <td>{{ match.field or 'TBA' }}</td>
+                            <td>
+                                {% if match.team1 %}
+                                    {{ match.team1 }}
+                                {% else %}
+                                    {{ match.team1_initial or 'TBA' }}
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if match.team2 %}
+                                    {{ match.team2 }}
+                                {% else %}
+                                    {{ match.team2_initial or 'TBA' }}
+                                {% endif %}
+                            </td>
+                            <td>
+                                <span class="badge bg-success">Completed</span>
+                            </td>
+                            <td>
+                                <a href="/{{ tournament.url }}/match?id={{ match.uuid }}" class="btn btn-sm btn-outline-primary">View Details</a>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% else %}
+            <div class="alert alert-info">
+                <h4>No results available yet</h4>
+                <p>Tournament results will be posted here as matches are completed.</p>
+            </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

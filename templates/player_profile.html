@@ -1,0 +1,160 @@
+{% extends "base.html" %}
+
+{% block title %}{{ player.name }} - Player Profile{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <h1>{{ player.name }}</h1>
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item"><a href="{{ url_for('players') }}">Players</a></li>
+                <li class="breadcrumb-item active">{{ player.name }}</li>
+            </ol>
+        </nav>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Player Information</h5>
+            </div>
+            <div class="card-body">
+                {% if player.profile_photo %}
+                <div class="text-center mb-3">
+                    <img src="/static/{{ player.profile_photo }}" alt="Profile Photo" class="rounded-circle" style="width: 100px; height: 100px; object-fit: cover;">
+                </div>
+                {% endif %}
+                <p><strong>Username:</strong> @{{ player.id }}</p>
+                <p><strong>Display Name:</strong> {{ player.name }}</p>
+                {% if current_user.is_authenticated and current_user.id == player.id and player.phone %}
+                <p><strong>Phone:</strong> {{ player.phone }}</p>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="card mt-3">
+            <div class="card-header">
+                <h5 class="mb-0">Tournament History</h5>
+            </div>
+            <div class="card-body">
+                {% if registrations %}
+                    <div class="table-responsive">
+                        <table class="table table-striped">
+                            <thead>
+                                <tr>
+                                    <th>Tournament</th>
+                                    <th>Team</th>
+                                    <th>Jersey</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for reg in registrations %}
+                                <tr>
+                                    <td>
+                                        <a href="/{{ reg.event }}">{{ reg.event }}</a>
+                                    </td>
+                                    <td>
+                                        {% if reg.team %}
+                                            <a href="/teams/{{ reg.team }}">{{ reg.team }}</a>
+                                        {% else %}
+                                            Unattached
+                                        {% endif %}
+                                    </td>
+                                    <td>{{ reg.jersey or '-' }}</td>
+                                    <td>
+                                        <span class="badge 
+                                            {% if reg.status == 'CONFIRMED' %}bg-success
+                                            {% else %}bg-warning
+                                            {% endif %}">
+                                            {{ reg.status }}
+                                        </span>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                {% else %}
+                    <p class="text-muted">No tournament registrations yet.</p>
+                {% endif %}
+            </div>
+        </div>
+
+        {% if injuries %}
+        <div class="card mt-3">
+            <div class="card-header">
+                <h5 class="mb-0">Injury History</h5>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-striped">
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Description</th>
+                                <th>Active</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for injury in injuries %}
+                            <tr>
+                                <td>{{ injury.stamp.strftime('%Y-%m-%d %H:%M') }}</td>
+                                <td>{{ injury.message }}</td>
+                                <td>
+                                    {% if injury.show %}
+                                        <span class="badge bg-warning">Active</span>
+                                    {% else %}
+                                        <span class="badge bg-secondary">Inactive</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Quick Stats</h5>
+            </div>
+            <div class="card-body">
+                <p><strong>Tournaments:</strong> {{ registrations|length }}</p>
+                <p><strong>Active Injuries:</strong> {{ injuries|selectattr('show')|list|length }}</p>
+            </div>
+        </div>
+
+        {% if current_user.is_authenticated and current_user.id == player.id %}
+        <div class="card mt-3">
+            <div class="card-header">
+                <h5 class="mb-0">Team Invitations</h5>
+            </div>
+            <div class="card-body">
+                <p class="text-muted">You'll see team invitations here when teams invite you to tournaments.</p>
+                <a href="#" class="btn btn-outline-primary">View Invitations</a>
+            </div>
+        </div>
+        
+        <div class="card mt-3">
+            <div class="card-header">
+                <h5 class="mb-0">Actions</h5>
+            </div>
+            <div class="card-body">
+                <div class="d-grid gap-2">
+                    <a href="/players/{{ player.id }}/edit" class="btn btn-primary">Edit Profile</a>
+                    <a href="#" class="btn btn-outline-primary">Add Injury</a>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

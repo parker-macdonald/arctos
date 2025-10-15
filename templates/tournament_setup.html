@@ -1,0 +1,270 @@
+{% extends "base.html" %}
+
+{% block title %}{{ tournament.name }} Setup{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <h1>{{ tournament.name }} - Setup</h1>
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item"><a href="/{{ tournament.url }}">{{ tournament.name }}</a></li>
+                <li class="breadcrumb-item active">Setup</li>
+            </ol>
+        </nav>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Match Schedule</h5>
+            </div>
+            <div class="card-body">
+                {% if matches %}
+                    <div class="table-responsive">
+                        <table class="table table-striped">
+                            <thead>
+                                <tr>
+                            <th>Match</th>
+                            <th>Time</th>
+                            <th>Field</th>
+                            <th>Team 1</th>
+                            <th>Team 2</th>
+                            <th>Schedule</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for match in matches %}
+                                <tr>
+                                    <td>{{ match.name }}</td>
+                                    <td>
+                                        {% if match.nominal_start_time %}
+                                            {{ match.nominal_start_time.strftime('%H:%M') }}
+                                        {% else %}
+                                            TBA
+                                        {% endif %}
+                                    </td>
+                                    <td>{{ match.field or 'TBA' }}</td>
+                                    <td>
+                                        {% if match.team1 %}
+                                            {{ match.team1 }}
+                                        {% else %}
+                                            {{ match.team1_initial or 'TBA' }}
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if match.team2 %}
+                                            {{ match.team2 }}
+                                        {% else %}
+                                            {{ match.team2_initial or 'TBA' }}
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if match.dynamic %}
+                                            <span class="badge bg-info">Dynamic</span>
+                                        {% else %}
+                                            <span class="badge bg-secondary">Static</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        <span class="badge 
+                                            {% if match.status == 'NOT_STARTED' %}bg-secondary
+                                            {% elif match.status == 'IN_PROGRESS' %}bg-warning
+                                            {% elif match.status == 'COMPLETED' %}bg-success
+                                            {% endif %}">
+                                            {{ match.status.replace('_', ' ').title() }}
+                                        </span>
+                                    </td>
+                                    <td>
+                                        <a href="/{{ tournament.url }}/match?id={{ match.uuid }}" class="btn btn-sm btn-outline-primary">View</a>
+                                        <a href="/{{ tournament.url }}/edit-match?id={{ match.uuid }}" class="btn btn-sm btn-outline-secondary">Edit</a>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                {% else %}
+                    <div class="alert alert-info">
+                        <h4>No matches scheduled yet</h4>
+                        <p>Create your first match to get started.</p>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="card mt-3">
+            <div class="card-header">
+                <h5 class="mb-0">Add New Match</h5>
+            </div>
+            <div class="card-body">
+                <form method="POST" action="/{{ tournament.url }}/add-match">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="match_name" class="form-label">Match Name</label>
+                                <input type="text" class="form-control" id="match_name" name="match_name" required>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="field" class="form-label">Field</label>
+                                <select class="form-select" id="field" name="field">
+                                    <option value="">Select Field</option>
+                                    {% for field in fields %}
+                                    <option value="{{ field.name }}">{{ field.name }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="start_time" class="form-label">Start Time</label>
+                                <input type="datetime-local" class="form-control" id="start_time" name="start_time">
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="length" class="form-label">Length (minutes)</label>
+                                <input type="number" class="form-control" id="length" name="length" value="{{ matches[-1].nominal_length if matches else 60 }}" min="1">
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="dynamic" class="form-label">Scheduling</label>
+                                <select class="form-select" id="dynamic" name="dynamic">
+                                    <option value="true">Dynamic (can start early if previous match ends)</option>
+                                    <option value="false">Static (starts at scheduled time)</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="refs" class="form-label">Referees</label>
+                                <input type="text" class="form-control" id="refs" name="refs" placeholder="Comma-separated referee names">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="team1" class="form-label">Team 1</label>
+                                <input type="text" class="form-control" id="team1" name="team1" placeholder="Team name or tag">
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="team2" class="form-label">Team 2</label>
+                                <input type="text" class="form-control" id="team2" name="team2" placeholder="Team name or tag">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="match_type" class="form-label">Match Type</label>
+                                <select class="form-select" id="match_type" name="match_type">
+                                    <option value="SETS" {% if not matches or matches[-1].type == 'SETS' %}selected{% endif %}>Sets</option>
+                                    <option value="STONES" {% if matches and matches[-1].type == 'STONES' %}selected{% endif %}>Stones</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="nsets" class="form-label">Number of Sets</label>
+                                <input type="number" class="form-control" id="nsets" name="nsets" value="{{ matches[-1].nsets if matches else 3 }}" min="1">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="d-grid">
+                        <button type="submit" class="btn btn-primary">Add Match</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Fields</h5>
+            </div>
+            <div class="card-body">
+                {% if fields %}
+                    <ul class="list-group list-group-flush">
+                        {% for field in fields %}
+                        <li class="list-group-item d-flex justify-content-between align-items-center">
+                            {{ field.name }}
+                            {% if field.camera %}
+                            <span class="badge bg-primary">Stream</span>
+                            {% endif %}
+                        </li>
+                        {% endfor %}
+                    </ul>
+                {% else %}
+                    <p class="text-muted">No fields configured yet.</p>
+                {% endif %}
+                <div class="mt-3">
+                    <button class="btn btn-outline-primary btn-sm" data-bs-toggle="modal" data-bs-target="#addFieldModal">
+                        Add Field
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div class="card mt-3">
+            <div class="card-header">
+                <h5 class="mb-0">Quick Actions</h5>
+            </div>
+            <div class="card-body">
+                <div class="d-grid gap-2">
+                    <a href="/{{ tournament.url }}/settings" class="btn btn-outline-primary">Tournament Settings</a>
+                    <a href="/{{ tournament.url }}/schedule" class="btn btn-outline-primary">View Schedule</a>
+                    <button class="btn btn-outline-success" onclick="updateTags()">Update Tags</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Add Field Modal -->
+<div class="modal fade" id="addFieldModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Add Field</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="POST" action="/{{ tournament.url }}/add-field">
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="field_name" class="form-label">Field Name</label>
+                        <input type="text" class="form-control" id="field_name" name="field_name" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="camera" class="form-label">Camera/Stream Info</label>
+                        <input type="text" class="form-control" id="camera" name="camera" placeholder="YouTube stream URL or camera info">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Add Field</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
