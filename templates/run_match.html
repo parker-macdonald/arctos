@@ -404,6 +404,7 @@ function updatePointNotes(pointId, notes) {
     });
 }
 
+
 function updateScore() {
     // Calculate score from all non-rerolled points
     fetch('/{{ tournament.url }}/get-score?match_id={{ match.uuid }}')
@@ -426,14 +427,41 @@ function populateNotesDropdowns() {
                 `<option value="${note.text}">${note.text} (${note.target})</option>`
             ).join('');
             
-            // Update all note dropdowns
+            // Update all note dropdowns and restore saved values
             document.querySelectorAll('select[onchange*="updatePointNotes"]').forEach(select => {
-                const currentValue = select.value;
+                const onchangeAttr = select.getAttribute('onchange');
+                // Extract point ID from onchange attribute - handle both UUIDs and numbers
+                const pointIdMatch = onchangeAttr.match(/updatePointNotes\(([^,)]+),/);
+                const pointId = pointIdMatch ? pointIdMatch[1].trim() : null;
+                
+                // Get saved value from database (point.notes) or gamestate
+                const savedValue = pointId ? getSavedPointNote(pointId) : '';
+                
                 select.innerHTML = '<option value="">No note</option>' + noteOptions;
-                select.value = currentValue;
+                select.value = savedValue || '';
             });
         }
     });
+}
+
+function getSavedPointNote(pointId) {
+    // Get saved note from the points data passed from the server
+    const points = [
+        {% for point in points %}
+        {
+            uuid: '{{ point.uuid }}',
+            winner: '{{ point.winner or "" }}',
+            rerolled: {{ point.rerolled | lower }},
+            notes: '{{ point.notes or "" }}',
+            set_number: {{ point.set_number or 1 }}
+        }{% if not loop.last %},{% endif %}
+        {% endfor %}
+    ];
+    const point = points.find(p => p.uuid === pointId);
+    if (point && point.notes) {
+        return point.notes;
+    }
+    return '';
 }
 
 function toggleRerun(pointId, rerun) {

@@ -1,5 +1,6 @@
 from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session
 from flask_login import LoginManager, login_user, logout_user, login_required, current_user
+from flask_socketio import SocketIO, emit, join_room, leave_room
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime, timedelta
 import uuid
@@ -10,6 +11,9 @@ app = Flask(__name__)
 app.config['SECRET_KEY'] = 'your-secret-key-here'
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///tournament.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+# Initialize SocketIO
+socketio = SocketIO(app, cors_allowed_origins="*")
 
 # Import models first to get db instance
 from models import db, init_db, TeamRegistration
@@ -494,7 +498,19 @@ def match_page(tournament_url):
     
     points = Point.query.filter_by(match=match.uuid).order_by(Point.stamp).all()
     
-    return render_template('match_page.html', tournament=tournament, match=match, points=points)
+    # Get gamestate for live updates
+    gamestate = {}
+    if match.gamestate:
+        try:
+            gamestate = json.loads(match.gamestate)
+        except:
+            gamestate = {}
+    
+    return render_template('match_page_websocket.html', 
+                         tournament=tournament, 
+                         match=match, 
+                         points=points,
+                         gamestate=gamestate)
 
 @app.route('/<tournament_url>/settings')
 @login_required
@@ -879,7 +895,7 @@ def start_match_post(tournament_url):
     db.session.commit()
     
     flash('Match started successfully!', 'success')
-    return redirect(url_for('run_match', tournament_url=tournament_url, id=match.uuid))
+    return redirect(url_for('run_match_websocket', tournament_url=tournament_url, id=match.uuid))
 
 @app.route('/<tournament_url>/run-match')
 @login_required
@@ -918,11 +934,11 @@ def run_match(tournament_url):
         except:
             gamestate = {}
     
-    return render_template('run_match.html', 
-                         tournament=tournament, 
-                         match=match, 
-                         points=points,
-                         gamestate=gamestate)
+    return render_template('run_match_websocket.html',
+                           tournament=tournament,
+                           match=match,
+                           points=points,
+                           gamestate=gamestate)
 
 @app.route('/<tournament_url>/finalize-match')
 @login_required
@@ -1013,141 +1029,13 @@ def finalize_match_post(tournament_url):
     flash('Match finalized successfully!', 'success')
     return redirect(url_for('tournament_schedule', tournament_url=tournament_url))
 
-@app.route('/<tournament_url>/add-point', methods=['POST'])
-@login_required
-def add_point(tournament_url):
-    """Add a new point to a match"""
-    data = request.get_json()
-    match_id = data.get('match_id')
-    start_time = data.get('start_time')
-    end_time = data.get('end_time')
-    stones_used = data.get('stones_used', 0)
-    
-    if not match_id or not start_time or not end_time:
-        return jsonify({'success': False, 'error': 'Missing required fields'})
-    
-    match = Match.query.get(match_id)
-    if not match or match.event != tournament_url:
-        return jsonify({'success': False, 'error': 'Match not found'})
-    
-    # Check if user is a head ref
-    if not is_head_ref(tournament_url, current_user.id):
-        return jsonify({'success': False, 'error': 'Not authorized'})
-    
-    # Create new point
-    point = Point(
-        match=match_id,
-        stamp=datetime.fromisoformat(start_time.replace('Z', '+00:00')),
-        nstones=stones_used,
-        set_number=1,  # Default to set 1, can be changed later
-        notes=''  # Initialize empty notes
-    )
-    
-    db.session.add(point)
-    db.session.commit()
-    
-    return jsonify({'success': True, 'point_id': point.uuid})
+# Old API endpoint removed - now handled by WebSockets
 
-@app.route('/<tournament_url>/update-point', methods=['POST'])
-@login_required
-def update_point(tournament_url):
-    """Update a point's details"""
-    data = request.get_json()
-    point_id = data.get('point_id')
-    
-    if not point_id:
-        return jsonify({'success': False, 'error': 'Point ID required'})
-    
-    point = Point.query.get(point_id)
-    if not point:
-        return jsonify({'success': False, 'error': 'Point not found'})
-    
-    # Check if user is a head ref
-    if not is_head_ref(tournament_url, current_user.id):
-        return jsonify({'success': False, 'error': 'Not authorized'})
-    
-    # Update fields
-    if 'set_number' in data:
-        point.set_number = data['set_number']
-    if 'winner' in data:
-        point.winner = data['winner'] if data['winner'] != 'none' else None
-    if 'rerolled' in data:
-        point.rerolled = data['rerolled']
-    if 'notes' in data:
-        point.notes = data['notes']
-    
-    db.session.commit()
-    
-    return jsonify({'success': True})
+# Old API endpoint removed - now handled by WebSockets
 
-@app.route('/<tournament_url>/delete-point', methods=['POST'])
-@login_required
-def delete_point(tournament_url):
-    """Delete a point"""
-    data = request.get_json()
-    point_id = data.get('point_id')
-    
-    if not point_id:
-        return jsonify({'success': False, 'error': 'Point ID required'})
-    
-    point = Point.query.get(point_id)
-    if not point:
-        return jsonify({'success': False, 'error': 'Point not found'})
-    
-    # Check if user is a head ref
-    if not is_head_ref(tournament_url, current_user.id):
-        return jsonify({'success': False, 'error': 'Not authorized'})
-    
-    db.session.delete(point)
-    db.session.commit()
-    
-    return jsonify({'success': True})
+# Old API endpoint removed - now handled by WebSockets
 
-@app.route('/<tournament_url>/add-note', methods=['POST'])
-@login_required
-def add_note(tournament_url):
-    """Add a note to a match"""
-    data = request.get_json()
-    match_id = data.get('match_id')
-    text = data.get('text')
-    target = data.get('target', 'match')
-    
-    if not match_id or not text:
-        return jsonify({'success': False, 'error': 'Match ID and text required'})
-    
-    match = Match.query.get(match_id)
-    if not match or match.event != tournament_url:
-        return jsonify({'success': False, 'error': 'Match not found'})
-    
-    # Check if user is a head ref
-    if not is_head_ref(tournament_url, current_user.id):
-        return jsonify({'success': False, 'error': 'Not authorized'})
-    
-    # For now, just store in match notes (could be expanded to separate notes table)
-    gamestate = {}
-    if match.gamestate:
-        try:
-            gamestate = json.loads(match.gamestate)
-        except:
-            gamestate = {}
-    
-    if 'notes' not in gamestate:
-        gamestate['notes'] = []
-    elif isinstance(gamestate['notes'], str):
-        # Handle case where notes is stored as a string
-        gamestate['notes'] = []
-    
-    gamestate['notes'].append({
-        'text': text,
-        'target': target,
-        'stamp': datetime.utcnow().isoformat(),
-        'added_by': current_user.id
-    })
-    
-    match.gamestate = json.dumps(gamestate)
-    db.session.commit()
-    
-    return jsonify({'success': True})
+# Old API endpoint removed - now handled by WebSockets
 
 @app.route('/<tournament_url>/get-notes')
 @login_required
@@ -1177,105 +1065,11 @@ def get_notes(tournament_url):
     
     return jsonify({'success': True, 'notes': notes})
 
-@app.route('/<tournament_url>/end-match', methods=['POST'])
-@login_required
-def end_match(tournament_url):
-    """End a match"""
-    data = request.get_json()
-    match_id = data.get('match_id')
-    
-    if not match_id:
-        return jsonify({'success': False, 'error': 'Match ID required'})
-    
-    match = Match.query.get(match_id)
-    if not match or match.event != tournament_url:
-        return jsonify({'success': False, 'error': 'Match not found'})
-    
-    # Check if user is a head ref
-    if not is_head_ref(tournament_url, current_user.id):
-        return jsonify({'success': False, 'error': 'Not authorized'})
-    
-    # Update match status
-    match.status = 'COMPLETED'
-    
-    # Update gamestate with end time
-    gamestate = {}
-    if match.gamestate:
-        try:
-            gamestate = json.loads(match.gamestate)
-        except:
-            gamestate = {}
-    
-    gamestate['ended_at'] = datetime.utcnow().isoformat()
-    gamestate['ended_by'] = current_user.id
-    
-    match.gamestate = json.dumps(gamestate)
-    db.session.commit()
-    
-    return jsonify({'success': True})
+# Old API endpoints removed - now handled by WebSockets
 
-@app.route('/<tournament_url>/update-stones', methods=['POST'])
-@login_required
-def update_stones(tournament_url):
-    """Update stones remaining for a match"""
-    data = request.get_json()
-    match_id = data.get('match_id')
-    stones_remaining = data.get('stones_remaining')
-    
-    if not match_id or stones_remaining is None:
-        return jsonify({'success': False, 'error': 'Match ID and stones remaining required'})
-    
-    match = Match.query.get(match_id)
-    if not match or match.event != tournament_url:
-        return jsonify({'success': False, 'error': 'Match not found'})
-    
-    # Check if user is a head ref
-    if not is_head_ref(tournament_url, current_user.id):
-        return jsonify({'success': False, 'error': 'Not authorized'})
-    
-    # Update gamestate with new stones remaining
-    gamestate = {}
-    if match.gamestate:
-        try:
-            gamestate = json.loads(match.gamestate)
-        except:
-            gamestate = {}
-    
-    gamestate['stones_remaining'] = stones_remaining
-    match.gamestate = json.dumps(gamestate)
-    db.session.commit()
-    
-    return jsonify({'success': True})
+# Old API endpoint removed - now handled by WebSockets
 
-@app.route('/<tournament_url>/get-score')
-@login_required
-def get_score(tournament_url):
-    """Get current score for a match"""
-    match_id = request.args.get('match_id')
-    
-    if not match_id:
-        return jsonify({'success': False, 'error': 'Match ID required'})
-    
-    match = Match.query.get(match_id)
-    if not match or match.event != tournament_url:
-        return jsonify({'success': False, 'error': 'Match not found'})
-    
-    # Check if user is a head ref
-    if not is_head_ref(tournament_url, current_user.id):
-        return jsonify({'success': False, 'error': 'Not authorized'})
-    
-    # Get all points for this match
-    points = Point.query.filter_by(match=match.uuid).all()
-    
-    # Calculate scores (only non-rerolled points count)
-    team1_score = sum(1 for point in points if point.winner == 'TEAM1' and not point.rerolled)
-    team2_score = sum(1 for point in points if point.winner == 'TEAM2' and not point.rerolled)
-    
-    return jsonify({
-        'success': True, 
-        'team1_score': team1_score, 
-        'team2_score': team2_score
-    })
+# Old API endpoint removed - now handled by WebSockets
 
 @app.route('/<tournament_url>/update-tags', methods=['POST'])
 def update_tags(tournament_url):
@@ -1940,7 +1734,182 @@ def add_injury(player_id):
     
     return render_template('add_injury.html', player_id=player_id)
 
+# WebSocket event handlers
+@socketio.on('join_match')
+def handle_join_match(data):
+    """Join a match room for real-time updates"""
+    match_id = data.get('match_id')
+    if match_id:
+        join_room(f'match_{match_id}')
+        emit('status', {'msg': f'Joined match {match_id}'})
+
+@socketio.on('leave_match')
+def handle_leave_match(data):
+    """Leave a match room"""
+    match_id = data.get('match_id')
+    if match_id:
+        leave_room(f'match_{match_id}')
+
+@socketio.on('update_score')
+def handle_update_score(data):
+    """Handle score updates and broadcast to all viewers"""
+    match_id = data.get('match_id')
+    if not match_id:
+        return
+    
+    # Calculate new score
+    match = Match.query.get(match_id)
+    if not match:
+        return
+    
+    points = Point.query.filter_by(match=match.uuid).all()
+    team1_score = sum(1 for point in points if point.winner == 'TEAM1' and not point.rerolled)
+    team2_score = sum(1 for point in points if point.winner == 'TEAM2' and not point.rerolled)
+    
+    # Broadcast score update to all viewers
+    emit('score_updated', {
+        'team1_score': team1_score,
+        'team2_score': team2_score
+    }, room=f'match_{match_id}')
+
+@socketio.on('update_stones')
+def handle_update_stones(data):
+    """Handle stones updates and broadcast to all viewers"""
+    match_id = data.get('match_id')
+    stones_remaining = data.get('stones_remaining')
+    
+    if not match_id or stones_remaining is None:
+        return
+    
+    # Update match gamestate
+    match = Match.query.get(match_id)
+    if not match:
+        return
+    
+    # Parse existing gamestate
+    gamestate = {}
+    if match.gamestate:
+        try:
+            gamestate = json.loads(match.gamestate)
+        except:
+            gamestate = {}
+    
+    gamestate['stones_remaining'] = stones_remaining
+    match.gamestate = json.dumps(gamestate)
+    db.session.commit()
+    
+    # Broadcast stones update to all viewers
+    emit('stones_updated', {
+        'stones_remaining': stones_remaining
+    }, room=f'match_{match_id}')
+
+@socketio.on('update_point')
+def handle_update_point(data):
+    """Handle point updates and broadcast to all viewers"""
+    point_id = data.get('point_id')
+    if not point_id:
+        return
+    
+    point = Point.query.get(point_id)
+    if not point:
+        return
+    
+    # Update point fields
+    if 'winner' in data:
+        point.winner = data['winner'] if data['winner'] != 'none' else None
+    if 'rerolled' in data:
+        point.rerolled = data['rerolled']
+    if 'notes' in data:
+        point.notes = data['notes']
+    if 'set_number' in data:
+        point.set_number = data['set_number']
+    
+    db.session.commit()
+    
+    # Broadcast point update to all viewers
+    emit('point_updated', {
+        'point_id': point_id,
+        'winner': point.winner,
+        'rerolled': point.rerolled,
+        'notes': point.notes,
+        'set_number': point.set_number
+    }, room=f'match_{point.match}')
+
+@socketio.on('add_point')
+def handle_add_point(data):
+    """Handle new point creation and broadcast to all viewers"""
+    match_id = data.get('match_id')
+    if not match_id:
+        return
+    
+    # Create new point
+    new_point = Point(
+        match=match_id,
+        set_number=data.get('set_number', 1),
+        stamp=datetime.utcnow()
+    )
+    db.session.add(new_point)
+    db.session.commit()
+    
+    # Broadcast new point to all viewers
+    emit('point_added', {
+        'point_id': new_point.uuid,
+        'set_number': new_point.set_number,
+        'stamp': new_point.stamp.isoformat()
+    }, room=f'match_{match_id}')
+
+@socketio.on('delete_point')
+def handle_delete_point(data):
+    """Handle point deletion and broadcast to all viewers"""
+    point_id = data.get('point_id')
+    if not point_id:
+        return
+    
+    point = Point.query.get(point_id)
+    if not point:
+        return
+    
+    match_id = point.match
+    db.session.delete(point)
+    db.session.commit()
+    
+    # Broadcast point deletion to all viewers
+    emit('point_deleted', {
+        'point_id': point_id
+    }, room=f'match_{match_id}')
+
+@socketio.on('update_notes')
+def handle_update_notes(data):
+    """Handle notes updates and broadcast to all viewers"""
+    match_id = data.get('match_id')
+    notes = data.get('notes', [])
+    
+    if not match_id:
+        return
+    
+    # Update match gamestate
+    match = Match.query.get(match_id)
+    if not match:
+        return
+    
+    # Parse existing gamestate
+    gamestate = {}
+    if match.gamestate:
+        try:
+            gamestate = json.loads(match.gamestate)
+        except:
+            gamestate = {}
+    
+    gamestate['notes'] = notes
+    match.gamestate = json.dumps(gamestate)
+    db.session.commit()
+    
+    # Broadcast notes update to all viewers
+    emit('notes_updated', {
+        'notes': notes
+    }, room=f'match_{match_id}')
+
 if __name__ == '__main__':
     with app.app_context():
         db.create_all()
-    app.run(debug=True)
+    socketio.run(app)

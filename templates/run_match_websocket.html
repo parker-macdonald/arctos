@@ -1,0 +1,470 @@
+{% extends "base.html" %}
+
+{% block title %}Run Match - {{ tournament.name }}{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="row">
+        <div class="col-md-12">
+            <h2>Run Match: {{ match.name }}</h2>
+            <p><strong>Teams:</strong> {{ match.team1_registration.pseudonym if match.team1_registration else match.team1 }} vs {{ match.team2_registration.pseudonym if match.team2_registration else match.team2 }}</p>
+            <p><strong>Refs:</strong> {{ match.refs or match.refs_initial }}</p>
+        </div>
+    </div>
+    
+    <!-- Match Status Bar -->
+    <div class="row mb-4">
+        <div class="col-md-12">
+            <div class="card">
+                <div class="card-body">
+                    <div class="row text-center">
+                        <div class="col-md-3">
+                            <h4>Score</h4>
+                            <div class="row">
+                                <div class="col-6">
+                                    <h3 id="team1-score">{{ match.team1_registration.pseudonym if match.team1_registration else match.team1 }}</h3>
+                                    <h2 id="team1-score-value">0</h2>
+                                </div>
+                                <div class="col-6">
+                                    <h3 id="team2-score">{{ match.team2_registration.pseudonym if match.team2_registration else match.team2 }}</h3>
+                                    <h2 id="team2-score-value">0</h2>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <h4>Stones Remaining</h4>
+                            <div class="input-group">
+                                <input type="number" class="form-control text-center" id="stones-remaining" 
+                                       value="{{ gamestate.stones_remaining if gamestate.stones_remaining else match.nstonesperset or 100 }}" 
+                                       onchange="updateStonesRemaining(this.value)" min="0" max="1000">
+                                <button class="btn btn-outline-secondary" type="button" onclick="updateStonesRemaining(document.getElementById('stones-remaining').value)">
+                                    Update
+                                </button>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <h4>Time Elapsed</h4>
+                            <h2 id="time-elapsed">00:00</h2>
+                        </div>
+                        <div class="col-md-3">
+                            <h4>Match Status</h4>
+                            <div id="match-status">
+                                <button id="point-button" class="btn btn-success btn-lg w-100" onclick="startEndPoint()">
+                                    Start Point
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Match Info -->
+    <div class="row mb-4">
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header">
+                    <h5>Match Information</h5>
+                </div>
+                <div class="card-body">
+                    <p><strong>Type:</strong> {{ match.type }}</p>
+                    {% if match.type == 'STONES' %}
+                    <p><strong>Stones per Set:</strong> {{ match.nstonesperset or 100 }}</p>
+                    {% endif %}
+                    {% if match.nominal_length %}
+                    <p><strong>Length:</strong> {{ match.nominal_length }} minutes</p>
+                    {% endif %}
+                    {% if gamestate.notes %}
+                    <p><strong>Notes:</strong> {{ gamestate.notes }}</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header">
+                    <h5>Actions</h5>
+                </div>
+                <div class="card-body">
+                    <button class="btn btn-primary mb-2" onclick="showAddNoteDialog()">Add Note</button>
+                    <button class="btn btn-warning mb-2" onclick="endMatch()">Finalize Match</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Points Table -->
+    <div class="row">
+        <div class="col-md-12">
+            <div class="card">
+                <div class="card-header">
+                    <h5>Points</h5>
+                </div>
+                <div class="card-body">
+                    {% if points %}
+                    <div class="table-responsive">
+                        <table class="table table-sm">
+                            <thead>
+                                <tr>
+                                    <th>#</th>
+                                    <th>Set</th>
+                                    <th>Start Time</th>
+                                    <th>End Time</th>
+                                    <th>Winner</th>
+                                    <th>Rerun</th>
+                                    <th>Notes</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="points-table-body">
+                                {% for point in points %}
+                                <tr id="point-row-{{ point.uuid }}">
+                                    <td>{{ loop.index }}</td>
+                                    <td>
+                                        <input type="number" class="form-control form-control-sm" 
+                                               value="{{ point.set_number or 1 }}" 
+                                               onchange="updatePointSetNumber('{{ point.uuid }}', this.value)"
+                                               style="width: 60px;">
+                                    </td>
+                                    <td id="start-time-{{ point.uuid }}">{{ point.stamp.strftime('%H:%M:%S') if point.stamp else '' }}</td>
+                                    <td id="end-time-{{ point.uuid }}">{{ point.end_stamp.strftime('%H:%M:%S') if point.end_stamp else '' }}</td>
+                                    <td>
+                                        <select class="form-select form-select-sm" onchange="updatePointWinner('{{ point.uuid }}', this.value)">
+                                            <option value="none" {% if not point.winner %}selected{% endif %}>None</option>
+                                            <option value="TEAM1" {% if point.winner == 'TEAM1' %}selected{% endif %}>{{ match.team1_registration.pseudonym if match.team1_registration else match.team1 }}</option>
+                                            <option value="TEAM2" {% if point.winner == 'TEAM2' %}selected{% endif %}>{{ match.team2_registration.pseudonym if match.team2_registration else match.team2 }}</option>
+                                        </select>
+                                    </td>
+                                    <td>
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" 
+                                                   {% if point.rerolled %}checked{% endif %}
+                                                   onchange="toggleRerun('{{ point.uuid }}', this.checked)">
+                                        </div>
+                                    </td>
+                                    <td>
+                                        <select class="form-select form-select-sm" onchange="updatePointNotes('{{ point.uuid }}', this.value)" data-initial-value="{{ point.notes or '' }}">
+                                            <option value="">No note</option>
+                                            <!-- Notes will be populated by JavaScript -->
+                                        </select>
+                                    </td>
+                                    <td>
+                                        <button class="btn btn-sm btn-danger" onclick="deletePoint('{{ point.uuid }}')">Delete</button>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {% else %}
+                    <p class="text-muted">No points recorded yet.</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Add Note Modal -->
+<div class="modal fade" id="addNoteModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Add Note</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <!-- Existing Notes Section -->
+                <div class="mb-4">
+                    <h6>Existing Notes for This Match:</h6>
+                    <div id="existing-notes-list" class="border p-3" style="max-height: 200px; overflow-y: auto;">
+                        <p class="text-muted">Loading notes...</p>
+                    </div>
+                </div>
+                
+                <!-- Add New Note Section -->
+                <div class="mb-3">
+                    <label for="noteText" class="form-label">New Note Text:</label>
+                    <input type="text" class="form-control" id="noteText" placeholder="Enter note text">
+                </div>
+                <div class="mb-3">
+                    <label for="noteTarget" class="form-label">Target:</label>
+                    <select class="form-select" id="noteTarget">
+                        <option value="match">Match</option>
+                        <option value="team1">{{ match.team1_registration.pseudonym if match.team1_registration else match.team1 }}</option>
+                        <option value="team2">{{ match.team2_registration.pseudonym if match.team2_registration else match.team2 }}</option>
+                    </select>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="addNote()">Add Note</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js"></script>
+<script>
+// WebSocket connection
+const socket = io();
+const matchId = '{{ match.uuid }}';
+
+// Join match room on page load
+socket.emit('join_match', { match_id: matchId });
+
+// Leave match room on page unload
+window.addEventListener('beforeunload', function() {
+    socket.emit('leave_match', { match_id: matchId });
+});
+
+// WebSocket event handlers
+socket.on('score_updated', function(data) {
+    document.getElementById('team1-score-value').textContent = data.team1_score;
+    document.getElementById('team2-score-value').textContent = data.team2_score;
+});
+
+socket.on('stones_updated', function(data) {
+    document.getElementById('stones-remaining').value = data.stones_remaining;
+});
+
+socket.on('point_updated', function(data) {
+    const pointId = data.point_id;
+    const winnerSelect = document.querySelector(`select[onchange*="updatePointWinner('${pointId}'"]`);
+    const rerollCheckbox = document.querySelector(`input[onchange*="toggleRerun('${pointId}'"]`);
+    const notesSelect = document.querySelector(`select[onchange*="updatePointNotes('${pointId}'"]`);
+    
+    if (winnerSelect) {
+        winnerSelect.value = data.winner || 'none';
+    }
+    if (rerollCheckbox) {
+        rerollCheckbox.checked = data.rerolled;
+    }
+    if (notesSelect) {
+        notesSelect.value = data.notes || '';
+    }
+});
+
+socket.on('point_added', function(data) {
+    // Add new point row to table
+    const tbody = document.getElementById('points-table-body');
+    const newRow = document.createElement('tr');
+    newRow.id = `point-row-${data.point_id}`;
+    newRow.innerHTML = `
+        <td>${tbody.children.length + 1}</td>
+        <td>
+            <input type="number" class="form-control form-control-sm" 
+                   value="${data.set_number}" 
+                   onchange="updatePointSetNumber('${data.point_id}', this.value)"
+                   style="width: 60px;">
+        </td>
+        <td id="start-time-${data.point_id}">${new Date(data.stamp).toLocaleTimeString()}</td>
+        <td id="end-time-${data.point_id}"></td>
+        <td>
+            <select class="form-select form-select-sm" onchange="updatePointWinner('${data.point_id}', this.value)">
+                <option value="none" selected>None</option>
+                <option value="TEAM1">{{ match.team1_registration.pseudonym if match.team1_registration else match.team1 }}</option>
+                <option value="TEAM2">{{ match.team2_registration.pseudonym if match.team2_registration else match.team2 }}</option>
+            </select>
+        </td>
+        <td>
+            <div class="form-check">
+                <input class="form-check-input" type="checkbox" onchange="toggleRerun('${data.point_id}', this.checked)">
+            </div>
+        </td>
+        <td>
+            <select class="form-select form-select-sm" onchange="updatePointNotes('${data.point_id}', this.value)">
+                <option value="">No note</option>
+            </select>
+        </td>
+        <td>
+            <button class="btn btn-sm btn-danger" onclick="deletePoint('${data.point_id}')">Delete</button>
+        </td>
+    `;
+    tbody.appendChild(newRow);
+});
+
+socket.on('point_deleted', function(data) {
+    const row = document.getElementById(`point-row-${data.point_id}`);
+    if (row) {
+        row.remove();
+    }
+});
+
+socket.on('notes_updated', function(data) {
+    // Update all note dropdowns
+    document.querySelectorAll('select[onchange*="updatePointNotes"]').forEach(select => {
+        const currentValue = select.value;
+        select.innerHTML = '<option value="">No note</option>' + 
+            data.notes.map(note => `<option value="${note.text}">${note.text} (${note.target})</option>`).join('');
+        select.value = currentValue;
+    });
+});
+
+// Client-side functions (no state storage, all via WebSocket)
+function updateStonesRemaining(stones) {
+    socket.emit('update_stones', {
+        match_id: matchId,
+        stones_remaining: parseInt(stones)
+    });
+}
+
+function startEndPoint() {
+    const button = document.getElementById('point-button');
+    if (button.textContent === 'Start Point') {
+        // Start new point
+        socket.emit('add_point', {
+            match_id: matchId,
+            set_number: 1 // Default set number
+        });
+        button.textContent = 'End Point';
+        button.className = 'btn btn-danger btn-lg w-100';
+    } else {
+        // End current point
+        button.textContent = 'Start Point';
+        button.className = 'btn btn-success btn-lg w-100';
+        // Trigger score update
+        socket.emit('update_score', { match_id: matchId });
+    }
+}
+
+function updatePointWinner(pointId, winner) {
+    socket.emit('update_point', {
+        point_id: pointId,
+        winner: winner
+    });
+    // Trigger score update
+    socket.emit('update_score', { match_id: matchId });
+}
+
+function toggleRerun(pointId, rerun) {
+    socket.emit('update_point', {
+        point_id: pointId,
+        rerolled: rerun
+    });
+    // Trigger score update
+    socket.emit('update_score', { match_id: matchId });
+}
+
+function updatePointNotes(pointId, notes) {
+    socket.emit('update_point', {
+        point_id: pointId,
+        notes: notes
+    });
+}
+
+function updatePointSetNumber(pointId, setNumber) {
+    socket.emit('update_point', {
+        point_id: pointId,
+        set_number: parseInt(setNumber)
+    });
+}
+
+function deletePoint(pointId) {
+    if (confirm('Are you sure you want to delete this point?')) {
+        socket.emit('delete_point', { point_id: pointId });
+        // Trigger score update
+        socket.emit('update_score', { match_id: matchId });
+    }
+}
+
+function showAddNoteDialog() {
+    // Load existing notes before showing modal
+    loadExistingNotes();
+    const modal = new bootstrap.Modal(document.getElementById('addNoteModal'));
+    modal.show();
+}
+
+function loadExistingNotes() {
+    fetch('/{{ tournament.url }}/get-notes?match_id={{ match.uuid }}')
+    .then(response => response.json())
+    .then(data => {
+        const notesList = document.getElementById('existing-notes-list');
+        if (data.success && data.notes.length > 0) {
+            notesList.innerHTML = data.notes.map(note => `
+                <div class="border-bottom pb-2 mb-2">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div>
+                            <strong>${note.text}</strong>
+                            <br>
+                            <small class="text-muted">Target: ${note.target}</small>
+                            <br>
+                            <small class="text-muted">Added: ${new Date(note.stamp).toLocaleString()}</small>
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+        } else {
+            notesList.innerHTML = '<p class="text-muted">No notes added yet.</p>';
+        }
+    })
+    .catch(error => {
+        console.error('Error loading notes:', error);
+        document.getElementById('existing-notes-list').innerHTML = '<p class="text-danger">Error loading notes.</p>';
+    });
+}
+
+function addNote() {
+    const text = document.getElementById('noteText').value;
+    const target = document.getElementById('noteTarget').value;
+    
+    if (text.trim()) {
+        const newNote = {
+            text: text,
+            target: target,
+            stamp: new Date().toISOString(),
+            added_by: 'current_user' // This would be the actual user ID in a real implementation
+        };
+        
+        socket.emit('update_notes', {
+            match_id: matchId,
+            notes: [...(window.currentNotes || []), newNote]
+        });
+        
+        // Refresh the existing notes list
+        loadExistingNotes();
+        
+        // Clear form but keep modal open
+        document.getElementById('noteText').value = '';
+    }
+}
+
+function endMatch() {
+    if (confirm('Are you sure you want to finalize this match?')) {
+        window.location.href = '/{{ tournament.url }}/finalize-match?id={{ match.uuid }}';
+    }
+}
+
+// Initialize page
+document.addEventListener('DOMContentLoaded', function() {
+    // Load initial notes
+    fetch('/{{ tournament.url }}/get-notes?match_id={{ match.uuid }}')
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            window.currentNotes = data.notes;
+            // Update all note dropdowns with available notes, preserving current values
+            document.querySelectorAll('select[onchange*="updatePointNotes"]').forEach(select => {
+                const initialValue = select.getAttribute('data-initial-value') || '';
+                select.innerHTML = '<option value="">No note</option>' + 
+                    data.notes.map(note => `<option value="${note.text}">${note.text} (${note.target})</option>`).join('');
+                // Restore the initial value from the template
+                select.value = initialValue;
+            });
+        }
+    });
+    
+    // Start time elapsed timer
+    const startTime = new Date('{{ match.start_time or match.stamp }}');
+    setInterval(function() {
+        const now = new Date();
+        const elapsed = Math.floor((now - startTime) / 1000);
+        const minutes = Math.floor(elapsed / 60);
+        const seconds = elapsed % 60;
+        document.getElementById('time-elapsed').textContent = 
+            `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+    }, 1000);
+});
+</script>
+{% endblock %}

@@ -1,0 +1,354 @@
+{% extends "base.html" %}
+
+{% block title %}{{ match.name }} - {{ tournament.name }}{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <h1>{{ match.name }}</h1>
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item"><a href="/{{ tournament.url }}">{{ tournament.name }}</a></li>
+                <li class="breadcrumb-item"><a href="/{{ tournament.url }}/schedule">Schedule</a></li>
+                <li class="breadcrumb-item active">{{ match.name }}</li>
+            </ol>
+        </nav>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Match Information</h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-6">
+                        <h6>Team 1</h6>
+                        <p>
+                            {% if match.team1 %}
+                                {% set team1_registration = match.team1_registration %}
+                                {% if team1_registration %}
+                                    <a href="/teams/{{ match.team1 }}" class="text-decoration-none">{{ team1_registration.pseudonym }}</a>
+                                {% else %}
+                                    <a href="/teams/{{ match.team1 }}" class="text-decoration-none">{{ match.team1 }}</a>
+                                {% endif %}
+                            {% else %}
+                                {% set team1_display = match.team1_initial or 'TBA' %}
+                                {% if team1_display.endswith(' winner') or team1_display.endswith(' loser') %}
+                                    {% set match_ref = team1_display.rsplit(' ', 1)[0] %}
+                                    <a href="/{{ tournament.url }}/match?name={{ match_ref }}" class="text-decoration-none">{{ team1_display }}</a>
+                                {% else %}
+                                    {{ team1_display }}
+                                {% endif %}
+                            {% endif %}
+                        </p>
+                    </div>
+                    <div class="col-md-6">
+                        <h6>Team 2</h6>
+                        <p>
+                            {% if match.team2 %}
+                                {% set team2_registration = match.team2_registration %}
+                                {% if team2_registration %}
+                                    <a href="/teams/{{ match.team2 }}" class="text-decoration-none">{{ team2_registration.pseudonym }}</a>
+                                {% else %}
+                                    <a href="/teams/{{ match.team2 }}" class="text-decoration-none">{{ match.team2 }}</a>
+                                {% endif %}
+                            {% else %}
+                                {% set team2_display = match.team2_initial or 'TBA' %}
+                                {% if team2_display.endswith(' winner') or team2_display.endswith(' loser') %}
+                                    {% set match_ref = team2_display.rsplit(' ', 1)[0] %}
+                                    <a href="/{{ tournament.url }}/match?name={{ match_ref }}" class="text-decoration-none">{{ team2_display }}</a>
+                                {% else %}
+                                    {{ team2_display }}
+                                {% endif %}
+                            {% endif %}
+                        </p>
+                    </div>
+                </div>
+                
+                <div class="row mt-3">
+                    <div class="col-md-6">
+                        <h6>Refs</h6>
+                        <p>
+                            {% if match.refs %}
+                                {% for ref_trimmed in match.refs.split(',') %}
+                                    {% set ref_trimmed = ref_trimmed.strip() %}
+                                    {% if ref_trimmed %}
+                                        {% set team_registration = ref_trimmed | team_registration_for_tournament(tournament.url) %}
+                                        {% if team_registration %}
+                                            <a href="/teams/{{ ref_trimmed }}" class="text-decoration-none">{{ team_registration.pseudonym }}</a>{% if not loop.last %}, {% endif %}
+                                        {% else %}
+                                            {% set team_by_pseudonym = ref_trimmed | team_by_pseudonym_for_tournament(tournament.url) %}
+                                            {% if team_by_pseudonym %}
+                                                <a href="/teams/{{ team_by_pseudonym.team }}" class="text-decoration-none">{{ team_by_pseudonym.pseudonym }}</a>{% if not loop.last %}, {% endif %}
+                                            {% else %}
+                                                {{ ref_trimmed }}{% if not loop.last %}, {% endif %}
+                                            {% endif %}
+                                        {% endif %}
+                                    {% endif %}
+                                {% endfor %}
+                            {% else %}
+                                {% for ref_trimmed in match.refs_initial.split(',') %}
+                                    {% set ref_trimmed = ref_trimmed.strip() %}
+                                    {% if ref_trimmed %}
+                                        {% set team_registration = ref_trimmed | team_registration_for_tournament(tournament.url) %}
+                                        {% if team_registration %}
+                                            <a href="/teams/{{ ref_trimmed }}" class="text-decoration-none">{{ team_registration.pseudonym }}</a>{% if not loop.last %}, {% endif %}
+                                        {% else %}
+                                            {% set team_by_pseudonym = ref_trimmed | team_by_pseudonym_for_tournament(tournament.url) %}
+                                            {% if team_by_pseudonym %}
+                                                <a href="/teams/{{ team_by_pseudonym.team }}" class="text-decoration-none">{{ team_by_pseudonym.pseudonym }}</a>{% if not loop.last %}, {% endif %}
+                                            {% else %}
+                                                {{ ref_trimmed }}{% if not loop.last %}, {% endif %}
+                                            {% endif %}
+                                        {% endif %}
+                                    {% endif %}
+                                {% endfor %}
+                            {% endif %}
+                        </p>
+                    </div>
+                    <div class="col-md-6">
+                        <h6>Status</h6>
+                        <p>
+                            {% if match.status == 'completed' %}
+                                <span class="badge bg-success">Completed</span>
+                            {% elif match.status == 'in_progress' %}
+                                <span class="badge bg-warning">In Progress</span>
+                            {% else %}
+                                <span class="badge bg-secondary">Scheduled</span>
+                            {% endif %}
+                        </p>
+                    </div>
+                </div>
+                
+                {% if match.type %}
+                <div class="row mt-3">
+                    <div class="col-md-6">
+                        <h6>Type</h6>
+                        <p>{{ match.type }}</p>
+                    </div>
+                    {% if match.nominal_length %}
+                    <div class="col-md-6">
+                        <h6>Length</h6>
+                        <p>{{ match.nominal_length }} minutes</p>
+                    </div>
+                    {% endif %}
+                </div>
+                {% endif %}
+            </div>
+        </div>
+        
+        <!-- Live Score Display -->
+        <div class="card mt-3">
+            <div class="card-header">
+                <h5 class="mb-0">Live Score</h5>
+            </div>
+            <div class="card-body">
+                <div class="row text-center">
+                    <div class="col-6">
+                        <h3>{{ match.team1_registration.pseudonym if match.team1_registration else match.team1 }}</h3>
+                        <h1 id="live-team1-score">0</h1>
+                    </div>
+                    <div class="col-6">
+                        <h3>{{ match.team2_registration.pseudonym if match.team2_registration else match.team2 }}</h3>
+                        <h1 id="live-team2-score">0</h1>
+                    </div>
+                </div>
+                {% if match.type == 'STONES' %}
+                <div class="row mt-3">
+                    <div class="col-12 text-center">
+                        <h6>Stones Remaining: <span id="live-stones-remaining">{{ gamestate.stones_remaining if gamestate.stones_remaining else match.nstonesperset or 100 }}</span></h6>
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+        
+        <!-- Points Table -->
+        <div class="card mt-3">
+            <div class="card-header">
+                <h5 class="mb-0">Points</h5>
+            </div>
+            <div class="card-body">
+                {% if points %}
+                <div class="table-responsive">
+                    <table class="table table-sm">
+                        <thead>
+                            <tr>
+                                <th>#</th>
+                                <th>Set</th>
+                                <th>Start Time</th>
+                                <th>End Time</th>
+                                <th>Winner</th>
+                                <th>Rerun</th>
+                                <th>Notes</th>
+                            </tr>
+                        </thead>
+                        <tbody id="live-points-table">
+                            {% for point in points %}
+                            <tr id="live-point-row-{{ point.uuid }}">
+                                <td>{{ loop.index }}</td>
+                                <td>{{ point.set_number or 1 }}</td>
+                                <td>{{ point.stamp.strftime('%H:%M:%S') if point.stamp else '' }}</td>
+                                <td>{{ point.end_stamp.strftime('%H:%M:%S') if point.end_stamp else '' }}</td>
+                                <td>
+                                    {% if point.winner == 'TEAM1' %}
+                                        {{ match.team1_registration.pseudonym if match.team1_registration else match.team1 }}
+                                    {% elif point.winner == 'TEAM2' %}
+                                        {{ match.team2_registration.pseudonym if match.team2_registration else match.team2 }}
+                                    {% else %}
+                                        -
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if point.rerolled %}
+                                        <span class="badge bg-warning">Rerun</span>
+                                    {% else %}
+                                        <span class="badge bg-success">Normal</span>
+                                    {% endif %}
+                                </td>
+                                <td>{{ point.notes or '-' }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <p class="text-muted">No points recorded yet.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Match Details</h5>
+            </div>
+            <div class="card-body">
+                <p><strong>Start Time:</strong> {{ match.start_time.strftime('%Y-%m-%d %H:%M') if match.start_time else 'TBA' }}</p>
+                <p><strong>End Time:</strong> {{ match.end_time.strftime('%Y-%m-%d %H:%M') if match.end_time else 'TBA' }}</p>
+                {% if match.location %}
+                <p><strong>Location:</strong> {{ match.location }}</p>
+                {% endif %}
+                {% if match.notes %}
+                <p><strong>Notes:</strong> {{ match.notes }}</p>
+                {% endif %}
+            </div>
+        </div>
+        
+        {% if match.status == 'in_progress' %}
+        <div class="card mt-3">
+            <div class="card-header">
+                <h5 class="mb-0">Live Updates</h5>
+            </div>
+            <div class="card-body">
+                <p class="text-success"><i class="fas fa-circle"></i> Match is live - updates will appear automatically</p>
+                <p><strong>Time Elapsed:</strong> <span id="live-time-elapsed">00:00</span></p>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js"></script>
+<script>
+// WebSocket connection
+const socket = io();
+const matchId = '{{ match.uuid }}';
+
+// Join match room on page load
+socket.emit('join_match', { match_id: matchId });
+
+// Leave match room on page unload
+window.addEventListener('beforeunload', function() {
+    socket.emit('leave_match', { match_id: matchId });
+});
+
+// WebSocket event handlers
+socket.on('score_updated', function(data) {
+    document.getElementById('live-team1-score').textContent = data.team1_score;
+    document.getElementById('live-team2-score').textContent = data.team2_score;
+});
+
+socket.on('stones_updated', function(data) {
+    const stonesElement = document.getElementById('live-stones-remaining');
+    if (stonesElement) {
+        stonesElement.textContent = data.stones_remaining;
+    }
+});
+
+socket.on('point_updated', function(data) {
+    const pointId = data.point_id;
+    const row = document.getElementById(`live-point-row-${pointId}`);
+    if (row) {
+        // Update winner
+        const winnerCell = row.cells[4];
+        if (data.winner === 'TEAM1') {
+            winnerCell.textContent = '{{ match.team1_registration.pseudonym if match.team1_registration else match.team1 }}';
+        } else if (data.winner === 'TEAM2') {
+            winnerCell.textContent = '{{ match.team2_registration.pseudonym if match.team2_registration else match.team2 }}';
+        } else {
+            winnerCell.textContent = '-';
+        }
+        
+        // Update rerun status
+        const rerunCell = row.cells[5];
+        if (data.rerolled) {
+            rerunCell.innerHTML = '<span class="badge bg-warning">Rerun</span>';
+        } else {
+            rerunCell.innerHTML = '<span class="badge bg-success">Normal</span>';
+        }
+        
+        // Update notes
+        const notesCell = row.cells[6];
+        notesCell.textContent = data.notes || '-';
+    }
+});
+
+socket.on('point_added', function(data) {
+    const tbody = document.getElementById('live-points-table');
+    const newRow = tbody.insertRow();
+    newRow.id = `live-point-row-${data.point_id}`;
+    newRow.innerHTML = `
+        <td>${tbody.rows.length}</td>
+        <td>${data.set_number}</td>
+        <td>${new Date(data.stamp).toLocaleTimeString()}</td>
+        <td></td>
+        <td>-</td>
+        <td><span class="badge bg-success">Normal</span></td>
+        <td>-</td>
+    `;
+});
+
+socket.on('point_deleted', function(data) {
+    const row = document.getElementById(`live-point-row-${data.point_id}`);
+    if (row) {
+        row.remove();
+        // Renumber remaining rows
+        const tbody = document.getElementById('live-points-table');
+        for (let i = 0; i < tbody.rows.length; i++) {
+            tbody.rows[i].cells[0].textContent = i + 1;
+        }
+    }
+});
+
+// Initialize page
+document.addEventListener('DOMContentLoaded', function() {
+    // Start time elapsed timer if match is in progress
+    {% if match.status == 'in_progress' %}
+    const startTime = new Date('{{ match.start_time or match.stamp }}');
+    setInterval(function() {
+        const now = new Date();
+        const elapsed = Math.floor((now - startTime) / 1000);
+        const minutes = Math.floor(elapsed / 60);
+        const seconds = elapsed % 60;
+        document.getElementById('live-time-elapsed').textContent = 
+            `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+    }, 1000);
+    {% endif %}
+});
+</script>
+{% endblock %}
