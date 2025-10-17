@@ -151,7 +151,9 @@
                         <div class="col-md-6">
                             <div class="mb-3">
                                 <label for="refs" class="form-label">Referees</label>
-                                <input type="text" class="form-control" id="refs" name="refs" placeholder="Comma-separated referee names">
+                                <input type="text" class="form-control autocomplete" id="refs" name="refs" 
+                                       placeholder="Search teams, tags, or match results" data-multiple="true" autocomplete="off">
+                                <div class="autocomplete-suggestions" id="refs-suggestions"></div>
                             </div>
                         </div>
                     </div>
@@ -160,13 +162,17 @@
                         <div class="col-md-6">
                             <div class="mb-3">
                                 <label for="team1" class="form-label">Team 1</label>
-                                <input type="text" class="form-control" id="team1" name="team1" placeholder="Team name or tag">
+                                <input type="text" class="form-control autocomplete" id="team1" name="team1" 
+                                       placeholder="Search teams, tags, or match results" data-multiple="false" autocomplete="off">
+                                <div class="autocomplete-suggestions" id="team1-suggestions"></div>
                             </div>
                         </div>
                         <div class="col-md-6">
                             <div class="mb-3">
                                 <label for="team2" class="form-label">Team 2</label>
-                                <input type="text" class="form-control" id="team2" name="team2" placeholder="Team name or tag">
+                                <input type="text" class="form-control autocomplete" id="team2" name="team2" 
+                                       placeholder="Search teams, tags, or match results" data-multiple="false" autocomplete="off">
+                                <div class="autocomplete-suggestions" id="team2-suggestions"></div>
                             </div>
                         </div>
                     </div>
@@ -207,10 +213,19 @@
                     <ul class="list-group list-group-flush">
                         {% for field in fields %}
                         <li class="list-group-item d-flex justify-content-between align-items-center">
-                            {{ field.name }}
-                            {% if field.camera %}
-                            <span class="badge bg-primary">Stream</span>
-                            {% endif %}
+                            <div>
+                                <strong>{{ field.name }}</strong>
+                                {% if field.camera %}
+                                <span class="badge bg-primary ms-2">Stream</span>
+                                {% endif %}
+                            </div>
+                            <div class="btn-group btn-group-sm">
+                                <a href="/{{ tournament.url }}/edit-field?id={{ field.id }}" class="btn btn-outline-primary btn-sm">Edit</a>
+                                <form method="POST" action="/{{ tournament.url }}/delete-field" class="d-inline">
+                                    <input type="hidden" name="field_id" value="{{ field.id }}">
+                                    <button type="submit" class="btn btn-outline-danger btn-sm" onclick="return confirm('Are you sure you want to delete this field?')">Delete</button>
+                                </form>
+                            </div>
                         </li>
                         {% endfor %}
                     </ul>
@@ -218,8 +233,45 @@
                     <p class="text-muted">No fields configured yet.</p>
                 {% endif %}
                 <div class="mt-3">
+                    {% if fields|length < tournament.num_fields %}
                     <button class="btn btn-outline-primary btn-sm" data-bs-toggle="modal" data-bs-target="#addFieldModal">
-                        Add Field
+                        Add Field ({{ fields|length }}/{{ tournament.num_fields }})
+                    </button>
+                    {% else %}
+                    <button class="btn btn-outline-secondary btn-sm" disabled>
+                        Field Limit Reached ({{ fields|length }}/{{ tournament.num_fields }})
+                    </button>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <div class="card mt-3">
+            <div class="card-header">
+                <h5 class="mb-0">Tags</h5>
+            </div>
+            <div class="card-body">
+                {% if tags %}
+                    <div class="d-flex flex-wrap gap-2 mb-3">
+                        {% for tag in tags %}
+                        <div class="d-flex align-items-center">
+                            <span class="badge bg-secondary me-2">{{ tag.name }}</span>
+                            <div class="btn-group btn-group-sm">
+                                <a href="/{{ tournament.url }}/edit-tag?id={{ tag.id }}" class="btn btn-outline-primary btn-sm">Edit</a>
+                                <form method="POST" action="/{{ tournament.url }}/delete-tag" class="d-inline">
+                                    <input type="hidden" name="tag_id" value="{{ tag.id }}">
+                                    <button type="submit" class="btn btn-outline-danger btn-sm" onclick="return confirm('Are you sure you want to delete this tag?')">Delete</button>
+                                </form>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <p class="text-muted">No tags configured yet.</p>
+                {% endif %}
+                <div class="mt-3">
+                    <button class="btn btn-outline-primary btn-sm" data-bs-toggle="modal" data-bs-target="#addTagModal">
+                        Add Tag
                     </button>
                 </div>
             </div>
@@ -233,7 +285,7 @@
                 <div class="d-grid gap-2">
                     <a href="/{{ tournament.url }}/settings" class="btn btn-outline-primary">Tournament Settings</a>
                     <a href="/{{ tournament.url }}/schedule" class="btn btn-outline-primary">View Schedule</a>
-                    <button class="btn btn-outline-success" onclick="updateTags()">Update Tags</button>
+                    <button class="btn btn-outline-success" data-bs-toggle="modal" data-bs-target="#updateTagsModal">Update Tags</button>
                 </div>
             </div>
         </div>
@@ -245,7 +297,7 @@
     <div class="modal-dialog">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title">Add Field</h5>
+                <h5 class="modal-title">Add Field ({{ fields|length }}/{{ tournament.num_fields }})</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
             <form method="POST" action="/{{ tournament.url }}/add-field">
@@ -267,4 +319,322 @@
         </div>
     </div>
 </div>
+
+<!-- Add Tag Modal -->
+<div class="modal fade" id="addTagModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Add Tag</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="POST" action="/{{ tournament.url }}/add-tag">
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="tag_name" class="form-label">Tag Name</label>
+                        <input type="text" class="form-control" id="tag_name" name="tag_name" required maxlength="50">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Add Tag</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Update Tags Modal -->
+<div class="modal fade" id="updateTagsModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Update Tags to Teams</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="POST" action="/{{ tournament.url }}/update-tags">
+                <div class="modal-body">
+                    <p class="text-muted">Select which tags should be converted to which teams. This will update all matches that use these tags.</p>
+                    
+                    {% if tags and team_registrations %}
+                        <div class="row">
+                            {% for tag in tags %}
+                            <div class="col-md-6 mb-3">
+                                <div class="card">
+                                    <div class="card-header">
+                                        <h6 class="mb-0">Tag: {{ tag.name }}</h6>
+                                    </div>
+                                    <div class="card-body">
+                                        <p class="text-muted small">Convert this tag to which team?</p>
+                                        {% for reg in team_registrations %}
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="radio" name="tag_{{ tag.id }}" id="tag_{{ tag.id }}_team_{{ reg.id }}" value="{{ reg.team }}">
+                                            <label class="form-check-label" for="tag_{{ tag.id }}_team_{{ reg.id }}">
+                                                {{ reg.pseudonym }} ({{ reg.team }})
+                                            </label>
+                                        </div>
+                                        {% endfor %}
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="radio" name="tag_{{ tag.id }}" id="tag_{{ tag.id }}_none" value="">
+                                            <label class="form-check-label" for="tag_{{ tag.id }}_none">
+                                                <em>Don't convert this tag</em>
+                                            </label>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    {% else %}
+                        <div class="alert alert-info">
+                            {% if not tags %}
+                                <p>No tags available to convert.</p>
+                            {% endif %}
+                            {% if not team_registrations %}
+                                <p>No teams registered for this tournament.</p>
+                            {% endif %}
+                        </div>
+                    {% endif %}
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Update Tags</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<style>
+.autocomplete-suggestions {
+    position: absolute;
+    z-index: 1000;
+    background: white;
+    border: 1px solid #ccc;
+    border-top: none;
+    max-height: 200px;
+    overflow-y: auto;
+    width: 100%;
+    display: none;
+}
+
+.autocomplete-suggestion {
+    padding: 8px 12px;
+    cursor: pointer;
+    border-bottom: 1px solid #eee;
+}
+
+.autocomplete-suggestion:hover,
+.autocomplete-suggestion.active {
+    background-color: #f8f9fa;
+}
+
+.autocomplete-suggestion .type {
+    font-size: 0.8em;
+    color: #666;
+    margin-left: 8px;
+}
+
+.autocomplete-container {
+    position: relative;
+}
+</style>
+
+            <script>
+            document.addEventListener('DOMContentLoaded', function() {
+                const tournamentUrl = '{{ tournament.url }}';
+                let debounceTimer;
+                let cachedSuggestions = null;
+    
+    // Add autocomplete containers
+    document.querySelectorAll('.autocomplete').forEach(input => {
+        const container = document.createElement('div');
+        container.className = 'autocomplete-container';
+        input.parentNode.insertBefore(container, input);
+        container.appendChild(input);
+    });
+    
+    // Add event listeners to all autocomplete inputs
+    document.querySelectorAll('.autocomplete').forEach(input => {
+        input.addEventListener('input', function() {
+            const fullValue = this.value.trim();
+            const suggestionsId = this.id + '-suggestions';
+            const suggestionsDiv = document.getElementById(suggestionsId);
+            
+            // Clear previous timer
+            clearTimeout(debounceTimer);
+            
+            // For multiple fields, get the last part after the last comma
+            let query = fullValue;
+            if (input.dataset.multiple === 'true' && fullValue.includes(',')) {
+                const parts = fullValue.split(',');
+                query = parts[parts.length - 1].trim();
+            }
+            
+            if (query.length < 2) {
+                suggestionsDiv.style.display = 'none';
+                return;
+            }
+            
+            // Debounce the search
+            debounceTimer = setTimeout(() => {
+                fetchSuggestions(query, suggestionsDiv, this);
+            }, 300);
+        });
+        
+                    input.addEventListener('blur', function() {
+                        // Hide suggestions after a short delay to allow clicking
+                        setTimeout(() => {
+                            const suggestionsId = this.id + '-suggestions';
+                            const suggestionsDiv = document.getElementById(suggestionsId);
+                            suggestionsDiv.style.display = 'none';
+                        }, 200);
+                    });
+                    
+                    input.addEventListener('click', function() {
+                        // Show suggestions when clicking on the input
+                        const suggestionsId = this.id + '-suggestions';
+                        const suggestionsDiv = document.getElementById(suggestionsId);
+                        const currentValue = this.value.trim();
+                        
+                        // If there's content, search for suggestions
+                        if (currentValue.length >= 2) {
+                            const query = currentValue;
+                            if (input.dataset.multiple === 'true' && currentValue.includes(',')) {
+                                const parts = currentValue.split(',');
+                                query = parts[parts.length - 1].trim();
+                            }
+                            
+                            if (query.length >= 2) {
+                                fetchSuggestions(query, suggestionsDiv, this);
+                            }
+                        }
+                    });
+        
+        input.addEventListener('keydown', function(e) {
+            const suggestionsId = this.id + '-suggestions';
+            const suggestionsDiv = document.getElementById(suggestionsId);
+            const activeSuggestion = suggestionsDiv.querySelector('.active');
+            
+            if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                if (activeSuggestion) {
+                    activeSuggestion.classList.remove('active');
+                    const next = activeSuggestion.nextElementSibling;
+                    if (next) next.classList.add('active');
+                } else {
+                    const first = suggestionsDiv.querySelector('.autocomplete-suggestion');
+                    if (first) first.classList.add('active');
+                }
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                if (activeSuggestion) {
+                    activeSuggestion.classList.remove('active');
+                    const prev = activeSuggestion.previousElementSibling;
+                    if (prev) prev.classList.add('active');
+                }
+            } else if (e.key === 'Enter') {
+                e.preventDefault();
+                if (activeSuggestion) {
+                    selectSuggestion(activeSuggestion, this);
+                }
+            } else if (e.key === 'Escape') {
+                suggestionsDiv.style.display = 'none';
+            }
+        });
+    });
+    
+                function fetchSuggestions(query, suggestionsDiv, input) {
+                    // Use cached suggestions if available, otherwise fetch from server
+                    if (cachedSuggestions) {
+                        const filteredSuggestions = cachedSuggestions.filter(suggestion => 
+                            suggestion.value.toLowerCase().includes(query.toLowerCase())
+                        );
+                        displaySuggestions(filteredSuggestions, suggestionsDiv, input);
+                    } else {
+                        fetch(`/${tournamentUrl}/api/autocomplete?q=${encodeURIComponent(query)}`)
+                            .then(response => response.json())
+                            .then(suggestions => {
+                                displaySuggestions(suggestions, suggestionsDiv, input);
+                            })
+                            .catch(error => {
+                                console.error('Error fetching suggestions:', error);
+                                suggestionsDiv.style.display = 'none';
+                            });
+                    }
+                }
+                
+                // Load all suggestions once on page load
+                function loadAllSuggestions() {
+                    fetch(`/${tournamentUrl}/api/autocomplete?q=`)
+                        .then(response => response.json())
+                        .then(suggestions => {
+                            cachedSuggestions = suggestions;
+                        })
+                        .catch(error => {
+                            console.error('Error loading suggestions:', error);
+                        });
+                }
+                
+                // Load suggestions on page load
+                loadAllSuggestions();
+    
+    function displaySuggestions(suggestions, suggestionsDiv, input) {
+        suggestionsDiv.innerHTML = '';
+        
+        if (suggestions.length === 0) {
+            suggestionsDiv.style.display = 'none';
+            return;
+        }
+        
+        suggestions.forEach(suggestion => {
+            const div = document.createElement('div');
+            div.className = 'autocomplete-suggestion';
+            div.innerHTML = `
+                <span>${suggestion.label}</span>
+                <span class="type">${suggestion.type}</span>
+            `;
+            // Store the actual value in a data attribute
+            div.dataset.value = suggestion.value;
+            div.addEventListener('click', () => selectSuggestion(div, input));
+            suggestionsDiv.appendChild(div);
+        });
+        
+        suggestionsDiv.style.display = 'block';
+    }
+    
+    function selectSuggestion(suggestionElement, input) {
+        // Get the actual value from the data attribute
+        const value = suggestionElement.dataset.value;
+        const isMultiple = input.dataset.multiple === 'true';
+        
+        if (isMultiple) {
+            // For refs field, replace only the last part (after last comma)
+            const currentValue = input.value.trim();
+            if (currentValue && currentValue.includes(',')) {
+                // Find the last comma and replace everything after it
+                const lastCommaIndex = currentValue.lastIndexOf(',');
+                input.value = currentValue.substring(0, lastCommaIndex + 1) + value;
+            } else if (currentValue) {
+                // No comma yet, so replace the entire value
+                input.value = value;
+            } else {
+                // Empty field, just set the value
+                input.value = value;
+            }
+        } else {
+            // For team fields, replace the value
+            input.value = value;
+        }
+        
+        // Hide suggestions
+        const suggestionsId = input.id + '-suggestions';
+        const suggestionsDiv = document.getElementById(suggestionsId);
+        suggestionsDiv.style.display = 'none';
+        
+        // Focus back to input
+        input.focus();
+    }
+});
+</script>
 {% endblock %}

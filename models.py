@@ -3,6 +3,7 @@ from flask_login import UserMixin
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime
 import uuid
+from sqlalchemy.orm import foreign
 
 # This will be imported from app.py
 db = SQLAlchemy()
@@ -79,6 +80,7 @@ class Tournament(db.Model):
     registration_open = db.Column(db.Boolean, default=False)
     about = db.Column(db.Text)
     terms_link = db.Column(db.String(500))
+    head_refs = db.Column(db.Text)  # comma-separated player IDs
 
 class TO(db.Model):
     __tablename__ = 'tos'
@@ -128,6 +130,13 @@ class Field(db.Model):
     name = db.Column(db.String(100), nullable=False)
     camera = db.Column(db.String(200))
 
+class Tag(db.Model):
+    __tablename__ = 'tags'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    event = db.Column(db.String(100), db.ForeignKey('tournaments.url'), nullable=False)
+    name = db.Column(db.String(50), nullable=False)
+
 class Match(db.Model):
     __tablename__ = 'matches'
     
@@ -150,6 +159,14 @@ class Match(db.Model):
     status = db.Column(db.String(20), default='NOT_STARTED')  # NOT_STARTED, IN_PROGRESS, COMPLETED
     gamestate = db.Column(db.Text)
     dynamic = db.Column(db.Boolean, default=True)  # True for dynamic, False for static scheduling
+    
+    # Relationships
+    team1_registration = db.relationship('TeamRegistration', 
+                                       primaryjoin='and_(Match.team1 == foreign(TeamRegistration.team), Match.event == TeamRegistration.event)',
+                                       uselist=False)
+    team2_registration = db.relationship('TeamRegistration',
+                                       primaryjoin='and_(Match.team2 == foreign(TeamRegistration.team), Match.event == TeamRegistration.event)',
+                                       uselist=False)
 
 class Point(db.Model):
     __tablename__ = 'points'
@@ -163,6 +180,8 @@ class Point(db.Model):
     length = db.Column(db.Interval)
     nstones = db.Column(db.Integer)
     rerollreason = db.Column(db.Text)
+    set_number = db.Column(db.Integer, default=1)
+    notes = db.Column(db.Text)
 
 class HeadRef(db.Model):
     __tablename__ = 'headrefs'

@@ -27,6 +27,7 @@
                             <th>Field</th>
                             <th>Team 1</th>
                             <th>Team 2</th>
+                            <th>Refs</th>
                             <th>Status</th>
                             <th>Actions</th>
                         </tr>
@@ -45,16 +46,73 @@
                             <td>{{ match.field or 'TBA' }}</td>
                             <td>
                                 {% if match.team1 %}
-                                    {{ match.team1 }}
+                                    {% set team1_registration = match.team1_registration %}
+                                    {% if team1_registration %}
+                                        <a href="/teams/{{ match.team1 }}" class="text-decoration-none">{{ team1_registration.pseudonym }}</a>
+                                    {% else %}
+                                        <a href="/teams/{{ match.team1 }}" class="text-decoration-none">{{ match.team1 }}</a>
+                                    {% endif %}
                                 {% else %}
-                                    {{ match.team1_initial or 'TBA' }}
+                                    {% set team1_display = match.team1_initial or 'TBA' %}
+                                    {% if team1_display.endswith(' winner') or team1_display.endswith(' loser') %}
+                                        {% set match_ref = team1_display.rsplit(' ', 1)[0] %}
+                                        <a href="/{{ tournament.url }}/match?name={{ match_ref }}" class="text-decoration-none">{{ team1_display }}</a>
+                                    {% else %}
+                                        {{ team1_display }}
+                                    {% endif %}
                                 {% endif %}
                             </td>
                             <td>
                                 {% if match.team2 %}
-                                    {{ match.team2 }}
+                                    {% set team2_registration = match.team2_registration %}
+                                    {% if team2_registration %}
+                                        <a href="/teams/{{ match.team2 }}" class="text-decoration-none">{{ team2_registration.pseudonym }}</a>
+                                    {% else %}
+                                        <a href="/teams/{{ match.team2 }}" class="text-decoration-none">{{ match.team2 }}</a>
+                                    {% endif %}
                                 {% else %}
-                                    {{ match.team2_initial or 'TBA' }}
+                                    {% set team2_display = match.team2_initial or 'TBA' %}
+                                    {% if team2_display.endswith(' winner') or team2_display.endswith(' loser') %}
+                                        {% set match_ref = team2_display.rsplit(' ', 1)[0] %}
+                                        <a href="/{{ tournament.url }}/match?name={{ match_ref }}" class="text-decoration-none">{{ team2_display }}</a>
+                                    {% else %}
+                                        {{ team2_display }}
+                                    {% endif %}
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if match.refs %}
+                                    {% set refs_display = match.refs %}
+                                {% else %}
+                                    {% set refs_display = match.refs_initial or 'TBA' %}
+                                {% endif %}
+                                
+                                {% if refs_display != 'TBA' %}
+                                    {% set refs_list = refs_display.split(',') %}
+                                    {% for ref in refs_list %}
+                                        {% set ref_trimmed = ref.strip() %}
+                                        {% if ref_trimmed.endswith(' winner') or ref_trimmed.endswith(' loser') %}
+                                            {% set match_ref = ref_trimmed.rsplit(' ', 1)[0] %}
+                                            <a href="/{{ tournament.url }}/match?name={{ match_ref }}" class="text-decoration-none">{{ ref_trimmed }}</a>{% if not loop.last %}, {% endif %}
+                                        {% elif ref_trimmed != 'TBA' and ref_trimmed != '' %}
+                                            {% set ref_registration = ref_trimmed|team_registration_for_tournament(tournament.url) %}
+                                            {% if ref_registration %}
+                                                <a href="/teams/{{ ref_trimmed }}" class="text-decoration-none">{{ ref_registration.pseudonym }}</a>{% if not loop.last %}, {% endif %}
+                                            {% else %}
+                                                {# Try to find team by pseudonym if not found by ID #}
+                                                {% set ref_by_pseudonym = ref_trimmed|team_by_pseudonym_for_tournament(tournament.url) %}
+                                                {% if ref_by_pseudonym %}
+                                                    <a href="/teams/{{ ref_by_pseudonym.team }}" class="text-decoration-none">{{ ref_by_pseudonym.pseudonym }}</a>{% if not loop.last %}, {% endif %}
+                                                {% else %}
+                                                    {{ ref_trimmed }}{% if not loop.last %}, {% endif %}
+                                                {% endif %}
+                                            {% endif %}
+                                        {% else %}
+                                            {{ ref_trimmed }}{% if not loop.last %}, {% endif %}
+                                        {% endif %}
+                                    {% endfor %}
+                                {% else %}
+                                    {{ refs_display }}
                                 {% endif %}
                             </td>
                             <td>
@@ -68,6 +126,17 @@
                             </td>
                             <td>
                                 <a href="/{{ tournament.url }}/match?id={{ match.uuid }}" class="btn btn-sm btn-outline-primary">View</a>
+                                {% if current_user.is_authenticated and current_user.__class__.__name__ == 'Player' and is_head_ref(tournament.url, current_user.id) %}
+                                    {% if match.status == 'NOT_STARTED' and match.team1 and match.team2 and (match.refs or match.refs_initial) %}
+                                        <a href="/{{ tournament.url }}/start-match?id={{ match.uuid }}" class="btn btn-sm btn-success">Start Match</a>
+                                    {% elif match.status == 'NOT_STARTED' %}
+                                        <span class="btn btn-sm btn-secondary disabled" title="Missing: team1={{ match.team1 }}, team2={{ match.team2 }}, refs={{ match.refs }}, refs_initial={{ match.refs_initial }}">Cannot Start</span>
+                                    {% elif match.status == 'IN_PROGRESS' %}
+                                        <a href="/{{ tournament.url }}/run-match?id={{ match.uuid }}" class="btn btn-sm btn-warning">Run Match</a>
+                                    {% elif match.status == 'COMPLETED' %}
+                                        <span class="btn btn-sm btn-success disabled">Completed</span>
+                                    {% endif %}
+                                {% endif %}
                             </td>
                         </tr>
                         {% endfor %}

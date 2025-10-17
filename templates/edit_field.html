@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+
+{% block title %}Edit Field - {{ tournament_url }}{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <h1>Edit Field</h1>
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item"><a href="/{{ tournament_url }}">{{ tournament_url }}</a></li>
+                <li class="breadcrumb-item"><a href="/{{ tournament_url }}/setup">Setup</a></li>
+                <li class="breadcrumb-item active">Edit Field</li>
+            </ol>
+        </nav>
+    </div>
+</div>
+
+<div class="row justify-content-center">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Field Information</h5>
+            </div>
+            <div class="card-body">
+                <form method="POST" action="/{{ tournament_url }}/update-field">
+                    <input type="hidden" name="field_id" value="{{ field.id }}">
+                    
+                    <div class="mb-3">
+                        <label for="field_name" class="form-label">Field Name</label>
+                        <input type="text" class="form-control" id="field_name" name="field_name" 
+                               value="{{ field.name }}" required>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="camera" class="form-label">Camera/Stream Link</label>
+                        <input type="url" class="form-control" id="camera" name="camera" 
+                               value="{{ field.camera or '' }}" placeholder="https://example.com/stream">
+                        <div class="form-text">Optional - Link to field camera or stream</div>
+                    </div>
+                    
+                    <div class="d-grid gap-2">
+                        <button type="submit" class="btn btn-primary">Update Field</button>
+                        <a href="/{{ tournament_url }}/setup" class="btn btn-outline-secondary">Cancel</a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+

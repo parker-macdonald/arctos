@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+
+{% block title %}Edit Tag - {{ tournament_url }}{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <h1>Edit Tag</h1>
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item"><a href="/{{ tournament_url }}">{{ tournament_url }}</a></li>
+                <li class="breadcrumb-item"><a href="/{{ tournament_url }}/setup">Setup</a></li>
+                <li class="breadcrumb-item active">Edit Tag</li>
+            </ol>
+        </nav>
+    </div>
+</div>
+
+<div class="row justify-content-center">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Tag Information</h5>
+            </div>
+            <div class="card-body">
+                <form method="POST" action="/{{ tournament_url }}/update-tag">
+                    <input type="hidden" name="tag_id" value="{{ tag.id }}">
+                    
+                    <div class="mb-3">
+                        <label for="tag_name" class="form-label">Tag Name</label>
+                        <input type="text" class="form-control" id="tag_name" name="tag_name" 
+                               value="{{ tag.name }}" required maxlength="50">
+                    </div>
+                    
+                    <div class="d-grid gap-2">
+                        <button type="submit" class="btn btn-primary">Update Tag</button>
+                        <a href="/{{ tournament_url }}/setup" class="btn btn-outline-secondary">Cancel</a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

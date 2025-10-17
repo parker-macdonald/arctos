@@ -1,0 +1,321 @@
+{% extends "base.html" %}
+
+{% block title %}Start Match - {{ tournament.name }}{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <h1>Start Match</h1>
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item"><a href="/{{ tournament.url }}">{{ tournament.name }}</a></li>
+                <li class="breadcrumb-item"><a href="/{{ tournament.url }}/schedule">Schedule</a></li>
+                <li class="breadcrumb-item active">Start Match</li>
+            </ol>
+        </nav>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Match Setup</h5>
+            </div>
+            <div class="card-body">
+                <form method="POST" action="/{{ tournament.url }}/start-match">
+                    <input type="hidden" name="match_id" value="{{ match.uuid }}">
+                    
+                    <div class="row mb-4">
+                        <div class="col-md-6">
+                            <h6>Team 1: {{ match.team1_registration.pseudonym if match.team1_registration else match.team1 }}</h6>
+                        </div>
+                        <div class="col-md-6">
+                            <h6>Team 2: {{ match.team2_registration.pseudonym if match.team2_registration else match.team2 }}</h6>
+                        </div>
+                    </div>
+                    
+                    <div class="row mb-4">
+                        <div class="col-md-6">
+                            <h6>Team 1: {{ match.team1_registration.pseudonym if match.team1_registration else match.team1 }}</h6>
+                            <div class="mb-3">
+                                <label class="form-label">Select Players (max {{ tournament.max_team_size_field }}):</label>
+                                <div id="team1_players_list" class="border p-3" style="max-height: 200px; overflow-y: auto;">
+                                    <!-- Players will be populated by JavaScript -->
+                                </div>
+                                <input type="hidden" id="team1_players_input" name="team1_players" value="">
+                            </div>
+                            
+                            <div class="mb-3">
+                                <label for="team1_search" class="form-label">Add Player:</label>
+                                <div class="input-group">
+                                    <input type="text" class="form-control" id="team1_search" placeholder="Search players...">
+                                    <button class="btn btn-outline-secondary" type="button" onclick="searchPlayers('team1')">Search</button>
+                                </div>
+                                <div id="team1_search_results" class="mt-2"></div>
+                            </div>
+                        </div>
+                        
+                        <div class="col-md-6">
+                            <h6>Team 2: {{ match.team2_registration.pseudonym if match.team2_registration else match.team2 }}</h6>
+                            <div class="mb-3">
+                                <label class="form-label">Select Players (max {{ tournament.max_team_size_field }}):</label>
+                                <div id="team2_players_list" class="border p-3" style="max-height: 200px; overflow-y: auto;">
+                                    <!-- Players will be populated by JavaScript -->
+                                </div>
+                                <input type="hidden" id="team2_players_input" name="team2_players" value="">
+                            </div>
+                            
+                            <div class="mb-3">
+                                <label for="team2_search" class="form-label">Add Player:</label>
+                                <div class="input-group">
+                                    <input type="text" class="form-control" id="team2_search" placeholder="Search players...">
+                                    <button class="btn btn-outline-secondary" type="button" onclick="searchPlayers('team2')">Search</button>
+                                </div>
+                                <div id="team2_search_results" class="mt-2"></div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    {% if match.type == 'STONES' %}
+                    <div class="row mb-4">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="stones_per_set" class="form-label">Stones per Set</label>
+                                <input type="number" class="form-control" id="stones_per_set" name="stones_per_set" 
+                                       value="{{ match.nstonesperset or 100 }}" min="1" max="1000">
+                            </div>
+                        </div>
+                    </div>
+                    {% endif %}
+                    
+                    <div class="mb-4">
+                        <label for="match_notes" class="form-label">Match Notes</label>
+                        <textarea class="form-control" id="match_notes" name="match_notes" rows="3" 
+                                  placeholder="Any special rules or notes for this match..."></textarea>
+                    </div>
+                    
+                    <div class="d-grid">
+                        <button type="submit" class="btn btn-success btn-lg">Start Match</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Match Info</h5>
+            </div>
+            <div class="card-body">
+                <p><strong>Match:</strong> {{ match.name }}</p>
+                <p><strong>Field:</strong> {{ match.field or 'TBA' }}</p>
+                <p><strong>Type:</strong> {{ match.type or 'Standard' }}</p>
+                <p><strong>Refs:</strong> {{ match.refs or 'TBA' }}</p>
+                {% if match.nominal_length %}
+                <p><strong>Length:</strong> {{ match.nominal_length }} minutes</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// Player data from server
+const allPlayers = [
+    {% for player_reg, player in all_players %}
+    {
+        id: '{{ player_reg.player }}',
+        name: '{{ player.name }}',
+        jersey_name: '{{ player_reg.jersey_name or "" }}',
+        jersey_number: '{{ player_reg.jersey_number or "" }}',
+        team: '{{ player_reg.team or "" }}'
+    }{% if not loop.last %},{% endif %}
+    {% endfor %}
+];
+
+// Tournament settings
+const maxRoster = {{ tournament.max_team_size_field }};
+
+// Track all players for each team (selected and unselected)
+let team1AllPlayers = [];
+let team2AllPlayers = [];
+
+// Track selected players for each team
+let team1Players = [];
+let team2Players = [];
+
+// Initialize with existing team players (but don't select them by default)
+{% if team1_players %}
+{% for player_reg, player in team1_players %}
+team1AllPlayers.push('{{ player_reg.player }}');
+// Don't add to team1Players - they start deselected
+{% endfor %}
+{% endif %}
+
+{% if team2_players %}
+{% for player_reg, player in team2_players %}
+team2AllPlayers.push('{{ player_reg.player }}');
+// Don't add to team2Players - they start deselected
+{% endfor %}
+{% endif %}
+
+// If no existing players, initialize with empty arrays
+if (team1AllPlayers.length === 0) {
+    team1AllPlayers = [];
+    team1Players = [];
+}
+if (team2AllPlayers.length === 0) {
+    team2AllPlayers = [];
+    team2Players = [];
+}
+
+// Update player lists display
+function updatePlayerList(team) {
+    const listId = team + '_players_list';
+    const inputId = team + '_players_input';
+    const allTeamPlayers = team === 'team1' ? team1AllPlayers : team2AllPlayers;
+    const selectedPlayers = team === 'team1' ? team1Players : team2Players;
+    
+    
+    const listDiv = document.getElementById(listId);
+    const inputField = document.getElementById(inputId);
+    
+    listDiv.innerHTML = '';
+    
+    if (allTeamPlayers.length === 0) {
+        listDiv.innerHTML = '<p class="text-muted">No players added yet. Use the search below to add players.</p>';
+    } else {
+        allTeamPlayers.forEach(playerId => {
+            const player = allPlayers.find(p => p.id === playerId);
+            if (player) {
+                const isSelected = selectedPlayers.includes(playerId);
+                const playerDiv = document.createElement('div');
+                playerDiv.className = 'form-check';
+            const displayName = player.jersey_name && player.jersey_number ? 
+                `${player.jersey_name} #${player.jersey_number}` : 
+                player.name;
+            playerDiv.innerHTML = `
+                <input class="form-check-input" type="checkbox" id="${team}_${playerId}" ${isSelected ? 'checked' : ''} onchange="togglePlayer('${team}', '${playerId}')">
+                <label class="form-check-label" for="${team}_${playerId}">${displayName}</label>
+            `;
+                listDiv.appendChild(playerDiv);
+            }
+        });
+    }
+    
+    // Update hidden input
+    inputField.value = selectedPlayers.join(',');
+}
+
+// Toggle player selection
+function togglePlayer(team, playerId) {
+    const players = team === 'team1' ? team1Players : team2Players;
+    const index = players.indexOf(playerId);
+    
+    if (index > -1) {
+        players.splice(index, 1);
+    } else {
+        if (players.length < maxRoster) {
+            players.push(playerId);
+        } else {
+            alert(`Maximum ${maxRoster} players per team`);
+            document.getElementById(team + '_' + playerId).checked = false;
+            return;
+        }
+    }
+    
+    updatePlayerList(team);
+}
+
+// Search players
+function searchPlayers(team) {
+    const searchTerm = document.getElementById(team + '_search').value.toLowerCase();
+    const resultsDiv = document.getElementById(team + '_search_results');
+    const currentPlayers = team === 'team1' ? team1Players : team2Players;
+    const otherTeamPlayers = team === 'team1' ? team2Players : team1Players;
+    
+    // Filter players by real name, jersey name, or jersey number
+    const filteredPlayers = allPlayers.filter(player => {
+        const realName = player.name.toLowerCase();
+        const jerseyName = (player.jersey_name || '').toLowerCase();
+        const jerseyNumber = (player.jersey_number || '').toString();
+        const searchLower = searchTerm.toLowerCase();
+        
+        return (realName.includes(searchLower) || 
+                jerseyName.includes(searchLower) || 
+                jerseyNumber.includes(searchLower)) &&
+               !currentPlayers.includes(player.id) &&
+               !otherTeamPlayers.includes(player.id);
+    });
+    
+    resultsDiv.innerHTML = '';
+    
+    if (filteredPlayers.length === 0) {
+        resultsDiv.innerHTML = '<p class="text-muted">No players found</p>';
+        return;
+    }
+    
+    filteredPlayers.forEach(player => {
+        const displayName = player.jersey_name && player.jersey_number ? 
+            `${player.jersey_name} #${player.jersey_number}` : 
+            player.name;
+        const playerDiv = document.createElement('div');
+        playerDiv.className = 'd-flex justify-content-between align-items-center border-bottom py-2';
+        playerDiv.innerHTML = `
+            <span>${displayName}</span>
+            <button class="btn btn-sm btn-primary" onclick="addPlayer('${team}', '${player.id}')">Add</button>
+        `;
+        resultsDiv.appendChild(playerDiv);
+    });
+}
+
+// Add player to team
+function addPlayer(team, playerId) {
+    const players = team === 'team1' ? team1Players : team2Players;
+    const allTeamPlayers = team === 'team1' ? team1AllPlayers : team2AllPlayers;
+    
+    if (players.length >= maxRoster) {
+        alert(`Maximum ${maxRoster} players per team`);
+        return;
+    }
+    
+    if (!players.includes(playerId)) {
+        players.push(playerId);
+        if (!allTeamPlayers.includes(playerId)) {
+            allTeamPlayers.push(playerId);
+        }
+        updatePlayerList(team);
+        
+        // Clear search
+        document.getElementById(team + '_search').value = '';
+        document.getElementById(team + '_search_results').innerHTML = '';
+    }
+}
+
+// Initialize on page load
+document.addEventListener('DOMContentLoaded', function() {
+    updatePlayerList('team1');
+    updatePlayerList('team2');
+    
+    // Prevent form submission on Enter key
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            return false;
+        }
+    });
+});
+
+// Handle form submission
+document.querySelector('form').addEventListener('submit', function(e) {
+    // Ensure we have at least 1 player per team
+    if (team1Players.length === 0 || team2Players.length === 0) {
+        e.preventDefault();
+        alert('Each team must have at least 1 player');
+        return false;
+    }
+});
+</script>
+{% endblock %}
