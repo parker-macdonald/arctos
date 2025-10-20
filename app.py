@@ -12,6 +12,9 @@ app.config['SECRET_KEY'] = 'your-secret-key-here'
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///tournament.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
+# File upload configuration
+app.config['MAX_CONTENT_LENGTH'] = 10 * 1024 * 1024  # 10MB max file size
+
 # Handle subpath deployment
 import os
 if 'SCRIPT_NAME' in os.environ:
@@ -34,6 +37,12 @@ socketio = SocketIO(app, cors_allowed_origins="*")
 @app.context_processor
 def inject_url_for():
     return dict(url_for=url_for)
+
+# Error handler for file upload size limits
+@app.errorhandler(413)
+def too_large(e):
+    flash('File too large. Maximum size is 10MB.', 'error')
+    return redirect(url_for('index'))
 
 # Import models first to get db instance
 from models import db, init_db, TeamRegistration, Point, Match, Tournament
@@ -168,7 +177,6 @@ def is_head_ref_any(viewed_player_id: str) -> bool:
 
 @app.route('/teams/<team_id>')
 def team_profile(team_id):
-    team_id = team_id.lower()  # Force lowercase
     team = Team.query.get_or_404(team_id)
     # Get team's tournament registrations
     team_registrations = TeamRegistration.query.filter_by(team=team_id).all()
@@ -225,7 +233,6 @@ def team_profile(team_id):
 @app.route('/players/<player_id>/edit', methods=['GET', 'POST'])
 @login_required
 def edit_player_profile(player_id):
-    player_id = player_id.lower()  # Force lowercase
     if current_user.id != player_id:
         flash('You can only edit your own profile', 'error')
         return redirect(url_for('player_profile', player_id=player_id))
@@ -246,7 +253,6 @@ def edit_player_profile(player_id):
 @app.route('/teams/<team_id>/edit', methods=['GET', 'POST'])
 @login_required
 def edit_team_profile(team_id):
-    team_id = team_id.lower()  # Force lowercase
     if current_user.id != team_id:
         flash('You can only edit your own team profile', 'error')
         return redirect(url_for('team_profile', team_id=team_id))
@@ -268,7 +274,6 @@ def edit_team_profile(team_id):
 @app.route('/players/<player_id>/upload-photo', methods=['POST'])
 @login_required
 def upload_player_photo(player_id):
-    player_id = player_id.lower()  # Force lowercase
     if current_user.id != player_id:
         flash('You can only upload photos for your own profile', 'error')
         return redirect(url_for('player_profile', player_id=player_id))
@@ -282,23 +287,40 @@ def upload_player_photo(player_id):
         flash('No photo selected', 'error')
         return redirect(url_for('edit_player_profile', player_id=player_id))
     
+    # Check file size (additional check beyond Flask's MAX_CONTENT_LENGTH)
+    file.seek(0, 2)  # Seek to end
+    file_size = file.tell()
+    file.seek(0)  # Reset to beginning
+    
+    if file_size > 10 * 1024 * 1024:  # 10MB
+        flash('File too large. Maximum size is 10MB.', 'error')
+        return redirect(url_for('edit_player_profile', player_id=player_id))
+    
     if file:
-        # Simple file handling - in production, use proper file validation and storage
-        filename = f"player_{player_id}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.jpg"
-        file.save(f"static/uploads/{filename}")
-        
-        player = Player.query.get_or_404(player_id)
-        player.profile_photo = f"uploads/{filename}"
-        db.session.commit()
-        
-        flash('Profile photo updated successfully!', 'success')
+        try:
+            # Ensure uploads directory exists
+            upload_dir = "static/uploads"
+            os.makedirs(upload_dir, exist_ok=True)
+            
+            # Simple file handling - in production, use proper file validation and storage
+            filename = f"player_{player_id}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.jpg"
+            file_path = os.path.join(upload_dir, filename)
+            file.save(file_path)
+            
+            player = Player.query.get_or_404(player_id)
+            player.profile_photo = f"uploads/{filename}"
+            db.session.commit()
+            
+            flash('Profile photo updated successfully!', 'success')
+        except Exception as e:
+            flash(f'Error uploading photo: {str(e)}', 'error')
+            db.session.rollback()
     
     return redirect(url_for('edit_player_profile', player_id=player_id))
 
 @app.route('/teams/<team_id>/upload-photo', methods=['POST'])
 @login_required
 def upload_team_photo(team_id):
-    team_id = team_id.lower()  # Force lowercase
     if current_user.id != team_id:
         flash('You can only upload photos for your own team profile', 'error')
         return redirect(url_for('team_profile', team_id=team_id))
@@ -312,23 +334,40 @@ def upload_team_photo(team_id):
         flash('No photo selected', 'error')
         return redirect(url_for('edit_team_profile', team_id=team_id))
     
+    # Check file size (additional check beyond Flask's MAX_CONTENT_LENGTH)
+    file.seek(0, 2)  # Seek to end
+    file_size = file.tell()
+    file.seek(0)  # Reset to beginning
+    
+    if file_size > 10 * 1024 * 1024:  # 10MB
+        flash('File too large. Maximum size is 10MB.', 'error')
+        return redirect(url_for('edit_team_profile', team_id=team_id))
+    
     if file:
-        # Simple file handling - in production, use proper file validation and storage
-        filename = f"team_{team_id}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.jpg"
-        file.save(f"static/uploads/{filename}")
-        
-        team = Team.query.get_or_404(team_id)
-        team.profile_photo = f"uploads/{filename}"
-        db.session.commit()
-        
-        flash('Profile photo updated successfully!', 'success')
+        try:
+            # Ensure uploads directory exists
+            upload_dir = "static/uploads"
+            os.makedirs(upload_dir, exist_ok=True)
+            
+            # Simple file handling - in production, use proper file validation and storage
+            filename = f"team_{team_id}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.jpg"
+            file_path = os.path.join(upload_dir, filename)
+            file.save(file_path)
+            
+            team = Team.query.get_or_404(team_id)
+            team.profile_photo = f"uploads/{filename}"
+            db.session.commit()
+            
+            flash('Profile photo updated successfully!', 'success')
+        except Exception as e:
+            flash(f'Error uploading photo: {str(e)}', 'error')
+            db.session.rollback()
     
     return redirect(url_for('edit_team_profile', team_id=team_id))
 
 @app.route('/players/<player_id>/delete', methods=['POST'])
 @login_required
 def delete_player_account(player_id):
-    player_id = player_id.lower()  # Force lowercase
     if current_user.id != player_id:
         flash('You can only delete your own account', 'error')
         return redirect(url_for('player_profile', player_id=player_id))
@@ -350,7 +389,6 @@ def delete_player_account(player_id):
 @app.route('/teams/<team_id>/delete', methods=['POST'])
 @login_required
 def delete_team_account(team_id):
-    team_id = team_id.lower()  # Force lowercase
     if current_user.id != team_id:
         flash('You can only delete your own team account', 'error')
         return redirect(url_for('team_profile', team_id=team_id))
@@ -410,7 +448,7 @@ def create_tournament():
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
-        username = request.form['username'].lower()  # Force lowercase
+        username = request.form['username']
         password = request.form['password']
         user_type = request.form.get('user_type', 'player')
         
@@ -432,7 +470,7 @@ def login():
 @app.route('/register', methods=['GET', 'POST'])
 def register():
     if request.method == 'POST':
-        username = request.form['username'].lower()  # Force lowercase
+        username = request.form['username']
         password = request.form['password']
         name = request.form['name']
         user_type = request.form.get('user_type', 'player')
@@ -2393,7 +2431,6 @@ def decline_invitation(tournament_url, invitation_id):
 @app.route('/players/<player_id>/add-injury', methods=['GET', 'POST'])
 @login_required
 def add_injury(player_id):
-    player_id = player_id.lower()  # Force lowercase
     if current_user.id != player_id:
         flash('You can only add injuries to your own profile', 'error')
         return redirect(url_for('player_profile', player_id=player_id))
