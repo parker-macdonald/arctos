@@ -93,6 +93,7 @@ def players():
 
 @app.route('/players/<player_id>')
 def player_profile(player_id):
+    player_id = player_id.lower()  # Force lowercase
     player = Player.query.get_or_404(player_id)
     # Get player's tournament registrations
     registrations = PlayerRegistration.query.filter_by(player=player_id).all()
@@ -147,6 +148,7 @@ def is_head_ref_any(viewed_player_id: str) -> bool:
 
 @app.route('/teams/<team_id>')
 def team_profile(team_id):
+    team_id = team_id.lower()  # Force lowercase
     team = Team.query.get_or_404(team_id)
     # Get team's tournament registrations
     team_registrations = TeamRegistration.query.filter_by(team=team_id).all()
@@ -203,6 +205,7 @@ def team_profile(team_id):
 @app.route('/players/<player_id>/edit', methods=['GET', 'POST'])
 @login_required
 def edit_player_profile(player_id):
+    player_id = player_id.lower()  # Force lowercase
     if current_user.id != player_id:
         flash('You can only edit your own profile', 'error')
         return redirect(url_for('player_profile', player_id=player_id))
@@ -223,6 +226,7 @@ def edit_player_profile(player_id):
 @app.route('/teams/<team_id>/edit', methods=['GET', 'POST'])
 @login_required
 def edit_team_profile(team_id):
+    team_id = team_id.lower()  # Force lowercase
     if current_user.id != team_id:
         flash('You can only edit your own team profile', 'error')
         return redirect(url_for('team_profile', team_id=team_id))
@@ -244,6 +248,7 @@ def edit_team_profile(team_id):
 @app.route('/players/<player_id>/upload-photo', methods=['POST'])
 @login_required
 def upload_player_photo(player_id):
+    player_id = player_id.lower()  # Force lowercase
     if current_user.id != player_id:
         flash('You can only upload photos for your own profile', 'error')
         return redirect(url_for('player_profile', player_id=player_id))
@@ -273,6 +278,7 @@ def upload_player_photo(player_id):
 @app.route('/teams/<team_id>/upload-photo', methods=['POST'])
 @login_required
 def upload_team_photo(team_id):
+    team_id = team_id.lower()  # Force lowercase
     if current_user.id != team_id:
         flash('You can only upload photos for your own team profile', 'error')
         return redirect(url_for('team_profile', team_id=team_id))
@@ -302,6 +308,7 @@ def upload_team_photo(team_id):
 @app.route('/players/<player_id>/delete', methods=['POST'])
 @login_required
 def delete_player_account(player_id):
+    player_id = player_id.lower()  # Force lowercase
     if current_user.id != player_id:
         flash('You can only delete your own account', 'error')
         return redirect(url_for('player_profile', player_id=player_id))
@@ -323,6 +330,7 @@ def delete_player_account(player_id):
 @app.route('/teams/<team_id>/delete', methods=['POST'])
 @login_required
 def delete_team_account(team_id):
+    team_id = team_id.lower()  # Force lowercase
     if current_user.id != team_id:
         flash('You can only delete your own team account', 'error')
         return redirect(url_for('team_profile', team_id=team_id))
@@ -382,7 +390,7 @@ def create_tournament():
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
-        username = request.form['username']
+        username = request.form['username'].lower()  # Force lowercase
         password = request.form['password']
         user_type = request.form.get('user_type', 'player')
         
@@ -404,7 +412,7 @@ def login():
 @app.route('/register', methods=['GET', 'POST'])
 def register():
     if request.method == 'POST':
-        username = request.form['username']
+        username = request.form['username'].lower()  # Force lowercase
         password = request.form['password']
         name = request.form['name']
         user_type = request.form.get('user_type', 'player')
@@ -2365,6 +2373,7 @@ def decline_invitation(tournament_url, invitation_id):
 @app.route('/players/<player_id>/add-injury', methods=['GET', 'POST'])
 @login_required
 def add_injury(player_id):
+    player_id = player_id.lower()  # Force lowercase
     if current_user.id != player_id:
         flash('You can only add injuries to your own profile', 'error')
         return redirect(url_for('player_profile', player_id=player_id))
