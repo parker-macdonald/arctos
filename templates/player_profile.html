@@ -24,7 +24,7 @@
             <div class="card-body">
                 {% if player.profile_photo %}
                 <div class="text-center mb-3">
-                    <img src="/static/{{ player.profile_photo }}" alt="Profile Photo" class="rounded-circle" style="width: 100px; height: 100px; object-fit: cover;">
+                    <img src="{{ url_for('static', filename=player.profile_photo) }}" alt="Profile Photo" class="rounded-circle" style="width: 100px; height: 100px; object-fit: cover;">
                 </div>
                 {% endif %}
                 <p><strong>Username:</strong> @{{ player.id }}</p>

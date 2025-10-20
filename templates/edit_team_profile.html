@@ -74,10 +74,10 @@
             <div class="card-body">
                 {% if team.profile_photo %}
                 <div class="text-center mb-3">
-                    <img src="/static/{{ team.profile_photo }}" alt="Current Photo" class="rounded" style="width: 150px; height: 100px; object-fit: cover;">
+                    <img src="{{ url_for('static', filename=team.profile_photo) }}" alt="Current Photo" class="rounded" style="width: 150px; height: 100px; object-fit: cover;">
                 </div>
                 {% endif %}
-                <form method="POST" action="/teams/{{ team.id }}/upload-photo" enctype="multipart/form-data">
+                <form method="POST" action="{{ url_for('upload_team_photo', team_id=team.id) }}" enctype="multipart/form-data">
                     <div class="mb-3">
                         <label for="photo" class="form-label">Upload New Photo</label>
                         <input type="file" class="form-control" id="photo" name="photo" accept="image/*">

@@ -298,8 +298,8 @@ def upload_player_photo(player_id):
     
     if file:
         try:
-            # Ensure uploads directory exists
-            upload_dir = "static/uploads"
+            # Ensure uploads directory exists in the project directory
+            upload_dir = os.path.join(app.root_path, "static", "uploads")
             os.makedirs(upload_dir, exist_ok=True)
             
             # Simple file handling - in production, use proper file validation and storage
@@ -345,8 +345,8 @@ def upload_team_photo(team_id):
     
     if file:
         try:
-            # Ensure uploads directory exists
-            upload_dir = "static/uploads"
+            # Ensure uploads directory exists in the project directory
+            upload_dir = os.path.join(app.root_path, "static", "uploads")
             os.makedirs(upload_dir, exist_ok=True)
             
             # Simple file handling - in production, use proper file validation and storage
