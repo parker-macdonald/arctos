@@ -2,7 +2,7 @@ from flask import Flask, render_template, request, redirect, url_for, flash, jso
 from flask_login import LoginManager, login_user, logout_user, login_required, current_user
 from flask_socketio import SocketIO, emit, join_room, leave_room
 from werkzeug.security import generate_password_hash, check_password_hash
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import uuid
 import os
 import json
@@ -16,7 +16,7 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 socketio = SocketIO(app, cors_allowed_origins="*")
 
 # Import models first to get db instance
-from models import db, init_db, TeamRegistration
+from models import db, init_db, TeamRegistration, Point, Match, Tournament
 db.init_app(app)
 init_db(db)
 
@@ -510,7 +510,8 @@ def match_page(tournament_url):
                          tournament=tournament, 
                          match=match, 
                          points=points,
-                         gamestate=gamestate)
+                         gamestate=gamestate,
+                         is_head_ref=is_head_ref)
 
 @app.route('/<tournament_url>/settings')
 @login_required
@@ -868,7 +869,9 @@ def start_match_post(tournament_url):
     
     # Update match status to IN_PROGRESS
     match.status = 'IN_PROGRESS'
-    match.confirmed_start_time = datetime.utcnow()
+    confirmed_start = datetime.now(timezone.utc)
+    match.confirmed_start_time = confirmed_start
+    print(f"Setting confirmed_start_time to: {confirmed_start}")
     
     # Store match notes and roster info in gamestate
     gamestate = {
@@ -894,8 +897,12 @@ def start_match_post(tournament_url):
     
     db.session.commit()
     
+    # Verify the confirmed_start_time was saved
+    db.session.refresh(match)
+    print(f"Confirmed start time after commit: {match.confirmed_start_time}")
+    
     flash('Match started successfully!', 'success')
-    return redirect(url_for('run_match_websocket', tournament_url=tournament_url, id=match.uuid))
+    return redirect(url_for('run_match', tournament_url=tournament_url, id=match.uuid))
 
 @app.route('/<tournament_url>/run-match')
 @login_required
@@ -934,11 +941,86 @@ def run_match(tournament_url):
         except:
             gamestate = {}
     
+    # Build players list for this match from gamestate rosters
+    from models import PlayerRegistration, Player
+    match_players = []
+    try:
+        team1_ids = gamestate.get('team1_players', []) or []
+        team2_ids = gamestate.get('team2_players', []) or []
+        all_reg_ids = [rid for rid in (team1_ids + team2_ids) if rid]
+        if all_reg_ids:
+            regs = PlayerRegistration.query.filter(PlayerRegistration.id.in_(all_reg_ids)).all()
+
+            # If no PlayerRegistration records were found, the IDs might be Player IDs.
+            if not regs:
+                players_list = Player.query.filter(Player.id.in_(all_reg_ids)).all()
+                player_id_list = [p.id for p in players_list]
+                if player_id_list:
+                    regs = PlayerRegistration.query.filter(
+                        PlayerRegistration.player.in_(player_id_list),
+                        PlayerRegistration.event == tournament_url
+                    ).all()
+
+            player_ids = [r.player for r in regs if getattr(r, 'player', None)]
+            players = {p.id: p for p in Player.query.filter(Player.id.in_(player_ids)).all()}
+            for r in regs:
+                p = players.get(r.player)
+                if not p:
+                    continue
+                # Prefer jersey name/number if available
+                display = None
+                jname = getattr(r, 'jersey_name', None)
+                jnum = getattr(r, 'jersey_number', None)
+                if jname and jnum:
+                    display = f"{jname} #{jnum}"
+                elif jname:
+                    display = jname
+                elif jnum:
+                    display = f"#{jnum}"
+                else:
+                    display = p.name
+                match_players.append({
+                    'registration_id': r.id,
+                    'player_id': p.id,
+                    'display': display,
+                    'name': p.name
+                })
+        else:
+            # Fallback: get players from match teams if gamestate doesn't have them
+            if match.team1 and match.team2:
+                regs = db.session.query(PlayerRegistration, Player).join(Player, PlayerRegistration.player == Player.id).filter(
+                    PlayerRegistration.event == tournament_url,
+                    PlayerRegistration.team.in_([match.team1, match.team2]),
+                    PlayerRegistration.status == 'CONFIRMED'
+                ).all()
+                for r, p in regs:
+                    # Prefer jersey name/number if available
+                    display = None
+                    jname = getattr(r, 'jersey_name', None)
+                    jnum = getattr(r, 'jersey_number', None)
+                    if jname and jnum:
+                        display = f"{jname} #{jnum}"
+                    elif jname:
+                        display = jname
+                    elif jnum:
+                        display = f"#{jnum}"
+                    else:
+                        display = p.name
+                    match_players.append({
+                        'registration_id': r.id,
+                        'player_id': p.id,
+                        'display': display,
+                        'name': p.name
+                    })
+    except Exception as e:
+        match_players = []
+    
     return render_template('run_match_websocket.html',
                            tournament=tournament,
                            match=match,
                            points=points,
-                           gamestate=gamestate)
+                           gamestate=gamestate,
+                           match_players=match_players)
 
 @app.route('/<tournament_url>/finalize-match')
 @login_required
@@ -959,10 +1041,7 @@ def finalize_match(tournament_url):
         flash('You are not authorized to finalize matches for this tournament', 'error')
         return redirect(url_for('tournament_schedule', tournament_url=tournament_url))
     
-    # Check if match is completed
-    if match.status != 'COMPLETED':
-        flash('This match must be completed before finalization', 'error')
-        return redirect(url_for('tournament_schedule', tournament_url=tournament_url))
+    # Allow finalization of matches in progress or completed
     
     tournament = Tournament.query.get(tournament_url)
     
@@ -1011,6 +1090,12 @@ def finalize_match_post(tournament_url):
     # Update match status to COMPLETED
     match.status = 'COMPLETED'
     
+    # Get match winner from form
+    match_winner = request.form.get('match_winner')
+    if not match_winner:
+        flash('Please select a match winner', 'error')
+        return redirect(url_for('finalize_match', tournament_url=tournament_url, id=match_id))
+    
     # Update gamestate with finalization info
     gamestate = {}
     if match.gamestate:
@@ -1022,9 +1107,28 @@ def finalize_match_post(tournament_url):
     gamestate['finalized_at'] = datetime.utcnow().isoformat()
     gamestate['finalized_by'] = current_user.id
     gamestate['final_notes'] = request.form.get('final_notes', '')
+    gamestate['match_winner'] = match_winner
+    
+    # Store captain signatures if provided
+    team1_signature = request.form.get('team1_signature')
+    team2_signature = request.form.get('team2_signature')
+    if team1_signature:
+        gamestate['team1_signature'] = team1_signature
+    if team2_signature:
+        gamestate['team2_signature'] = team2_signature
     
     match.gamestate = json.dumps(gamestate)
     db.session.commit()
+    
+    # Broadcast match completion to all viewers
+    print(f"Broadcasting match_completed to room: match_{match_id}")
+    socketio.emit('match_completed', {
+        'match_id': match_id,
+        'status': 'COMPLETED',
+        'winner': match_winner,
+        'finalized_at': gamestate['finalized_at']
+    }, room=f'match_{match_id}')
+    print("Match completion broadcast sent")
     
     flash('Match finalized successfully!', 'success')
     return redirect(url_for('tournament_schedule', tournament_url=tournament_url))
@@ -1054,16 +1158,413 @@ def get_notes(tournament_url):
     if not is_head_ref(tournament_url, current_user.id):
         return jsonify({'success': False, 'error': 'Not authorized'})
     
-    gamestate = {}
-    if match.gamestate:
-        try:
-            gamestate = json.loads(match.gamestate)
-        except:
-            gamestate = {}
+    # Get notes from database
+    from models import MatchNote, Player, PlayerRegistration
+    point_id = request.args.get('point_id')
     
-    notes = gamestate.get('notes', [])
+    if point_id:
+        # Get notes for a specific point (both assigned and unassigned)
+        notes = MatchNote.query.filter_by(match=match_id).filter(
+            (MatchNote.point_id == point_id) | (MatchNote.point_id.is_(None))
+        ).order_by(MatchNote.created_at.desc()).all()
+    else:
+        # Get only unassigned notes (point_id is None)
+        notes = MatchNote.query.filter_by(match=match_id, point_id=None).order_by(MatchNote.created_at.desc()).all()
     
-    return jsonify({'success': True, 'notes': notes})
+    from datetime import timezone
+    notes_data = []
+    for note in notes:
+        player_name = None
+        player_display = None
+        if note.player_id:
+            player = Player.query.get(note.player_id)
+            if player:
+                player_name = player.name
+                reg = PlayerRegistration.query.filter_by(event=tournament_url, player=player.id).first()
+                if reg:
+                    if getattr(reg, 'jersey_name', None) and getattr(reg, 'jersey_number', None):
+                        player_display = f"{reg.jersey_name} #{reg.jersey_number}"
+                    elif getattr(reg, 'jersey_name', None):
+                        player_display = reg.jersey_name
+                    elif getattr(reg, 'jersey_number', None):
+                        player_display = f"#{reg.jersey_number}"
+                if not player_display:
+                    player_display = player.name
+        created_ts = note.created_at
+        if created_ts and created_ts.tzinfo is None:
+            created_ts = created_ts.replace(tzinfo=timezone.utc)
+        # Truncate microseconds to avoid JavaScript parsing issues
+        if created_ts:
+            created_ts = created_ts.replace(microsecond=0)
+        notes_data.append({
+            'uuid': note.uuid,
+            'text': note.text,
+            'target': note.target,
+            'created_by': note.created_by,
+            'created_at': created_ts.isoformat() if created_ts else None,
+            'player_id': note.player_id,
+            'player_name': player_name,
+            'player_display': player_display
+        })
+    
+    return jsonify({'success': True, 'notes': notes_data})
+
+@app.route('/<tournament_url>/add-note', methods=['POST'])
+@login_required
+def add_note(tournament_url):
+    """Add a note to a match"""
+    match_id = request.json.get('match_id')
+    text = request.json.get('text')
+    target = request.json.get('target', 'MATCH')
+    player_id = request.json.get('player_id')  # optional
+    
+    if not match_id or not text:
+        return jsonify({'success': False, 'error': 'Match ID and text required'})
+    
+    match = Match.query.get(match_id)
+    if not match or match.event != tournament_url:
+        return jsonify({'success': False, 'error': 'Match not found'})
+    
+    # Check if user is a head ref
+    if not is_head_ref(tournament_url, current_user.id):
+        return jsonify({'success': False, 'error': 'Not authorized'})
+    
+    # Create new note
+    from models import MatchNote, Player
+    note = MatchNote(
+        match=match_id,
+        text=text,
+        target=target,
+        created_by=current_user.id,
+        player_id=player_id if player_id else None
+    )
+    db.session.add(note)
+    db.session.commit()
+    
+    # Prepare player display fields
+    player_name = None
+    player_display = None
+    if note.player_id:
+        player = Player.query.get(note.player_id)
+        if player:
+            player_name = player.name
+            reg = PlayerRegistration.query.filter_by(event=tournament_url, player=player.id).first()
+            if reg:
+                if getattr(reg, 'jersey_name', None) and getattr(reg, 'jersey_number', None):
+                    player_display = f"{reg.jersey_name} #{reg.jersey_number}"
+                elif getattr(reg, 'jersey_name', None):
+                    player_display = reg.jersey_name
+                elif getattr(reg, 'jersey_number', None):
+                    player_display = f"#{reg.jersey_number}"
+            if not player_display:
+                player_display = player.name
+    
+    # Broadcast to all viewers
+    # Ensure created_at includes timezone info for consistent parsing
+    from datetime import timezone
+    created_ts = note.created_at
+    if created_ts and created_ts.tzinfo is None:
+        created_ts = created_ts.replace(tzinfo=timezone.utc)
+    
+    # Truncate microseconds to avoid JavaScript parsing issues
+    if created_ts:
+        created_ts = created_ts.replace(microsecond=0)
+    
+    socketio.emit('note_added', {
+        'note_id': note.uuid,
+        'text': note.text,
+        'target': note.target,
+        'created_by': note.created_by,
+        'created_at': created_ts.isoformat() if created_ts else None,
+        'player_id': note.player_id,
+        'player_name': player_name,
+        'player_display': player_display
+    }, room=f'match_{match_id}')
+    
+    return jsonify({'success': True, 'note_id': note.uuid})
+
+@app.route('/<tournament_url>/assign-notes-to-point', methods=['POST'])
+@login_required
+def assign_notes_to_point(tournament_url):
+    """Assign selected notes to a specific point"""
+    point_id = request.json.get('point_id')
+    note_ids = request.json.get('note_ids', [])
+    
+    if not point_id or not note_ids:
+        return jsonify({'success': False, 'error': 'Point ID and note IDs required'})
+    
+    # Get the point to verify it exists and get the match
+    from models import Point
+    point = Point.query.get(point_id)
+    if not point:
+        return jsonify({'success': False, 'error': 'Point not found'})
+    
+    match = Match.query.get(point.match)
+    if not match or match.event != tournament_url:
+        return jsonify({'success': False, 'error': 'Match not found'})
+    
+    # Check if user is a head ref
+    if not is_head_ref(tournament_url, current_user.id):
+        return jsonify({'success': False, 'error': 'Not authorized'})
+    
+    # Assign notes to the point
+    from models import MatchNote
+    assigned_count = 0
+    for note_id in note_ids:
+        note = MatchNote.query.get(note_id)
+        if note and note.match == point.match and note.point_id is None:
+            note.point_id = point_id
+            assigned_count += 1
+    
+    db.session.commit()
+    
+    return jsonify({'success': True, 'assigned_count': assigned_count})
+
+@app.route('/<tournament_url>/get-point-notes')
+@login_required
+def get_point_notes(tournament_url):
+    """Get notes for a specific point"""
+    match_id = request.args.get('match_id')
+    point_id = request.args.get('point_id')
+    
+    if not match_id or not point_id:
+        return jsonify({'success': False, 'error': 'Match ID and Point ID required'})
+    
+    match = Match.query.get(match_id)
+    if not match or match.event != tournament_url:
+        return jsonify({'success': False, 'error': 'Match not found'})
+    
+    # Check if user is a head ref
+    if not is_head_ref(tournament_url, current_user.id):
+        return jsonify({'success': False, 'error': 'Not authorized'})
+    
+    # Get notes specifically assigned to this point
+    from models import MatchNote, Player, PlayerRegistration
+    notes = MatchNote.query.filter_by(match=match_id, point_id=point_id).order_by(MatchNote.created_at.desc()).all()
+    
+    from datetime import timezone
+    notes_data = []
+    for note in notes:
+        player_name = None
+        player_display = None
+        if note.player_id:
+            player = Player.query.get(note.player_id)
+            if player:
+                player_name = player.name
+                reg = PlayerRegistration.query.filter_by(event=tournament_url, player=player.id).first()
+                if reg:
+                    if getattr(reg, 'jersey_name', None) and getattr(reg, 'jersey_number', None):
+                        player_display = f"{reg.jersey_name} #{reg.jersey_number}"
+                    elif getattr(reg, 'jersey_name', None):
+                        player_display = reg.jersey_name
+                    elif getattr(reg, 'jersey_number', None):
+                        player_display = f"#{reg.jersey_number}"
+                if not player_display:
+                    player_display = player.name
+        created_ts = note.created_at
+        if created_ts and created_ts.tzinfo is None:
+            created_ts = created_ts.replace(tzinfo=timezone.utc)
+        # Truncate microseconds to avoid JavaScript parsing issues
+        if created_ts:
+            created_ts = created_ts.replace(microsecond=0)
+        notes_data.append({
+            'uuid': note.uuid,
+            'text': note.text,
+            'target': note.target,
+            'created_by': note.created_by,
+            'created_at': created_ts.isoformat() if created_ts else None,
+            'player_id': note.player_id,
+            'player_name': player_name,
+            'player_display': player_display
+        })
+    
+    return jsonify({'success': True, 'notes': notes_data})
+
+@app.route('/<tournament_url>/add-point-note', methods=['POST'])
+@login_required
+def add_point_note(tournament_url):
+    """Add a note directly to a specific point"""
+    match_id = request.json.get('match_id')
+    point_id = request.json.get('point_id')
+    text = request.json.get('text')
+    target = request.json.get('target', 'MATCH')
+    # Normalize target to canonical values
+    target_map = {
+        'team1': 'TEAM1', 'TEAM1': 'TEAM1',
+        'team2': 'TEAM2', 'TEAM2': 'TEAM2',
+        'match': 'MATCH', 'MATCH': 'MATCH',
+        'player': 'PLAYER', 'PLAYER': 'PLAYER'
+    }
+    target = target_map.get(target, 'MATCH')
+    player_id = request.json.get('player_id')  # optional
+    
+    if not match_id or not point_id or not text:
+        return jsonify({'success': False, 'error': 'Match ID, Point ID, and text required'})
+    
+    match = Match.query.get(match_id)
+    if not match or match.event != tournament_url:
+        return jsonify({'success': False, 'error': 'Match not found'})
+    
+    # Check if user is a head ref
+    if not is_head_ref(tournament_url, current_user.id):
+        return jsonify({'success': False, 'error': 'Not authorized'})
+    
+    # Create new note directly assigned to the point
+    from models import MatchNote, Player, PlayerRegistration
+    note = MatchNote(
+        match=match_id,
+        text=text,
+        target=target,
+        created_by=current_user.id,
+        player_id=player_id if player_id else None,
+        point_id=point_id  # Directly assign to the point
+    )
+    db.session.add(note)
+    db.session.commit()
+    
+    # Prepare player display fields
+    player_name = None
+    player_display = None
+    if note.player_id:
+        player = Player.query.get(note.player_id)
+        if player:
+            player_name = player.name
+            reg = PlayerRegistration.query.filter_by(event=tournament_url, player=player.id).first()
+            if reg:
+                if getattr(reg, 'jersey_name', None) and getattr(reg, 'jersey_number', None):
+                    player_display = f"{reg.jersey_name} #{reg.jersey_number}"
+                elif getattr(reg, 'jersey_name', None):
+                    player_display = reg.jersey_name
+                elif getattr(reg, 'jersey_number', None):
+                    player_display = f"#{reg.jersey_number}"
+            if not player_display:
+                player_display = player.name
+    
+    # Ensure created_at includes timezone info for consistent parsing
+    from datetime import timezone
+    created_ts = note.created_at
+    if created_ts and created_ts.tzinfo is None:
+        created_ts = created_ts.replace(tzinfo=timezone.utc)
+    # Truncate microseconds to avoid JavaScript parsing issues
+    if created_ts:
+        created_ts = created_ts.replace(microsecond=0)
+    
+    # Broadcast to all viewers
+    socketio.emit('point_note_added', {
+        'note_id': note.uuid,
+        'point_id': point_id,
+        'text': note.text,
+        'target': note.target,
+        'created_by': note.created_by,
+        'created_at': created_ts.isoformat() if created_ts else None,
+        'player_id': note.player_id,
+        'player_name': player_name,
+        'player_display': player_display
+    }, room=f'match_{match_id}')
+    
+    return jsonify({'success': True, 'note_id': note.uuid})
+
+@app.route('/<tournament_url>/delete-point-note', methods=['POST'])
+@login_required
+def delete_point_note(tournament_url):
+    """Delete a note that is attached to a specific point"""
+    match_id = request.json.get('match_id')
+    point_id = request.json.get('point_id')
+    note_id = request.json.get('note_id')
+
+    if not match_id or not point_id or not note_id:
+        return jsonify({'success': False, 'error': 'Match ID, Point ID, and Note ID required'})
+
+    match = Match.query.get(match_id)
+    if not match or match.event != tournament_url:
+        return jsonify({'success': False, 'error': 'Match not found'})
+
+    # Check if user is a head ref
+    if not is_head_ref(tournament_url, current_user.id):
+        return jsonify({'success': False, 'error': 'Not authorized'})
+
+    from models import MatchNote
+    note = MatchNote.query.get(note_id)
+    if not note or note.match != match_id or note.point_id != point_id:
+        return jsonify({'success': False, 'error': 'Note not found for this point'})
+
+    db.session.delete(note)
+    db.session.commit()
+
+    # Notify clients (optional)
+    socketio.emit('point_note_deleted', {
+        'note_id': note_id,
+        'point_id': point_id
+    }, room=f'match_{match_id}')
+
+    return jsonify({'success': True})
+
+@app.route('/<tournament_url>/unassign-notes-from-point', methods=['POST'])
+@login_required
+def unassign_notes_from_point(tournament_url):
+    """Unassign notes from a specific point"""
+    point_id = request.json.get('point_id')
+    note_ids = request.json.get('note_ids', [])
+    
+    if not point_id or not note_ids:
+        return jsonify({'success': False, 'error': 'Point ID and note IDs required'})
+    
+    # Get the point to verify it exists and get the match
+    from models import Point
+    point = Point.query.get(point_id)
+    if not point:
+        return jsonify({'success': False, 'error': 'Point not found'})
+    
+    match = Match.query.get(point.match)
+    if not match or match.event != tournament_url:
+        return jsonify({'success': False, 'error': 'Match not found'})
+    
+    # Check if user is a head ref
+    if not is_head_ref(tournament_url, current_user.id):
+        return jsonify({'success': False, 'error': 'Not authorized'})
+    
+    # Unassign notes from the point
+    from models import MatchNote
+    unassigned_count = 0
+    for note_id in note_ids:
+        note = MatchNote.query.get(note_id)
+        if note and note.point_id == point_id:
+            note.point_id = None
+            unassigned_count += 1
+    
+    db.session.commit()
+    
+    return jsonify({'success': True, 'unassigned_count': unassigned_count})
+
+@app.route('/<tournament_url>/get-points')
+@login_required
+def get_points(tournament_url):
+    """Get points for a match"""
+    match_id = request.args.get('match_id')
+    if not match_id:
+        return jsonify({'success': False, 'error': 'Match ID required'})
+    
+    match = Match.query.get(match_id)
+    if not match or match.event != tournament_url:
+        return jsonify({'success': False, 'error': 'Match not found'})
+    
+    # Get all points for this match
+    points = Point.query.filter_by(match=match_id).order_by(Point.stamp).all()
+    
+    # Convert to JSON-serializable format
+    points_data = []
+    for point in points:
+        points_data.append({
+            'uuid': point.uuid,
+            'set_number': point.set_number,
+            'stamp': point.stamp.isoformat() if point.stamp else None,
+            'end_stamp': point.end_stamp.isoformat() if point.end_stamp else None,
+            'winner': point.winner,
+            'rerolled': point.rerolled,
+            'notes': point.notes
+        })
+    
+    return jsonify({'success': True, 'points': points_data})
 
 # Old API endpoints removed - now handled by WebSockets
 
@@ -1738,10 +2239,14 @@ def add_injury(player_id):
 @socketio.on('join_match')
 def handle_join_match(data):
     """Join a match room for real-time updates"""
+    print(f"join_match called with data: {data}")
     match_id = data.get('match_id')
     if match_id:
         join_room(f'match_{match_id}')
+        print(f"Joined room: match_{match_id}")
         emit('status', {'msg': f'Joined match {match_id}'})
+    else:
+        print("No match_id provided to join_match")
 
 @socketio.on('leave_match')
 def handle_leave_match(data):
@@ -1766,10 +2271,21 @@ def handle_update_score(data):
     team1_score = sum(1 for point in points if point.winner == 'TEAM1' and not point.rerolled)
     team2_score = sum(1 for point in points if point.winner == 'TEAM2' and not point.rerolled)
     
+    # Calculate scores by set
+    sets = sorted(set(p.set_number for p in points))
+    scores_by_set = {}
+    for set_num in sets:
+        set_points = [p for p in points if p.set_number == set_num]
+        scores_by_set[set_num] = {
+            'team1_score': sum(1 for p in set_points if p.winner == 'TEAM1' and not p.rerolled),
+            'team2_score': sum(1 for p in set_points if p.winner == 'TEAM2' and not p.rerolled)
+        }
+    
     # Broadcast score update to all viewers
     emit('score_updated', {
         'team1_score': team1_score,
-        'team2_score': team2_score
+        'team2_score': team2_score,
+        'scores_by_set': scores_by_set
     }, room=f'match_{match_id}')
 
 @socketio.on('update_stones')
@@ -1823,6 +2339,9 @@ def handle_update_point(data):
         point.notes = data['notes']
     if 'set_number' in data:
         point.set_number = data['set_number']
+    if 'end_stamp' in data:
+        from datetime import datetime
+        point.end_stamp = datetime.fromisoformat(data['end_stamp'].replace('Z', '+00:00'))
     
     db.session.commit()
     
@@ -1832,14 +2351,38 @@ def handle_update_point(data):
         'winner': point.winner,
         'rerolled': point.rerolled,
         'notes': point.notes,
-        'set_number': point.set_number
+        'set_number': point.set_number,
+        'end_stamp': point.end_stamp.isoformat() if point.end_stamp else None
+    }, room=f'match_{point.match}')
+    
+    # Trigger score update
+    points = Point.query.filter_by(match=point.match).all()
+    team1_score = sum(1 for p in points if p.winner == 'TEAM1' and not p.rerolled)
+    team2_score = sum(1 for p in points if p.winner == 'TEAM2' and not p.rerolled)
+    
+    # Calculate scores by set
+    sets = sorted(set(p.set_number for p in points))
+    scores_by_set = {}
+    for set_num in sets:
+        set_points = [p for p in points if p.set_number == set_num]
+        scores_by_set[set_num] = {
+            'team1_score': sum(1 for p in set_points if p.winner == 'TEAM1' and not p.rerolled),
+            'team2_score': sum(1 for p in set_points if p.winner == 'TEAM2' and not p.rerolled)
+        }
+    
+    emit('score_updated', {
+        'team1_score': team1_score,
+        'team2_score': team2_score,
+        'scores_by_set': scores_by_set
     }, room=f'match_{point.match}')
 
 @socketio.on('add_point')
 def handle_add_point(data):
     """Handle new point creation and broadcast to all viewers"""
+    print(f"handle_add_point called with data: {data}")
     match_id = data.get('match_id')
     if not match_id:
+        print("No match_id provided")
         return
     
     # Create new point
@@ -1850,12 +2393,35 @@ def handle_add_point(data):
     )
     db.session.add(new_point)
     db.session.commit()
+    print(f"Created point with ID: {new_point.uuid}")
     
     # Broadcast new point to all viewers
     emit('point_added', {
         'point_id': new_point.uuid,
         'set_number': new_point.set_number,
-        'stamp': new_point.stamp.isoformat()
+        'stamp': new_point.stamp.isoformat(),
+        'end_stamp': new_point.end_stamp.isoformat() if new_point.end_stamp else None
+    }, room=f'match_{match_id}')
+    
+    # Trigger score update
+    points = Point.query.filter_by(match=match_id).all()
+    team1_score = sum(1 for p in points if p.winner == 'TEAM1' and not p.rerolled)
+    team2_score = sum(1 for p in points if p.winner == 'TEAM2' and not p.rerolled)
+    
+    # Calculate scores by set
+    sets = sorted(set(p.set_number for p in points))
+    scores_by_set = {}
+    for set_num in sets:
+        set_points = [p for p in points if p.set_number == set_num]
+        scores_by_set[set_num] = {
+            'team1_score': sum(1 for p in set_points if p.winner == 'TEAM1' and not p.rerolled),
+            'team2_score': sum(1 for p in set_points if p.winner == 'TEAM2' and not p.rerolled)
+        }
+    
+    emit('score_updated', {
+        'team1_score': team1_score,
+        'team2_score': team2_score,
+        'scores_by_set': scores_by_set
     }, room=f'match_{match_id}')
 
 @socketio.on('delete_point')
@@ -1877,36 +2443,101 @@ def handle_delete_point(data):
     emit('point_deleted', {
         'point_id': point_id
     }, room=f'match_{match_id}')
-
-@socketio.on('update_notes')
-def handle_update_notes(data):
-    """Handle notes updates and broadcast to all viewers"""
-    match_id = data.get('match_id')
-    notes = data.get('notes', [])
     
+    # Trigger score update
+    points = Point.query.filter_by(match=match_id).all()
+    team1_score = sum(1 for p in points if p.winner == 'TEAM1' and not p.rerolled)
+    team2_score = sum(1 for p in points if p.winner == 'TEAM2' and not p.rerolled)
+    
+    # Calculate scores by set
+    sets = sorted(set(p.set_number for p in points))
+    scores_by_set = {}
+    for set_num in sets:
+        set_points = [p for p in points if p.set_number == set_num]
+        scores_by_set[set_num] = {
+            'team1_score': sum(1 for p in set_points if p.winner == 'TEAM1' and not p.rerolled),
+            'team2_score': sum(1 for p in set_points if p.winner == 'TEAM2' and not p.rerolled)
+        }
+    
+    emit('score_updated', {
+        'team1_score': team1_score,
+        'team2_score': team2_score,
+        'scores_by_set': scores_by_set
+    }, room=f'match_{match_id}')
+
+@socketio.on('note_added')
+def handle_note_added(data):
+    """Handle new note addition and broadcast to all viewers"""
+    match_id = data.get('match_id')
+    text = data.get('text')
+    target = data.get('target', 'MATCH')
+    
+    if not match_id or not text:
+        return
+    
+    # Create new note
+    from models import MatchNote
+    note = MatchNote(
+        match=match_id,
+        text=text,
+        target=target,
+        created_by=current_user.id
+    )
+    db.session.add(note)
+    db.session.commit()
+    
+    # Broadcast to all viewers
+    emit('note_added', {
+        'note_id': note.uuid,
+        'text': note.text,
+        'target': note.target,
+        'created_by': note.created_by,
+        'created_at': note.created_at.isoformat()
+    }, room=f'match_{match_id}')
+
+@socketio.on('update_set')
+def handle_update_set(data):
+    """Handle set number updates and broadcast to all viewers"""
+    point_id = data.get('point_id')
+    set_number = data.get('set_number')
+    match_id = data.get('match_id')
+    
+    if not point_id or set_number is None:
+        return
+    
+    point = Point.query.get(point_id)
+    if not point:
+        return
+    
+    # Update the point's set number
+    point.set_number = set_number
+    db.session.commit()
+    
+    # Broadcast set update to all viewers
+    emit('set_updated', {
+        'point_id': point_id,
+        'set_number': set_number
+    }, room=f'match_{match_id}')
+
+@socketio.on('complete_match')
+def handle_complete_match(data):
+    """Handle match completion"""
+    match_id = data.get('match_id')
     if not match_id:
         return
     
-    # Update match gamestate
     match = Match.query.get(match_id)
     if not match:
         return
     
-    # Parse existing gamestate
-    gamestate = {}
-    if match.gamestate:
-        try:
-            gamestate = json.loads(match.gamestate)
-        except:
-            gamestate = {}
-    
-    gamestate['notes'] = notes
-    match.gamestate = json.dumps(gamestate)
+    # Update match status to COMPLETED
+    match.status = 'COMPLETED'
     db.session.commit()
     
-    # Broadcast notes update to all viewers
-    emit('notes_updated', {
-        'notes': notes
+    # Broadcast match completion to all viewers
+    emit('match_completed', {
+        'match_id': match_id,
+        'status': 'COMPLETED'
     }, room=f'match_{match_id}')
 
 if __name__ == '__main__':

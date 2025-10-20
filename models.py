@@ -176,12 +176,33 @@ class Point(db.Model):
     winner = db.Column(db.String(10))  # TEAM1, TEAM2
     rerolled = db.Column(db.Boolean, default=False)
     stamp = db.Column(db.DateTime, default=datetime.utcnow)
+    end_stamp = db.Column(db.DateTime)
     footage = db.Column(db.String(500))
     length = db.Column(db.Interval)
     nstones = db.Column(db.Integer)
     rerollreason = db.Column(db.Text)
     set_number = db.Column(db.Integer, default=1)
     notes = db.Column(db.Text)
+
+class MatchNote(db.Model):
+    __tablename__ = 'match_notes'
+    
+    uuid = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    match = db.Column(db.String(36), db.ForeignKey('matches.uuid'), nullable=False)
+    text = db.Column(db.Text, nullable=False)
+    target = db.Column(db.String(50))  # 'TEAM1', 'TEAM2', 'MATCH', or player name
+    created_by = db.Column(db.String(50), db.ForeignKey('players.id'), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    # Optional link to a specific player
+    player_id = db.Column(db.String(50), db.ForeignKey('players.id'))
+    # Optional link to a specific point
+    point_id = db.Column(db.String(36), db.ForeignKey('points.uuid'))
+    
+    # Relationships
+    match_obj = db.relationship('Match', backref='match_notes')
+    creator = db.relationship('Player', foreign_keys=[created_by])
+    player = db.relationship('Player', foreign_keys=[player_id])
+    point_obj = db.relationship('Point', foreign_keys=[point_id], backref='point_notes')
 
 class HeadRef(db.Model):
     __tablename__ = 'headrefs'

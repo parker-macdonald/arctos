@@ -4,54 +4,105 @@
 
 {% block content %}
 <div class="container mt-4">
+    <style>
+    /* Make the stones number input spinners larger and easier to tap */
+    #stones-remaining {
+        font-size: 3rem; /* ensure large numerals */
+        line-height: 1;
+        height: 64px;
+    }
+    #stones-remaining::-webkit-outer-spin-button,
+    #stones-remaining::-webkit-inner-spin-button {
+        -webkit-transform: scale(1.6);
+        transform: scale(1.6);
+    }
+    </style>
     <div class="row">
         <div class="col-md-12">
             <h2>Run Match: {{ match.name }}</h2>
-            <p><strong>Teams:</strong> {{ match.team1_registration.pseudonym if match.team1_registration else match.team1 }} vs {{ match.team2_registration.pseudonym if match.team2_registration else match.team2 }}</p>
-            <p><strong>Refs:</strong> {{ match.refs or match.refs_initial }}</p>
+            <div class="row">
+                <div class="col-md-4">
+                    <p><strong>Teams:</strong> {{ match.team1_registration.pseudonym if match.team1_registration else match.team1 }} vs {{ match.team2_registration.pseudonym if match.team2_registration else match.team2 }}</p>
+                </div>
+                <div class="col-md-4">
+                    <p><strong>Refs:</strong> {{ match.refs or match.refs_initial }}</p>
+                </div>
+                <div class="col-md-2">
+                    {% if match.nominal_length %}
+                    <p><strong>Length:</strong> {{ match.nominal_length }} min</p>
+                    {% endif %}
+                </div>
+                <div class="col-md-2">
+                    {% if match.field %}
+                    <p><strong>Field:</strong> {{ match.field }}</p>
+                    {% endif %}
+                </div>
+            </div>
         </div>
     </div>
     
-    <!-- Match Status Bar -->
+    <!-- Score and Controls -->
     <div class="row mb-4">
         <div class="col-md-12">
             <div class="card">
                 <div class="card-body">
-                    <div class="row text-center">
-                        <div class="col-md-3">
-                            <h4>Score</h4>
+                    <div class="row">
+                        <div class="col-md-6">
+                            <h4>Score by Set</h4>
+                            <div id="score-by-set">
+                                {% set sets = points | map(attribute='set_number') | unique | sort %}
+                                {% if sets %}
+                                <!-- Team names header -->
+                                <div class="row mb-1">
+                                    <div class="col-5 text-center">
+                                        <small class="text-muted">{{ match.team1_registration.pseudonym if match.team1_registration else match.team1 }}</small>
+                                    </div>
+                                    <div class="col-2"></div>
+                                    <div class="col-5 text-center">
+                                        <small class="text-muted">{{ match.team2_registration.pseudonym if match.team2_registration else match.team2 }}</small>
+                                    </div>
+                                </div>
+                                <!-- Scores for each set -->
+                                {% for set_num in sets %}
+                                <div class="row mb-0">
+                                    <div class="col-5 text-center">
+                                        <strong id="team1-set-{{ set_num }}-score">{{ points | selectattr('set_number', 'equalto', set_num) | selectattr('winner', 'equalto', 'TEAM1') | rejectattr('rerolled', 'equalto', true) | list | length }}</strong>
+                                    </div>
+                                    <div class="col-2 text-center">
+                                        <small class="text-muted">Set{{ set_num }}</small>
+                                    </div>
+                                    <div class="col-5 text-center">
+                                        <strong id="team2-set-{{ set_num }}-score">{{ points | selectattr('set_number', 'equalto', set_num) | selectattr('winner', 'equalto', 'TEAM2') | rejectattr('rerolled', 'equalto', true) | list | length }}</strong>
+                                    </div>
+                                </div>
+                                {% endfor %}
+                                {% else %}
+                                <div class="text-muted text-center">No points yet</div>
+                                {% endif %}
+                            </div>
+                        </div>
+                        <div class="col-md-6">
                             <div class="row">
-                                <div class="col-6">
-                                    <h3 id="team1-score">{{ match.team1_registration.pseudonym if match.team1_registration else match.team1 }}</h3>
-                                    <h2 id="team1-score-value">0</h2>
+                                <div class="col-md-6">
+                                    <h4>Stones Remaining</h4>
+                                    <div class="text-center">
+                                        <input type="number" class="form-control-plaintext text-center display-4 m-0 p-0" id="stones-remaining" 
+                                               style="width: 6ch; line-height: 1;" 
+                                               value="{{ gamestate.stones_remaining if gamestate.stones_remaining else match.nstonesperset or 100 }}" 
+                                               onchange="updateStonesRemaining(this.value)">
+                                    </div>
                                 </div>
-                                <div class="col-6">
-                                    <h3 id="team2-score">{{ match.team2_registration.pseudonym if match.team2_registration else match.team2 }}</h3>
-                                    <h2 id="team2-score-value">0</h2>
+                                <div class="col-md-6">
+                                    <h4>Time Elapsed</h4>
+                                    <h2 id="time-elapsed">00:00</h2>
                                 </div>
                             </div>
-                        </div>
-                        <div class="col-md-3">
-                            <h4>Stones Remaining</h4>
-                            <div class="input-group">
-                                <input type="number" class="form-control text-center" id="stones-remaining" 
-                                       value="{{ gamestate.stones_remaining if gamestate.stones_remaining else match.nstonesperset or 100 }}" 
-                                       onchange="updateStonesRemaining(this.value)" min="0" max="1000">
-                                <button class="btn btn-outline-secondary" type="button" onclick="updateStonesRemaining(document.getElementById('stones-remaining').value)">
-                                    Update
-                                </button>
-                            </div>
-                        </div>
-                        <div class="col-md-3">
-                            <h4>Time Elapsed</h4>
-                            <h2 id="time-elapsed">00:00</h2>
-                        </div>
-                        <div class="col-md-3">
-                            <h4>Match Status</h4>
-                            <div id="match-status">
-                                <button id="point-button" class="btn btn-success btn-lg w-100" onclick="startEndPoint()">
-                                    Start Point
-                                </button>
+                            <div class="row mt-3">
+                                <div class="col-12">
+                                    <button id="point-button" class="btn btn-success btn-lg w-100" onclick="startEndPoint()">
+                                        Start Point
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -60,39 +111,6 @@
         </div>
     </div>
     
-    <!-- Match Info -->
-    <div class="row mb-4">
-        <div class="col-md-6">
-            <div class="card">
-                <div class="card-header">
-                    <h5>Match Information</h5>
-                </div>
-                <div class="card-body">
-                    <p><strong>Type:</strong> {{ match.type }}</p>
-                    {% if match.type == 'STONES' %}
-                    <p><strong>Stones per Set:</strong> {{ match.nstonesperset or 100 }}</p>
-                    {% endif %}
-                    {% if match.nominal_length %}
-                    <p><strong>Length:</strong> {{ match.nominal_length }} minutes</p>
-                    {% endif %}
-                    {% if gamestate.notes %}
-                    <p><strong>Notes:</strong> {{ gamestate.notes }}</p>
-                    {% endif %}
-                </div>
-            </div>
-        </div>
-        <div class="col-md-6">
-            <div class="card">
-                <div class="card-header">
-                    <h5>Actions</h5>
-                </div>
-                <div class="card-body">
-                    <button class="btn btn-primary mb-2" onclick="showAddNoteDialog()">Add Note</button>
-                    <button class="btn btn-warning mb-2" onclick="endMatch()">Finalize Match</button>
-                </div>
-            </div>
-        </div>
-    </div>
     
     <!-- Points Table -->
     <div class="row">
@@ -102,15 +120,13 @@
                     <h5>Points</h5>
                 </div>
                 <div class="card-body">
-                    {% if points %}
                     <div class="table-responsive">
                         <table class="table table-sm">
                             <thead>
                                 <tr>
                                     <th>#</th>
                                     <th>Set</th>
-                                    <th>Start Time</th>
-                                    <th>End Time</th>
+                                    <th>Stones Elapsed</th>
                                     <th>Winner</th>
                                     <th>Rerun</th>
                                     <th>Notes</th>
@@ -127,8 +143,7 @@
                                                onchange="updatePointSetNumber('{{ point.uuid }}', this.value)"
                                                style="width: 60px;">
                                     </td>
-                                    <td id="start-time-{{ point.uuid }}">{{ point.stamp.strftime('%H:%M:%S') if point.stamp else '' }}</td>
-                                    <td id="end-time-{{ point.uuid }}">{{ point.end_stamp.strftime('%H:%M:%S') if point.end_stamp else '' }}</td>
+                                    <td id="stones-{{ point.uuid }}" data-stamp="{{ point.stamp.isoformat() if point.stamp }}" data-end="{{ point.end_stamp.isoformat() if point.end_stamp }}">0</td>
                                     <td>
                                         <select class="form-select form-select-sm" onchange="updatePointWinner('{{ point.uuid }}', this.value)">
                                             <option value="none" {% if not point.winner %}selected{% endif %}>None</option>
@@ -144,10 +159,12 @@
                                         </div>
                                     </td>
                                     <td>
-                                        <select class="form-select form-select-sm" onchange="updatePointNotes('{{ point.uuid }}', this.value)" data-initial-value="{{ point.notes or '' }}">
-                                            <option value="">No note</option>
-                                            <!-- Notes will be populated by JavaScript -->
-                                        </select>
+                                        <button class="btn btn-sm btn-outline-primary" onclick="selectNotesForPoint('{{ point.uuid }}')">
+                                            <i class="fas fa-sticky-note"></i> Notes
+                                        </button>
+                                        <div id="notes-for-point-{{ point.uuid }}" class="mt-1">
+                                            <!-- Selected notes will appear here -->
+                                        </div>
                                     </td>
                                     <td>
                                         <button class="btn btn-sm btn-danger" onclick="deletePoint('{{ point.uuid }}')">Delete</button>
@@ -157,49 +174,67 @@
                             </tbody>
                         </table>
                     </div>
-                    {% else %}
-                    <p class="text-muted">No points recorded yet.</p>
-                    {% endif %}
                 </div>
             </div>
         </div>
     </div>
+    
+    <!-- Action Buttons -->
+    <div class="row mt-4">
+        <div class="col-12">
+            <button class="btn btn-warning btn-lg w-100" onclick="endMatch()">Finalize Match</button>
+        </div>
+    </div>
 </div>
 
-<!-- Add Note Modal -->
-<div class="modal fade" id="addNoteModal" tabindex="-1">
+<!-- Removed Add Note Modal -->
+
+<!-- Point Notes Modal -->
+<div class="modal fade" id="pointNotesModal" tabindex="-1">
     <div class="modal-dialog modal-lg">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title">Add Note</h5>
+                <h5 class="modal-title">Notes for Point</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body">
-                <!-- Existing Notes Section -->
+                <!-- Existing Notes for this Point -->
                 <div class="mb-4">
-                    <h6>Existing Notes for This Match:</h6>
-                    <div id="existing-notes-list" class="border p-3" style="max-height: 200px; overflow-y: auto;">
-                        <p class="text-muted">Loading notes...</p>
+                    <h6>Existing Notes for This Point:</h6>
+                    <div id="point-notes-list" class="border p-3" style="max-height: 200px; overflow-y: auto;">
+                        <div class="text-muted">Loading notes...</div>
                     </div>
                 </div>
                 
-                <!-- Add New Note Section -->
+                <!-- Add New Note for this Point -->
                 <div class="mb-3">
-                    <label for="noteText" class="form-label">New Note Text:</label>
-                    <input type="text" class="form-control" id="noteText" placeholder="Enter note text">
+                    <h6>Add New Note:</h6>
+                    <input type="text" class="form-control" id="pointNoteText" placeholder="Enter note text">
                 </div>
                 <div class="mb-3">
-                    <label for="noteTarget" class="form-label">Target:</label>
-                    <select class="form-select" id="noteTarget">
+                    <label for="pointNoteTarget" class="form-label">Target:</label>
+                    <select class="form-select" id="pointNoteTarget" onchange="togglePointPlayerAssignment()">
                         <option value="match">Match</option>
                         <option value="team1">{{ match.team1_registration.pseudonym if match.team1_registration else match.team1 }}</option>
                         <option value="team2">{{ match.team2_registration.pseudonym if match.team2_registration else match.team2 }}</option>
+                        <option value="player">Player</option>
                     </select>
+                </div>
+                <div class="mb-3" id="pointPlayerAssignmentSection" style="display: none;">
+                    <label for="pointNotePlayer" class="form-label">Assign to Player:</label>
+                    <input list="matchPlayers" class="form-control" id="pointNotePlayer" placeholder="Type to search players..." autocomplete="off" oninput="handlePlayerAutocomplete()" onblur="setTimeout(()=>hidePlayerSuggestions(),150)" autocomplete="new-password">
+                    <datalist id="matchPlayers">
+                        {% for p in match_players %}
+                        <option data-player-id="{{ p.player_id }}" value="{{ p.display }}">{{ p.name }}</option>
+                        {% endfor %}
+                    </datalist>
+                    <div id="playerSuggestions" class="list-group mt-1" style="max-height: 180px; overflow-y: auto; display:none;"></div>
+                    <small class="text-muted">Selecting a player will tie this note to that player.</small>
                 </div>
             </div>
             <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                <button type="button" class="btn btn-primary" onclick="addNote()">Add Note</button>
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                <button type="button" class="btn btn-primary" onclick="addPointNote()">Add Note</button>
             </div>
         </div>
     </div>
@@ -207,99 +242,423 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js"></script>
 <script>
-// WebSocket connection
+// Global variables
 const socket = io();
 const matchId = '{{ match.uuid }}';
+let currentPoint = null;
 
-// Join match room on page load
-socket.emit('join_match', { match_id: matchId });
+// Helper Functions
+function checkForUnfinishedPoint() {
+    console.log('checkForUnfinishedPoint called');
+    console.log('Match ID:', matchId);
+    console.log('Tournament URL:', '{{ tournament.url }}');
+    
+    // Get all existing points from the server
+    const url = `/{{ tournament.url }}/get-points?match_id=${matchId}`;
+    console.log('Fetching from URL:', url);
+    
+    fetch(url)
+    .then(response => {
+        console.log('Response status:', response.status);
+        return response.json();
+    })
+    .then(data => {
+        console.log('Points data received:', data);
+        if (data.success && data.points.length > 0) {
+            // Find the most recent point
+            const latestPoint = data.points[data.points.length - 1];
+            console.log('Latest point:', latestPoint);
+            
+            // If the latest point doesn't have an end time, it's still ongoing
+            if (!latestPoint.end_stamp) {
+                console.log('Found unfinished point:', latestPoint);
+                
+                // Set current point reference
+                currentPoint = {
+                    uuid: latestPoint.uuid,
+                    set_number: latestPoint.set_number,
+                    stamp: latestPoint.stamp,
+                    end_stamp: latestPoint.end_stamp
+                };
+                
+                // Update button to "End Point"
+                const button = document.getElementById('point-button');
+                button.textContent = 'End Point';
+                button.className = 'btn btn-danger btn-lg w-100';
+                console.log('Button updated to End Point');
+                
+                // Check if the point is already in the table, if not add it
+                const existingRow = document.getElementById(`point-row-${latestPoint.uuid}`);
+                if (!existingRow) {
+                    console.log('Adding unfinished point to table');
+                    addPointToTable({
+                        point_id: latestPoint.uuid,
+                        set_number: latestPoint.set_number,
+                        stamp: latestPoint.stamp,
+                        end_stamp: latestPoint.end_stamp
+                    });
+                } else {
+                    console.log('Point already exists in table');
+                }
+            } else {
+                console.log('Latest point is finished, no action needed');
+            }
+        } else {
+            console.log('No points found or error in response');
+        }
+    })
+    .catch(error => {
+        console.error('Error checking for unfinished points:', error);
+    });
+}
+
+// Initialize WebSocket connection
+socket.on('connect', function() {
+    console.log('Connected to WebSocket server');
+    // Join the match room
+    socket.emit('join_match', { match_id: matchId });
+    
+    // Check for unfinished points after a short delay to ensure DOM is ready
+    setTimeout(() => {
+        console.log('Calling checkForUnfinishedPoint...');
+        checkForUnfinishedPoint();
+    }, 200);
+});
+
+socket.on('disconnect', function() {
+    console.log('Disconnected from WebSocket server');
+});
+
+// Start/End Point Button Function
+function startEndPoint() {
+    const button = document.getElementById('point-button');
+    
+    if (button.textContent.trim() === 'Start Point') {
+        // Start a new point
+        console.log('Starting new point...');
+        socket.emit('add_point', {
+            match_id: matchId,
+            set_number: 1
+        });
+    } else {
+        // End current point
+        console.log('Ending current point...');
+        if (currentPoint) {
+            socket.emit('update_point', {
+                point_id: currentPoint.uuid,
+                end_stamp: new Date().toISOString()
+            });
+        }
+    }
+}
+
+// WebSocket Event Handlers
+socket.on('point_added', function(data) {
+    console.log('Point added:', data);
+    
+    // Update current point reference
+    currentPoint = {
+        uuid: data.point_id,
+        set_number: data.set_number,
+        stamp: data.stamp,
+        end_stamp: data.end_stamp
+    };
+    
+    // Update button to "End Point"
+    const button = document.getElementById('point-button');
+    button.textContent = 'End Point';
+    button.className = 'btn btn-danger btn-lg w-100';
+    
+    // Add point to table
+    addPointToTable(data);
+
+    // Start stones recomputation ticker for current point
+    startStonesTicker(data.stamp);
+});
+
+socket.on('point_updated', function(data) {
+    console.log('Point updated:', data);
+    
+    // Update current point if it's the one being updated
+    if (currentPoint && currentPoint.uuid === data.point_id) {
+        if (data.end_stamp) {
+            currentPoint.end_stamp = data.end_stamp;
+            // Update button to "Start Point"
+            const button = document.getElementById('point-button');
+            button.textContent = 'Start Point';
+            button.className = 'btn btn-success btn-lg w-100';
+            currentPoint = null; // Clear current point
+        }
+    }
+    
+    // Update point in table
+    updatePointInTable(data);
+
+    // Stop stones ticker when point ends
+    if (data.end_stamp) {
+        stopStonesTicker();
+    }
+});
+
+function addPointToTable(data) {
+    try {
+        console.log('Adding point to table:', data);
+        let tbody = document.getElementById('points-table-body');
+        if (!tbody) {
+            console.error('Points table body not found, waiting for DOM...');
+            // Wait a bit and try again
+            setTimeout(() => {
+                tbody = document.getElementById('points-table-body');
+                if (tbody) {
+                    console.log('Found table body on retry');
+                    addPointToTable(data);
+                } else {
+                    console.error('Points table body still not found after retry');
+                }
+            }, 100);
+            return;
+        }
+        
+        const rowCount = tbody.children.length;
+        
+        const newRow = document.createElement('tr');
+        newRow.id = `point-row-${data.point_id}`;
+        newRow.innerHTML = `
+            <td>${rowCount + 1}</td>
+            <td>
+                <input type="number" class="form-control form-control-sm" 
+                       value="${data.set_number || 1}" 
+                       onchange="updatePointSetNumber('${data.point_id}', this.value)"
+                       style="width: 60px;">
+            </td>
+            <td id="stones-${data.point_id}" data-stamp="${data.stamp || ''}" data-end="${data.end_stamp || ''}">0</td>
+            <td>
+                <select class="form-select form-select-sm" onchange="updatePointWinner('${data.point_id}', this.value)">
+                    <option value="none" selected>None</option>
+                    <option value="TEAM1">{{ match.team1_registration.pseudonym if match.team1_registration else match.team1 }}</option>
+                    <option value="TEAM2">{{ match.team2_registration.pseudonym if match.team2_registration else match.team2 }}</option>
+                </select>
+            </td>
+            <td>
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" onchange="toggleRerun('${data.point_id}', this.checked)">
+                </div>
+            </td>
+            <td>
+                <button class="btn btn-sm btn-outline-primary" onclick="selectNotesForPoint('${data.point_id}')">
+                    <i class="fas fa-sticky-note"></i> Notes
+                </button>
+                <div id="notes-for-point-${data.point_id}" class="mt-1">
+                    <!-- Selected notes will appear here -->
+                </div>
+            </td>
+            <td>
+                <button class="btn btn-sm btn-danger" onclick="deletePoint('${data.point_id}')">Delete</button>
+            </td>
+        `;
+        
+        tbody.appendChild(newRow);
+        console.log('Point added to table successfully');
+    } catch (error) {
+        console.error('Error adding point to table:', error);
+    }
+}
+
+function updatePointInTable(data) {
+    const pointId = data.point_id;
+    
+    // Update winner selection
+    const winnerSelect = document.querySelector(`select[onchange*="updatePointWinner('${pointId}'"]`);
+    if (winnerSelect) {
+        winnerSelect.value = data.winner || 'none';
+    }
+    
+    // Update reroll checkbox
+    const rerollCheckbox = document.querySelector(`input[onchange*="toggleRerun('${pointId}'"]`);
+    if (rerollCheckbox) {
+        rerollCheckbox.checked = data.rerolled || false;
+    }
+    
+    // Notes are now handled by the new selection system
+    
+    // Update stones elapsed cell data attributes and recompute
+    const stonesCell = document.getElementById(`stones-${pointId}`);
+    if (stonesCell) {
+        if (data.stamp) stonesCell.setAttribute('data-stamp', data.stamp);
+        if (data.end_stamp) stonesCell.setAttribute('data-end', data.end_stamp);
+        stonesCell.textContent = computeStonesElapsed(
+            stonesCell.getAttribute('data-stamp'),
+            stonesCell.getAttribute('data-end')
+        );
+    }
+}
+
+// Point Management Functions
+function updatePointWinner(pointId, winner) {
+    socket.emit('update_point', {
+        point_id: pointId,
+        winner: winner
+    });
+}
+
+function toggleRerun(pointId, rerolled) {
+    socket.emit('update_point', {
+        point_id: pointId,
+        rerolled: rerolled
+    });
+}
+
+
+function updatePointSetNumber(pointId, setNumber) {
+    socket.emit('update_point', {
+        point_id: pointId,
+        set_number: parseInt(setNumber)
+    });
+    
+    // Also emit a set update event for real-time synchronization
+    socket.emit('update_set', {
+        match_id: matchId,
+        point_id: pointId,
+        set_number: parseInt(setNumber)
+    });
+}
+
+function deletePoint(pointId) {
+    if (confirm('Are you sure you want to delete this point?')) {
+        // First, unassign any notes from this point
+        const notesForThisPoint = window.currentNotes.filter(note => note.point_id === pointId);
+        if (notesForThisPoint.length > 0) {
+            const noteIds = notesForThisPoint.map(note => note.uuid);
+            fetch('/{{ tournament.url }}/unassign-notes-from-point', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    point_id: pointId,
+                    note_ids: noteIds
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    console.log(`Released ${data.unassigned_count} notes back to the pool`);
+                }
+            })
+            .catch(error => {
+                console.error('Error releasing notes:', error);
+            });
+        }
+        
+        // Then delete the point
+        socket.emit('delete_point', {
+            point_id: pointId
+        });
+    }
+}
 
 // Leave match room on page unload
 window.addEventListener('beforeunload', function() {
     socket.emit('leave_match', { match_id: matchId });
 });
 
-// WebSocket event handlers
+// Additional WebSocket Event Handlers
 socket.on('score_updated', function(data) {
-    document.getElementById('team1-score-value').textContent = data.team1_score;
-    document.getElementById('team2-score-value').textContent = data.team2_score;
+    console.log('Score updated:', data);
+    // Update overall scores
+    const team1ScoreEl = document.getElementById('team1-score-value');
+    const team2ScoreEl = document.getElementById('team2-score-value');
+    if (team1ScoreEl) team1ScoreEl.textContent = data.team1_score;
+    if (team2ScoreEl) team2ScoreEl.textContent = data.team2_score;
+    
+    // Update scores by set
+    if (data.scores_by_set) {
+        for (const [setNum, scores] of Object.entries(data.scores_by_set)) {
+            const team1SetEl = document.getElementById(`team1-set-${setNum}-score`);
+            const team2SetEl = document.getElementById(`team2-set-${setNum}-score`);
+            if (team1SetEl) team1SetEl.textContent = scores.team1_score;
+            if (team2SetEl) team2SetEl.textContent = scores.team2_score;
+        }
+    }
 });
 
 socket.on('stones_updated', function(data) {
-    document.getElementById('stones-remaining').value = data.stones_remaining;
-});
-
-socket.on('point_updated', function(data) {
-    const pointId = data.point_id;
-    const winnerSelect = document.querySelector(`select[onchange*="updatePointWinner('${pointId}'"]`);
-    const rerollCheckbox = document.querySelector(`input[onchange*="toggleRerun('${pointId}'"]`);
-    const notesSelect = document.querySelector(`select[onchange*="updatePointNotes('${pointId}'"]`);
-    
-    if (winnerSelect) {
-        winnerSelect.value = data.winner || 'none';
+    console.log('Stones updated:', data);
+    // Only apply server stones after a point ends to avoid resetting during play
+    if (!stonesTickerStartIso) {
+        document.getElementById('stones-remaining').value = data.stones_remaining;
     }
-    if (rerollCheckbox) {
-        rerollCheckbox.checked = data.rerolled;
-    }
-    if (notesSelect) {
-        notesSelect.value = data.notes || '';
-    }
-});
-
-socket.on('point_added', function(data) {
-    // Add new point row to table
-    const tbody = document.getElementById('points-table-body');
-    const newRow = document.createElement('tr');
-    newRow.id = `point-row-${data.point_id}`;
-    newRow.innerHTML = `
-        <td>${tbody.children.length + 1}</td>
-        <td>
-            <input type="number" class="form-control form-control-sm" 
-                   value="${data.set_number}" 
-                   onchange="updatePointSetNumber('${data.point_id}', this.value)"
-                   style="width: 60px;">
-        </td>
-        <td id="start-time-${data.point_id}">${new Date(data.stamp).toLocaleTimeString()}</td>
-        <td id="end-time-${data.point_id}"></td>
-        <td>
-            <select class="form-select form-select-sm" onchange="updatePointWinner('${data.point_id}', this.value)">
-                <option value="none" selected>None</option>
-                <option value="TEAM1">{{ match.team1_registration.pseudonym if match.team1_registration else match.team1 }}</option>
-                <option value="TEAM2">{{ match.team2_registration.pseudonym if match.team2_registration else match.team2 }}</option>
-            </select>
-        </td>
-        <td>
-            <div class="form-check">
-                <input class="form-check-input" type="checkbox" onchange="toggleRerun('${data.point_id}', this.checked)">
-            </div>
-        </td>
-        <td>
-            <select class="form-select form-select-sm" onchange="updatePointNotes('${data.point_id}', this.value)">
-                <option value="">No note</option>
-            </select>
-        </td>
-        <td>
-            <button class="btn btn-sm btn-danger" onclick="deletePoint('${data.point_id}')">Delete</button>
-        </td>
-    `;
-    tbody.appendChild(newRow);
 });
 
 socket.on('point_deleted', function(data) {
+    console.log('Point deleted:', data);
     const row = document.getElementById(`point-row-${data.point_id}`);
     if (row) {
         row.remove();
     }
 });
 
-socket.on('notes_updated', function(data) {
-    // Update all note dropdowns
-    document.querySelectorAll('select[onchange*="updatePointNotes"]').forEach(select => {
-        const currentValue = select.value;
-        select.innerHTML = '<option value="">No note</option>' + 
-            data.notes.map(note => `<option value="${note.text}">${note.text} (${note.target})</option>`).join('');
-        select.value = currentValue;
+socket.on('note_added', function(data) {
+    console.log('Note added:', data);
+    
+    // Add the new note to the existing notes list
+    const notesList = document.getElementById('existing-notes-list');
+    if (notesList) {
+        const noteElement = document.createElement('div');
+        noteElement.className = 'border-bottom pb-2 mb-2';
+        // Convert target to readable display
+        let targetDisplay = data.target;
+        if (data.target === 'TEAM1') {
+            targetDisplay = '{{ match.team1_registration.pseudonym if match.team1_registration else match.team1 }}';
+        } else if (data.target === 'TEAM2') {
+            targetDisplay = '{{ match.team2_registration.pseudonym if match.team2_registration else match.team2 }}';
+        } else if (data.target === 'MATCH') {
+            targetDisplay = 'Match';
+        } else if (data.player_display) {
+            targetDisplay = data.player_display;
+        } else if (data.player_name) {
+            targetDisplay = data.player_name;
+        }
+        
+        noteElement.innerHTML = `
+            <div class="d-flex justify-content-between align-items-start">
+                <div>
+                    <strong>${targetDisplay}:</strong> ${data.text}
+                </div>
+                <small class="text-muted">${data.created_at ? new Date(data.created_at).toLocaleString() : 'Unknown time'}</small>
+            </div>
+        `;
+        
+        // Insert at the top of the list
+        if (notesList.firstChild && notesList.firstChild.className !== 'text-muted') {
+            notesList.insertBefore(noteElement, notesList.firstChild);
+        } else {
+            notesList.innerHTML = '';
+            notesList.appendChild(noteElement);
+        }
+    }
+    
+    // Update window.currentNotes
+    if (!window.currentNotes) window.currentNotes = [];
+    window.currentNotes.unshift({
+        uuid: data.note_id,
+        text: data.text,
+        target: data.target,
+        created_by: data.created_by,
+        created_at: data.created_at
     });
+    
+    // Notes are now handled by the new selection system
+});
+
+socket.on('set_updated', function(data) {
+    console.log('Set updated:', data);
+    // Update set number in the point table
+    const setInput = document.querySelector(`input[onchange*="updatePointSetNumber('${data.point_id}'"]`);
+    if (setInput) {
+        setInput.value = data.set_number;
+    }
+    
+    // Update any set-related displays
+    updateSetDisplay(data.set_number);
 });
 
 // Client-side functions (no state storage, all via WebSocket)
@@ -310,64 +669,69 @@ function updateStonesRemaining(stones) {
     });
 }
 
-function startEndPoint() {
-    const button = document.getElementById('point-button');
-    if (button.textContent === 'Start Point') {
-        // Start new point
-        socket.emit('add_point', {
-            match_id: matchId,
-            set_number: 1 // Default set number
-        });
-        button.textContent = 'End Point';
-        button.className = 'btn btn-danger btn-lg w-100';
-    } else {
-        // End current point
-        button.textContent = 'Start Point';
-        button.className = 'btn btn-success btn-lg w-100';
-        // Trigger score update
-        socket.emit('update_score', { match_id: matchId });
+// Stones ticker aligned to 1.5s beats using epoch
+let stonesTicker = null;
+let stonesTickerStartIso = null;
+let stonesBaseline = null; // baseline stones at point start
+let lastSentStones = null;
+let lastSentAt = 0;
+function startStonesTicker(pointStartIso) {
+    stonesTickerStartIso = pointStartIso;
+    // Initialize baseline from the current input value at the moment the point starts
+    const input = document.getElementById('stones-remaining');
+    stonesBaseline = input ? parseInt(input.value || '0') : 0;
+    if (isNaN(stonesBaseline)) stonesBaseline = 0;
+    if (stonesTicker) clearInterval(stonesTicker);
+    stonesTicker = setInterval(recomputeStonesFromEpoch, 100); // check 10x per beat
+}
+function stopStonesTicker() {
+    if (stonesTicker) {
+        clearInterval(stonesTicker);
+        stonesTicker = null;
     }
+    stonesTickerStartIso = null;
 }
-
-function updatePointWinner(pointId, winner) {
-    socket.emit('update_point', {
-        point_id: pointId,
-        winner: winner
-    });
-    // Trigger score update
-    socket.emit('update_score', { match_id: matchId });
-}
-
-function toggleRerun(pointId, rerun) {
-    socket.emit('update_point', {
-        point_id: pointId,
-        rerolled: rerun
-    });
-    // Trigger score update
-    socket.emit('update_score', { match_id: matchId });
-}
-
-function updatePointNotes(pointId, notes) {
-    socket.emit('update_point', {
-        point_id: pointId,
-        notes: notes
-    });
-}
-
-function updatePointSetNumber(pointId, setNumber) {
-    socket.emit('update_point', {
-        point_id: pointId,
-        set_number: parseInt(setNumber)
-    });
-}
-
-function deletePoint(pointId) {
-    if (confirm('Are you sure you want to delete this point?')) {
-        socket.emit('delete_point', { point_id: pointId });
-        // Trigger score update
-        socket.emit('update_score', { match_id: matchId });
+function parseIsoToDate(iso) {
+    if (!iso) return null;
+    // Remove microseconds if present and ensure 'Z' timezone if none
+    let s = String(iso);
+    s = s.replace(/\.(\d{3,6})/, '');
+    if (!/[zZ]|[\+\-]\d{2}:?\d{2}$/.test(s)) {
+        s += 'Z';
     }
+    const d = new Date(s);
+    return isNaN(d.getTime()) ? null : d;
 }
+function recomputeStonesFromEpoch() {
+    if (!stonesTickerStartIso) return;
+    const input = document.getElementById('stones-remaining');
+    if (!input) return;
+    if (stonesBaseline == null) {
+        const currentDisplayed = parseInt(input.value || '0');
+        stonesBaseline = isNaN(currentDisplayed) ? 0 : currentDisplayed;
+    }
+    try {
+        const startDate = parseIsoToDate(stonesTickerStartIso);
+        if (!startDate) return;
+        const startEpoch = startDate.getTime() / 1000;
+        const nowEpoch = Date.now() / 1000;
+        const startCount = Math.floor(startEpoch / 1.5);
+        const nowCount = Math.floor(nowEpoch / 1.5);
+        const elapsedBeats = nowCount - startCount;
+        const newRemaining = stonesBaseline - elapsedBeats;
+        if (parseInt(input.value || '0') !== newRemaining) {
+            input.value = newRemaining;
+        }
+        // Authoritatively sync to server when value changes (throttled)
+        const nowMs = Date.now();
+        if (lastSentStones !== newRemaining && (nowMs - lastSentAt) > 300) {
+            lastSentStones = newRemaining;
+            lastSentAt = nowMs;
+            socket.emit('update_stones', { match_id: matchId, stones_remaining: newRemaining });
+        }
+    } catch (e) {}
+}
+
 
 function showAddNoteDialog() {
     // Load existing notes before showing modal
@@ -381,22 +745,45 @@ function loadExistingNotes() {
     .then(response => response.json())
     .then(data => {
         const notesList = document.getElementById('existing-notes-list');
-        if (data.success && data.notes.length > 0) {
-            notesList.innerHTML = data.notes.map(note => `
-                <div class="border-bottom pb-2 mb-2">
-                    <div class="d-flex justify-content-between align-items-start">
-                        <div>
-                            <strong>${note.text}</strong>
-                            <br>
-                            <small class="text-muted">Target: ${note.target}</small>
-                            <br>
-                            <small class="text-muted">Added: ${new Date(note.stamp).toLocaleString()}</small>
+        if (data.success) {
+            // Update window.currentNotes with the latest notes
+            window.currentNotes = data.notes;
+            
+            if (data.notes.length > 0) {
+                notesList.innerHTML = data.notes.map(note => {
+                    // Convert target to readable display
+                    let targetDisplay = note.target;
+                    if (note.target === 'team1') {
+                        targetDisplay = '{{ match.team1_registration.pseudonym if match.team1_registration else match.team1 }}';
+                    } else if (note.target === 'team2') {
+                        targetDisplay = '{{ match.team2_registration.pseudonym if match.team2_registration else match.team2 }}';
+                    } else if (note.target === 'MATCH') {
+                        targetDisplay = 'Match';
+                    } else if (note.player_display) {
+                        targetDisplay = note.player_display;
+                    } else if (note.player_name) {
+                        targetDisplay = note.player_name;
+                    }
+                    
+                    return `
+                    <div class="border-bottom pb-2 mb-2">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div>
+                                <strong>${targetDisplay}:</strong> ${note.text}
+                                <div>
+                                    <button class="btn btn-sm btn-outline-danger mt-1" onclick="deletePointNote('${note.uuid}')">
+                                        <i class="fas fa-trash"></i> Remove
+                                    </button>
+                                </div>
+                            </div>
+                            <small class="text-muted">${note.created_at ? new Date(note.created_at).toLocaleString() : 'Unknown time'}</small>
                         </div>
                     </div>
-                </div>
-            `).join('');
-        } else {
-            notesList.innerHTML = '<p class="text-muted">No notes added yet.</p>';
+                `;
+                }).join('');
+            } else {
+                notesList.innerHTML = '<p class="text-muted">No notes added yet.</p>';
+            }
         }
     })
     .catch(error => {
@@ -405,58 +792,494 @@ function loadExistingNotes() {
     });
 }
 
+function togglePlayerAssignment() {
+    const targetSelect = document.getElementById('noteTarget');
+    const playerSection = document.getElementById('playerAssignmentSection');
+    const playerInput = document.getElementById('notePlayer');
+    
+    if (targetSelect.value === 'player') {
+        playerSection.style.display = 'block';
+        playerInput.required = true;
+    } else {
+        playerSection.style.display = 'none';
+        playerInput.required = false;
+        playerInput.value = '';
+    }
+}
+
+function handlePlayerAutocomplete() {
+    const input = document.getElementById('notePlayer');
+    const suggestions = document.getElementById('playerSuggestions');
+    const term = (input.value || '').toLowerCase();
+    
+    // Build a local array from server-rendered match_players for custom suggestions
+    const players = [
+        {% for p in match_players %}
+        { display: {{ p.display|tojson }}, id: {{ p.player_id|tojson }}, name: {{ p.name|tojson }} },
+        {% endfor %}
+    ];
+    
+    
+    if (!term) {
+        suggestions.style.display = 'none';
+        suggestions.innerHTML = '';
+        return;
+    }
+    const filtered = players.filter(p => p.display.toLowerCase().includes(term) || p.name.toLowerCase().includes(term));
+    console.log('Filtered players:', filtered);
+    
+    if (!filtered.length) {
+        suggestions.style.display = 'none';
+        suggestions.innerHTML = '';
+        return;
+    }
+    suggestions.innerHTML = filtered.map(p => `
+        <button type="button" class="list-group-item list-group-item-action" data-player-id="${p.id}" onclick="selectPlayerFromSuggestions('${p.display}', '${p.id}')">
+            ${p.display} <small class="text-muted">(${p.name})</small>
+        </button>
+    `).join('');
+    suggestions.style.display = 'block';
+}
+
+function selectPlayerFromSuggestions(display, id) {
+    const input = document.getElementById('notePlayer');
+    input.value = display;
+    const suggestions = document.getElementById('playerSuggestions');
+    suggestions.style.display = 'none';
+    suggestions.innerHTML = '';
+    // store selected id on input dataset for reliable retrieval
+    input.dataset.playerId = id;
+}
+
+function hidePlayerSuggestions() {
+    const suggestions = document.getElementById('playerSuggestions');
+    suggestions.style.display = 'none';
+}
+
 function addNote() {
     const text = document.getElementById('noteText').value;
     const target = document.getElementById('noteTarget').value;
+    const playerInput = document.getElementById('notePlayer');
+    let playerId = null;
+    
+    if (target === 'player') {
+        // Prefer dataset from custom suggestions selection
+        if (playerInput && playerInput.dataset && playerInput.dataset.playerId) {
+            playerId = playerInput.dataset.playerId;
+        } else if (playerInput && playerInput.value) {
+            // Fallback: map the typed display back to player_id via datalist options
+            const options = document.querySelectorAll('#matchPlayers option');
+            for (const opt of options) {
+                if (opt.value === playerInput.value) {
+                    playerId = opt.getAttribute('data-player-id');
+                    break;
+                }
+            }
+        }
+        
+        if (!playerId) {
+            alert('Please select a valid player from the list');
+            return;
+        }
+    }
     
     if (text.trim()) {
-        const newNote = {
-            text: text,
-            target: target,
-            stamp: new Date().toISOString(),
-            added_by: 'current_user' // This would be the actual user ID in a real implementation
-        };
-        
-        socket.emit('update_notes', {
-            match_id: matchId,
-            notes: [...(window.currentNotes || []), newNote]
+        // Send note to server
+        fetch('/{{ tournament.url }}/add-note', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                match_id: matchId,
+                text: text,
+                target: target,
+                player_id: playerId
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                // Refresh the existing notes list
+                loadExistingNotes();
+                
+                // Clear form but keep modal open
+                document.getElementById('noteText').value = '';
+                document.getElementById('notePlayer').value = '';
+                document.getElementById('noteTarget').value = 'match';
+                togglePlayerAssignment();
+            } else {
+                alert('Error adding note: ' + data.error);
+            }
+        })
+        .catch(error => {
+            console.error('Error adding note:', error);
+            alert('Error adding note');
         });
-        
-        // Refresh the existing notes list
-        loadExistingNotes();
-        
-        // Clear form but keep modal open
-        document.getElementById('noteText').value = '';
     }
 }
 
 function endMatch() {
-    if (confirm('Are you sure you want to finalize this match?')) {
+    if (confirm('Are you sure you want to go to the finalization page?')) {
+        // Just redirect to finalization page without completing the match
         window.location.href = '/{{ tournament.url }}/finalize-match?id={{ match.uuid }}';
     }
 }
 
+// Point notes system
+let currentPointForNotes = null;
+
+function selectNotesForPoint(pointId) {
+    currentPointForNotes = pointId;
+    
+    // Load existing notes for this point
+    loadPointNotes(pointId);
+    
+    // Show the modal
+    const modal = new bootstrap.Modal(document.getElementById('pointNotesModal'));
+    modal.show();
+}
+
+function loadPointNotes(pointId) {
+    // Load notes specifically assigned to this point
+    fetch(`/{{ tournament.url }}/get-point-notes?match_id={{ match.uuid }}&point_id=${pointId}`)
+    .then(response => response.json())
+    .then(data => {
+        const notesList = document.getElementById('point-notes-list');
+        if (data.success) {
+            if (data.notes.length > 0) {
+                notesList.innerHTML = data.notes.map(note => {
+                    // Convert target to readable display
+                    let targetDisplay = note.target;
+                    if (note.target === 'TEAM1' || note.target === 'team1') {
+                        targetDisplay = '{{ match.team1_registration.pseudonym if match.team1_registration else match.team1 }}';
+                    } else if (note.target === 'TEAM2' || note.target === 'team2') {
+                        targetDisplay = '{{ match.team2_registration.pseudonym if match.team2_registration else match.team2 }}';
+                    } else if (note.target === 'MATCH') {
+                        targetDisplay = 'Match';
+                    } else if (note.player_display) {
+                        targetDisplay = note.player_display;
+                    } else if (note.player_name) {
+                        targetDisplay = note.player_name;
+                    }
+                    
+                    const prefix = (note.target && note.target !== 'MATCH') ? `<strong>${targetDisplay}:</strong> ` : '';
+                    return `
+                    <div class="border-bottom pb-2 mb-2">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div>
+                                ${prefix}${note.text}
+                            </div>
+                            <small class="text-muted">${note.created_at ? new Date(note.created_at).toLocaleString() : 'Unknown time'}</small>
+                        </div>
+                    </div>
+                `;
+                }).join('');
+            } else {
+                notesList.innerHTML = '<div class="text-muted">No notes for this point yet.</div>';
+            }
+        } else {
+            notesList.innerHTML = '<div class="text-danger">Error loading notes</div>';
+        }
+    })
+    .catch(error => {
+        console.error('Error loading point notes:', error);
+        document.getElementById('point-notes-list').innerHTML = '<div class="text-danger">Error loading notes</div>';
+    });
+}
+
+function addPointNote() {
+    const text = document.getElementById('pointNoteText').value;
+    const target = document.getElementById('pointNoteTarget').value;
+    const playerInput = document.getElementById('pointNotePlayer');
+    let playerId = null;
+    
+    if (target === 'player') {
+        // Prefer dataset from custom suggestions selection
+        if (playerInput && playerInput.dataset && playerInput.dataset.playerId) {
+            playerId = playerInput.dataset.playerId;
+        } else if (playerInput && playerInput.value) {
+            // Fallback: map the typed display back to player_id via datalist options
+            const options = document.querySelectorAll('#matchPlayers option');
+            for (const opt of options) {
+                if (opt.value === playerInput.value) {
+                    playerId = opt.getAttribute('data-player-id');
+                    break;
+                }
+            }
+        }
+        
+        if (!playerId) {
+            alert('Please select a valid player from the list');
+            return;
+        }
+    }
+    
+    if (text.trim()) {
+        // Send note to server with point_id
+        fetch('/{{ tournament.url }}/add-point-note', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                match_id: '{{ match.uuid }}',
+                point_id: currentPointForNotes,
+                text: text,
+                target: target,
+                player_id: playerId
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                // Clear form
+                document.getElementById('pointNoteText').value = '';
+                document.getElementById('pointNotePlayer').value = '';
+                document.getElementById('pointNoteTarget').value = 'match';
+                togglePointPlayerAssignment();
+                
+                // Reload notes for this point
+                loadPointNotes(currentPointForNotes);
+                
+                // Update the point notes display in the table
+                updatePointNotesInTable();
+            } else {
+                alert('Error adding note: ' + data.error);
+            }
+        })
+        .catch(error => {
+            console.error('Error adding note:', error);
+            alert('Error adding note');
+        });
+    } else {
+        alert('Please enter note text');
+    }
+}
+
+function deletePointNote(noteId) {
+    if (!currentPointForNotes) return;
+    if (!confirm('Remove this note from the point?')) return;
+    
+    fetch('/{{ tournament.url }}/delete-point-note', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            match_id: '{{ match.uuid }}',
+            point_id: currentPointForNotes,
+            note_id: noteId
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            // Reload notes for this point
+            loadPointNotes(currentPointForNotes);
+            // Update table display
+            updatePointNotesInTableForPoint(currentPointForNotes);
+        } else {
+            alert('Error removing note: ' + data.error);
+        }
+    })
+    .catch(error => {
+        console.error('Error removing note:', error);
+        alert('Error removing note');
+    });
+}
+
+function togglePointPlayerAssignment() {
+    const targetSelect = document.getElementById('pointNoteTarget');
+    const playerSection = document.getElementById('pointPlayerAssignmentSection');
+    const playerInput = document.getElementById('pointNotePlayer');
+    
+    if (targetSelect.value === 'player') {
+        playerSection.style.display = 'block';
+        playerInput.required = true;
+    } else {
+        playerSection.style.display = 'none';
+        playerInput.required = false;
+        playerInput.value = ''; // Clear player input when hidden
+    }
+}
+
+function updatePointNotesInTable() {
+    if (!currentPointForNotes) return;
+    
+    // Reload the notes for this point and update the display in the table
+    loadPointNotes(currentPointForNotes);
+}
+
+// WebSocket handler for point notes
+socket.on('point_note_added', function(data) {
+    console.log('Point note added:', data);
+    
+    // If this note is for the currently open point, refresh the display
+    if (currentPointForNotes === data.point_id) {
+        loadPointNotes(data.point_id);
+    }
+    
+    // Update the point notes display in the table
+    updatePointNotesInTableForPoint(data.point_id);
+    // Also refresh the modal list to ensure persistence from server
+    loadPointNotes(data.point_id);
+});
+
+function updatePointNotesInTableForPoint(pointId) {
+    // Update the notes display for a specific point in the table
+    const notesContainer = document.getElementById(`notes-for-point-${pointId}`);
+    if (notesContainer) {
+        // Load and display notes for this specific point
+        fetch(`/{{ tournament.url }}/get-point-notes?match_id={{ match.uuid }}&point_id=${pointId}`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.notes.length > 0) {
+                notesContainer.innerHTML = data.notes.map(note => {
+                    // Convert target to readable display
+                    let targetDisplay = note.target;
+                    if (note.target === 'TEAM1' || note.target === 'team1') {
+                        targetDisplay = '{{ match.team1_registration.pseudonym if match.team1_registration else match.team1 }}';
+                    } else if (note.target === 'TEAM2' || note.target === 'team2') {
+                        targetDisplay = '{{ match.team2_registration.pseudonym if match.team2_registration else match.team2 }}';
+                    } else if (note.target === 'MATCH') {
+                        targetDisplay = 'Match';
+                    } else if (note.player_display) {
+                        targetDisplay = note.player_display;
+                    } else if (note.player_name) {
+                        targetDisplay = note.player_name;
+                    }
+                    
+                    const prefix = (note.target && note.target !== 'MATCH') ? `<strong>${targetDisplay}:</strong> ` : '';
+                    return `
+                    <div class="small text-muted border-start border-3 ps-2 mb-1">
+                        ${prefix}${note.text}
+                    </div>
+                `;
+                }).join('');
+            } else {
+                notesContainer.innerHTML = '';
+            }
+        })
+        .catch(error => {
+            console.error('Error loading point notes for table:', error);
+        });
+    }
+}
+
+function updateSetDisplay(setNumber) {
+    // Update any set-related displays
+    console.log('Updating set display to:', setNumber);
+    
+    // Update set number in any UI elements that show current set
+    document.querySelectorAll('.current-set-number').forEach(element => {
+        element.textContent = setNumber;
+    });
+    
+    // Update any set-specific score displays
+    updateSetScores(setNumber);
+}
+
+function updateSetScores(setNumber) {
+    // Update scores for the specific set
+    const setPoints = document.querySelectorAll(`[data-set="${setNumber}"]`);
+    console.log(`Found ${setPoints.length} elements for set ${setNumber}`);
+}
+
+// Helper function for consistent time formatting
+function formatTime(dateString) {
+    if (!dateString) return '';
+    const date = new Date(dateString);
+    return date.toLocaleTimeString('en-US', {
+        hour12: false,
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+    });
+}
+
+// Compute stones elapsed aligned to 1.5s epoch beats
+function toDateSafe(iso) {
+    if (!iso) return null;
+    let s = String(iso).replace(/\.(\d{3,6})/, '');
+    if (!/[zZ]|[\+\-]\d{2}:?\d{2}$/.test(s)) s += 'Z';
+    const d = new Date(s);
+    return isNaN(d.getTime()) ? null : d;
+}
+function computeStonesElapsed(startIso, endIso) {
+    const start = toDateSafe(startIso);
+    const end = endIso ? toDateSafe(endIso) : new Date();
+    if (!start || !end) return 0;
+    const startEpoch = start.getTime() / 1000;
+    const endEpoch = end.getTime() / 1000;
+    const startCount = Math.floor(startEpoch / 1.5);
+    const endCount = Math.floor(endEpoch / 1.5);
+    return Math.max(0, endCount - startCount);
+}
+
 // Initialize page
 document.addEventListener('DOMContentLoaded', function() {
+    console.log('DOM loaded, checking for unfinished points...');
+    
+    // Verify table exists
+    const tbody = document.getElementById('points-table-body');
+    if (tbody) {
+        console.log('Points table body found on DOM load');
+    } else {
+        console.error('Points table body NOT found on DOM load');
+    }
+    
+    // Check for unfinished points immediately (fallback in case WebSocket is slow)
+    setTimeout(() => {
+        console.log('Fallback check for unfinished points');
+        checkForUnfinishedPoint();
+    }, 1000);
+    
     // Load initial notes
     fetch('/{{ tournament.url }}/get-notes?match_id={{ match.uuid }}')
     .then(response => response.json())
     .then(data => {
         if (data.success) {
             window.currentNotes = data.notes;
-            // Update all note dropdowns with available notes, preserving current values
-            document.querySelectorAll('select[onchange*="updatePointNotes"]').forEach(select => {
-                const initialValue = select.getAttribute('data-initial-value') || '';
-                select.innerHTML = '<option value="">No note</option>' + 
-                    data.notes.map(note => `<option value="${note.text}">${note.text} (${note.target})</option>`).join('');
-                // Restore the initial value from the template
-                select.value = initialValue;
-            });
+            // Notes are now handled by the new selection system
         }
     });
     
-    // Start time elapsed timer
-    const startTime = new Date('{{ match.start_time or match.stamp }}');
+    // Load notes for all existing points
+    {% for point in points %}
+    updatePointNotesInTableForPoint('{{ point.uuid }}');
+    {% endfor %}
+    
+    // Compute initial stones elapsed and set periodic update for ongoing last point
+    try {
+        const stonesCells = document.querySelectorAll('[id^="stones-"]');
+        stonesCells.forEach(cell => {
+            const s = cell.getAttribute('data-stamp');
+            const e = cell.getAttribute('data-end');
+            cell.textContent = computeStonesElapsed(s, e);
+        });
+        setInterval(() => {
+            const cells = document.querySelectorAll('[id^="stones-"]');
+            if (cells.length) {
+                const last = cells[cells.length - 1];
+                const end = last.getAttribute('data-end');
+                if (!end) {
+                    const s = last.getAttribute('data-stamp');
+                    last.textContent = computeStonesElapsed(s, null);
+                }
+            }
+        }, 500);
+    } catch (e) {}
+
+    // Start time elapsed timer using confirmed_start_time if present, else fallback cleanly
+    const startRaw = '{{ match.confirmed_start_time or match.nominal_start_time or match.stamp }}';
+    // Normalize to ISO without microseconds and ensure timezone
+    const normStart = (function(s){
+        if (!s || s === 'None') return null;
+        let x = String(s).replace(/\.(\d{3,6})/, '');
+        if (!/[zZ]|[\+\-]\d{2}:?\d{2}$/.test(x)) x += 'Z';
+        const d = new Date(x);
+        return isNaN(d.getTime()) ? null : d;
+    })(startRaw);
+    let startTime = normStart || new Date();
     setInterval(function() {
         const now = new Date();
         const elapsed = Math.floor((now - startTime) / 1000);
@@ -466,5 +1289,15 @@ document.addEventListener('DOMContentLoaded', function() {
             `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
     }, 1000);
 });
+
+// Additional Functions
+function updateStonesRemaining(stones) {
+    socket.emit('update_stones', {
+        match_id: matchId,
+        stones_remaining: parseInt(stones)
+    });
+}
+
 </script>
 {% endblock %}
+
