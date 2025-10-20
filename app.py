@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session
+from flask import Flask, render_template, request, redirect, flash, jsonify, session
 from flask_login import LoginManager, login_user, logout_user, login_required, current_user
 from flask_socketio import SocketIO, emit, join_room, leave_room
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -12,8 +12,28 @@ app.config['SECRET_KEY'] = 'your-secret-key-here'
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///tournament.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
+# Handle subpath deployment
+import os
+if 'SCRIPT_NAME' in os.environ:
+    app.config['APPLICATION_ROOT'] = os.environ['SCRIPT_NAME']
+
+# Override url_for to handle subpath
+from flask import url_for as _url_for
+
+def url_for(endpoint, **values):
+    """Custom url_for that handles subpath deployment"""
+    url = _url_for(endpoint, **values)
+    if 'SCRIPT_NAME' in os.environ and not url.startswith(os.environ['SCRIPT_NAME']):
+        url = os.environ['SCRIPT_NAME'] + url
+    return url
+
 # Initialize SocketIO
 socketio = SocketIO(app, cors_allowed_origins="*")
+
+# Make custom url_for available in templates
+@app.context_processor
+def inject_url_for():
+    return dict(url_for=url_for)
 
 # Import models first to get db instance
 from models import db, init_db, TeamRegistration, Point, Match, Tournament
