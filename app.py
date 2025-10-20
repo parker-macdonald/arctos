@@ -98,7 +98,52 @@ def player_profile(player_id):
     registrations = PlayerRegistration.query.filter_by(player=player_id).all()
     # Get player's injuries
     injuries = Injury.query.filter_by(player=player_id).order_by(Injury.stamp.desc()).all()
-    return render_template('player_profile.html', player=player, registrations=registrations, injuries=injuries)
+    # Get notes addressed to this player (visible to the player themselves or head refs)
+    is_head_ref_flag = is_head_ref_any(player_id)
+    player_notes = []
+    if current_user.is_authenticated and (current_user.id == player_id or is_head_ref_flag):
+        try:
+            player_notes = MatchNote.query.filter_by(player_id=player_id).order_by(MatchNote.created_at.desc()).all()
+        except Exception:
+            player_notes = []
+    # Build rows with point index within the match (1-based)
+    player_note_rows = []
+    if player_notes:
+        # cache points per match
+        match_to_points = {}
+        for note in player_notes:
+            idx = '-'  # default when no point
+            match_obj = getattr(note, 'match_obj', None)
+            if match_obj and note.point_id:
+                match_id = match_obj.uuid
+                if match_id not in match_to_points:
+                    pts = Point.query.filter_by(match=match_id).order_by(Point.stamp).all()
+                    match_to_points[match_id] = [p.uuid for p in pts]
+                order = match_to_points.get(match_id, [])
+                if note.point_id in order:
+                    idx = order.index(note.point_id) + 1
+            player_note_rows.append({
+                'created_at': note.created_at,
+                'text': note.text,
+                'match_obj': match_obj,
+                'point_index': idx
+            })
+    return render_template('player_profile.html', player=player, registrations=registrations, injuries=injuries, player_notes=player_note_rows, is_head_ref=is_head_ref_flag)
+
+def is_head_ref_any(viewed_player_id: str) -> bool:
+    # Helper: is the current user a head ref in any tournament?
+    if not current_user.is_authenticated:
+        return False
+    try:
+        tournaments = Tournament.query.all()
+        for t in tournaments:
+            if t.head_refs:
+                head_refs_list = [ref.strip() for ref in t.head_refs.split(',') if ref.strip()]
+                if current_user.id in head_refs_list:
+                    return True
+    except Exception:
+        return False
+    return False
 
 @app.route('/teams/<team_id>')
 def team_profile(team_id):
@@ -121,7 +166,39 @@ def team_profile(team_id):
             ).all()
             tournament_players[team_reg.event] = accepted_players
     
-    return render_template('team_profile.html', team=team, team_registrations=team_registrations, player_registrations=player_registrations, tournaments=tournaments, tournament_players=tournament_players)
+    # Notes for this team (team-level notes only), visible to the team itself or head refs
+    is_head_ref_flag = is_head_ref_any(team_id)
+    team_notes = []
+    if current_user.is_authenticated and (current_user.id == team_id or is_head_ref_flag):
+        try:
+            from sqlalchemy import or_
+            candidate_notes = MatchNote.query.filter(or_(MatchNote.target=='TEAM1', MatchNote.target=='TEAM2')).order_by(MatchNote.created_at.desc()).all()
+            # Build rows with point index within the match (1-based) and match link
+            match_to_points = {}
+            for n in candidate_notes:
+                m = Match.query.get(n.match)
+                if not m:
+                    continue
+                if not ((m.team1 == team_id) or (m.team2 == team_id)):
+                    continue
+                idx = '-'
+                if n.point_id:
+                    mid = m.uuid
+                    if mid not in match_to_points:
+                        pts = Point.query.filter_by(match=mid).order_by(Point.stamp).all()
+                        match_to_points[mid] = [p.uuid for p in pts]
+                    order = match_to_points.get(mid, [])
+                    if n.point_id in order:
+                        idx = order.index(n.point_id) + 1
+                team_notes.append({
+                    'created_at': n.created_at,
+                    'text': n.text,
+                    'match_obj': m,
+                    'point_index': idx
+                })
+        except Exception:
+            team_notes = []
+    return render_template('team_profile.html', team=team, team_registrations=team_registrations, player_registrations=player_registrations, tournaments=tournaments, tournament_players=tournament_players, team_notes=team_notes, is_head_ref=is_head_ref_flag)
 
 @app.route('/players/<player_id>/edit', methods=['GET', 'POST'])
 @login_required
