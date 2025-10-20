@@ -83,6 +83,7 @@
                         </div>
                         <div class="col-md-6">
                             <div class="row">
+                                {% if match.type == 'STONES' %}
                                 <div class="col-md-6">
                                     <h4>Stones Remaining</h4>
                                     <div class="text-center">
@@ -92,6 +93,7 @@
                                                onchange="updateStonesRemaining(this.value)">
                                     </div>
                                 </div>
+                                {% endif %}
                                 <div class="col-md-6">
                                     <h4>Time Elapsed</h4>
                                     <h2 id="time-elapsed">00:00</h2>

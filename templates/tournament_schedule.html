@@ -45,6 +45,8 @@
                             </td>
                             <td>{{ match.field or 'TBA' }}</td>
                             <td>
+                                {% set team1_won = (match.status == 'COMPLETED' and (match.gamestate and ('"match_winner"\u003a "TEAM1"' in match.gamestate or 'match_winner":"TEAM1' in match.gamestate))) %}
+                                <div class="p-1 {% if team1_won %}border border-3 border-success rounded{% endif %}">
                                 {% if match.team1 %}
                                     {% set team1_registration = match.team1_registration %}
                                     {% if team1_registration %}
@@ -61,8 +63,11 @@
                                         {{ team1_display }}
                                     {% endif %}
                                 {% endif %}
+                                </div>
                             </td>
                             <td>
+                                {% set team2_won = (match.status == 'COMPLETED' and (match.gamestate and ('"match_winner"\u003a "TEAM2"' in match.gamestate or 'match_winner":"TEAM2' in match.gamestate))) %}
+                                <div class="p-1 {% if team2_won %}border border-3 border-success rounded{% endif %}">
                                 {% if match.team2 %}
                                     {% set team2_registration = match.team2_registration %}
                                     {% if team2_registration %}
@@ -79,6 +84,7 @@
                                         {{ team2_display }}
                                     {% endif %}
                                 {% endif %}
+                                </div>
                             </td>
                             <td>
                                 {% if match.refs %}
