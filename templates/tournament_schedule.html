@@ -132,7 +132,7 @@
                             </td>
                             <td>
                                 <a href="/{{ tournament.url }}/match?id={{ match.uuid }}" class="btn btn-sm btn-outline-primary">View</a>
-                                {% if current_user.is_authenticated and current_user.__class__.__name__ == 'Player' and is_head_ref(tournament.url, current_user.id) %}
+                                {% if current_user.is_authenticated and current_user.__class__.__name__ == 'Player' and is_head_ref %}
                                     {% if match.status == 'NOT_STARTED' and match.team1 and match.team2 and (match.refs or match.refs_initial) %}
                                         <a href="/{{ tournament.url }}/start-match?id={{ match.uuid }}" class="btn btn-sm btn-success">Start Match</a>
                                     {% elif match.status == 'NOT_STARTED' %}

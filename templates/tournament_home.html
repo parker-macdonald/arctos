@@ -39,7 +39,11 @@
             </div>
             <div class="card-body">
                 <div class="d-grid gap-2">
-                    <a href="/{{ tournament.url }}/schedule" class="btn btn-primary">Schedule</a>
+                    {% if tournament.schedule_published %}
+                        <a href="/{{ tournament.url }}/schedule" class="btn btn-primary">Schedule</a>
+                    {% else %}
+                        <a href="/{{ tournament.url }}/schedule" class="btn btn-outline-secondary">Schedule (Not Published)</a>
+                    {% endif %}
                     
                     <a href="/{{ tournament.url }}/results" class="btn btn-outline-primary">Results</a>
                     <a href="/{{ tournament.url }}/register" class="btn btn-success">Register</a>

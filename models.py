@@ -77,6 +77,7 @@ class Tournament(db.Model):
     player_reg_fee = db.Column(db.Float, default=0.0)
     payment_info = db.Column(db.Text)
     published = db.Column(db.Boolean, default=False)
+    schedule_published = db.Column(db.Boolean, default=False)
     registration_open = db.Column(db.Boolean, default=False)
     about = db.Column(db.Text)
     terms_link = db.Column(db.String(500))

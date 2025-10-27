@@ -593,9 +593,29 @@ def check_tournament_access(tournament_url):
 
 @app.route('/<tournament_url>/schedule')
 def tournament_schedule(tournament_url):
-    tournament = check_tournament_access(tournament_url)
-    if not tournament:
-        return redirect(url_for('index'))
+    tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
+    
+    # Initialize is_head_ref
+    is_head_ref = False
+    if current_user.is_authenticated and current_user.__class__.__name__ == 'Player':
+        is_head_ref = tournament.head_refs and current_user.id.lower() in [ref.strip().lower() for ref in tournament.head_refs.split(',')]
+    
+    # Check if schedule is published or user has access
+    if not tournament.schedule_published:
+        if not current_user.is_authenticated:
+            flash('The tournament schedule is not yet published', 'error')
+            return redirect(url_for('tournament_home', tournament_url=tournament_url))
+        
+        # Check if user is TO for this tournament
+        is_to = TO.query.filter_by(
+            user_id=current_user.id, 
+            user_type=current_user.__class__.__name__.lower(),
+            event=tournament_url
+        ).first()
+        
+        if not is_to and not is_head_ref:
+            flash('The tournament schedule is not yet published', 'error')
+            return redirect(url_for('tournament_home', tournament_url=tournament_url))
     
     matches = Match.query.filter_by(event=tournament_url).order_by(Match.nominal_start_time).all()
     return render_template('tournament_schedule.html', tournament=tournament, matches=matches, is_head_ref=is_head_ref)
@@ -735,6 +755,7 @@ def update_tournament_settings(tournament_url):
     tournament.terms_link = request.form.get('terms_link', '')
     tournament.head_refs = request.form.get('head_refs', '')
     tournament.published = 'published' in request.form
+    tournament.schedule_published = 'schedule_published' in request.form
     tournament.registration_open = 'registration_open' in request.form
     
     if request.form.get('start_date'):
@@ -2459,6 +2480,48 @@ def add_injury(player_id):
         return redirect(url_for('player_profile', player_id=player_id))
     
     return render_template('add_injury.html', player_id=player_id)
+
+@app.route('/players/<player_id>/edit-injury/<int:injury_id>', methods=['GET', 'POST'])
+@login_required
+def edit_injury(player_id, injury_id):
+    if current_user.id != player_id:
+        flash('You can only edit injuries on your own profile', 'error')
+        return redirect(url_for('player_profile', player_id=player_id))
+    
+    injury = Injury.query.filter_by(id=injury_id, player=player_id).first_or_404()
+    
+    if request.method == 'POST':
+        injury.message = request.form['message']
+        injury.show = 'show' in request.form
+        injury.active = 'active' in request.form
+        
+        # Parse the custom date
+        custom_date = request.form.get('custom_date')
+        if custom_date:
+            try:
+                injury.stamp = datetime.strptime(custom_date, '%Y-%m-%d')
+            except ValueError:
+                flash('Invalid date format. Please use YYYY-MM-DD.', 'error')
+                return render_template('edit_injury.html', injury=injury, player_id=player_id)
+        
+        db.session.commit()
+        flash('Injury updated successfully!', 'success')
+        return redirect(url_for('player_profile', player_id=player_id))
+    
+    return render_template('edit_injury.html', injury=injury, player_id=player_id)
+
+@app.route('/players/<player_id>/delete-injury/<int:injury_id>', methods=['POST'])
+@login_required
+def delete_injury(player_id, injury_id):
+    if current_user.id != player_id:
+        flash('You can only delete injuries from your own profile', 'error')
+        return redirect(url_for('player_profile', player_id=player_id))
+    
+    injury = Injury.query.filter_by(id=injury_id, player=player_id).first_or_404()
+    db.session.delete(injury)
+    db.session.commit()
+    flash('Injury deleted successfully!', 'success')
+    return redirect(url_for('player_profile', player_id=player_id))
 
 # WebSocket event handlers
 @socketio.on('join_match')

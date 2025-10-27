@@ -1,15 +1,15 @@
 {% extends "base.html" %}
 
-{% block title %}Add Injury{% endblock %}
+{% block title %}Edit Injury{% endblock %}
 
 {% block content %}
 <div class="row">
     <div class="col-12">
-        <h1>Add Injury</h1>
+        <h1>Edit Injury</h1>
         <nav aria-label="breadcrumb">
             <ol class="breadcrumb">
                 <li class="breadcrumb-item"><a href="{{ url_for('player_profile', player_id=player_id) }}">Player Profile</a></li>
-                <li class="breadcrumb-item active">Add Injury</li>
+                <li class="breadcrumb-item active">Edit Injury</li>
             </ol>
         </nav>
     </div>
@@ -26,19 +26,21 @@
                     <div class="mb-3">
                         <label for="message" class="form-label">Injury Description</label>
                         <textarea class="form-control" id="message" name="message" rows="4" required 
-                                  placeholder="Describe the injury, affected body parts, severity, etc."></textarea>
+                                  placeholder="Describe the injury, affected body parts, severity, etc.">{{ injury.message }}</textarea>
                         <div class="form-text">Provide details about the injury for medical and safety purposes.</div>
                     </div>
                     
                     <div class="mb-3">
-                        <label for="injury_date" class="form-label">Injury Date</label>
-                        <input type="date" class="form-control" id="injury_date" name="injury_date" required>
+                        <label for="custom_date" class="form-label">Injury Date</label>
+                        <input type="date" class="form-control" id="custom_date" name="custom_date" 
+                               value="{{ injury.stamp.strftime('%Y-%m-%d') }}" required>
                         <div class="form-text">When did this injury occur?</div>
                     </div>
                     
                     <div class="mb-3">
                         <div class="form-check">
-                            <input class="form-check-input" type="checkbox" id="active" name="active" checked>
+                            <input class="form-check-input" type="checkbox" id="active" name="active" 
+                                   {% if injury.active %}checked{% endif %}>
                             <label class="form-check-label" for="active">
                                 <strong>Active Injury</strong>
                             </label>
@@ -48,7 +50,8 @@
                     
                     <div class="mb-3">
                         <div class="form-check">
-                            <input class="form-check-input" type="checkbox" id="show" name="show" checked>
+                            <input class="form-check-input" type="checkbox" id="show" name="show" 
+                                   {% if injury.show %}checked{% endif %}>
                             <label class="form-check-label" for="show">
                                 <strong>Public Visibility</strong>
                             </label>
@@ -58,7 +61,7 @@
                     
                     <div class="d-grid gap-2 d-md-flex justify-content-md-end">
                         <a href="{{ url_for('player_profile', player_id=player_id) }}" class="btn btn-outline-secondary">Cancel</a>
-                        <button type="submit" class="btn btn-primary">Add Injury</button>
+                        <button type="submit" class="btn btn-primary">Update Injury</button>
                     </div>
                 </form>
             </div>
@@ -87,3 +90,6 @@
     </div>
 </div>
 {% endblock %}
+
+
+

@@ -154,6 +154,17 @@
                     
                     <div class="mb-3">
                         <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="schedule_published" name="schedule_published" 
+                                   {% if tournament.schedule_published %}checked{% endif %}>
+                            <label class="form-check-label" for="schedule_published">
+                                Schedule Published (schedule visible to public)
+                            </label>
+                            <div class="form-text">When checked, the tournament schedule will be visible to all users. When unchecked, only tournament organizers and head refs can view the schedule.</div>
+                        </div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <div class="form-check">
                             <input class="form-check-input" type="checkbox" id="registration_open" name="registration_open" 
                                    {% if tournament.registration_open %}checked{% endif %}>
                             <label class="form-check-label" for="registration_open">
