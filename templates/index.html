@@ -4,6 +4,19 @@
 
 {% block content %}
 
+<style>
+.tournament-card {
+    transition: box-shadow 0.2s ease, transform 0.2s ease;
+    cursor: pointer;
+    color: inherit;
+}
+.tournament-card:hover {
+    box-shadow: 0 0.5rem 1rem rgba(0,0,0,0.15);
+    transform: translateY(-2px);
+    text-decoration: none;
+}
+</style>
+
 <div class="row">
     <div class="col-12">
         <h2>Upcoming Tournaments</h2>
@@ -11,7 +24,7 @@
             <div class="row">
                 {% for tournament in tournaments %}
                 <div class="col-md-6 col-lg-4">
-                    <div class="card tournament-card">
+                    <a href="/{{ tournament.url }}" class="card tournament-card text-decoration-none" style="display:block;">
                         <div class="card-body">
                             <h5 class="card-title">{{ tournament.name }}</h5>
                             <p class="card-text">
@@ -22,13 +35,16 @@
                                     {{ tournament.start_date.strftime('%B %d, %Y') }}
                                 {% endif %}<br>
                                 <i class="fas fa-map-marker-alt"></i> {{ tournament.location or 'TBA' }}
+                                <br>
+                                {% set reg_count = team_counts.get(tournament.url, 0) %}
+                                {% if tournament.n_max_teams %}
+                                    <small class="text-muted">{{ reg_count }}/{{ tournament.n_max_teams }} teams registered</small>
+                                {% else %}
+                                    <small class="text-muted">{{ reg_count }} teams registered</small>
+                                {% endif %}
                             </p>
-                            <div class="d-flex justify-content-between">
-                                <a href="/{{ tournament.url }}" class="btn btn-primary">View Details</a>
-                                <a href="/{{ tournament.url }}/register" class="btn btn-outline-primary">Register</a>
-                            </div>
                         </div>
-                    </div>
+                    </a>
                 </div>
                 {% endfor %}
             </div>
@@ -41,40 +57,7 @@
     </div>
 </div>
 
-{% if to_tournaments %}
-<div class="row mt-5">
-    <div class="col-12">
-        <h2>My Tournaments</h2>
-        <div class="row">
-            {% for tournament in to_tournaments %}
-            <div class="col-md-6 col-lg-4">
-                <div class="card tournament-card">
-                    <div class="card-body">
-                        <h5 class="card-title">{{ tournament.name }}</h5>
-                        <p class="card-text">
-                            <i class="fas fa-calendar"></i> 
-                            {% if tournament.end_date and tournament.end_date != tournament.start_date %}
-                                {{ tournament.start_date.strftime('%B %d, %Y') }} - {{ tournament.end_date.strftime('%B %d, %Y') }}
-                            {% else %}
-                                {{ tournament.start_date.strftime('%B %d, %Y') }}
-                            {% endif %}<br>
-                            <i class="fas fa-map-marker-alt"></i> {{ tournament.location or 'TBA' }}
-                            {% if not tournament.published %}
-                            <br><span class="badge bg-warning">Not Published</span>
-                            {% endif %}
-                        </p>
-                        <div class="d-flex justify-content-between">
-                            <a href="/{{ tournament.url }}" class="btn btn-primary">View Details</a>
-                            <a href="/{{ tournament.url }}/settings" class="btn btn-outline-secondary">Settings</a>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            {% endfor %}
-        </div>
-    </div>
-</div>
-{% endif %}
+{# My Tournaments section removed per request #}
 
 <!-- Removed intro tiles for Players, Teams, and Organizers -->
 {% endblock %}

@@ -99,7 +99,12 @@ def index():
         tournament_urls = [entry.event for entry in to_entries]
         to_tournaments = Tournament.query.filter(Tournament.url.in_(tournament_urls)).order_by(Tournament.start_date.desc()).all()
     
-    return render_template('index.html', tournaments=published_tournaments, to_tournaments=to_tournaments)
+    # Compute registered team counts per tournament
+    team_counts = {}
+    for t in published_tournaments:
+        team_counts[t.url] = TeamRegistration.query.filter_by(event=t.url, status='CONFIRMED').count()
+    
+    return render_template('index.html', tournaments=published_tournaments, to_tournaments=to_tournaments, team_counts=team_counts)
 
 
 @app.route('/teams')
@@ -566,8 +571,34 @@ def tournament_home(tournament_url):
     
     # Get TO entries for access control
     to_entries = TO.query.filter_by(event=tournament_url).all()
-    
-    return render_template('tournament_home.html', tournament=tournament, teams_with_counts=teams_with_counts, unattached_players=unattached_players, to_entries=to_entries)
+
+    # Registration flags for current user
+    is_current_team_registered = False
+    is_current_player_registered = False
+    if current_user.is_authenticated:
+        if current_user.__class__.__name__ == 'Team':
+            is_current_team_registered = TeamRegistration.query.filter_by(
+                event=tournament_url,
+                team=current_user.id,
+                status='CONFIRMED'
+            ).first() is not None
+        elif current_user.__class__.__name__ == 'Player':
+            is_current_player_registered = PlayerRegistration.query.filter_by(
+                event=tournament_url,
+                player=current_user.id
+            ).filter(
+                PlayerRegistration.status.in_(['PENDING_TEAM_APPROVAL', 'CONFIRMED'])
+            ).first() is not None
+
+    return render_template(
+        'tournament_home.html',
+        tournament=tournament,
+        teams_with_counts=teams_with_counts,
+        unattached_players=unattached_players,
+        to_entries=to_entries,
+        is_current_team_registered=is_current_team_registered,
+        is_current_player_registered=is_current_player_registered,
+    )
 
 def check_tournament_access(tournament_url):
     tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
@@ -719,6 +750,9 @@ def tournament_setup(tournament_url):
 @app.route('/<tournament_url>/register')
 def tournament_register(tournament_url):
     tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
+    if not tournament.registration_open:
+        flash('Registration is not open for this tournament', 'warning')
+        return redirect(url_for('tournament_home', tournament_url=tournament_url))
     
     # Get only teams that are registered for this tournament
     team_registrations = TeamRegistration.query.filter_by(
@@ -1000,12 +1034,123 @@ def start_match(tournament_url):
         PlayerRegistration.status == 'CONFIRMED'
     ).all()
     
+    # Collect active injuries for involved players (regardless of public/private)
+    injuries_map = {}
+    try:
+        from models import Injury
+        all_player_ids = set([pr.player for pr, _ in all_players] +
+                              [pr.player for pr, _ in team1_players] +
+                              [pr.player for pr, _ in team2_players])
+        if all_player_ids:
+            active_injuries = Injury.query.filter(Injury.player.in_(list(all_player_ids)), Injury.active.is_(True)).all()
+            for inj in active_injuries:
+                injuries_map.setdefault(inj.player, []).append(inj.message)
+    except Exception:
+        injuries_map = {}
+    
     return render_template('start_match.html', 
                          tournament=tournament, 
                          match=match, 
                          team1_players=team1_players, 
                          team2_players=team2_players, 
-                         all_players=all_players)
+                         all_players=all_players,
+                         injuries_map=injuries_map)
+
+@app.route('/<tournament_url>/get-selection-notes')
+@login_required
+def get_selection_notes(tournament_url):
+    """Return notes relevant to a team and selected players for this tournament.
+    Params: match_id, team (team1|team2), player_ids (comma-separated player ids)
+    """
+    match_id = request.args.get('match_id')
+    team_side = request.args.get('team')  # 'team1' or 'team2'
+    player_ids_csv = request.args.get('player_ids', '')
+
+    if not match_id or team_side not in ('team1', 'team2'):
+        return jsonify({'success': False, 'error': 'match_id and team required'})
+
+    match = Match.query.get(match_id)
+    if not match or match.event != tournament_url:
+        return jsonify({'success': False, 'error': 'Match not found'})
+
+    # Only head refs can view
+    if not is_head_ref(tournament_url, current_user.id):
+        return jsonify({'success': False, 'error': 'Not authorized'})
+
+    team_id = match.team1 if team_side == 'team1' else match.team2
+    if not team_id:
+        return jsonify({'success': True, 'notes': []})
+
+    selected_player_ids = [pid.strip() for pid in player_ids_csv.split(',') if pid.strip()]
+
+    # Matches in this tournament for the team by relative position
+    team1_matches = Match.query.filter_by(event=tournament_url, team1=team_id).all()
+    team2_matches = Match.query.filter_by(event=tournament_url, team2=team_id).all()
+    team1_match_ids = {m.uuid for m in team1_matches}
+    team2_match_ids = {m.uuid for m in team2_matches}
+
+    from models import MatchNote, Player, PlayerRegistration
+
+    # Fetch notes for players
+    player_notes = []
+    if selected_player_ids:
+        player_notes = MatchNote.query.filter(
+            MatchNote.player_id.in_(selected_player_ids)
+        ).all()
+
+    # Fetch team-targeted notes across matches in this tournament
+    team_target_notes = MatchNote.query.filter(
+        MatchNote.match.in_(list(team1_match_ids | team2_match_ids))
+    ).filter(
+        MatchNote.target.in_(['TEAM1', 'team1', 'TEAM2', 'team2'])
+    ).all()
+
+    # Filter team-target notes to those where target aligns with team position in that note's match
+    filtered_team_notes = []
+    for n in team_target_notes:
+        if n.match in team1_match_ids and (n.target == 'TEAM1' or n.target == 'team1'):
+            filtered_team_notes.append(n)
+        elif n.match in team2_match_ids and (n.target == 'TEAM2' or n.target == 'team2'):
+            filtered_team_notes.append(n)
+
+    # Merge and de-duplicate by uuid
+    all_notes = {}
+    for n in player_notes + filtered_team_notes:
+        all_notes[getattr(n, 'uuid', id(n))] = n
+
+    # Build response with player display like other pages
+    notes_data = []
+    for n in all_notes.values():
+        player_name = None
+        player_display = None
+        if n.player_id:
+            p = Player.query.get(n.player_id)
+            if p:
+                player_name = p.name
+                reg = PlayerRegistration.query.filter_by(event=tournament_url, player=p.id).first()
+                if reg:
+                    if getattr(reg, 'jersey_name', None) and getattr(reg, 'jersey_number', None):
+                        player_display = f"{reg.jersey_name} #{reg.jersey_number}"
+                    elif getattr(reg, 'jersey_name', None):
+                        player_display = reg.jersey_name
+                    elif getattr(reg, 'jersey_number', None):
+                        player_display = f"#{reg.jersey_number}"
+                if not player_display:
+                    player_display = p.name
+        notes_data.append({
+            'text': n.text,
+            'target': n.target,
+            'player_name': player_name,
+            'player_display': player_display,
+        })
+
+    # Sort newest first if created_at exists
+    try:
+        notes_data.sort(key=lambda x: x.get('created_at') or '', reverse=True)
+    except Exception:
+        pass
+
+    return jsonify({'success': True, 'notes': notes_data})
 
 @app.route('/<tournament_url>/start-match', methods=['POST'])
 @login_required
@@ -1211,6 +1356,56 @@ def finalize_match(tournament_url):
     
     # Get all points for this match
     points = Point.query.filter_by(match=match.uuid).order_by(Point.stamp).all()
+
+    # Gather point-specific notes
+    from models import MatchNote, Player, PlayerRegistration
+    point_notes_map = {}
+    # Compute stones elapsed per point (aligned 1.5s beats)
+    stones_elapsed_map = {}
+    def compute_stones_elapsed(start_dt, end_dt):
+        try:
+            if not start_dt or not end_dt:
+                return 0
+            start_epoch = start_dt.timestamp()
+            end_epoch = end_dt.timestamp()
+            start_count = int(start_epoch // 1.5)
+            end_count = int(end_epoch // 1.5)
+            val = end_count - start_count
+            return val if val >= 0 else 0
+        except Exception:
+            return 0
+    if points:
+        point_ids = [p.uuid for p in points if getattr(p, 'uuid', None)]
+        for p in points:
+            stones_elapsed_map[p.uuid] = compute_stones_elapsed(getattr(p, 'stamp', None), getattr(p, 'end_stamp', None))
+        if point_ids:
+            notes = MatchNote.query.filter_by(match=match.uuid).filter(MatchNote.point_id.in_(point_ids)).order_by(MatchNote.created_at.asc()).all()
+            for n in notes:
+                # Build player display similar to run-match
+                player_name = None
+                player_display = None
+                if n.player_id:
+                    pl = Player.query.get(n.player_id)
+                    if pl:
+                        player_name = pl.name
+                        reg = PlayerRegistration.query.filter_by(event=tournament_url, player=pl.id).first()
+                        if reg:
+                            if getattr(reg, 'jersey_name', None) and getattr(reg, 'jersey_number', None):
+                                player_display = f"{reg.jersey_name} #{reg.jersey_number}"
+                            elif getattr(reg, 'jersey_name', None):
+                                player_display = reg.jersey_name
+                            elif getattr(reg, 'jersey_number', None):
+                                player_display = f"#{reg.jersey_number}"
+                        if not player_display:
+                            player_display = pl.name
+
+                point_notes_map.setdefault(n.point_id, []).append({
+                    'text': n.text,
+                    'target': n.target,
+                    'player_name': player_name,
+                    'player_display': player_display,
+                    'created_at': n.created_at.isoformat() if getattr(n, 'created_at', None) else None,
+                })
     
     # Parse gamestate
     gamestate = {}
@@ -1229,6 +1424,8 @@ def finalize_match(tournament_url):
                          match=match, 
                          points=points,
                          gamestate=gamestate,
+                         point_notes_map=point_notes_map,
+                         stones_elapsed_map=stones_elapsed_map,
                          team1_score=team1_score,
                          team2_score=team2_score)
 
@@ -1325,8 +1522,25 @@ def apply_match_dependencies(tournament_url: str, completed_match: Match) -> Non
     if not winner_team_id or not loser_team_id:
         pass  # Still proceed for what exists
 
-    winner_placeholder = f"{completed_match.name} winner"
-    loser_placeholder = f"{completed_match.name} loser"
+    # Build robust placeholder variants (case-insensitive, flexible separators)
+    def normalize(s: str) -> str:
+        return ' '.join((s or '').strip().lower().split())
+
+    base_name = completed_match.name
+    winner_placeholder = f"{base_name} winner"
+    loser_placeholder = f"{base_name} loser"
+    winner_alternates = set([
+        normalize(winner_placeholder),
+        normalize(f"{base_name} - winner"),
+        normalize(f"{base_name} (winner)"),
+        normalize(f"{completed_match.uuid} winner"),
+    ])
+    loser_alternates = set([
+        normalize(loser_placeholder),
+        normalize(f"{base_name} - loser"),
+        normalize(f"{base_name} (loser)"),
+        normalize(f"{completed_match.uuid} loser"),
+    ])
 
     dependent_matches = Match.query.filter_by(event=tournament_url).all()
     updated_any = False
@@ -1337,20 +1551,20 @@ def apply_match_dependencies(tournament_url: str, completed_match: Match) -> Non
         # team1
         if not m.team1 and m.team1_initial:
             initial = m.team1_initial.strip()
-            if initial == winner_placeholder and winner_team_id:
+            if normalize(initial) in winner_alternates and winner_team_id:
                 m.team1 = winner_team_id
                 updated_any = True
-            elif initial == loser_placeholder and loser_team_id:
+            elif normalize(initial) in loser_alternates and loser_team_id:
                 m.team1 = loser_team_id
                 updated_any = True
 
         # team2
         if not m.team2 and m.team2_initial:
             initial = m.team2_initial.strip()
-            if initial == winner_placeholder and winner_team_id:
+            if normalize(initial) in winner_alternates and winner_team_id:
                 m.team2 = winner_team_id
                 updated_any = True
-            elif initial == loser_placeholder and loser_team_id:
+            elif normalize(initial) in loser_alternates and loser_team_id:
                 m.team2 = loser_team_id
                 updated_any = True
 
@@ -1363,10 +1577,10 @@ def apply_match_dependencies(tournament_url: str, completed_match: Match) -> Non
             resolved = []
             changed = False
             for r in refs_list:
-                if r == winner_placeholder and winner_team_id:
+                if normalize(r) in winner_alternates and winner_team_id:
                     resolved.append(winner_team_id)
                     changed = True
-                elif r == loser_placeholder and loser_team_id:
+                elif normalize(r) in loser_alternates and loser_team_id:
                     resolved.append(loser_team_id)
                     changed = True
                 else:
@@ -2198,6 +2412,10 @@ def tournament_manage(tournament_url):
         flash('Only tournament organizers can access this page', 'error')
         return redirect(url_for('tournament_home', tournament_url=tournament_url))
     
+    # Optional search params
+    search_query = (request.args.get('search') or '').strip()
+    search_type = (request.args.get('type') or 'both').lower()  # 'teams', 'players', 'both'
+
     # Get all team registrations with team objects (excluding cancelled)
     team_registrations = TeamRegistration.query.filter_by(event=tournament_url).filter(
         TeamRegistration.status != 'CANCELLED'
@@ -2227,11 +2445,95 @@ def tournament_manage(tournament_url):
                 'player': player,
                 'team': team
             })
-    
+    # Apply search filtering (case-insensitive contains)
+    if search_query:
+        q = search_query.lower()
+        if search_type in ('both', 'teams'):
+            teams_with_registrations = [t for t in teams_with_registrations if (
+                (t['team'].name or '').lower().find(q) != -1 or
+                (t['registration'].pseudonym or '').lower().find(q) != -1
+            )]
+        else:
+            teams_with_registrations = []
+
+        if search_type in ('both', 'players'):
+            players_with_registrations = [p for p in players_with_registrations if (
+                (p['player'].name or '').lower().find(q) != -1 or
+                (p['registration'].jersey_name or '').lower().find(q) != -1
+            )]
+        else:
+            players_with_registrations = []
+
     return render_template('tournament_manage.html', 
                          tournament=tournament, 
                          team_registrations=teams_with_registrations,
-                         players_with_registrations=players_with_registrations)
+                         players_with_registrations=players_with_registrations,
+                         search_query=search_query,
+                         search_type=search_type)
+
+@app.route('/<tournament_url>/mark-team-paid', methods=['POST'])
+@login_required
+def mark_team_paid(tournament_url):
+    tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
+    # Verify TO access
+    is_to = TO.query.filter_by(
+        user_id=current_user.id, 
+        user_type=current_user.__class__.__name__.lower(),
+        event=tournament_url
+    ).first()
+    if not is_to:
+        flash('Only tournament organizers can perform this action', 'error')
+        return redirect(url_for('tournament_manage', tournament_url=tournament_url))
+
+    reg_id = request.form.get('registration_id')
+    paid = request.form.get('paid') == 'on'
+    amount_paid = float(request.form.get('amount_paid') or 0)
+    payment_method = request.form.get('payment_method', '')
+    payment_reference = request.form.get('payment_reference', '')
+    payment_notes = request.form.get('payment_notes', '')
+
+    reg = TeamRegistration.query.filter_by(id=reg_id, event=tournament_url).first_or_404()
+    reg.paid = paid
+    reg.amount_paid = amount_paid
+    reg.payment_method = payment_method
+    reg.payment_reference = payment_reference
+    reg.payment_notes = payment_notes
+    reg.paid_at = datetime.utcnow() if paid else None
+    db.session.commit()
+    flash('Team payment updated', 'success')
+    return redirect(url_for('tournament_manage', tournament_url=tournament_url))
+
+@app.route('/<tournament_url>/mark-player-paid', methods=['POST'])
+@login_required
+def mark_player_paid(tournament_url):
+    tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
+    # Verify TO access
+    is_to = TO.query.filter_by(
+        user_id=current_user.id, 
+        user_type=current_user.__class__.__name__.lower(),
+        event=tournament_url
+    ).first()
+    if not is_to:
+        flash('Only tournament organizers can perform this action', 'error')
+        return redirect(url_for('tournament_manage', tournament_url=tournament_url))
+
+    reg_id = request.form.get('registration_id')
+    paid = request.form.get('paid') == 'on'
+    amount_paid = float(request.form.get('amount_paid') or 0)
+    payment_method = request.form.get('payment_method', '')
+    payment_reference = request.form.get('payment_reference', '')
+    payment_notes = request.form.get('payment_notes', '')
+
+    reg = PlayerRegistration.query.filter_by(id=reg_id, event=tournament_url).first_or_404()
+    reg.paid = paid
+    reg.amount_paid = amount_paid
+    reg.payment_method = payment_method
+    reg.payment_reference = payment_reference
+    reg.payment_notes = payment_notes
+    reg.paid_at = datetime.utcnow() if paid else None
+    db.session.commit()
+    flash('Player payment updated', 'success')
+    return redirect(url_for('tournament_manage', tournament_url=tournament_url))
 
 @app.route('/<tournament_url>/deregister-any-team', methods=['POST'])
 @login_required

@@ -31,7 +31,7 @@
                                 <th>Set</th>
                                 <th>Point</th>
                                 <th>Winner</th>
-                                <th>Length (stones)</th>
+                                <th>Stones Elapsed</th>
                                 <th>Rerun?</th>
                                 <th>Notes</th>
                             </tr>
@@ -50,7 +50,7 @@
                                         None
                                     {% endif %}
                                 </td>
-                                <td>{{ point.nstones or 0 }}</td>
+                                <td>{{ stones_elapsed_map.get(point.uuid, 0) }}</td>
                                 <td>
                                     {% if point.rerolled %}
                                         <span class="badge bg-warning">Rerun</span>
@@ -58,7 +58,31 @@
                                         <span class="badge bg-success">Valid</span>
                                     {% endif %}
                                 </td>
-                                <td>{{ point.notes or '' }}</td>
+                                <td>
+                                    {% set pnotes = point_notes_map.get(point.uuid, []) %}
+                                    {% if pnotes %}
+                                        {% for n in pnotes %}
+                                            {% set targetDisplay = n.target %}
+                                            {% if n.target in ['TEAM1','team1'] %}
+                                                {% set targetDisplay = match.team1_registration.pseudonym if match.team1_registration else match.team1 %}
+                                            {% elif n.target in ['TEAM2','team2'] %}
+                                                {% set targetDisplay = match.team2_registration.pseudonym if match.team2_registration else match.team2 %}
+                                            {% elif n.target == 'MATCH' %}
+                                                {% set targetDisplay = 'Match' %}
+                                            {% elif n.player_display %}
+                                                {% set targetDisplay = n.player_display %}
+                                            {% elif n.player_name %}
+                                                {% set targetDisplay = n.player_name %}
+                                            {% endif %}
+                                            {% set prefix = '' if (n.target == 'MATCH') else (targetDisplay ~ ': ') %}
+                                            <div class="small text-muted border-start border-3 ps-2 mb-1">
+                                                <strong>{{ '' if n.target == 'MATCH' else targetDisplay ~ ': ' }}</strong>{{ n.text }}
+                                            </div>
+                                        {% endfor %}
+                                    {% else %}
+                                        <span class="text-muted">—</span>
+                                    {% endif %}
+                                </td>
                             </tr>
                             {% endfor %}
                         </tbody>
@@ -105,12 +129,18 @@
                             <div class="border p-3" style="height: 100px;">
                                 <canvas id="team1-signature" width="300" height="80"></canvas>
                             </div>
+                            <div class="mt-2">
+                                <button type="button" class="btn btn-sm btn-outline-secondary" onclick="clearSignature('team1-signature', 'team1-signature-data')">Clear</button>
+                            </div>
                             <input type="hidden" id="team1-signature-data" name="team1_signature">
                         </div>
                         <div class="col-md-6">
                             <h6>{{ match.team2_registration.pseudonym if match.team2_registration else match.team2 }} Captain Signature</h6>
                             <div class="border p-3" style="height: 100px;">
                                 <canvas id="team2-signature" width="300" height="80"></canvas>
+                            </div>
+                            <div class="mt-2">
+                                <button type="button" class="btn btn-sm btn-outline-secondary" onclick="clearSignature('team2-signature', 'team2-signature-data')">Clear</button>
                             </div>
                             <input type="hidden" id="team2-signature-data" name="team2_signature">
                         </div>
@@ -150,16 +180,7 @@
             </div>
         </div>
         
-        <div class="card mt-3">
-            <div class="card-header">
-                <h5 class="mb-0">Match Notes</h5>
-            </div>
-            <div class="card-body">
-                <div id="match-notes">
-                    <!-- Notes will be loaded here -->
-                </div>
-            </div>
-        </div>
+        
     </div>
 </div>
 
@@ -213,6 +234,15 @@ function initSignaturePad(canvasId, hiddenInputId) {
     ctx.strokeStyle = '#000';
     ctx.lineWidth = 2;
     ctx.lineCap = 'round';
+}
+
+function clearSignature(canvasId, hiddenInputId) {
+    const canvas = document.getElementById(canvasId);
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const hiddenInput = document.getElementById(hiddenInputId);
+    if (hiddenInput) hiddenInput.value = '';
 }
 
 // Initialize signature pads

@@ -284,6 +284,31 @@
     </div>
     
     <div class="col-md-4">
+        {% if current_user.is_authenticated and current_user.__class__.__name__ == 'Player' and is_head_ref(tournament.url, current_user.id) %}
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Head Ref Notes</h5>
+            </div>
+            <div class="card-body">
+                <div class="mb-3">
+                    <h6 class="mb-1">Start Notes</h6>
+                    {% if gamestate and gamestate.notes %}
+                        <div class="small text-muted border-start border-3 ps-2">{{ gamestate.notes }}</div>
+                    {% else %}
+                        <div class="text-muted small">None</div>
+                    {% endif %}
+                </div>
+                <div>
+                    <h6 class="mb-1">Finalize Notes</h6>
+                    {% if gamestate and gamestate.final_notes %}
+                        <div class="small text-muted border-start border-3 ps-2">{{ gamestate.final_notes }}</div>
+                    {% else %}
+                        <div class="text-muted small">None</div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        {% endif %}
     </div>
 </div>
 

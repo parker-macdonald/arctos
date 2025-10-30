@@ -87,9 +87,9 @@
                                         </span>
                                     </td>
                                     <td>
-                                        {% if current_user.is_authenticated and current_user.id == team.id %}
-                                        <a href="/{{ reg.event }}/invitations" class="btn btn-sm btn-outline-primary">View Invitations</a>
-                                        {% endif %}
+                                    {% if current_user.is_authenticated and current_user.id == team.id %}
+                                        <a href="/{{ reg.event }}/invitations" class="btn btn-sm btn-outline-primary">View Join Requests</a>
+                                    {% endif %}
                                     </td>
                                 </tr>
                                 {% endfor %}
@@ -203,7 +203,6 @@
             <div class="card-body">
                 <div class="d-grid gap-2">
                     <a href="/teams/{{ team.id }}/edit" class="btn btn-primary">Edit Team Profile</a>
-                    <a href="#" class="btn btn-outline-primary">View Invitations</a>
                 </div>
             </div>
         </div>

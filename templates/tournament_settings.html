@@ -147,8 +147,10 @@
                             <input class="form-check-input" type="checkbox" id="published" name="published" 
                                    {% if tournament.published %}checked{% endif %}>
                             <label class="form-check-label" for="published">
-                                Published (visible to public)
+                                Published
                             </label>
+                            <div class="form-text">show this tournament on the homepage!</div>
+
                         </div>
                     </div>
                     
@@ -159,7 +161,7 @@
                             <label class="form-check-label" for="schedule_published">
                                 Schedule Published (schedule visible to public)
                             </label>
-                            <div class="form-text">When checked, the tournament schedule will be visible to all users. When unchecked, only tournament organizers and head refs can view the schedule.</div>
+                            <div class="form-text">show the schedule will be visible to all users. Still visible to TOs and head refs if unchecked.</div>
                         </div>
                     </div>
                     
@@ -170,6 +172,7 @@
                             <label class="form-check-label" for="registration_open">
                                 Registration Open
                             </label>
+                            <div class="form-text">Allows <i>teams and players</i> to register.</div>
                         </div>
                     </div>
 
@@ -182,20 +185,7 @@
     </div>
 
     <div class="col-md-4">
-        <div class="card">
-            <div class="card-header">
-                <h5 class="mb-0">Quick Actions</h5>
-            </div>
-            <div class="card-body">
-                <div class="d-grid gap-2">
-                    <a href="/{{ tournament.url }}/setup" class="btn btn-primary">Setup Matches</a>
-                    <a href="/{{ tournament.url }}/schedule" class="btn btn-outline-primary">View Schedule</a>
-                    <a href="/{{ tournament.url }}/register" class="btn btn-outline-primary">Registration</a>
-                </div>
-            </div>
-        </div>
-
-        <div class="card mt-3">
+        <div class="card mt-0">
             <div class="card-header">
                 <h5 class="mb-0">Tournament Status</h5>
             </div>

@@ -60,11 +60,19 @@
                         </ul>
                     </li>
                     {% else %}
-                    <li class="nav-item">
-                        <a class="nav-link" href="{{ url_for('login') }}">Login</a>
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle" href="#" id="loginDropdown" role="button" data-bs-toggle="dropdown">Login</a>
+                        <ul class="dropdown-menu">
+                            <li><a class="dropdown-item" href="{{ url_for('login', type='player') }}">Login as Player</a></li>
+                            <li><a class="dropdown-item" href="{{ url_for('login', type='team') }}">Login as Team</a></li>
+                        </ul>
                     </li>
-                    <li class="nav-item">
-                        <a class="nav-link" href="{{ url_for('register') }}">Register</a>
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle" href="#" id="registerDropdown" role="button" data-bs-toggle="dropdown">Register</a>
+                        <ul class="dropdown-menu">
+                            <li><a class="dropdown-item" href="{{ url_for('register', type='player') }}">Register as Player</a></li>
+                            <li><a class="dropdown-item" href="{{ url_for('register', type='team') }}">Register as Team</a></li>
+                        </ul>
                     </li>
                     {% endif %}
                 </ul>

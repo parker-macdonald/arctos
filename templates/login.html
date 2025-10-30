@@ -7,7 +7,13 @@
     <div class="col-md-6">
         <div class="card">
             <div class="card-header">
-                <h3 class="mb-0">Login as {{ user_type.title() }}</h3>
+                <div class="d-flex justify-content-between align-items-center">
+                    <h3 class="mb-0">Login as {{ user_type.title() }}</h3>
+                    <div class="btn-group btn-group-sm" role="group">
+                        <a href="{{ url_for('login', type='player') }}" class="btn {% if user_type=='player' %}btn-primary{% else %}btn-outline-primary{% endif %}">Player</a>
+                        <a href="{{ url_for('login', type='team') }}" class="btn {% if user_type=='team' %}btn-primary{% else %}btn-outline-primary{% endif %}">Team</a>
+                    </div>
+                </div>
             </div>
             <div class="card-body">
                 <form method="POST">

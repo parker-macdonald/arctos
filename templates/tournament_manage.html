@@ -1,18 +1,39 @@
 {% extends "base.html" %}
 
-{% block title %}{{ tournament.name }} - Management{% endblock %}
+{% block title %}{{ tournament.name }} - Registration Management{% endblock %}
 
 {% block content %}
 <div class="row">
     <div class="col-12">
-        <h1>{{ tournament.name }} - Management</h1>
+        <h1>{{ tournament.name }} - Registration Management</h1>
         <nav aria-label="breadcrumb">
             <ol class="breadcrumb">
                 <li class="breadcrumb-item"><a href="/{{ tournament.url }}">{{ tournament.name }}</a></li>
-                <li class="breadcrumb-item active">Management</li>
+                <li class="breadcrumb-item active">Registration Management</li>
             </ol>
         </nav>
     </div>
+</div>
+
+<div class="row mb-3">
+    <div class="col-12">
+        <form class="row g-2" method="GET" action="{{ url_for('tournament_manage', tournament_url=tournament.url) }}">
+            <div class="col-md-6">
+                <input type="text" class="form-control" name="search" placeholder="Search teams or players by name" value="{{ search_query }}">
+            </div>
+            <div class="col-md-4">
+                <select class="form-select" name="type">
+                    <option value="both" {% if search_type == 'both' %}selected{% endif %}>Teams and Players</option>
+                    <option value="teams" {% if search_type == 'teams' %}selected{% endif %}>Teams</option>
+                    <option value="players" {% if search_type == 'players' %}selected{% endif %}>Players</option>
+                </select>
+            </div>
+            <div class="col-md-2 d-grid">
+                <button type="submit" class="btn btn-primary">Search</button>
+            </div>
+        </form>
+    </div>
+    
 </div>
 
 <div class="row">
@@ -44,6 +65,11 @@
                                     <span class="badge {% if team_data.registration.status == 'CONFIRMED' %}bg-success{% elif team_data.registration.status == 'CANCELLED' %}bg-danger{% else %}bg-warning{% endif %}">
                                         {{ team_data.registration.status }}
                                     </span>
+                                    {% if team_data.registration.paid %}
+                                        <span class="badge bg-primary ms-1">Paid</span>
+                                    {% else %}
+                                        <span class="badge bg-secondary ms-1">Unpaid</span>
+                                    {% endif %}
                                 </td>
                                 <td>{{ team_data.registration.registered_at.strftime('%Y-%m-%d') }}</td>
                                 <td>
@@ -53,6 +79,20 @@
                                         <button type="submit" class="btn btn-sm btn-outline-danger" onclick="return confirm('Are you sure you want to deregister this team? This will also deregister all their players.')">Deregister</button>
                                     </form>
                                     {% endif %}
+                                    <form method="POST" action="/{{ tournament.url }}/mark-team-paid" class="d-inline ms-2">
+                                        <input type="hidden" name="registration_id" value="{{ team_data.registration.id }}">
+                                        <div class="input-group input-group-sm" style="max-width: 420px;">
+                                            <span class="input-group-text">$</span>
+                                            <input type="number" step="0.01" min="0" class="form-control" name="amount_paid" placeholder="Amount" value="{{ '%.2f'|format(team_data.registration.amount_paid or 0) }}">
+                                            <div class="input-group-text">
+                                                <input class="form-check-input mt-0" type="checkbox" name="paid" {% if team_data.registration.paid %}checked{% endif %}>
+                                            </div>
+                                            <button type="submit" class="btn btn-sm btn-outline-primary">Save</button>
+                                        </div>
+                                        {% if team_data.registration.paid_at %}
+                                            <div class="form-text">Paid at {{ team_data.registration.paid_at.strftime('%Y-%m-%d %H:%M') }}</div>
+                                        {% endif %}
+                                    </form>
                                 </td>
                             </tr>
                             {% endfor %}
@@ -115,6 +155,11 @@
                                     <span class="badge {% if player_data.registration.status == 'CONFIRMED' %}bg-success{% elif player_data.registration.status == 'CANCELLED' %}bg-danger{% elif player_data.registration.status == 'PENDING_TEAM_APPROVAL' %}bg-warning{% else %}bg-secondary{% endif %}">
                                         {{ player_data.registration.status }}
                                     </span>
+                                    {% if player_data.registration.paid %}
+                                        <span class="badge bg-primary ms-1">Paid</span>
+                                    {% else %}
+                                        <span class="badge bg-secondary ms-1">Unpaid</span>
+                                    {% endif %}
                                 </td>
                                 <td>{{ player_data.registration.registered_at.strftime('%Y-%m-%d') }}</td>
                                 <td>
@@ -124,6 +169,20 @@
                                         <button type="submit" class="btn btn-sm btn-outline-danger" onclick="return confirm('Are you sure you want to deregister this player?')">Deregister</button>
                                     </form>
                                     {% endif %}
+                                    <form method="POST" action="/{{ tournament.url }}/mark-player-paid" class="d-inline ms-2">
+                                        <input type="hidden" name="registration_id" value="{{ player_data.registration.id }}">
+                                        <div class="input-group input-group-sm" style="max-width: 420px;">
+                                            <span class="input-group-text">$</span>
+                                            <input type="number" step="0.01" min="0" class="form-control" name="amount_paid" placeholder="Amount" value="{{ '%.2f'|format(player_data.registration.amount_paid or 0) }}">
+                                            <div class="input-group-text">
+                                                <input class="form-check-input mt-0" type="checkbox" name="paid" {% if player_data.registration.paid %}checked{% endif %}>
+                                            </div>
+                                            <button type="submit" class="btn btn-sm btn-outline-primary">Save</button>
+                                        </div>
+                                        {% if player_data.registration.paid_at %}
+                                            <div class="form-text">Paid at {{ player_data.registration.paid_at.strftime('%Y-%m-%d %H:%M') }}</div>
+                                        {% endif %}
+                                    </form>
                                 </td>
                             </tr>
                             {% endfor %}
@@ -135,9 +194,5 @@
     </div>
 </div>
 
-<div class="row mt-3">
-    <div class="col-12">
-        <a href="/{{ tournament.url }}" class="btn btn-outline-secondary">Back to Tournament</a>
-    </div>
-</div>
+{# Back to Tournament button removed per request #}
 {% endblock %}

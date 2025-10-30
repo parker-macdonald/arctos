@@ -35,7 +35,7 @@
                     <tbody>
                         {% for match in matches %}
                         <tr>
-                            <td>{{ match.name }}</td>
+                            <td><a href="/{{ tournament.url }}/match?id={{ match.uuid }}" class="text-decoration-none">{{ match.name }}</a></td>
                             <td>
                                 {% if match.nominal_start_time %}
                                     {{ match.nominal_start_time.strftime('%H:%M') }}

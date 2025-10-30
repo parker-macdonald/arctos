@@ -16,6 +16,55 @@
     </div>
 </div>
 
+<div class="row mb-3">
+    <div class="col-12 d-flex flex-wrap gap-2">
+        {% if tournament.schedule_published %}
+            <a href="/{{ tournament.url }}/schedule" class="btn btn-primary">Schedule</a>
+        {% else %}
+            <a href="/{{ tournament.url }}/schedule" class="btn btn-outline-secondary">Schedule (Not Published)</a>
+        {% endif %}
+        <a href="/{{ tournament.url }}/results" class="btn btn-outline-primary">Results</a>
+        {% if tournament.registration_open %}
+            {% if current_user.is_authenticated %}
+                {% if current_user.__class__.__name__ == 'Team' %}
+                    {% if is_current_team_registered %}
+                        <form method="POST" action="/{{ tournament.url }}/deregister-team" class="d-inline">
+                            <button type="submit" class="btn btn-outline-danger" onclick="return confirm('Are you sure you want to deregister your team? No refunds will be processed.')">Deregister Team</button>
+                        </form>
+                    {% else %}
+                        <a href="/{{ tournament.url }}/register" class="btn btn-success">Register</a>
+                    {% endif %}
+                {% elif current_user.__class__.__name__ == 'Player' %}
+                    {% if is_current_player_registered %}
+                        <form method="POST" action="/{{ tournament.url }}/deregister-player" class="d-inline">
+                            <button type="submit" class="btn btn-outline-danger" onclick="return confirm('Are you sure you want to deregister from this tournament? No refunds will be processed.')">Deregister Player</button>
+                        </form>
+                    {% else %}
+                        <a href="/{{ tournament.url }}/register" class="btn btn-success">Register</a>
+                    {% endif %}
+                {% else %}
+                    <a href="/{{ tournament.url }}/register" class="btn btn-success">Register</a>
+                {% endif %}
+            {% else %}
+                <a href="/{{ tournament.url }}/register" class="btn btn-success">Register</a>
+            {% endif %}
+        {% else %}
+            {% if current_user.is_authenticated %}
+                {% if current_user.__class__.__name__ == 'Team' and is_current_team_registered %}
+                    <a href="/{{ tournament.url }}/register" class="btn btn-outline-secondary">Deregister</a>
+                {% elif current_user.__class__.__name__ == 'Player' and is_current_player_registered %}
+                    <a href="/{{ tournament.url }}/register" class="btn btn-outline-secondary">Deregister</a>
+                {% else %}
+                    <a href="/{{ tournament.url }}/register" class="btn btn-outline-secondary">Register</a>
+                {% endif %}
+            {% else %}
+                <a href="/{{ tournament.url }}/register" class="btn btn-outline-secondary">Register</a>
+            {% endif %}
+        {% endif %}
+        {# TO-only buttons moved to side card #}
+    </div>
+</div>
+
 <div class="row">
     <div class="col-md-8">
         <div class="card">
@@ -32,68 +81,24 @@
         </div>
     </div>
     
+    {% set is_to = false %}
+    {% if current_user.is_authenticated and (current_user.__class__.__name__ == 'Player' or current_user.__class__.__name__ == 'Team') %}
+        {% set to_entry = to_entries|selectattr('user_id', 'equalto', current_user.id)|selectattr('user_type', 'equalto', current_user.__class__.__name__.lower())|selectattr('event', 'equalto', tournament.url)|first %}
+        {% if to_entry %}
+            {% set is_to = true %}
+        {% endif %}
+    {% endif %}
+    {% if is_to %}
     <div class="col-md-4">
         <div class="card">
             <div class="card-header">
-                <h5 class="mb-0">Quick Links</h5>
+                <h5 class="mb-0">Admin</h5>
             </div>
             <div class="card-body">
                 <div class="d-grid gap-2">
-                    {% if tournament.schedule_published %}
-                        <a href="/{{ tournament.url }}/schedule" class="btn btn-primary">Schedule</a>
-                    {% else %}
-                        <a href="/{{ tournament.url }}/schedule" class="btn btn-outline-secondary">Schedule (Not Published)</a>
-                    {% endif %}
-                    
-                    <a href="/{{ tournament.url }}/results" class="btn btn-outline-primary">Results</a>
-                    <a href="/{{ tournament.url }}/register" class="btn btn-success">Register</a>
-                    
-                    {% if current_user.is_authenticated and tournament.registration_open %}
-                        {% if current_user.__class__.__name__ == 'Team' %}
-                            {% set team_registered = false %}
-                            {% for team_data in teams_with_counts %}
-                                {% if team_data.team_registration.team == current_user.id %}
-                                    {% set team_registered = true %}
-                                {% endif %}
-                            {% endfor %}
-                            {% if team_registered %}
-                                <a href="/{{ tournament.url }}/invitations" class="btn btn-outline-info">View Invitations</a>
-                                <form method="POST" action="/{{ tournament.url }}/deregister-team" class="d-inline">
-                                    <button type="submit" class="btn btn-outline-danger" onclick="return confirm('Are you sure you want to deregister your team? This will also deregister all your players.')">Deregister Team</button>
-                                </form>
-                            {% endif %}
-                        {% elif current_user.__class__.__name__ == 'Player' %}
-                            {% set player_registered = false %}
-                            {% for player_data in unattached_players %}
-                                {% if player_data.registration.player == current_user.id %}
-                                    {% set player_registered = true %}
-                                {% endif %}
-                            {% endfor %}
-                            {% if player_registered %}
-                                <form method="POST" action="/{{ tournament.url }}/deregister-player" class="d-inline">
-                                    <button type="submit" class="btn btn-outline-danger" onclick="return confirm('Are you sure you want to deregister from this tournament?')">Deregister Player</button>
-                                </form>
-                            {% endif %}
-                        {% endif %}
-                    {% elif current_user.is_authenticated and not tournament.registration_open %}
-                        <div class="alert alert-warning mt-2">
-                            <small>Registration changes are locked. You can no longer deregister.</small>
-                        </div>
-                    {% endif %}
-                    {% if current_user.is_authenticated %}
-                        {% set is_to = false %}
-                        {% if current_user.__class__.__name__ == 'Player' or current_user.__class__.__name__ == 'Team' %}
-                            {% set to_entry = to_entries|selectattr('user_id', 'equalto', current_user.id)|selectattr('user_type', 'equalto', current_user.__class__.__name__.lower())|selectattr('event', 'equalto', tournament.url)|first %}
-                            {% if to_entry %}
-                                {% set is_to = true %}
-                            {% endif %}
-                        {% endif %}
-                        {% if is_to %}
-                        <a href="/{{ tournament.url }}/settings" class="btn btn-outline-secondary">Settings</a>
-                        <a href="/{{ tournament.url }}/setup" class="btn btn-outline-secondary">Setup</a>
-                        <a href="/{{ tournament.url }}/manage" class="btn btn-outline-warning">Manage</a>
-                        {% endif %}
-                    {% endif %}
+                    <a href="/{{ tournament.url }}/settings" class="btn btn-outline-secondary">Settings</a>
+                    <a href="/{{ tournament.url }}/setup" class="btn btn-outline-secondary">Setup Matches</a>
+                    <a href="/{{ tournament.url }}/manage" class="btn btn-outline-warning">Registration Management</a>
                 </div>
             </div>
         </div>
@@ -114,6 +119,7 @@
         </div>
         {% endif %}
     </div>
+    {% endif %}
 </div>
 
 {% if teams_with_counts %}

@@ -15,17 +15,6 @@
     </div>
 </div>
 
-{% if not tournament.registration_open %}
-<div class="row">
-    <div class="col-12">
-        <div class="alert alert-warning">
-            <h4>Registration Closed</h4>
-            <p>Registration is not currently open for this tournament.</p>
-        </div>
-    </div>
-</div>
-{% else %}
-
 <div class="row">
     <div class="col-md-8">
         {% if not current_user.is_authenticated %}
@@ -182,5 +171,4 @@
         {% endif %}
     </div>
 </div>
-{% endif %}
 {% endblock %}

@@ -28,16 +28,10 @@
                     
                     <div class="row mb-4">
                         <div class="col-md-6">
-                            <h6>Team 1: {{ match.team1_registration.pseudonym if match.team1_registration else match.team1 }}</h6>
-                        </div>
-                        <div class="col-md-6">
-                            <h6>Team 2: {{ match.team2_registration.pseudonym if match.team2_registration else match.team2 }}</h6>
-                        </div>
-                    </div>
-                    
-                    <div class="row mb-4">
-                        <div class="col-md-6">
-                            <h6>Team 1: {{ match.team1_registration.pseudonym if match.team1_registration else match.team1 }}</h6>
+                            <div class="d-flex justify-content-between align-items-center">
+                                <h6 class="mb-0">Team 1: {{ match.team1_registration.pseudonym if match.team1_registration else match.team1 }}</h6>
+                                <button type="button" class="btn btn-sm btn-outline-info" onclick="openNotesModal('team1')">View Notes</button>
+                            </div>
                             <div class="mb-3">
                                 <label class="form-label">Select Players (max {{ tournament.max_team_size_field }}):</label>
                                 <div id="team1_players_list" class="border p-3" style="max-height: 200px; overflow-y: auto;">
@@ -57,7 +51,10 @@
                         </div>
                         
                         <div class="col-md-6">
-                            <h6>Team 2: {{ match.team2_registration.pseudonym if match.team2_registration else match.team2 }}</h6>
+                            <div class="d-flex justify-content-between align-items-center">
+                                <h6 class="mb-0">Team 2: {{ match.team2_registration.pseudonym if match.team2_registration else match.team2 }}</h6>
+                                <button type="button" class="btn btn-sm btn-outline-info" onclick="openNotesModal('team2')">View Notes</button>
+                            </div>
                             <div class="mb-3">
                                 <label class="form-label">Select Players (max {{ tournament.max_team_size_field }}):</label>
                                 <div id="team2_players_list" class="border p-3" style="max-height: 200px; overflow-y: auto;">
@@ -130,7 +127,9 @@ const allPlayers = [
         name: '{{ player.name }}',
         jersey_name: '{{ player_reg.jersey_name or "" }}',
         jersey_number: '{{ player_reg.jersey_number or "" }}',
-        team: '{{ player_reg.team or "" }}'
+        team: '{{ player_reg.team or "" }}',
+        paid: {{ 'true' if player_reg.paid else 'false' }},
+        injuries: {{ (injuries_map.get(player_reg.player, []) or []) | tojson }}
     }{% if not loop.last %},{% endif %}
     {% endfor %}
 ];
@@ -196,9 +195,14 @@ function updatePlayerList(team) {
             const displayName = player.jersey_name && player.jersey_number ? 
                 `${player.jersey_name} #${player.jersey_number}` : 
                 player.name;
-            playerDiv.innerHTML = `
-                <input class="form-check-input" type="checkbox" id="${team}_${playerId}" ${isSelected ? 'checked' : ''} onchange="togglePlayer('${team}', '${playerId}')">
-                <label class="form-check-label" for="${team}_${playerId}">${displayName}</label>
+                const disabledAttr = player.paid ? '' : 'disabled';
+                const mutedClass = player.paid ? '' : ' text-muted';
+                const badge = player.paid ? '' : '<span class="badge bg-secondary ms-2">Unpaid</span>';
+                const injuriesHtml = (player.injuries && player.injuries.length) ? `<div class=\"small text-danger mt-1\">${player.injuries.join(' • ')}</div>` : '';
+                playerDiv.innerHTML = `
+                <input class="form-check-input" type="checkbox" id="${team}_${playerId}" ${isSelected ? 'checked' : ''} ${disabledAttr} onchange="togglePlayer('${team}', '${playerId}')">
+                <label class="form-check-label${mutedClass}" for="${team}_${playerId}">${displayName}</label> ${badge}
+                ${injuriesHtml}
             `;
                 listDiv.appendChild(playerDiv);
             }
@@ -263,9 +267,16 @@ function searchPlayers(team) {
             player.name;
         const playerDiv = document.createElement('div');
         playerDiv.className = 'd-flex justify-content-between align-items-center border-bottom py-2';
+        const disabledAttr = player.paid ? '' : 'disabled';
+        const mutedClass = player.paid ? '' : ' text-muted';
+        const badge = player.paid ? '' : '<span class="badge bg-secondary ms-2">Unpaid</span>';
+        const injuriesHtml = (player.injuries && player.injuries.length) ? `<div class="small text-danger mt-1">${player.injuries.join(' • ')}</div>` : '';
         playerDiv.innerHTML = `
-            <span>${displayName}</span>
-            <button class="btn btn-sm btn-primary" onclick="addPlayer('${team}', '${player.id}')">Add</button>
+            <div>
+                <span class="${mutedClass}">${displayName} ${badge}</span>
+                ${injuriesHtml}
+            </div>
+            <button class="btn btn-sm btn-primary" ${disabledAttr} onclick="addPlayer('${team}', '${player.id}')">Add</button>
         `;
         resultsDiv.appendChild(playerDiv);
     });
@@ -275,6 +286,11 @@ function searchPlayers(team) {
 function addPlayer(team, playerId) {
     const players = team === 'team1' ? team1Players : team2Players;
     const allTeamPlayers = team === 'team1' ? team1AllPlayers : team2AllPlayers;
+    const player = allPlayers.find(p => p.id === playerId);
+    if (player && !player.paid) {
+        alert('This player has not paid and cannot be selected.');
+        return;
+    }
     
     if (players.length >= maxRoster) {
         alert(`Maximum ${maxRoster} players per team`);
@@ -294,6 +310,65 @@ function addPlayer(team, playerId) {
     }
 }
 
+// Notes modal
+function openNotesModal(team) {
+    const selected = team === 'team1' ? team1Players : team2Players;
+    const playerIds = selected.join(',');
+    const matchId = '{{ match.uuid }}';
+    const url = `/${'{{ tournament.url }}'}/get-selection-notes?match_id=${matchId}&team=${team}&player_ids=${encodeURIComponent(playerIds)}`;
+    fetch(url)
+      .then(r => r.json())
+      .then(data => {
+        const body = document.getElementById('notesModalBody');
+        if (!data.success) {
+            body.innerHTML = `<div class="text-danger">${data.error || 'Failed to load notes'}</div>`;
+        } else if (!data.notes || data.notes.length === 0) {
+            body.innerHTML = '<div class="text-muted">No notes for this selection.</div>';
+        } else {
+            body.innerHTML = data.notes.map(n => {
+                let target = n.target;
+                if (target === 'TEAM1' || target === 'team1') {
+                    target = `{{ match.team1_registration.pseudonym if match.team1_registration else match.team1 }}`;
+                } else if (target === 'TEAM2' || target === 'team2') {
+                    target = `{{ match.team2_registration.pseudonym if match.team2_registration else match.team2 }}`;
+                } else if (n.player_display) {
+                    target = n.player_display;
+                } else if (n.player_name) {
+                    target = n.player_name;
+                }
+                const prefix = (n.target && n.target !== 'MATCH') ? `<strong>${target}:</strong> ` : '';
+                return `<div class="small text-muted border-start border-3 ps-2 mb-1">${prefix}${n.text}</div>`;
+            }).join('');
+        }
+        const modal = new bootstrap.Modal(document.getElementById('notesModal'));
+        modal.show();
+      })
+      .catch(() => {
+        document.getElementById('notesModalBody').innerHTML = '<div class="text-danger">Error loading notes.</div>';
+        const modal = new bootstrap.Modal(document.getElementById('notesModal'));
+        modal.show();
+      });
+}
+</script>
+
+<!-- Notes Modal -->
+<div class="modal fade" id="notesModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Relevant Notes</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body" id="notesModalBody">
+        <div class="text-muted">Loading...</div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', function() {
     updatePlayerList('team1');

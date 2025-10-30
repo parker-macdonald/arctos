@@ -100,6 +100,13 @@ class TeamRegistration(db.Model):
     pseudonym = db.Column(db.String(100), nullable=False)  # Team name for this tournament
     status = db.Column(db.String(20), default='CONFIRMED')  # CONFIRMED, CANCELLED
     registered_at = db.Column(db.DateTime, default=datetime.utcnow)
+    # Payment fields
+    paid = db.Column(db.Boolean, default=False)
+    amount_paid = db.Column(db.Float, default=0.0)
+    paid_at = db.Column(db.DateTime, nullable=True)
+    payment_method = db.Column(db.String(50))  # e.g., cash, check, venmo, stripe
+    payment_reference = db.Column(db.String(100))  # txn id, check #, etc
+    payment_notes = db.Column(db.Text)
 
 class PlayerRegistration(db.Model):
     __tablename__ = 'player_registrations'
@@ -112,6 +119,13 @@ class PlayerRegistration(db.Model):
     jersey_name = db.Column(db.String(100))  # Player name for this tournament
     status = db.Column(db.String(20), default='PENDING_TEAM_APPROVAL')  # PENDING_TEAM_APPROVAL, CONFIRMED, REJECTED
     registered_at = db.Column(db.DateTime, default=datetime.utcnow)
+    # Payment fields
+    paid = db.Column(db.Boolean, default=False)
+    amount_paid = db.Column(db.Float, default=0.0)
+    paid_at = db.Column(db.DateTime, nullable=True)
+    payment_method = db.Column(db.String(50))
+    payment_reference = db.Column(db.String(100))
+    payment_notes = db.Column(db.Text)
 
 class TeamInvitation(db.Model):
     __tablename__ = 'team_invitations'
