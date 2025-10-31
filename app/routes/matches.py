@@ -1,0 +1,527 @@
+"""
+Match operation routes (start, run, finalize, view).
+"""
+from flask import Blueprint, render_template, request, redirect, flash, jsonify
+from flask_login import login_required, current_user
+from datetime import datetime, timezone
+import json
+from models import (
+    Match, Tournament, Point, PlayerRegistration, Player, db
+)
+from app.filters import is_head_ref
+from app.utils.helpers import check_tournament_access
+from app.utils.dependencies import apply_match_dependencies
+from app.utils.scheduling import update_dynamic_schedule_after_completion
+
+bp = Blueprint('matches', __name__)
+
+
+@bp.route('/<tournament_url>/match')
+def match_page(tournament_url):
+    """Match viewing page."""
+    match_id = request.args.get('id')
+    match_name = request.args.get('name')
+    
+    if not match_id and not match_name:
+        flash('Match ID or name required', 'error')
+        return redirect(f'/{tournament_url}/schedule')
+    
+    tournament = check_tournament_access(tournament_url)
+    if not tournament:
+        return redirect('/')
+    
+    if match_id:
+        match = Match.query.filter_by(uuid=match_id, event=tournament_url).first_or_404()
+    else:
+        match = Match.query.filter_by(name=match_name, event=tournament_url).first_or_404()
+    
+    points = Point.query.filter_by(match=match.uuid).order_by(Point.stamp).all()
+    
+    gamestate = {}
+    if match.gamestate:
+        try:
+            gamestate = json.loads(match.gamestate)
+        except:
+            gamestate = {}
+    
+    is_head_ref_flag = is_head_ref(tournament_url, current_user.id) if current_user.is_authenticated and current_user.__class__.__name__ == 'Player' else False
+    
+    return render_template('match_page_websocket.html', 
+                         tournament=tournament, 
+                         match=match, 
+                         points=points,
+                         gamestate=gamestate,
+                         is_head_ref=is_head_ref_flag)
+
+
+@bp.route('/<tournament_url>/start-match')
+@login_required
+def start_match(tournament_url):
+    """Match setup page for head refs."""
+    match_id = request.args.get('id')
+    if not match_id:
+        flash('Match ID required', 'error')
+        return redirect(f'/{tournament_url}/schedule')
+    
+    match = Match.query.get(match_id)
+    if not match or match.event != tournament_url:
+        flash('Match not found', 'error')
+        return redirect(f'/{tournament_url}/schedule')
+    
+    if not is_head_ref(tournament_url, current_user.id):
+        flash('You are not authorized to start matches for this tournament', 'error')
+        return redirect(f'/{tournament_url}/schedule')
+    
+    if match.status != 'NOT_STARTED':
+        flash('This match has already been started or completed', 'error')
+        return redirect(f'/{tournament_url}/schedule')
+    
+    if not match.team1 or not match.team2 or not (match.refs or match.refs_initial):
+        flash('Cannot start match - teams and refs not yet determined', 'error')
+        return redirect(f'/{tournament_url}/schedule')
+    
+    tournament = Tournament.query.get(tournament_url)
+    
+    team1_players = db.session.query(PlayerRegistration, Player).join(
+        Player, PlayerRegistration.player == Player.id
+    ).filter(
+        PlayerRegistration.event == tournament_url,
+        PlayerRegistration.team == match.team1,
+        PlayerRegistration.status == 'CONFIRMED'
+    ).all()
+    
+    team2_players = db.session.query(PlayerRegistration, Player).join(
+        Player, PlayerRegistration.player == Player.id
+    ).filter(
+        PlayerRegistration.event == tournament_url,
+        PlayerRegistration.team == match.team2,
+        PlayerRegistration.status == 'CONFIRMED'
+    ).all()
+    
+    all_players = db.session.query(PlayerRegistration, Player).join(
+        Player, PlayerRegistration.player == Player.id
+    ).filter(
+        PlayerRegistration.event == tournament_url,
+        PlayerRegistration.status == 'CONFIRMED'
+    ).all()
+    
+    from models import Injury
+    injuries_map = {}
+    try:
+        all_player_ids = set([pr.player for pr, _ in all_players] +
+                              [pr.player for pr, _ in team1_players] +
+                              [pr.player for pr, _ in team2_players])
+        if all_player_ids:
+            active_injuries = Injury.query.filter(
+                Injury.player.in_(list(all_player_ids)), 
+                Injury.active.is_(True)
+            ).all()
+            for inj in active_injuries:
+                injuries_map.setdefault(inj.player, []).append(inj.message)
+    except Exception:
+        injuries_map = {}
+    
+    return render_template('start_match.html', 
+                         tournament=tournament, 
+                         match=match, 
+                         team1_players=team1_players, 
+                         team2_players=team2_players, 
+                         all_players=all_players,
+                         injuries_map=injuries_map)
+
+
+@bp.route('/<tournament_url>/get-selection-notes')
+@login_required
+def get_selection_notes(tournament_url):
+    """Get notes relevant to team and selected players."""
+    match_id = request.args.get('match_id')
+    team_side = request.args.get('team')
+    player_ids_csv = request.args.get('player_ids', '')
+
+    if not match_id or team_side not in ('team1', 'team2'):
+        return jsonify({'success': False, 'error': 'match_id and team required'})
+
+    match = Match.query.get(match_id)
+    if not match or match.event != tournament_url:
+        return jsonify({'success': False, 'error': 'Match not found'})
+
+    if not is_head_ref(tournament_url, current_user.id):
+        return jsonify({'success': False, 'error': 'Not authorized'})
+
+    team_id = match.team1 if team_side == 'team1' else match.team2
+    if not team_id:
+        return jsonify({'success': True, 'notes': []})
+
+    selected_player_ids = [pid.strip() for pid in player_ids_csv.split(',') if pid.strip()]
+
+    team1_matches = Match.query.filter_by(event=tournament_url, team1=team_id).all()
+    team2_matches = Match.query.filter_by(event=tournament_url, team2=team_id).all()
+    team1_match_ids = {m.uuid for m in team1_matches}
+    team2_match_ids = {m.uuid for m in team2_matches}
+
+    from models import MatchNote
+    player_notes = []
+    if selected_player_ids:
+        player_notes = MatchNote.query.filter(
+            MatchNote.player_id.in_(selected_player_ids)
+        ).all()
+
+    team_target_notes = MatchNote.query.filter(
+        MatchNote.match.in_(list(team1_match_ids | team2_match_ids))
+    ).filter(
+        MatchNote.target.in_(['TEAM1', 'team1', 'TEAM2', 'team2'])
+    ).all()
+
+    filtered_team_notes = []
+    for n in team_target_notes:
+        if n.match in team1_match_ids and (n.target == 'TEAM1' or n.target == 'team1'):
+            filtered_team_notes.append(n)
+        elif n.match in team2_match_ids and (n.target == 'TEAM2' or n.target == 'team2'):
+            filtered_team_notes.append(n)
+
+    all_notes = {}
+    for n in player_notes + filtered_team_notes:
+        all_notes[getattr(n, 'uuid', id(n))] = n
+
+    notes_data = []
+    for n in all_notes.values():
+        player_name = None
+        player_display = None
+        if n.player_id:
+            p = Player.query.get(n.player_id)
+            if p:
+                player_name = p.name
+                reg = PlayerRegistration.query.filter_by(event=tournament_url, player=p.id).first()
+                if reg:
+                    if getattr(reg, 'jersey_name', None) and getattr(reg, 'jersey_number', None):
+                        player_display = f"{reg.jersey_name} #{reg.jersey_number}"
+                    elif getattr(reg, 'jersey_name', None):
+                        player_display = reg.jersey_name
+                    elif getattr(reg, 'jersey_number', None):
+                        player_display = f"#{reg.jersey_number}"
+                if not player_display:
+                    player_display = p.name
+        notes_data.append({
+            'text': n.text,
+            'target': n.target,
+            'player_name': player_name,
+            'player_display': player_display,
+        })
+
+    try:
+        notes_data.sort(key=lambda x: x.get('created_at') or '', reverse=True)
+    except Exception:
+        pass
+
+    return jsonify({'success': True, 'notes': notes_data})
+
+
+@bp.route('/<tournament_url>/start-match', methods=['POST'])
+@login_required
+def start_match_post(tournament_url):
+    """Handle match start form submission."""
+    match_id = request.form.get('match_id')
+    if not match_id:
+        flash('Match ID required', 'error')
+        return redirect(f'/{tournament_url}/schedule')
+    
+    match = Match.query.get(match_id)
+    if not match or match.event != tournament_url:
+        flash('Match not found', 'error')
+        return redirect(f'/{tournament_url}/schedule')
+    
+    if not is_head_ref(tournament_url, current_user.id):
+        flash('You are not authorized to start matches for this tournament', 'error')
+        return redirect(f'/{tournament_url}/schedule')
+    
+    if match.status != 'NOT_STARTED':
+        flash('This match has already been started or completed', 'error')
+        return redirect(f'/{tournament_url}/schedule')
+    
+    match.status = 'IN_PROGRESS'
+    confirmed_start = datetime.now(timezone.utc)
+    match.confirmed_start_time = confirmed_start
+    
+    gamestate = {
+        'notes': request.form.get('match_notes', ''),
+        'team1_players': request.form.getlist('team1_players'),
+        'team2_players': request.form.getlist('team2_players'),
+        'started_by': current_user.id,
+        'started_at': datetime.utcnow().isoformat()
+    }
+    
+    if match.type == 'STONES':
+        stones_per_set = request.form.get('stones_per_set')
+        if stones_per_set:
+            try:
+                stones_per_set = int(stones_per_set)
+                gamestate['stones_per_set'] = stones_per_set
+                gamestate['stones_remaining'] = stones_per_set
+            except ValueError:
+                flash('Invalid stones per set value', 'error')
+                return redirect(f'/{tournament_url}/start-match?id={match.uuid}')
+    match.gamestate = json.dumps(gamestate)
+    
+    db.session.commit()
+    
+    flash('Match started successfully!', 'success')
+    return redirect(f'/{tournament_url}/run-match?id={match.uuid}')
+
+
+@bp.route('/<tournament_url>/run-match')
+@login_required
+def run_match(tournament_url):
+    """Match running page for head refs."""
+    match_id = request.args.get('id')
+    if not match_id:
+        flash('Match ID required', 'error')
+        return redirect(f'/{tournament_url}/schedule')
+    
+    match = Match.query.get(match_id)
+    if not match or match.event != tournament_url:
+        flash('Match not found', 'error')
+        return redirect(f'/{tournament_url}/schedule')
+    
+    if not is_head_ref(tournament_url, current_user.id):
+        flash('You are not authorized to run matches for this tournament', 'error')
+        return redirect(f'/{tournament_url}/schedule')
+    
+    tournament = Tournament.query.get(tournament_url)
+    points = Point.query.filter_by(match=match.uuid).order_by(Point.stamp).all()
+    
+    gamestate = {}
+    if match.gamestate:
+        try:
+            gamestate = json.loads(match.gamestate)
+        except:
+            gamestate = {}
+    
+    team1_players = []
+    team2_players = []
+    if gamestate.get('team1_players'):
+        player_ids = gamestate['team1_players']
+        for pid in player_ids:
+            pr = PlayerRegistration.query.filter_by(
+                event=tournament_url,
+                player=pid,
+                status='CONFIRMED'
+            ).first()
+            if pr:
+                player = Player.query.get(pid)
+                if player:
+                    team1_players.append((pr, player))
+    
+    if gamestate.get('team2_players'):
+        player_ids = gamestate['team2_players']
+        for pid in player_ids:
+            pr = PlayerRegistration.query.filter_by(
+                event=tournament_url,
+                player=pid,
+                status='CONFIRMED'
+            ).first()
+            if pr:
+                player = Player.query.get(pid)
+                if player:
+                    team2_players.append((pr, player))
+    
+    return render_template('run_match_websocket.html',
+                         tournament=tournament,
+                         match=match,
+                         points=points,
+                         gamestate=gamestate,
+                         team1_players=team1_players,
+                         team2_players=team2_players)
+
+
+@bp.route('/<tournament_url>/finalize-match')
+@login_required
+def finalize_match(tournament_url):
+    """Match finalization page."""
+    match_id = request.args.get('id')
+    if not match_id:
+        flash('Match ID required', 'error')
+        return redirect(f'/{tournament_url}/schedule')
+    
+    match = Match.query.get(match_id)
+    if not match or match.event != tournament_url:
+        flash('Match not found', 'error')
+        return redirect(f'/{tournament_url}/schedule')
+    
+    if not is_head_ref(tournament_url, current_user.id):
+        flash('You are not authorized to finalize matches for this tournament', 'error')
+        return redirect(f'/{tournament_url}/schedule')
+    
+    tournament = Tournament.query.get(tournament_url)
+    points = Point.query.filter_by(match=match.uuid).order_by(Point.stamp).all()
+
+    from models import MatchNote
+    point_notes_map = {}
+    stones_elapsed_map = {}
+    
+    def compute_stones_elapsed(start_dt, end_dt):
+        try:
+            if not start_dt or not end_dt:
+                return 0
+            start_epoch = start_dt.timestamp()
+            end_epoch = end_dt.timestamp()
+            start_count = int(start_epoch // 1.5)
+            end_count = int(end_epoch // 1.5)
+            val = end_count - start_count
+            return val if val >= 0 else 0
+        except Exception:
+            return 0
+    
+    if points:
+        point_ids = [p.uuid for p in points if getattr(p, 'uuid', None)]
+        for p in points:
+            stones_elapsed_map[p.uuid] = compute_stones_elapsed(getattr(p, 'stamp', None), getattr(p, 'end_stamp', None))
+        if point_ids:
+            notes = MatchNote.query.filter_by(match=match.uuid).filter(
+                MatchNote.point_id.in_(point_ids)
+            ).order_by(MatchNote.created_at.asc()).all()
+            for n in notes:
+                player_name = None
+                player_display = None
+                if n.player_id:
+                    pl = Player.query.get(n.player_id)
+                    if pl:
+                        player_name = pl.name
+                        reg = PlayerRegistration.query.filter_by(event=tournament_url, player=pl.id).first()
+                        if reg:
+                            if getattr(reg, 'jersey_name', None) and getattr(reg, 'jersey_number', None):
+                                player_display = f"{reg.jersey_name} #{reg.jersey_number}"
+                            elif getattr(reg, 'jersey_name', None):
+                                player_display = reg.jersey_name
+                            elif getattr(reg, 'jersey_number', None):
+                                player_display = f"#{reg.jersey_number}"
+                        if not player_display:
+                            player_display = pl.name
+
+                point_notes_map.setdefault(n.point_id, []).append({
+                    'text': n.text,
+                    'target': n.target,
+                    'player_name': player_name,
+                    'player_display': player_display,
+                    'created_at': n.created_at.isoformat() if getattr(n, 'created_at', None) else None,
+                })
+    
+    gamestate = {}
+    if match.gamestate:
+        try:
+            gamestate = json.loads(match.gamestate)
+        except:
+            gamestate = {}
+    
+    team1_score = sum(1 for p in points if p.winner == 'TEAM1' and not p.rerolled)
+    team2_score = sum(1 for p in points if p.winner == 'TEAM2' and not p.rerolled)
+
+    return render_template('finalize_match.html',
+                         tournament=tournament,
+                         match=match,
+                         points=points,
+                         point_notes_map=point_notes_map,
+                         stones_elapsed_map=stones_elapsed_map,
+                         team1_score=team1_score,
+                         team2_score=team2_score)
+
+
+@bp.route('/<tournament_url>/finalize-match', methods=['POST'])
+@login_required
+def finalize_match_post(tournament_url):
+    """Handle match finalization."""
+    match_id = request.form.get('match_id')
+    if not match_id:
+        flash('Match ID required', 'error')
+        return redirect(f'/{tournament_url}/schedule')
+    
+    match = Match.query.get(match_id)
+    if not match or match.event != tournament_url:
+        flash('Match not found', 'error')
+        return redirect(f'/{tournament_url}/schedule')
+    
+    if not is_head_ref(tournament_url, current_user.id):
+        flash('You are not authorized to finalize matches for this tournament', 'error')
+        return redirect(f'/{tournament_url}/schedule')
+    
+    match.status = 'COMPLETED'
+    # Note: end_time may need to be added to Match model if not present
+    
+    match_winner = request.form.get('match_winner')
+    if not match_winner:
+        flash('Please select a match winner', 'error')
+        return redirect(f'/{tournament_url}/finalize-match?id={match_id}')
+    
+    gamestate = {}
+    if match.gamestate:
+        try:
+            gamestate = json.loads(match.gamestate)
+        except:
+            gamestate = {}
+    
+    gamestate['finalized_at'] = datetime.utcnow().isoformat()
+    gamestate['finalized_by'] = current_user.id
+    gamestate['final_notes'] = request.form.get('final_notes', '')
+    gamestate['match_winner'] = match_winner
+    
+    team1_signature = request.form.get('team1_signature')
+    team2_signature = request.form.get('team2_signature')
+    if team1_signature:
+        gamestate['team1_signature'] = team1_signature
+    if team2_signature:
+        gamestate['team2_signature'] = team2_signature
+    
+    match.gamestate = json.dumps(gamestate)
+    db.session.commit()
+    
+    from app import get_socketio
+    socketio = get_socketio()
+    socketio.emit('match_completed', {
+        'match_id': match_id,
+        'status': 'COMPLETED',
+        'winner': match_winner,
+        'finalized_at': gamestate['finalized_at']
+    }, room=f'match_{match_id}')
+
+    try:
+        apply_match_dependencies(tournament_url, match)
+    except Exception as e:
+        print(f"Dependency update error for match {match.name}: {e}")
+    
+    try:
+        update_dynamic_schedule_after_completion(tournament_url, match)
+    except Exception as e:
+        print(f"Dynamic scheduling update error for match {match.name}: {e}")
+    
+    flash('Match finalized successfully!', 'success')
+    return redirect(f'/{tournament_url}/schedule')
+
+
+@bp.route('/<tournament_url>/get-points')
+@login_required
+def get_points(tournament_url):
+    """Get points for a match."""
+    match_id = request.args.get('match_id')
+    if not match_id:
+        return jsonify({'success': False, 'error': 'Match ID required'})
+    
+    match = Match.query.get(match_id)
+    if not match or match.event != tournament_url:
+        return jsonify({'success': False, 'error': 'Match not found'})
+    
+    if not is_head_ref(tournament_url, current_user.id):
+        return jsonify({'success': False, 'error': 'Not authorized'})
+    
+    points = Point.query.filter_by(match=match_id).order_by(Point.stamp).all()
+    points_data = []
+    for p in points:
+        points_data.append({
+            'uuid': p.uuid,
+            'set_number': p.set_number,
+            'winner': p.winner,
+            'rerolled': p.rerolled,
+            'stamp': p.stamp.isoformat() if p.stamp else None,
+            'end_stamp': p.end_stamp.isoformat() if p.end_stamp else None,
+        })
+    
+    return jsonify({'success': True, 'points': points_data})
+

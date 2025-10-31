@@ -10,8 +10,8 @@
                 <div class="d-flex justify-content-between align-items-center">
                     <h3 class="mb-0">Register as {{ user_type.title() }}</h3>
                     <div class="btn-group btn-group-sm" role="group">
-                        <a href="{{ url_for('register', type='player') }}" class="btn {% if user_type=='player' %}btn-primary{% else %}btn-outline-primary{% endif %}">Player</a>
-                        <a href="{{ url_for('register', type='team') }}" class="btn {% if user_type=='team' %}btn-primary{% else %}btn-outline-primary{% endif %}">Team</a>
+                        <a href="{{ url_for('auth.register', type='player') }}" class="btn {% if user_type=='player' %}btn-primary{% else %}btn-outline-primary{% endif %}">Player</a>
+                        <a href="{{ url_for('auth.register', type='team') }}" class="btn {% if user_type=='team' %}btn-primary{% else %}btn-outline-primary{% endif %}">Team</a>
                     </div>
                 </div>
             </div>
@@ -43,8 +43,8 @@
                 
                 <hr>
                 <div class="text-center">
-                    <p>Already have an account? <a href="{{ url_for('login', type=user_type) }}">Login here</a></p>
-                    <p>Or register as a <a href="{{ url_for('register', type='player' if user_type == 'team' else 'team') }}">{{ 'player' if user_type == 'team' else 'team' }}</a></p>
+                    <p>Already have an account? <a href="{{ url_for('auth.login', type=user_type) }}">Login here</a></p>
+                    <p>Or register as a <a href="{{ url_for('auth.register', type='player' if user_type == 'team' else 'team') }}">{{ 'player' if user_type == 'team' else 'team' }}</a></p>
                 </div>
             </div>
         </div>

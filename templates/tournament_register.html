@@ -22,8 +22,8 @@
             <h4>Login Required</h4>
             <p>You need to be logged in to register for this tournament.</p>
             <div class="d-flex gap-2">
-                <a href="{{ url_for('login', type='player') }}" class="btn btn-primary">Login as Player</a>
-                <a href="{{ url_for('login', type='team') }}" class="btn btn-outline-primary">Login as Team</a>
+                <a href="{{ url_for('auth.login', type='player') }}" class="btn btn-primary">Login as Player</a>
+                <a href="{{ url_for('auth.login', type='team') }}" class="btn btn-outline-primary">Login as Team</a>
             </div>
         </div>
         {% else %}

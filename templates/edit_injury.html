@@ -8,7 +8,7 @@
         <h1>Edit Injury</h1>
         <nav aria-label="breadcrumb">
             <ol class="breadcrumb">
-                <li class="breadcrumb-item"><a href="{{ url_for('player_profile', player_id=player_id) }}">Player Profile</a></li>
+                <li class="breadcrumb-item"><a href="{{ url_for('players.player_profile', player_id=player_id) }}">Player Profile</a></li>
                 <li class="breadcrumb-item active">Edit Injury</li>
             </ol>
         </nav>
@@ -60,7 +60,7 @@
                     </div>
                     
                     <div class="d-grid gap-2 d-md-flex justify-content-md-end">
-                        <a href="{{ url_for('player_profile', player_id=player_id) }}" class="btn btn-outline-secondary">Cancel</a>
+                        <a href="{{ url_for('players.player_profile', player_id=player_id) }}" class="btn btn-outline-secondary">Cancel</a>
                         <button type="submit" class="btn btn-primary">Update Injury</button>
                     </div>
                 </form>

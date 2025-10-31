@@ -10,7 +10,7 @@
                 <h3 class="mb-0">Create New Tournament</h3>
             </div>
             <div class="card-body">
-                <form method="POST" action="{{ url_for('create_tournament') }}">
+                <form method="POST" action="{{ url_for('tournaments.create_tournament') }}">
                     <div class="mb-3">
                         <label for="name" class="form-label">Tournament Name</label>
                         <input type="text" class="form-control" id="name" name="name" required>
