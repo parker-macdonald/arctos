@@ -96,8 +96,11 @@ let scheduledTimeout = null;  // Track the current timeout to prevent duplicates
 let audioContext = null;
 let audioBuffer = null;  // Preloaded audio buffer for MP3
 let syncInterval = null;
+let scheduleInterval = null;  // Interval for scheduling beats ahead
 const STORAGE_KEY = 'stones_player_kf_state';
 const AUDIO_FILE = '{{ url_for("static", filename="stone.mp3") }}';
+const SCHEDULE_AHEAD = 0.5;  // Schedule beats 0.5 seconds in advance
+const LOOKAHEAD = 0.25;  // Check every 250ms for new beats to schedule
 
 // Load Kalman filter state from localStorage
 function loadKFState() {
@@ -154,8 +157,20 @@ async function initAudio() {
     }
 }
 
-// Play the MP3 sound
-function playSound() {
+// Convert Unix timestamp to audio context time
+function unixToAudioTime(unixTime) {
+    if (!audioContext) {
+        return 0;
+    }
+    const now = Date.now() / 1000;
+    // Calculate the delay from now to the target Unix time
+    const delayFromNow = unixTime - now;
+    // Convert to audio context time (relative to current audio context time)
+    return audioContext.currentTime + delayFromNow;
+}
+
+// Play the MP3 sound at a specific audio context time
+function scheduleSoundAt(audioTime) {
     if (!audioContext || !audioBuffer) {
         console.error('Audio not initialized');
         return;
@@ -167,8 +182,27 @@ function playSound() {
         source.buffer = audioBuffer;
         source.connect(audioContext.destination);
         
-        // Play immediately at current time
-        source.start(0);
+        // Schedule to play at the precise audio context time
+        // Ensure we schedule at least 0.01 seconds in the future
+        const scheduleTime = Math.max(audioContext.currentTime + 0.01, audioTime);
+        source.start(scheduleTime);
+    } catch (error) {
+        console.error('Error scheduling sound:', error);
+    }
+}
+
+// Legacy playSound for immediate playback (fallback)
+function playSound() {
+    if (!audioContext || !audioBuffer) {
+        console.error('Audio not initialized');
+        return;
+    }
+    
+    try {
+        const source = audioContext.createBufferSource();
+        source.buffer = audioBuffer;
+        source.connect(audioContext.destination);
+        source.start(audioContext.currentTime);
     } catch (error) {
         console.error('Error playing sound:', error);
     }
@@ -223,8 +257,11 @@ async function syncWithServer() {
     }
 }
 
-// Calculate next beat time based on unix timestamp
-function calculateNextBeat() {
+// Track which beats have been scheduled to avoid duplicates
+let scheduledBeats = new Set();
+
+// Calculate next beat time based on unix timestamp (returns server time)
+function calculateNextBeatServerTime() {
     const now = Date.now() / 1000;
     const beatInterval = 1.5;
     const estimatedOffset = kalmanFilter.getState();
@@ -232,90 +269,103 @@ function calculateNextBeat() {
     // Offset represents: server_time = client_time + offset
     // We want to play when server_time is a multiple of 1.5
     // Server time at now: serverNow = now + offset
-    // Next server beat: ceil(serverNow / beatInterval) * beatInterval
-    // Client time for that beat: nextBeatServer - offset
     const serverNow = now + estimatedOffset;
     const nextBeatServer = Math.ceil(serverNow / beatInterval) * beatInterval;
-    const nextBeat = nextBeatServer - estimatedOffset;
     
-    // If the calculated beat is in the past (more than 50ms), skip to next one
-    // This handles cases where scheduling was delayed (e.g., during sync failures)
-    const beatDelay = (nextBeat - now) * 1000;
-    if (beatDelay < -0.05) {
-        // Beat is already past, schedule the next one (1.5s later)
-        return nextBeat + beatInterval;
-    }
-    
-    return nextBeat;
+    return nextBeatServer;
 }
 
-// Play sound at the next beat
-function scheduleNextBeat() {
-    if (!isPlaying) return;
+// Schedule beats using Web Audio API for precise timing (mobile-friendly)
+function scheduleBeatsAhead() {
+    if (!isPlaying || !audioContext || !audioBuffer) return;
     
-    // Cancel any existing scheduled beat to prevent duplicates
-    if (scheduledTimeout !== null) {
-        clearTimeout(scheduledTimeout);
-        scheduledTimeout = null;
-    }
-    
-    const nextBeat = calculateNextBeat();
     const now = Date.now() / 1000;
-    let delay = (nextBeat - now) * 1000;
+    const estimatedOffset = kalmanFilter.getState();
+    const serverNow = now + estimatedOffset;
     
-    // If we're too close to or past the beat, skip to the next one (1.5 seconds later)
-    // Use a minimum delay to ensure proper timing and avoid scheduling conflicts
-    // Maximum delay is 2 seconds to ensure we don't wait too long if something goes wrong
-    const MIN_DELAY = 10; // Minimum 10ms delay for scheduling
-    const MAX_DELAY = 2000; // Maximum 2 seconds (safety limit)
-    let actualNextBeat = nextBeat;
-    if (delay < MIN_DELAY) {
-        // Skip to the beat 1.5 seconds after this one
-        actualNextBeat = nextBeat + 1.5;
-        delay = Math.max(MIN_DELAY, (actualNextBeat - now) * 1000);
-    } else if (delay > MAX_DELAY) {
-        // If delay is too long (likely a calculation error), clamp it
-        // This shouldn't happen normally, but protects against extreme offsets
-        delay = MAX_DELAY;
-        actualNextBeat = now + (delay / 1000);
+    // Look ahead for the next few beats that need to be scheduled
+    const beatInterval = 1.5;
+    const lookAheadServerTime = serverNow + SCHEDULE_AHEAD;
+    
+    // Find the next beat that needs scheduling
+    let nextBeatServer = calculateNextBeatServerTime();
+    
+    // Schedule all beats within the look-ahead window
+    while (nextBeatServer <= lookAheadServerTime + beatInterval) {
+        // Check if this beat is already scheduled
+        const beatKey = Math.round(nextBeatServer * 1000); // Use ms precision for key
+        
+        if (!scheduledBeats.has(beatKey)) {
+            // Convert server time to client time
+            const clientBeatTime = nextBeatServer - estimatedOffset;
+            
+            // Convert to audio context time
+            const audioTime = unixToAudioTime(clientBeatTime);
+            
+            // Only schedule if it's in the future (with a small buffer)
+            if (audioTime > audioContext.currentTime + 0.01) {
+                scheduleSoundAt(audioTime);
+                scheduledBeats.add(beatKey);
+                
+                // Clean up old scheduled beats (keep only recent ones)
+                if (scheduledBeats.size > 100) {
+                    // Remove beats that are more than 5 seconds old
+                    const cutoff = Math.round((serverNow - 5) * 1000);
+                    scheduledBeats = new Set([...scheduledBeats].filter(key => key > cutoff));
+                }
+            }
+        }
+        
+        // Move to next beat
+        nextBeatServer += beatInterval;
     }
     
-    nextBeatTime = actualNextBeat;
-    
-    // Ensure delay is reasonable (between MIN_DELAY and MAX_DELAY)
-    delay = Math.max(MIN_DELAY, Math.min(MAX_DELAY, delay));
-    
-    scheduledTimeout = setTimeout(() => {
-        scheduledTimeout = null;  // Clear the timeout reference
-        if (isPlaying) {
-            playSound();
-            // Schedule the next beat immediately after playing (non-blocking)
-            // This ensures beats continue even if sync is delayed
-            scheduleNextBeat(); // Schedule the next one
-        }
-    }, delay);
+    nextBeatTime = (calculateNextBeatServerTime() - estimatedOffset);
+}
+
+// Legacy function for compatibility (now uses look-ahead scheduling)
+function scheduleNextBeat() {
+    // This is now handled by scheduleBeatsAhead, but keeping for compatibility
+    if (!isPlaying) return;
+    scheduleBeatsAhead();
 }
 
 // Start playback (auto-starts)
 function startPlayback() {
     if (!isPlaying) {
         isPlaying = true;
-        // Clear any existing timeout before starting
+        scheduledBeats.clear(); // Reset scheduled beats
+        
+        // Clear any existing intervals/timeouts
         if (scheduledTimeout !== null) {
             clearTimeout(scheduledTimeout);
             scheduledTimeout = null;
         }
-        scheduleNextBeat();
+        if (scheduleInterval !== null) {
+            clearInterval(scheduleInterval);
+            scheduleInterval = null;
+        }
+        
+        // Start look-ahead scheduling using Web Audio API timing
+        scheduleBeatsAhead();
+        scheduleInterval = setInterval(scheduleBeatsAhead, LOOKAHEAD * 1000);
     }
 }
 
 // Stop playback
 function stopPlayback() {
     isPlaying = false;
+    scheduledBeats.clear();
+    
     if (scheduledTimeout !== null) {
         clearTimeout(scheduledTimeout);
         scheduledTimeout = null;
     }
+    if (scheduleInterval !== null) {
+        clearInterval(scheduleInterval);
+        scheduleInterval = null;
+    }
+    
     nextBeatTime = null;
 }
 
@@ -325,9 +375,10 @@ function resetKF() {
         kalmanFilter.reset();
         saveKFState();
         updateDisplay();
-        // Reschedule beat with new offset
+        // Clear scheduled beats and reschedule with new offset
         if (isPlaying) {
-            scheduleNextBeat();
+            scheduledBeats.clear();
+            scheduleBeatsAhead();
         }
     }
 }
