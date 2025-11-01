@@ -3,18 +3,6 @@
 {% block title %}Run Match - {{ tournament.name }}{% endblock %}
 
 {% block content %}
-<!-- MathJax for LaTeX rendering -->
-<script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
-<script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
-<script>
-window.MathJax = {
-    tex: {
-        inlineMath: [['$', '$'], ['\\(', '\\)']],
-        displayMath: [['$$', '$$'], ['\\[', '\\]']]
-    }
-};
-</script>
-
 <div class="container mt-4">
     <style>
     /* Make the stones number input spinners larger and easier to tap */
@@ -109,21 +97,6 @@ window.MathJax = {
                                 <div class="col-md-6">
                                     <h4>Time Elapsed</h4>
                                     <h2 id="time-elapsed">00:00</h2>
-                                </div>
-                            </div>
-                            <!-- Debug: Kalman Filter State -->
-                            <div class="row mt-3">
-                                <div class="col-12">
-                                    <div class="card">
-                                        <div class="card-header">
-                                            <h5 class="mb-0">Time Sync Debug</h5>
-                                        </div>
-                                        <div class="card-body">
-                                            <p>$\hat{x}$ : <span id="kf-offset">0.000</span> s</p>
-                                            <p>$P$ : <span id="kf-covariance">1.000</span> s²</p>
-                                            <p>round trip time: <span id="kf-rtt">-</span> ms</p>
-                                        </div>
-                                    </div>
                                 </div>
                             </div>
                             <div class="row mt-3">
@@ -270,157 +243,12 @@ window.MathJax = {
 </div>
 
 <script>
-// Kalman Filter for time offset estimation
-class KalmanFilter {
-    constructor() {
-        this.x = 0;  // State estimate (time offset)
-        this.P = 1.0;  // Initial estimation error covariance (1 second squared)
-        this.Q = 0.00001;  // Process noise covariance (clock drift)
-        this.R = 0.05;   // Measurement noise covariance (~50ms std dev, accounts for network jitter)
-    }
-    
-    update(measurement) {
-        // Predict
-        this.P = this.P + this.Q;
-        
-        // Update
-        const K = this.P / (this.P + this.R);  // Kalman gain
-        this.x = this.x + K * (measurement - this.x);
-        this.P = (1 - K) * this.P;
-        
-        return this.x;
-    }
-    
-    getState() {
-        return this.x;
-    }
-    
-    getCovariance() {
-        return this.P;
-    }
-    
-    reset() {
-        this.x = 0;
-        this.P = 1.0;
-    }
-    
-    toJSON() {
-        return {
-            x: this.x,
-            P: this.P
-        };
-    }
-    
-    fromJSON(data) {
-        if (data && typeof data.x === 'number' && typeof data.P === 'number') {
-            this.x = data.x;
-            this.P = data.P;
-        }
-    }
-}
-
 // Global variables
 const matchId = '{{ match.uuid }}';
 const tournamentUrl = '{{ tournament.url }}';
 let currentPoint = null;
 let lastPollTimestamp = null;
 let pollingInterval = null;
-let kalmanFilter = new KalmanFilter();
-let timeSyncInterval = null;
-const KF_STORAGE_KEY = 'run_match_kf_state';
-
-// Load Kalman filter state from localStorage
-function loadKFState() {
-    try {
-        const saved = localStorage.getItem(KF_STORAGE_KEY);
-        if (saved) {
-            const state = JSON.parse(saved);
-            kalmanFilter.fromJSON(state);
-            console.log('Loaded KF state from localStorage:', state);
-        }
-    } catch (error) {
-        console.error('Error loading KF state:', error);
-    }
-}
-
-// Save Kalman filter state to localStorage
-function saveKFState() {
-    try {
-        const state = kalmanFilter.toJSON();
-        localStorage.setItem(KF_STORAGE_KEY, JSON.stringify(state));
-    } catch (error) {
-        console.error('Error saving KF state:', error);
-    }
-}
-
-// Get server time and measure latency
-async function syncWithServerTime() {
-    const clientSendTime = Date.now() / 1000;
-    
-    try {
-        const response = await fetch('/server-time');
-        const clientReceiveTime = Date.now() / 1000;
-        const data = await response.json();
-        
-        const serverTime = data.server_time;
-        const rtt = (clientReceiveTime - clientSendTime) * 1000;
-        const estimatedServerTime = serverTime + (rtt / 2000); // Half of RTT
-        
-        // Calculate offset: server time - client time
-        const clientTime = clientSendTime + (rtt / 2000);
-        const offset = estimatedServerTime - clientTime;
-        
-        // Update Kalman filter
-        kalmanFilter.update(offset);
-        
-        // Save state to localStorage
-        saveKFState();
-        
-        // Update debug display
-        updateKFDisplay(rtt);
-        
-        return { offset: kalmanFilter.getState(), rtt };
-    } catch (error) {
-        console.error('Error syncing with server:', error);
-        return null;
-    }
-}
-
-// Update KF state display
-function updateKFDisplay(rtt) {
-    const offset = kalmanFilter.getState();
-    const covariance = kalmanFilter.getCovariance();
-    
-    const offsetEl = document.getElementById('kf-offset');
-    const covEl = document.getElementById('kf-covariance');
-    const rttEl = document.getElementById('kf-rtt');
-    
-    if (offsetEl) offsetEl.textContent = offset.toFixed(6);
-    if (covEl) covEl.textContent = covariance.toFixed(6);
-    if (rttEl && rtt !== undefined) rttEl.textContent = rtt.toFixed(1);
-    
-    // Trigger MathJax rendering after updating values
-    if (window.MathJax && window.MathJax.typesetPromise) {
-        window.MathJax.typesetPromise().catch((err) => console.error('MathJax error:', err));
-    }
-}
-
-// Get current server time (client time + offset)
-function getServerTime() {
-    const clientTime = Date.now() / 1000;
-    const offset = kalmanFilter.getState();
-    return clientTime + offset;
-}
-
-// Get current server time as Date object
-function getServerDate() {
-    return new Date(getServerTime() * 1000);
-}
-
-// Get current server time as ISO string
-function getServerTimeISO() {
-    return getServerDate().toISOString();
-}
 
 // Helper Functions
 function checkForUnfinishedPoint() {
@@ -591,7 +419,7 @@ async function startEndPoint() {
         if (currentPoint) {
             const data = await apiRequest('/match-actions/update-point', {
                 point_id: currentPoint.uuid,
-                end_stamp: getServerTimeISO()
+                end_stamp: new Date().toISOString()
             });
             if (data.success) {
                 handlePointUpdated(data);
@@ -854,8 +682,7 @@ function recomputeStonesFromEpoch() {
         const startDate = parseIsoToDate(stonesTickerStartIso);
         if (!startDate) return;
         const startEpoch = startDate.getTime() / 1000;
-        // Use server time for stones calculation
-        const nowEpoch = getServerTime();
+        const nowEpoch = Date.now() / 1000;
         const startCount = Math.floor(startEpoch / 1.5);
         const nowCount = Math.floor(nowEpoch / 1.5);
         const elapsedBeats = nowCount - startCount;
@@ -1335,8 +1162,7 @@ function toDateSafe(iso) {
 }
 function computeStonesElapsed(startIso, endIso) {
     const start = toDateSafe(startIso);
-    // Use server time for "now" if no end time provided
-    const end = endIso ? toDateSafe(endIso) : getServerDate();
+    const end = endIso ? toDateSafe(endIso) : new Date();
     if (!start || !end) return 0;
     const startEpoch = start.getTime() / 1000;
     const endEpoch = end.getTime() / 1000;
@@ -1346,21 +1172,8 @@ function computeStonesElapsed(startIso, endIso) {
 }
 
 // Initialize page
-document.addEventListener('DOMContentLoaded', async function() {
+document.addEventListener('DOMContentLoaded', function() {
     console.log('DOM loaded, checking for unfinished points...');
-    
-    // Load saved KF state
-    loadKFState();
-    updateKFDisplay();
-    
-    // Start time synchronization (every 5 seconds)
-    timeSyncInterval = setInterval(syncWithServerTime, 5000);
-    
-    // Initial sync
-    await syncWithServerTime();
-    
-    // Update KF display periodically
-    setInterval(updateKFDisplay, 100);
     
     // Verify table exists
     const tbody = document.getElementById('points-table-body');
@@ -1426,10 +1239,9 @@ document.addEventListener('DOMContentLoaded', async function() {
         const d = new Date(x);
         return isNaN(d.getTime()) ? null : d;
     })(startRaw);
-    let startTime = normStart || getServerDate();
+    let startTime = normStart || new Date();
     setInterval(function() {
-        // Use server time for elapsed time calculation
-        const now = getServerDate();
+        const now = new Date();
         const elapsed = Math.floor((now - startTime) / 1000);
         const minutes = Math.floor(elapsed / 60);
         const seconds = elapsed % 60;
