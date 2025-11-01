@@ -3,6 +3,18 @@
 {% block title %}{{ match.name }} - {{ tournament.name }}{% endblock %}
 
 {% block content %}
+<!-- MathJax for LaTeX rendering -->
+<script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
+<script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+<script>
+window.MathJax = {
+    tex: {
+        inlineMath: [['$', '$'], ['\\(', '\\)']],
+        displayMath: [['$$', '$$'], ['\\[', '\\]']]
+    }
+};
+</script>
+
 <div class="row">
     <div class="col-12">
         <h1>{{ match.name }}</h1>
@@ -309,37 +321,193 @@
             </div>
         </div>
         {% endif %}
+        
+        <!-- Debug: Kalman Filter State -->
+        <div class="card mt-3">
+            <div class="card-header">
+                <h5 class="mb-0">Time Sync Debug</h5>
+            </div>
+            <div class="card-body">
+                <p>$\hat{x}$ : <span id="kf-offset">0.000</span> s</p>
+                <p>$P$ : <span id="kf-covariance">1.000</span> s²</p>
+                <p>round trip time: <span id="kf-rtt">-</span> ms</p>
+            </div>
+        </div>
     </div>
 </div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js"></script>
 <script>
-// WebSocket connection
-const socket = io();
+// Kalman Filter for time offset estimation
+class KalmanFilter {
+    constructor() {
+        this.x = 0;  // State estimate (time offset)
+        this.P = 1.0;  // Initial estimation error covariance (1 second squared)
+        this.Q = 0.00001;  // Process noise covariance (clock drift)
+        this.R = 0.05;   // Measurement noise covariance (~50ms std dev, accounts for network jitter)
+    }
+    
+    update(measurement) {
+        // Predict
+        this.P = this.P + this.Q;
+        
+        // Update
+        const K = this.P / (this.P + this.R);  // Kalman gain
+        this.x = this.x + K * (measurement - this.x);
+        this.P = (1 - K) * this.P;
+        
+        return this.x;
+    }
+    
+    getState() {
+        return this.x;
+    }
+    
+    getCovariance() {
+        return this.P;
+    }
+    
+    reset() {
+        this.x = 0;
+        this.P = 1.0;
+    }
+    
+    toJSON() {
+        return {
+            x: this.x,
+            P: this.P
+        };
+    }
+    
+    fromJSON(data) {
+        if (data && typeof data.x === 'number' && typeof data.P === 'number') {
+            this.x = data.x;
+            this.P = data.P;
+        }
+    }
+}
+
+// Polling-based match updates
 const matchId = '{{ match.uuid }}';
+const tournamentUrl = '{{ tournament.url }}';
+let lastPollTimestamp = null;
+let pollingInterval = null;
+let kalmanFilter = new KalmanFilter();
+let timeSyncInterval = null;
+const KF_STORAGE_KEY = 'match_page_kf_state';
 
-// Debug WebSocket connection
-socket.on('connect', function() {
-    console.log('Connected to WebSocket server');
-    socket.emit('join_match', { match_id: matchId });
-    console.log('Joined match room:', matchId);
-});
+// Load Kalman filter state from localStorage
+function loadKFState() {
+    try {
+        const saved = localStorage.getItem(KF_STORAGE_KEY);
+        if (saved) {
+            const state = JSON.parse(saved);
+            kalmanFilter.fromJSON(state);
+            console.log('Loaded KF state from localStorage:', state);
+        }
+    } catch (error) {
+        console.error('Error loading KF state:', error);
+    }
+}
 
-socket.on('disconnect', function() {
-    console.log('Disconnected from WebSocket server');
-});
+// Save Kalman filter state to localStorage
+function saveKFState() {
+    try {
+        const state = kalmanFilter.toJSON();
+        localStorage.setItem(KF_STORAGE_KEY, JSON.stringify(state));
+    } catch (error) {
+        console.error('Error saving KF state:', error);
+    }
+}
 
-socket.on('connect_error', function(error) {
-    console.log('WebSocket connection error:', error);
-});
+// Get server time and measure latency
+async function syncWithServerTime() {
+    const clientSendTime = Date.now() / 1000;
+    
+    try {
+        const response = await fetch('/server-time');
+        const clientReceiveTime = Date.now() / 1000;
+        const data = await response.json();
+        
+        const serverTime = data.server_time;
+        const rtt = (clientReceiveTime - clientSendTime) * 1000;
+        const estimatedServerTime = serverTime + (rtt / 2000); // Half of RTT
+        
+        // Calculate offset: server time - client time
+        const clientTime = clientSendTime + (rtt / 2000);
+        const offset = estimatedServerTime - clientTime;
+        
+        // Update Kalman filter
+        kalmanFilter.update(offset);
+        
+        // Save state to localStorage
+        saveKFState();
+        
+        // Update debug display
+        updateKFDisplay(rtt);
+        
+        return { offset: kalmanFilter.getState(), rtt };
+    } catch (error) {
+        console.error('Error syncing with server:', error);
+        return null;
+    }
+}
 
-// Leave match room on page unload
-window.addEventListener('beforeunload', function() {
-    socket.emit('leave_match', { match_id: matchId });
-});
+// Update KF state display
+function updateKFDisplay(rtt) {
+    const offset = kalmanFilter.getState();
+    const covariance = kalmanFilter.getCovariance();
+    
+    document.getElementById('kf-offset').textContent = offset.toFixed(6);
+    document.getElementById('kf-covariance').textContent = covariance.toFixed(6);
+    if (rtt !== undefined) {
+        document.getElementById('kf-rtt').textContent = rtt.toFixed(1);
+    }
+    
+    // Trigger MathJax rendering after updating values
+    if (window.MathJax && window.MathJax.typesetPromise) {
+        window.MathJax.typesetPromise().catch((err) => console.error('MathJax error:', err));
+    }
+}
 
-// WebSocket event handlers
-socket.on('score_updated', function(data) {
+// Poll for match state updates
+function pollMatchState() {
+    fetch(`/${tournamentUrl}/match-state?id=${matchId}`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.error) {
+                console.error('Error polling match state:', data.error);
+                return;
+            }
+            
+            // Skip if no updates (using timestamp to detect changes)
+            if (lastPollTimestamp && data.timestamp === lastPollTimestamp) {
+                return;
+            }
+            lastPollTimestamp = data.timestamp;
+            
+            // Update scores
+            updateScores(data);
+            
+            // Update stones remaining
+            if (data.stones_remaining !== null && data.stones_remaining !== undefined) {
+                const stonesElement = document.getElementById('live-stones-remaining');
+                if (stonesElement) {
+                    stonesElement.textContent = data.stones_remaining;
+                }
+            }
+            
+            // Update points table
+            updatePointsTable(data.points);
+            
+            // Update match status
+            updateMatchStatus(data);
+        })
+        .catch(error => {
+            console.error('Error polling match state:', error);
+        });
+}
+
+function updateScores(data) {
     // Update scores by set
     if (data.scores_by_set) {
         const scoreBySetContainer = document.getElementById('score-by-set');
@@ -354,23 +522,20 @@ socket.on('score_updated', function(data) {
                 
                 // Create the set row
                 const setRow = document.createElement('div');
-                setRow.className = 'row mb-2';
+                setRow.className = 'row mb-1';
                 setRow.innerHTML = `
-                    <div class="col-6">
-                        <div class="d-flex justify-content-between">
-                            <span>{{ match.team1_registration.pseudonym if match.team1_registration else match.team1 }}</span>
-                            <span id="live-team1-set-${setNum}-score">0</span>
-                        </div>
+                    <div class="col-5 text-center">
+                        <strong id="live-team1-set-${setNum}-score">0</strong>
                     </div>
-                    <div class="col-6">
-                        <div class="d-flex justify-content-between">
-                            <span>{{ match.team2_registration.pseudonym if match.team2_registration else match.team2 }}</span>
-                            <span id="live-team2-set-${setNum}-score">0</span>
-                        </div>
+                    <div class="col-2 text-center">
+                        <small class="text-muted">Set ${setNum}</small>
+                    </div>
+                    <div class="col-5 text-center">
+                        <strong id="live-team2-set-${setNum}-score">0</strong>
                     </div>
                 `;
                 
-                // Insert the new set row
+                // Insert before the end
                 scoreBySetContainer.appendChild(setRow);
                 
                 // Get the newly created elements
@@ -383,25 +548,57 @@ socket.on('score_updated', function(data) {
             if (team2SetEl) team2SetEl.textContent = scores.team2_score;
         }
     }
-});
+}
 
-socket.on('stones_updated', function(data) {
-    const stonesElement = document.getElementById('live-stones-remaining');
-    if (stonesElement) {
-        // Always reflect server-authoritative stones; ticker only for visual smoothness
-        stonesElement.textContent = data.stones_remaining;
+function updatePointsTable(points) {
+    const tbody = document.getElementById('live-points-table');
+    if (!tbody) return;
+    
+    // Track existing point IDs
+    const existingPointIds = new Set();
+    for (let row of tbody.rows) {
+        if (row.id.startsWith('live-point-row-')) {
+            const pointId = row.id.replace('live-point-row-', '');
+            existingPointIds.add(pointId);
+        }
     }
-});
-
-socket.on('point_updated', function(data) {
-    const pointId = data.point_id;
-    const row = document.getElementById(`live-point-row-${pointId}`);
-    if (row) {
+    
+    // Track current point IDs from server
+    const serverPointIds = new Set(points.map(p => p.uuid));
+    
+    // Remove points that no longer exist
+    for (let pointId of existingPointIds) {
+        if (!serverPointIds.has(pointId)) {
+            const row = document.getElementById(`live-point-row-${pointId}`);
+            if (row) row.remove();
+        }
+    }
+    
+    // Update or add points
+    points.forEach((point, index) => {
+        let row = document.getElementById(`live-point-row-${point.uuid}`);
+        if (!row) {
+            // Add new row
+            row = tbody.insertRow();
+            row.id = `live-point-row-${point.uuid}`;
+            row.innerHTML = `
+                <td>${index + 1}</td>
+                <td>${point.set_number || 1}</td>
+                <td id="live-stones-${point.uuid}" data-stamp="${point.stamp || ''}" data-end="${point.end_stamp || ''}">${computeStonesElapsed(point.stamp, point.end_stamp)}</td>
+                <td>-</td>
+                <td><span class="badge bg-success">Normal</span></td>
+            `;
+        }
+        
+        // Update existing row
+        row.cells[0].textContent = index + 1;
+        row.cells[1].textContent = point.set_number || 1;
+        
         // Update winner
         const winnerCell = row.cells[3];
-        if (data.winner === 'TEAM1') {
+        if (point.winner === 'TEAM1') {
             winnerCell.textContent = '{{ match.team1_registration.pseudonym if match.team1_registration else match.team1 }}';
-        } else if (data.winner === 'TEAM2') {
+        } else if (point.winner === 'TEAM2') {
             winnerCell.textContent = '{{ match.team2_registration.pseudonym if match.team2_registration else match.team2 }}';
         } else {
             winnerCell.textContent = '-';
@@ -409,119 +606,65 @@ socket.on('point_updated', function(data) {
         
         // Update rerun status
         const rerunCell = row.cells[4];
-        if (data.rerolled) {
+        if (point.rerolled) {
             rerunCell.innerHTML = '<span class="badge bg-warning">Rerun</span>';
         } else {
             rerunCell.innerHTML = '<span class="badge bg-success">Normal</span>';
         }
         
-        // Update stones elapsed cell when stamps change
-        const stonesCell = document.getElementById(`live-stones-${pointId}`);
+        // Update stones elapsed
+        const stonesCell = document.getElementById(`live-stones-${point.uuid}`);
         if (stonesCell) {
-            if (data.stamp) stonesCell.setAttribute('data-stamp', data.stamp);
-            if (data.end_stamp) stonesCell.setAttribute('data-end', data.end_stamp);
+            if (point.stamp) stonesCell.setAttribute('data-stamp', point.stamp);
+            if (point.end_stamp) stonesCell.setAttribute('data-end', point.end_stamp);
             stonesCell.textContent = computeStonesElapsed(
                 stonesCell.getAttribute('data-stamp'),
                 stonesCell.getAttribute('data-end')
             );
         }
-    }
-    // Stones remaining is updated via websocket broadcasts only
-});
+    });
+}
 
-socket.on('point_added', function(data) {
-    const tbody = document.getElementById('live-points-table');
-    const newRow = tbody.insertRow();
-    newRow.id = `live-point-row-${data.point_id}`;
-    newRow.innerHTML = `
-        <td>${tbody.rows.length}</td>
-        <td>${data.set_number}</td>
-        <td id="live-stones-${data.point_id}" data-stamp="${data.stamp || ''}" data-end="${data.end_stamp || ''}">${computeStonesElapsed(data.stamp, data.end_stamp)}</td>
-        <td>-</td>
-        <td><span class="badge bg-success">Normal</span></td>
-        <td>-</td>
-    `;
-    // Stones remaining is updated via websocket broadcasts only
-});
-
-socket.on('point_deleted', function(data) {
-    const row = document.getElementById(`live-point-row-${data.point_id}`);
-    if (row) {
-        row.remove();
-        // Renumber remaining rows
-        const tbody = document.getElementById('live-points-table');
-        for (let i = 0; i < tbody.rows.length; i++) {
-            tbody.rows[i].cells[0].textContent = i + 1;
-        }
-    }
-});
-
-socket.on('set_updated', function(data) {
-    console.log('Set updated on match page:', data);
-    const row = document.getElementById(`live-point-row-${data.point_id}`);
-    if (row) {
-        // Update the set number in the table
-        row.cells[1].textContent = data.set_number;
-    }
-});
-
-socket.on('match_completed', function(data) {
-    console.log('Match completed event received:', data);
-    
+function updateMatchStatus(data) {
     // Update match status display
     const statusElement = document.getElementById('match-status');
-    console.log('Status element found:', statusElement);
     if (statusElement) {
-        statusElement.textContent = 'COMPLETED';
-        statusElement.className = 'badge bg-success';
-        console.log('Status updated to COMPLETED');
-    } else {
-        console.log('Status element not found!');
-    }
-    
-    // Show winner information
-    const winnerElement = document.getElementById('match-winner');
-    if (winnerElement && data.winner) {
-        const winnerText = data.winner === 'TEAM1' ? 
-            '{{ match.team1_registration.pseudonym if match.team1_registration else match.team1 }}' : 
-            '{{ match.team2_registration.pseudonym if match.team2_registration else match.team2 }}';
-        winnerElement.textContent = `Winner: ${winnerText}`;
-        winnerElement.style.display = 'block';
-    }
-    
-    // Update any other match completion indicators
-    const completionTime = document.getElementById('completion-time');
-    if (completionTime && data.finalized_at) {
-        completionTime.textContent = `Completed: ${new Date(data.finalized_at).toLocaleString()}`;
-        completionTime.style.display = 'block';
-    }
-    
-    // Update live updates section
-    const liveStatusMessage = document.getElementById('live-status-message');
-    if (liveStatusMessage) {
-        liveStatusMessage.innerHTML = '<i class="fas fa-check-circle"></i> Match completed - final results below';
-        liveStatusMessage.className = 'text-success';
-        console.log('Live updates section updated to show completion');
-    }
-
-    // Compute and show duration from start to finalization in the time elapsed spot
-    try {
-        const durationEl = document.getElementById('live-time-elapsed');
-        const startRaw = '{{ match.confirmed_start_time or match.nominal_start_time or match.stamp }}';
-        const startDate = (function(s){
-            if (!s || s === 'None') return null;
-            let x = String(s).replace(/\.(\d{3,6})/, '');
-            if (!/[zZ]|[\+\-]\d{2}:?\d{2}$/.test(x)) x += 'Z';
-            const d = new Date(x);
-            return isNaN(d.getTime()) ? null : d;
-        })(startRaw);
-        const endDate = new Date(data.finalized_at);
-        if (durationEl && startDate && !isNaN(endDate.getTime())) {
-            const totalSec = Math.max(0, Math.floor((endDate - startDate) / 1000));
-            durationEl.textContent = formatDuration(totalSec);
+        if (data.status === 'COMPLETED') {
+            statusElement.textContent = 'COMPLETED';
+            statusElement.className = 'badge bg-success';
+            
+            // Update live updates section
+            const liveStatusMessage = document.getElementById('live-status-message');
+            if (liveStatusMessage) {
+                liveStatusMessage.innerHTML = '<i class="fas fa-check-circle"></i> Match completed - final results below';
+                liveStatusMessage.className = 'text-success';
+            }
+            
+            // Compute and show duration from start to finalization in the time elapsed spot
+            if (data.finalized_at) {
+                try {
+                    const durationEl = document.getElementById('live-time-elapsed');
+                    const startRaw = '{{ match.confirmed_start_time or match.nominal_start_time or match.stamp }}';
+                    const startDate = (function(s){
+                        if (!s || s === 'None') return null;
+                        let x = String(s).replace(/\.(\d{3,6})/, '');
+                        if (!/[zZ]|[\+\-]\d{2}:?\d{2}$/.test(x)) x += 'Z';
+                        const d = new Date(x);
+                        return isNaN(d.getTime()) ? null : d;
+                    })(startRaw);
+                    const endDate = new Date(data.finalized_at);
+                    if (durationEl && startDate && !isNaN(endDate.getTime())) {
+                        const totalSec = Math.max(0, Math.floor((endDate - startDate) / 1000));
+                        durationEl.textContent = formatDuration(totalSec);
+                    }
+                } catch (e) {}
+            }
+        } else if (data.status === 'IN_PROGRESS') {
+            statusElement.textContent = 'In Progress';
+            statusElement.className = 'badge bg-warning';
         }
-    } catch (e) {}
-});
+    }
+}
 
 // Helper function for consistent time formatting
 function formatTime(dateString) {
@@ -535,7 +678,18 @@ function formatTime(dateString) {
     });
 }
 
-// Stones elapsed computation
+// Helper to get server time (for stones elapsed calculation)
+function getServerTime() {
+    const clientTime = Date.now() / 1000;
+    const offset = kalmanFilter.getState();
+    return clientTime + offset;
+}
+
+function getServerDate() {
+    return new Date(getServerTime() * 1000);
+}
+
+// Stones elapsed computation (uses server time)
 function toDateSafe(iso) {
     if (!iso) return null;
     let s = String(iso).replace(/\.(\d{3,6})/, '');
@@ -543,9 +697,11 @@ function toDateSafe(iso) {
     const d = new Date(s);
     return isNaN(d.getTime()) ? null : d;
 }
+
 function computeStonesElapsed(startIso, endIso) {
     const start = toDateSafe(startIso);
-    const end = endIso ? toDateSafe(endIso) : new Date();
+    // Use server time for "now" if no end time provided
+    const end = endIso ? toDateSafe(endIso) : getServerDate();
     if (!start || !end) return 0;
     const startEpoch = start.getTime() / 1000;
     const endEpoch = end.getTime() / 1000;
@@ -553,8 +709,6 @@ function computeStonesElapsed(startIso, endIso) {
     const endCount = Math.floor(endEpoch / 1.5);
     return Math.max(0, endCount - startCount);
 }
-
-// Removed client-side stones remaining ticker; websocket is authoritative
 
 // On load, compute initial stones elapsed for all rows and set a timer to update ongoing last point
 document.addEventListener('DOMContentLoaded', function() {
@@ -589,7 +743,7 @@ function formatDuration(totalSeconds) {
 }
 
 // Initialize page
-document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener('DOMContentLoaded', async function() {
     // Start time elapsed timer if match is in progress
     {% if match.status == 'IN_PROGRESS' %}
     const startRaw = '{{ match.confirmed_start_time or match.nominal_start_time or match.stamp }}';
@@ -600,9 +754,10 @@ document.addEventListener('DOMContentLoaded', function() {
         const d = new Date(x);
         return isNaN(d.getTime()) ? null : d;
     }
-    let startTime = normalizeStart(startRaw) || new Date();
+    let startTime = normalizeStart(startRaw) || getServerDate();
     setInterval(function() {
-        const now = new Date();
+        // Use server time for elapsed time calculation
+        const now = getServerDate();
         const elapsed = Math.floor((now - startTime)/1000);
         const minutes = Math.floor(elapsed / 60);
         const seconds = elapsed % 60;
@@ -632,6 +787,28 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     } catch (e) {}
     {% endif %}
+    
+    // Load saved KF state
+    loadKFState();
+    updateKFDisplay();
+    
+    // Start time synchronization (every 5 seconds)
+    timeSyncInterval = setInterval(syncWithServerTime, 5000);
+    
+    // Initial sync
+    await syncWithServerTime();
+    
+    // Start polling for match state updates (poll every 1 second if match is in progress, 2 seconds otherwise)
+    {% if match.status == 'IN_PROGRESS' %}
+    pollMatchState(); // Initial poll
+    pollingInterval = setInterval(pollMatchState, 1000);
+    {% else %}
+    pollMatchState(); // Initial poll
+    pollingInterval = setInterval(pollMatchState, 2000);
+    {% endif %}
+    
+    // Update KF display periodically
+    setInterval(updateKFDisplay, 100);
 });
 </script>
 {% endblock %}

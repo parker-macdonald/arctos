@@ -168,8 +168,8 @@ def tournament_schedule(tournament_url):
 @bp.route('/<tournament_url>/results')
 def tournament_results(tournament_url):
     """Tournament results page."""
-    tournament = check_tournament_access(tournament_url)
-    if not tournament:
+    has_access, tournament = check_tournament_access(tournament_url)
+    if not has_access or not tournament:
         return redirect('/')
     
     from models import Point

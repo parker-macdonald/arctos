@@ -26,8 +26,8 @@ def match_page(tournament_url):
         flash('Match ID or name required', 'error')
         return redirect(f'/{tournament_url}/schedule')
     
-    tournament = check_tournament_access(tournament_url)
-    if not tournament:
+    has_access, tournament = check_tournament_access(tournament_url)
+    if not has_access or not tournament:
         return redirect('/')
     
     if match_id:
@@ -524,4 +524,270 @@ def get_points(tournament_url):
         })
     
     return jsonify({'success': True, 'points': points_data})
+
+
+@bp.route('/<tournament_url>/match-state')
+def match_state(tournament_url):
+    """Get current match state for polling. Public endpoint."""
+    match_id = request.args.get('id')
+    if not match_id:
+        return jsonify({'error': 'Match ID required'}), 400
+    
+    match = Match.query.filter_by(uuid=match_id, event=tournament_url).first()
+    if not match:
+        return jsonify({'error': 'Match not found'}), 404
+    
+    points = Point.query.filter_by(match=match.uuid).order_by(Point.stamp).all()
+    
+    # Calculate scores
+    team1_score = sum(1 for p in points if p.winner == 'TEAM1' and not p.rerolled)
+    team2_score = sum(1 for p in points if p.winner == 'TEAM2' and not p.rerolled)
+    
+    # Scores by set
+    sets = sorted(set(p.set_number for p in points))
+    scores_by_set = {}
+    for set_num in sets:
+        set_points = [p for p in points if p.set_number == set_num]
+        scores_by_set[set_num] = {
+            'team1_score': sum(1 for p in set_points if p.winner == 'TEAM1' and not p.rerolled),
+            'team2_score': sum(1 for p in set_points if p.winner == 'TEAM2' and not p.rerolled)
+        }
+    
+    # Get stones remaining from gamestate
+    gamestate = {}
+    if match.gamestate:
+        try:
+            gamestate = json.loads(match.gamestate)
+        except:
+            gamestate = {}
+    
+    stones_remaining = gamestate.get('stones_remaining', None)
+    
+    # Build points data
+    points_data = []
+    for p in points:
+        points_data.append({
+            'uuid': p.uuid,
+            'set_number': p.set_number,
+            'winner': p.winner,
+            'rerolled': p.rerolled,
+            'stamp': p.stamp.isoformat() if p.stamp else None,
+            'end_stamp': p.end_stamp.isoformat() if p.end_stamp else None,
+        })
+    
+    # Get finalized_at from gamestate if match is completed
+    finalized_at = None
+    if match.status == 'COMPLETED' and 'finalized_at' in gamestate:
+        finalized_at = gamestate['finalized_at']
+    
+    return jsonify({
+        'match_id': match.uuid,
+        'status': match.status,
+        'team1_score': team1_score,
+        'team2_score': team2_score,
+        'scores_by_set': scores_by_set,
+        'stones_remaining': stones_remaining,
+        'points': points_data,
+        'finalized_at': finalized_at,
+        'timestamp': datetime.now(timezone.utc).isoformat()
+    })
+
+
+@bp.route('/<tournament_url>/match-actions/add-point', methods=['POST'])
+@login_required
+def add_point(tournament_url):
+    """Add a new point to a match."""
+    match_id = request.json.get('match_id')
+    set_number = request.json.get('set_number', 1)
+    
+    if not match_id:
+        return jsonify({'success': False, 'error': 'Match ID required'}), 400
+    
+    match = Match.query.get(match_id)
+    if not match or match.event != tournament_url:
+        return jsonify({'success': False, 'error': 'Match not found'}), 404
+    
+    if not is_head_ref(tournament_url, current_user.id):
+        return jsonify({'success': False, 'error': 'Not authorized'}), 403
+    
+    new_point = Point(
+        match=match_id,
+        set_number=set_number,
+        stamp=datetime.now(timezone.utc)
+    )
+    db.session.add(new_point)
+    db.session.commit()
+    
+    return jsonify({
+        'success': True,
+        'point_id': new_point.uuid,
+        'set_number': new_point.set_number,
+        'stamp': new_point.stamp.isoformat(),
+        'end_stamp': new_point.end_stamp.isoformat() if new_point.end_stamp else None
+    })
+
+
+@bp.route('/<tournament_url>/match-actions/update-point', methods=['POST'])
+@login_required
+def update_point(tournament_url):
+    """Update a point."""
+    point_id = request.json.get('point_id')
+    if not point_id:
+        return jsonify({'success': False, 'error': 'Point ID required'}), 400
+    
+    point = Point.query.get(point_id)
+    if not point:
+        return jsonify({'success': False, 'error': 'Point not found'}), 404
+    
+    match = Match.query.get(point.match)
+    if not match or match.event != tournament_url:
+        return jsonify({'success': False, 'error': 'Match not found'}), 404
+    
+    if not is_head_ref(tournament_url, current_user.id):
+        return jsonify({'success': False, 'error': 'Not authorized'}), 403
+    
+    data = request.json
+    if 'winner' in data:
+        point.winner = data['winner'] if data['winner'] != 'none' else None
+    if 'rerolled' in data:
+        point.rerolled = data['rerolled']
+    if 'notes' in data:
+        point.notes = data['notes']
+    if 'set_number' in data:
+        point.set_number = data['set_number']
+    if 'end_stamp' in data:
+        point.end_stamp = datetime.fromisoformat(data['end_stamp'].replace('Z', '+00:00'))
+    
+    db.session.commit()
+    
+    return jsonify({
+        'success': True,
+        'point_id': point_id,
+        'winner': point.winner,
+        'rerolled': point.rerolled,
+        'notes': point.notes,
+        'set_number': point.set_number,
+        'end_stamp': point.end_stamp.isoformat() if point.end_stamp else None
+    })
+
+
+@bp.route('/<tournament_url>/match-actions/delete-point', methods=['POST'])
+@login_required
+def delete_point_action(tournament_url):
+    """Delete a point."""
+    point_id = request.json.get('point_id')
+    if not point_id:
+        return jsonify({'success': False, 'error': 'Point ID required'}), 400
+    
+    point = Point.query.get(point_id)
+    if not point:
+        return jsonify({'success': False, 'error': 'Point not found'}), 404
+    
+    match = Match.query.get(point.match)
+    if not match or match.event != tournament_url:
+        return jsonify({'success': False, 'error': 'Match not found'}), 404
+    
+    if not is_head_ref(tournament_url, current_user.id):
+        return jsonify({'success': False, 'error': 'Not authorized'}), 403
+    
+    match_id = point.match
+    db.session.delete(point)
+    db.session.commit()
+    
+    return jsonify({'success': True, 'point_id': point_id})
+
+
+@bp.route('/<tournament_url>/match-actions/update-stones', methods=['POST'])
+@login_required
+def update_stones(tournament_url):
+    """Update stones remaining."""
+    match_id = request.json.get('match_id')
+    stones_remaining = request.json.get('stones_remaining')
+    
+    if not match_id or stones_remaining is None:
+        return jsonify({'success': False, 'error': 'Match ID and stones_remaining required'}), 400
+    
+    match = Match.query.get(match_id)
+    if not match or match.event != tournament_url:
+        return jsonify({'success': False, 'error': 'Match not found'}), 404
+    
+    if not is_head_ref(tournament_url, current_user.id):
+        return jsonify({'success': False, 'error': 'Not authorized'}), 403
+    
+    gamestate = {}
+    if match.gamestate:
+        try:
+            gamestate = json.loads(match.gamestate)
+        except:
+            gamestate = {}
+    
+    gamestate['stones_remaining'] = stones_remaining
+    match.gamestate = json.dumps(gamestate)
+    db.session.commit()
+    
+    return jsonify({'success': True, 'stones_remaining': stones_remaining})
+
+
+@bp.route('/<tournament_url>/match-actions/update-set', methods=['POST'])
+@login_required
+def update_set(tournament_url):
+    """Update set number for a point."""
+    point_id = request.json.get('point_id')
+    set_number = request.json.get('set_number')
+    
+    if not point_id or set_number is None:
+        return jsonify({'success': False, 'error': 'Point ID and set_number required'}), 400
+    
+    point = Point.query.get(point_id)
+    if not point:
+        return jsonify({'success': False, 'error': 'Point not found'}), 404
+    
+    match = Match.query.get(point.match)
+    if not match or match.event != tournament_url:
+        return jsonify({'success': False, 'error': 'Match not found'}), 404
+    
+    if not is_head_ref(tournament_url, current_user.id):
+        return jsonify({'success': False, 'error': 'Not authorized'}), 403
+    
+    point.set_number = set_number
+    db.session.commit()
+    
+    return jsonify({'success': True, 'point_id': point_id, 'set_number': set_number})
+
+
+@bp.route('/<tournament_url>/match-actions/complete-match', methods=['POST'])
+@login_required
+def complete_match(tournament_url):
+    """Mark a match as completed."""
+    match_id = request.json.get('match_id')
+    if not match_id:
+        return jsonify({'success': False, 'error': 'Match ID required'}), 400
+    
+    match = Match.query.get(match_id)
+    if not match or match.event != tournament_url:
+        return jsonify({'success': False, 'error': 'Match not found'}), 404
+    
+    if not is_head_ref(tournament_url, current_user.id):
+        return jsonify({'success': False, 'error': 'Not authorized'}), 403
+    
+    match.status = 'COMPLETED'
+    db.session.commit()
+    
+    return jsonify({'success': True, 'match_id': match_id, 'status': 'COMPLETED'})
+
+
+@bp.route('/stones-player')
+def stones_player():
+    """Stones audio player page with server time synchronization."""
+    return render_template('stones_player.html')
+
+
+@bp.route('/server-time')
+def server_time():
+    """Return current server time in unix timestamp format."""
+    import time
+    return jsonify({
+        'server_time': time.time(),
+        'timestamp': datetime.now(timezone.utc).isoformat()
+    })
 

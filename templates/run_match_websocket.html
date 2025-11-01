@@ -3,6 +3,18 @@
 {% block title %}Run Match - {{ tournament.name }}{% endblock %}
 
 {% block content %}
+<!-- MathJax for LaTeX rendering -->
+<script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
+<script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+<script>
+window.MathJax = {
+    tex: {
+        inlineMath: [['$', '$'], ['\\(', '\\)']],
+        displayMath: [['$$', '$$'], ['\\[', '\\]']]
+    }
+};
+</script>
+
 <div class="container mt-4">
     <style>
     /* Make the stones number input spinners larger and easier to tap */
@@ -97,6 +109,21 @@
                                 <div class="col-md-6">
                                     <h4>Time Elapsed</h4>
                                     <h2 id="time-elapsed">00:00</h2>
+                                </div>
+                            </div>
+                            <!-- Debug: Kalman Filter State -->
+                            <div class="row mt-3">
+                                <div class="col-12">
+                                    <div class="card">
+                                        <div class="card-header">
+                                            <h5 class="mb-0">Time Sync Debug</h5>
+                                        </div>
+                                        <div class="card-body">
+                                            <p>$\hat{x}$ : <span id="kf-offset">0.000</span> s</p>
+                                            <p>$P$ : <span id="kf-covariance">1.000</span> s²</p>
+                                            <p>round trip time: <span id="kf-rtt">-</span> ms</p>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                             <div class="row mt-3">
@@ -242,12 +269,158 @@
     </div>
 </div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js"></script>
 <script>
+// Kalman Filter for time offset estimation
+class KalmanFilter {
+    constructor() {
+        this.x = 0;  // State estimate (time offset)
+        this.P = 1.0;  // Initial estimation error covariance (1 second squared)
+        this.Q = 0.00001;  // Process noise covariance (clock drift)
+        this.R = 0.05;   // Measurement noise covariance (~50ms std dev, accounts for network jitter)
+    }
+    
+    update(measurement) {
+        // Predict
+        this.P = this.P + this.Q;
+        
+        // Update
+        const K = this.P / (this.P + this.R);  // Kalman gain
+        this.x = this.x + K * (measurement - this.x);
+        this.P = (1 - K) * this.P;
+        
+        return this.x;
+    }
+    
+    getState() {
+        return this.x;
+    }
+    
+    getCovariance() {
+        return this.P;
+    }
+    
+    reset() {
+        this.x = 0;
+        this.P = 1.0;
+    }
+    
+    toJSON() {
+        return {
+            x: this.x,
+            P: this.P
+        };
+    }
+    
+    fromJSON(data) {
+        if (data && typeof data.x === 'number' && typeof data.P === 'number') {
+            this.x = data.x;
+            this.P = data.P;
+        }
+    }
+}
+
 // Global variables
-const socket = io();
 const matchId = '{{ match.uuid }}';
+const tournamentUrl = '{{ tournament.url }}';
 let currentPoint = null;
+let lastPollTimestamp = null;
+let pollingInterval = null;
+let kalmanFilter = new KalmanFilter();
+let timeSyncInterval = null;
+const KF_STORAGE_KEY = 'run_match_kf_state';
+
+// Load Kalman filter state from localStorage
+function loadKFState() {
+    try {
+        const saved = localStorage.getItem(KF_STORAGE_KEY);
+        if (saved) {
+            const state = JSON.parse(saved);
+            kalmanFilter.fromJSON(state);
+            console.log('Loaded KF state from localStorage:', state);
+        }
+    } catch (error) {
+        console.error('Error loading KF state:', error);
+    }
+}
+
+// Save Kalman filter state to localStorage
+function saveKFState() {
+    try {
+        const state = kalmanFilter.toJSON();
+        localStorage.setItem(KF_STORAGE_KEY, JSON.stringify(state));
+    } catch (error) {
+        console.error('Error saving KF state:', error);
+    }
+}
+
+// Get server time and measure latency
+async function syncWithServerTime() {
+    const clientSendTime = Date.now() / 1000;
+    
+    try {
+        const response = await fetch('/server-time');
+        const clientReceiveTime = Date.now() / 1000;
+        const data = await response.json();
+        
+        const serverTime = data.server_time;
+        const rtt = (clientReceiveTime - clientSendTime) * 1000;
+        const estimatedServerTime = serverTime + (rtt / 2000); // Half of RTT
+        
+        // Calculate offset: server time - client time
+        const clientTime = clientSendTime + (rtt / 2000);
+        const offset = estimatedServerTime - clientTime;
+        
+        // Update Kalman filter
+        kalmanFilter.update(offset);
+        
+        // Save state to localStorage
+        saveKFState();
+        
+        // Update debug display
+        updateKFDisplay(rtt);
+        
+        return { offset: kalmanFilter.getState(), rtt };
+    } catch (error) {
+        console.error('Error syncing with server:', error);
+        return null;
+    }
+}
+
+// Update KF state display
+function updateKFDisplay(rtt) {
+    const offset = kalmanFilter.getState();
+    const covariance = kalmanFilter.getCovariance();
+    
+    const offsetEl = document.getElementById('kf-offset');
+    const covEl = document.getElementById('kf-covariance');
+    const rttEl = document.getElementById('kf-rtt');
+    
+    if (offsetEl) offsetEl.textContent = offset.toFixed(6);
+    if (covEl) covEl.textContent = covariance.toFixed(6);
+    if (rttEl && rtt !== undefined) rttEl.textContent = rtt.toFixed(1);
+    
+    // Trigger MathJax rendering after updating values
+    if (window.MathJax && window.MathJax.typesetPromise) {
+        window.MathJax.typesetPromise().catch((err) => console.error('MathJax error:', err));
+    }
+}
+
+// Get current server time (client time + offset)
+function getServerTime() {
+    const clientTime = Date.now() / 1000;
+    const offset = kalmanFilter.getState();
+    return clientTime + offset;
+}
+
+// Get current server time as Date object
+function getServerDate() {
+    return new Date(getServerTime() * 1000);
+}
+
+// Get current server time as ISO string
+function getServerTimeISO() {
+    return getServerDate().toISOString();
+}
 
 // Helper Functions
 function checkForUnfinishedPoint() {
@@ -314,51 +487,120 @@ function checkForUnfinishedPoint() {
     });
 }
 
-// Initialize WebSocket connection
-socket.on('connect', function() {
-    console.log('Connected to WebSocket server');
-    // Join the match room
-    socket.emit('join_match', { match_id: matchId });
-    
-    // Check for unfinished points after a short delay to ensure DOM is ready
-    setTimeout(() => {
-        console.log('Calling checkForUnfinishedPoint...');
-        checkForUnfinishedPoint();
-    }, 200);
-});
+// Helper function to make HTTP requests
+async function apiRequest(endpoint, data) {
+    const response = await fetch(`/${tournamentUrl}${endpoint}`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(data)
+    });
+    return response.json();
+}
 
-socket.on('disconnect', function() {
-    console.log('Disconnected from WebSocket server');
-});
+// Poll for match state updates
+function pollMatchState() {
+    fetch(`/${tournamentUrl}/match-state?id=${matchId}`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.error) {
+                console.error('Error polling match state:', data.error);
+                return;
+            }
+            
+            // Skip if no updates
+            if (lastPollTimestamp && data.timestamp === lastPollTimestamp) {
+                return;
+            }
+            lastPollTimestamp = data.timestamp;
+            
+            // Update scores
+            updateScoresFromPoll(data);
+            
+            // Update stones remaining
+            if (data.stones_remaining !== null && data.stones_remaining !== undefined) {
+                const stonesInput = document.getElementById('stones-remaining');
+                if (stonesInput) {
+                    stonesInput.value = data.stones_remaining;
+                }
+            }
+            
+            // Update points table
+            updatePointsTableFromPoll(data.points);
+        })
+        .catch(error => {
+            console.error('Error polling match state:', error);
+        });
+}
+
+function updateScoresFromPoll(data) {
+    if (data.scores_by_set) {
+        for (const [setNum, scores] of Object.entries(data.scores_by_set)) {
+            const team1El = document.getElementById(`team1-set-${setNum}-score`);
+            const team2El = document.getElementById(`team2-set-${setNum}-score`);
+            if (team1El) team1El.textContent = scores.team1_score;
+            if (team2El) team2El.textContent = scores.team2_score;
+        }
+    }
+}
+
+function updatePointsTableFromPoll(points) {
+    // This will be called from polling, but the table should already be up to date
+    // since we update it immediately after API calls. This is just for consistency.
+    const tbody = document.getElementById('points-table-body');
+    if (!tbody) return;
+    
+    // Track existing points
+    const existingIds = new Set();
+    for (let row of tbody.rows) {
+        if (row.id.startsWith('point-row-')) {
+            existingIds.add(row.id.replace('point-row-', ''));
+        }
+    }
+    
+    // Track server points
+    const serverIds = new Set(points.map(p => p.uuid));
+    
+    // Remove deleted points
+    for (let pointId of existingIds) {
+        if (!serverIds.has(pointId)) {
+            const row = document.getElementById(`point-row-${pointId}`);
+            if (row) row.remove();
+        }
+    }
+}
 
 // Start/End Point Button Function
-function startEndPoint() {
+async function startEndPoint() {
     const button = document.getElementById('point-button');
     
     if (button.textContent.trim() === 'Start Point') {
         // Start a new point
         console.log('Starting new point...');
-        socket.emit('add_point', {
+        const data = await apiRequest('/match-actions/add-point', {
             match_id: matchId,
             set_number: 1
         });
+        if (data.success) {
+            handlePointAdded(data);
+        }
     } else {
         // End current point
         console.log('Ending current point...');
         if (currentPoint) {
-            socket.emit('update_point', {
+            const data = await apiRequest('/match-actions/update-point', {
                 point_id: currentPoint.uuid,
-                end_stamp: new Date().toISOString()
+                end_stamp: getServerTimeISO()
             });
+            if (data.success) {
+                handlePointUpdated(data);
+            }
         }
     }
 }
 
-// WebSocket Event Handlers
-socket.on('point_added', function(data) {
-    console.log('Point added:', data);
-    
-    // Update current point reference
+function handlePointAdded(data) {
     currentPoint = {
         uuid: data.point_id,
         set_number: data.set_number,
@@ -366,41 +608,29 @@ socket.on('point_added', function(data) {
         end_stamp: data.end_stamp
     };
     
-    // Update button to "End Point"
     const button = document.getElementById('point-button');
     button.textContent = 'End Point';
     button.className = 'btn btn-danger btn-lg w-100';
     
-    // Add point to table
     addPointToTable(data);
-
-    // Start stones recomputation ticker for current point
     startStonesTicker(data.stamp);
-});
+}
 
-socket.on('point_updated', function(data) {
-    console.log('Point updated:', data);
-    
-    // Update current point if it's the one being updated
+function handlePointUpdated(data) {
     if (currentPoint && currentPoint.uuid === data.point_id) {
         if (data.end_stamp) {
             currentPoint.end_stamp = data.end_stamp;
-            // Update button to "Start Point"
             const button = document.getElementById('point-button');
             button.textContent = 'Start Point';
             button.className = 'btn btn-success btn-lg w-100';
-            currentPoint = null; // Clear current point
+            currentPoint = null;
+            stopStonesTicker();
         }
     }
-    
-    // Update point in table
     updatePointInTable(data);
+}
 
-    // Stop stones ticker when point ends
-    if (data.end_stamp) {
-        stopStonesTicker();
-    }
-});
+// Point handlers (called from API responses, not websockets)
 
 function addPointToTable(data) {
     try {
@@ -496,42 +726,49 @@ function updatePointInTable(data) {
 }
 
 // Point Management Functions
-function updatePointWinner(pointId, winner) {
-    socket.emit('update_point', {
+async function updatePointWinner(pointId, winner) {
+    const data = await apiRequest('/match-actions/update-point', {
         point_id: pointId,
         winner: winner
     });
+    if (data.success) {
+        updatePointInTable(data);
+    }
 }
 
-function toggleRerun(pointId, rerolled) {
-    socket.emit('update_point', {
+async function toggleRerun(pointId, rerolled) {
+    const data = await apiRequest('/match-actions/update-point', {
         point_id: pointId,
         rerolled: rerolled
     });
+    if (data.success) {
+        updatePointInTable(data);
+    }
 }
 
-
-function updatePointSetNumber(pointId, setNumber) {
-    socket.emit('update_point', {
+async function updatePointSetNumber(pointId, setNumber) {
+    const data = await apiRequest('/match-actions/update-point', {
         point_id: pointId,
         set_number: parseInt(setNumber)
     });
+    if (data.success) {
+        updatePointInTable(data);
+    }
     
-    // Also emit a set update event for real-time synchronization
-    socket.emit('update_set', {
-        match_id: matchId,
+    // Also update set separately
+    await apiRequest('/match-actions/update-set', {
         point_id: pointId,
         set_number: parseInt(setNumber)
     });
 }
 
-function deletePoint(pointId) {
+async function deletePoint(pointId) {
     if (confirm('Are you sure you want to delete this point?')) {
         // First, unassign any notes from this point
         const notesForThisPoint = window.currentNotes.filter(note => note.point_id === pointId);
         if (notesForThisPoint.length > 0) {
             const noteIds = notesForThisPoint.map(note => note.uuid);
-            fetch('/{{ tournament.url }}/unassign-notes-from-point', {
+            fetch(`/${tournamentUrl}/unassign-notes-from-point`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -551,124 +788,25 @@ function deletePoint(pointId) {
         }
         
         // Then delete the point
-        socket.emit('delete_point', {
+        const data = await apiRequest('/match-actions/delete-point', {
             point_id: pointId
         });
+        if (data.success) {
+            const row = document.getElementById(`point-row-${pointId}`);
+            if (row) {
+                row.remove();
+            }
+        }
     }
 }
 
-// Leave match room on page unload
-window.addEventListener('beforeunload', function() {
-    socket.emit('leave_match', { match_id: matchId });
-});
-
-// Additional WebSocket Event Handlers
-socket.on('score_updated', function(data) {
-    console.log('Score updated:', data);
-    // Update overall scores
-    const team1ScoreEl = document.getElementById('team1-score-value');
-    const team2ScoreEl = document.getElementById('team2-score-value');
-    if (team1ScoreEl) team1ScoreEl.textContent = data.team1_score;
-    if (team2ScoreEl) team2ScoreEl.textContent = data.team2_score;
-    
-    // Update scores by set
-    if (data.scores_by_set) {
-        for (const [setNum, scores] of Object.entries(data.scores_by_set)) {
-            const team1SetEl = document.getElementById(`team1-set-${setNum}-score`);
-            const team2SetEl = document.getElementById(`team2-set-${setNum}-score`);
-            if (team1SetEl) team1SetEl.textContent = scores.team1_score;
-            if (team2SetEl) team2SetEl.textContent = scores.team2_score;
-        }
-    }
-});
-
-socket.on('stones_updated', function(data) {
-    console.log('Stones updated:', data);
-    // Only apply server stones after a point ends to avoid resetting during play
-    if (!stonesTickerStartIso) {
-        document.getElementById('stones-remaining').value = data.stones_remaining;
-    }
-});
-
-socket.on('point_deleted', function(data) {
-    console.log('Point deleted:', data);
-    const row = document.getElementById(`point-row-${data.point_id}`);
-    if (row) {
-        row.remove();
-    }
-});
-
-socket.on('note_added', function(data) {
-    console.log('Note added:', data);
-    
-    // Add the new note to the existing notes list
-    const notesList = document.getElementById('existing-notes-list');
-    if (notesList) {
-        const noteElement = document.createElement('div');
-        noteElement.className = 'border-bottom pb-2 mb-2';
-        // Convert target to readable display
-        let targetDisplay = data.target;
-        if (data.target === 'TEAM1') {
-            targetDisplay = '{{ match.team1_registration.pseudonym if match.team1_registration else match.team1 }}';
-        } else if (data.target === 'TEAM2') {
-            targetDisplay = '{{ match.team2_registration.pseudonym if match.team2_registration else match.team2 }}';
-        } else if (data.target === 'MATCH') {
-            targetDisplay = 'Match';
-        } else if (data.player_display) {
-            targetDisplay = data.player_display;
-        } else if (data.player_name) {
-            targetDisplay = data.player_name;
-        }
-        
-        noteElement.innerHTML = `
-            <div class="d-flex justify-content-between align-items-start">
-                <div>
-                    <strong>${targetDisplay}:</strong> ${data.text}
-                </div>
-                <small class="text-muted">${data.created_at ? new Date(data.created_at).toLocaleString() : 'Unknown time'}</small>
-            </div>
-        `;
-        
-        // Insert at the top of the list
-        if (notesList.firstChild && notesList.firstChild.className !== 'text-muted') {
-            notesList.insertBefore(noteElement, notesList.firstChild);
-        } else {
-            notesList.innerHTML = '';
-            notesList.appendChild(noteElement);
-        }
-    }
-    
-    // Update window.currentNotes
-    if (!window.currentNotes) window.currentNotes = [];
-    window.currentNotes.unshift({
-        uuid: data.note_id,
-        text: data.text,
-        target: data.target,
-        created_by: data.created_by,
-        created_at: data.created_at
-    });
-    
-    // Notes are now handled by the new selection system
-});
-
-socket.on('set_updated', function(data) {
-    console.log('Set updated:', data);
-    // Update set number in the point table
-    const setInput = document.querySelector(`input[onchange*="updatePointSetNumber('${data.point_id}'"]`);
-    if (setInput) {
-        setInput.value = data.set_number;
-    }
-    
-    // Update any set-related displays
-    updateSetDisplay(data.set_number);
-});
-
-// Client-side functions (no state storage, all via WebSocket)
-function updateStonesRemaining(stones) {
-    socket.emit('update_stones', {
+// Client-side functions using HTTP API
+async function updateStonesRemaining(stones) {
+    const data = await apiRequest('/match-actions/update-stones', {
         match_id: matchId,
         stones_remaining: parseInt(stones)
     });
+    // No need to handle response - polling will update
 }
 
 // Stones ticker aligned to 1.5s beats using epoch
@@ -716,7 +854,8 @@ function recomputeStonesFromEpoch() {
         const startDate = parseIsoToDate(stonesTickerStartIso);
         if (!startDate) return;
         const startEpoch = startDate.getTime() / 1000;
-        const nowEpoch = Date.now() / 1000;
+        // Use server time for stones calculation
+        const nowEpoch = getServerTime();
         const startCount = Math.floor(startEpoch / 1.5);
         const nowCount = Math.floor(nowEpoch / 1.5);
         const elapsedBeats = nowCount - startCount;
@@ -729,7 +868,7 @@ function recomputeStonesFromEpoch() {
         if (lastSentStones !== newRemaining && (nowMs - lastSentAt) > 300) {
             lastSentStones = newRemaining;
             lastSentAt = nowMs;
-            socket.emit('update_stones', { match_id: matchId, stones_remaining: newRemaining });
+            apiRequest('/match-actions/update-stones', { match_id: matchId, stones_remaining: newRemaining });
         }
     } catch (e) {}
 }
@@ -1112,19 +1251,7 @@ function updatePointNotesInTable() {
 }
 
 // WebSocket handler for point notes
-socket.on('point_note_added', function(data) {
-    console.log('Point note added:', data);
-    
-    // If this note is for the currently open point, refresh the display
-    if (currentPointForNotes === data.point_id) {
-        loadPointNotes(data.point_id);
-    }
-    
-    // Update the point notes display in the table
-    updatePointNotesInTableForPoint(data.point_id);
-    // Also refresh the modal list to ensure persistence from server
-    loadPointNotes(data.point_id);
-});
+// Point note handlers removed - polling will handle updates
 
 function updatePointNotesInTableForPoint(pointId) {
     // Update the notes display for a specific point in the table
@@ -1208,7 +1335,8 @@ function toDateSafe(iso) {
 }
 function computeStonesElapsed(startIso, endIso) {
     const start = toDateSafe(startIso);
-    const end = endIso ? toDateSafe(endIso) : new Date();
+    // Use server time for "now" if no end time provided
+    const end = endIso ? toDateSafe(endIso) : getServerDate();
     if (!start || !end) return 0;
     const startEpoch = start.getTime() / 1000;
     const endEpoch = end.getTime() / 1000;
@@ -1218,8 +1346,21 @@ function computeStonesElapsed(startIso, endIso) {
 }
 
 // Initialize page
-document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener('DOMContentLoaded', async function() {
     console.log('DOM loaded, checking for unfinished points...');
+    
+    // Load saved KF state
+    loadKFState();
+    updateKFDisplay();
+    
+    // Start time synchronization (every 5 seconds)
+    timeSyncInterval = setInterval(syncWithServerTime, 5000);
+    
+    // Initial sync
+    await syncWithServerTime();
+    
+    // Update KF display periodically
+    setInterval(updateKFDisplay, 100);
     
     // Verify table exists
     const tbody = document.getElementById('points-table-body');
@@ -1249,6 +1390,10 @@ document.addEventListener('DOMContentLoaded', function() {
     {% for point in points %}
     updatePointNotesInTableForPoint('{{ point.uuid }}');
     {% endfor %}
+    
+    // Start polling for match state updates (poll every 1 second)
+    pollMatchState(); // Initial poll
+    pollingInterval = setInterval(pollMatchState, 1000);
     
     // Compute initial stones elapsed and set periodic update for ongoing last point
     try {
@@ -1281,9 +1426,10 @@ document.addEventListener('DOMContentLoaded', function() {
         const d = new Date(x);
         return isNaN(d.getTime()) ? null : d;
     })(startRaw);
-    let startTime = normStart || new Date();
+    let startTime = normStart || getServerDate();
     setInterval(function() {
-        const now = new Date();
+        // Use server time for elapsed time calculation
+        const now = getServerDate();
         const elapsed = Math.floor((now - startTime) / 1000);
         const minutes = Math.floor(elapsed / 60);
         const seconds = elapsed % 60;
@@ -1292,13 +1438,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }, 1000);
 });
 
-// Additional Functions
-function updateStonesRemaining(stones) {
-    socket.emit('update_stones', {
-        match_id: matchId,
-        stones_remaining: parseInt(stones)
-    });
-}
+// Additional Functions - already defined above, this is a duplicate
 
 </script>
 {% endblock %}
