@@ -97,6 +97,7 @@ let audioContext = null;
 let audioBuffer = null;  // Preloaded audio buffer for MP3
 let syncInterval = null;
 let scheduleInterval = null;  // Interval for scheduling beats ahead
+let wakeLock = null;  // Wake Lock to keep device awake
 const STORAGE_KEY = 'stones_player_kf_state';
 const AUDIO_FILE = '{{ url_for("static", filename="stone.mp3") }}';
 const SCHEDULE_AHEAD = 0.5;  // Schedule beats 0.5 seconds in advance
@@ -140,10 +141,39 @@ function updateDisplay() {
     }
 }
 
+// Request Wake Lock to keep device awake (mobile background support)
+async function requestWakeLock() {
+    if ('wakeLock' in navigator) {
+        try {
+            wakeLock = await navigator.wakeLock.request('screen');
+            console.log('Wake Lock acquired');
+            
+            // Handle wake lock release (e.g., when user switches tabs)
+            wakeLock.addEventListener('release', () => {
+                console.log('Wake Lock released');
+            });
+        } catch (err) {
+            console.warn('Wake Lock request failed:', err);
+        }
+    }
+}
+
+// Release Wake Lock
+async function releaseWakeLock() {
+    if (wakeLock !== null) {
+        await wakeLock.release();
+        wakeLock = null;
+        console.log('Wake Lock released');
+    }
+}
+
 // Initialize audio context and load MP3 file
 async function initAudio() {
     try {
         audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        
+        // Configure audio context to stay active (important for background playback)
+        // This helps prevent suspension when tab is in background
         
         // Load MP3 file into audio buffer
         const response = await fetch(AUDIO_FILE);
@@ -154,6 +184,18 @@ async function initAudio() {
         console.error('Error initializing audio:', error);
         // Fallback: try using HTML5 Audio if Web Audio API fails
         console.warn('Falling back to HTML5 Audio');
+    }
+}
+
+// Keep audio context active (prevents suspension in background)
+async function keepAudioActive() {
+    if (!audioContext || audioContext.state === 'running') return;
+    
+    try {
+        await audioContext.resume();
+        console.log('Audio context resumed');
+    } catch (error) {
+        console.warn('Failed to resume audio context:', error);
     }
 }
 
@@ -331,10 +373,16 @@ function scheduleNextBeat() {
 }
 
 // Start playback (auto-starts)
-function startPlayback() {
+async function startPlayback() {
     if (!isPlaying) {
         isPlaying = true;
         scheduledBeats.clear(); // Reset scheduled beats
+        
+        // Ensure audio context is active
+        await keepAudioActive();
+        
+        // Request wake lock to keep device awake
+        await requestWakeLock();
         
         // Clear any existing intervals/timeouts
         if (scheduledTimeout !== null) {
@@ -349,13 +397,25 @@ function startPlayback() {
         // Start look-ahead scheduling using Web Audio API timing
         scheduleBeatsAhead();
         scheduleInterval = setInterval(scheduleBeatsAhead, LOOKAHEAD * 1000);
+        
+        // Periodically ensure audio stays active (every 5 seconds)
+        const keepActiveInterval = setInterval(async () => {
+            if (isPlaying) {
+                await keepAudioActive();
+            } else {
+                clearInterval(keepActiveInterval);
+            }
+        }, 5000);
     }
 }
 
 // Stop playback
-function stopPlayback() {
+async function stopPlayback() {
     isPlaying = false;
     scheduledBeats.clear();
+    
+    // Release wake lock
+    await releaseWakeLock();
     
     if (scheduledTimeout !== null) {
         clearTimeout(scheduledTimeout);
@@ -455,6 +515,45 @@ document.addEventListener('DOMContentLoaded', async function() {
     
     // Update display periodically
     setInterval(updateDisplay, 100);
+    
+    // Handle page visibility changes (background/foreground)
+    document.addEventListener('visibilitychange', async function() {
+        if (document.hidden) {
+            console.log('Page went to background');
+            // Keep audio active when in background
+            if (isPlaying) {
+                await keepAudioActive();
+            }
+        } else {
+            console.log('Page came to foreground');
+            // Resume audio context if it was suspended
+            if (isPlaying && audioContext) {
+                await keepAudioActive();
+            }
+        }
+    });
+    
+    // Handle page focus/blur events as backup
+    window.addEventListener('blur', async function() {
+        if (isPlaying) {
+            await keepAudioActive();
+        }
+    });
+    
+    window.addEventListener('focus', async function() {
+        if (isPlaying && audioContext) {
+            await keepAudioActive();
+        }
+    });
+    
+    // Re-acquire wake lock if it's released (e.g., when device sleeps)
+    if ('wakeLock' in navigator) {
+        document.addEventListener('visibilitychange', async function() {
+            if (!document.hidden && isPlaying && wakeLock === null) {
+                await requestWakeLock();
+            }
+        });
+    }
 });
 </script>
 {% endblock %}
