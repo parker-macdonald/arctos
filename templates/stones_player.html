@@ -112,12 +112,10 @@ let scheduledTimeout = null;  // Track the current timeout to prevent duplicates
 let audioContext = null;
 let audioBuffer = null;  // Preloaded audio buffer for MP3
 let mediaStreamDestination = null;  // MediaStreamDestination for background playback on mobile
-let streamGainNode = null;  // Stable gain node connected to MediaStreamDestination
 let syncInterval = null;
 let wakeLock = null;  // Screen wake lock to prevent device sleep
 let activeSources = [];  // Track active audio sources for cleanup
 let lastPlayTime = 0;  // Track last play time to prevent rapid-fire playback
-let sourceStartTimes = new Map();  // Track when each source started playing
 const STORAGE_KEY = 'stones_player_kf_state';
 const AUDIO_SELECT_KEY = 'stones_player_audio_select';
 const MIN_PLAY_INTERVAL = 50;  // Minimum 50ms between plays (prevents rapid-fire)
@@ -221,19 +219,6 @@ function updateDisplay(skipMathJax = true) {
     }
 }
 
-// Resample audio buffer to match target sample rate
-function resampleBuffer(sourceBuffer, targetSampleRate) {
-    const numberOfChannels = sourceBuffer.numberOfChannels;
-    const sourceSampleRate = sourceBuffer.sampleRate;
-    const targetLength = Math.round(sourceBuffer.length * targetSampleRate / sourceSampleRate);
-    const offlineContext = new OfflineAudioContext(numberOfChannels, targetLength, targetSampleRate);
-    const bufferSource = offlineContext.createBufferSource();
-    bufferSource.buffer = sourceBuffer;
-    bufferSource.connect(offlineContext.destination);
-    bufferSource.start(0);
-    return offlineContext.startRendering();
-}
-
 // Initialize audio context and load MP3 file
 async function initAudio() {
     try {
@@ -246,20 +231,12 @@ async function initAudio() {
         if (!mediaStreamDestination) {
             mediaStreamDestination = audioContext.createMediaStreamDestination();
             
-            // Create a stable gain node that stays connected to MediaStreamDestination
-            // This helps stabilize audio routing on mobile devices
-            streamGainNode = audioContext.createGain();
-            streamGainNode.gain.value = 1.0;
-            streamGainNode.connect(mediaStreamDestination);
-            
             // Connect to audio element via srcObject
             const audioElement = document.getElementById('audio-stream');
             if (audioElement) {
                 audioElement.srcObject = mediaStreamDestination.stream;
-                // Ensure audio element is ready
+                // Ensure audio element is ready (muted initially to avoid issues)
                 audioElement.volume = 1.0;
-                // Explicitly set playback rate to prevent pitch shifts on mobile
-                audioElement.playbackRate = 1.0;
                 console.log('MediaStreamDestination connected to audio element');
             }
         }
@@ -268,48 +245,18 @@ async function initAudio() {
         const audioFile = getAudioFile();
         const response = await fetch(audioFile);
         const arrayBuffer = await response.arrayBuffer();
-        const decodedBuffer = await audioContext.decodeAudioData(arrayBuffer);
-        
-        // Check for sample rate mismatch and resample if needed
-        if (decodedBuffer.sampleRate !== audioContext.sampleRate) {
-            console.log(`Sample rate mismatch: buffer=${decodedBuffer.sampleRate}Hz, context=${audioContext.sampleRate}Hz. Resampling...`);
-            // Resample the buffer to match audio context sample rate
-            try {
-                audioBuffer = await resampleBuffer(decodedBuffer, audioContext.sampleRate);
-                console.log(`Resampling complete: ${audioBuffer.sampleRate}Hz`);
-            } catch (error) {
-                console.warn('Resampling failed, using original buffer (Web Audio will handle conversion):', error);
-                // Fallback: use original buffer, Web Audio API will handle conversion
-                audioBuffer = decodedBuffer;
-            }
-        } else {
-            audioBuffer = decodedBuffer;
-        }
-        console.log('Audio file loaded successfully:', audioFile, `(${audioBuffer.sampleRate}Hz, ${audioBuffer.duration.toFixed(3)}s)`);
-        // Warn if audio is longer than beat interval (1.5s)
-        if (audioBuffer.duration > 1.5) {
-            console.warn(`Audio file duration (${audioBuffer.duration.toFixed(3)}s) exceeds beat interval (1.5s), may cause overlap`);
-        }
+        audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+        console.log('Audio file loaded successfully:', audioFile);
     } catch (error) {
         console.error('Error initializing audio:', error);
     }
 }
 
 // Play the MP3 sound
-async function playSound() {
-    if (!audioContext || !audioBuffer || !mediaStreamDestination || !streamGainNode) {
+function playSound() {
+    if (!audioContext || !audioBuffer || !mediaStreamDestination) {
         console.error('Audio not initialized');
         return;
-    }
-    
-    // Ensure audio context is running (critical for consistent playback)
-    if (audioContext.state === 'suspended') {
-        try {
-            await audioContext.resume();
-        } catch (error) {
-            console.error('Failed to resume audio context:', error);
-            return;
-        }
     }
     
     // Prevent rapid-fire playback (important for short sounds)
@@ -321,76 +268,27 @@ async function playSound() {
     lastPlayTime = now;
     
     try {
-        // Get current time from audio context (more reliable after ensuring state)
-        const currentTime = audioContext.currentTime;
-        
-        // Only stop sources that would actually overlap with the new sound
-        // This prevents pitch shifts from abrupt stops while still preventing overlap
-        const sourcesToKeep = [];
-        activeSources.forEach((source, index) => {
-            const startTime = sourceStartTimes.get(source);
-            if (startTime !== undefined && audioBuffer) {
-                const endTime = startTime + audioBuffer.duration;
-                // If the source will finish before the new one starts (with 50ms buffer), keep it
-                // Otherwise stop it to prevent overlap
-                if (endTime <= currentTime + 0.05) {
-                    sourcesToKeep.push(source);
-                } else {
-                    try {
-                        // Fade out quickly to prevent clicks
-                        const gainNode = audioContext.createGain();
-                        source.disconnect();
-                        source.connect(gainNode);
-                        gainNode.connect(streamGainNode);
-                        gainNode.gain.setValueAtTime(1.0, audioContext.currentTime);
-                        gainNode.gain.linearRampToValueAtTime(0.0, audioContext.currentTime + 0.01);
-                        source.stop(audioContext.currentTime + 0.01);
-                        sourceStartTimes.delete(source);
-                    } catch (e) {
-                        // If fade fails, just stop abruptly
-                        try {
-                            source.stop();
-                            source.disconnect();
-                        } catch (e2) {
-                            // Ignore
-                        }
-                        sourceStartTimes.delete(source);
-                    }
-                }
-            } else {
-                // Can't determine timing, stop it to be safe
-                try {
-                    source.stop();
-                    source.disconnect();
-                } catch (e) {
-                    // Ignore errors
-                }
-                sourceStartTimes.delete(source);
+        // Clean up finished sources
+        activeSources = activeSources.filter(source => {
+            try {
+                // Check if source is still playing by attempting to get its playback state
+                // If we can't access it, assume it's done
+                return true; // Keep it for now, we'll clean on ended event
+            } catch {
+                return false; // Remove if access fails
             }
         });
-        activeSources = sourcesToKeep;
         
         // Ensure audio element is playing (mobile browsers may pause it)
         const audioElement = document.getElementById('audio-stream');
-        if (audioElement) {
-            if (audioElement.paused) {
-                audioElement.play().catch(err => console.error('Error resuming audio element:', err));
-            }
-            // Ensure playback rate stays at 1.0 (critical on mobile to prevent pitch shifts)
-            if (audioElement.playbackRate !== 1.0) {
-                try {
-                    audioElement.playbackRate = 1.0;
-                } catch (e) {
-                    // Some browsers may have read-only playbackRate
-                }
-            }
+        if (audioElement && audioElement.paused) {
+            audioElement.play().catch(err => console.error('Error resuming audio element:', err));
         }
         
         // Create a new buffer source for each play (required for multiple plays)
         const source = audioContext.createBufferSource();
         source.buffer = audioBuffer;
         source.loop = false; // Explicitly disable looping
-        source.playbackRate.value = 1.0; // Explicitly set playback rate to prevent pitch shifts
         
         // Handle source end to clean it up
         source.onended = () => {
@@ -401,23 +299,17 @@ async function playSound() {
                 // Ignore disconnect errors (source might already be disconnected)
             }
             activeSources = activeSources.filter(s => s !== source);
-            sourceStartTimes.delete(source);
         };
         
-        // Connect through the stable gain node to MediaStreamDestination
-        // This helps prevent pitch shifts on mobile by maintaining a stable routing path
-        source.connect(streamGainNode);
+        // Connect to MediaStreamDestination instead of audioContext.destination
+        // This allows background playback on mobile devices
+        source.connect(mediaStreamDestination);
         
         // Add to active sources for tracking
         activeSources.push(source);
         
-        // Schedule playback with a tiny buffer (5ms) to ensure context is ready
-        // This helps prevent pitch shifts from context state changes
-        const scheduleTime = currentTime + 0.005;
-        source.start(scheduleTime);
-        
-        // Track when this source started for overlap detection
-        sourceStartTimes.set(source, scheduleTime);
+        // Play immediately at current time (using audioContext time for precision)
+        source.start(audioContext.currentTime);
     } catch (error) {
         console.error('Error playing sound:', error);
     }
@@ -504,10 +396,10 @@ function scheduleNextBeat() {
     
     nextBeatTime = actualNextBeat;
     
-    scheduledTimeout = setTimeout(async () => {
+    scheduledTimeout = setTimeout(() => {
         scheduledTimeout = null;  // Clear the timeout reference
         if (isPlaying) {
-            await playSound();
+            playSound();
             scheduleNextBeat(); // Schedule the next one
         }
     }, delay);
@@ -629,7 +521,6 @@ function stopPlayback() {
         }
     });
     activeSources = [];
-    sourceStartTimes.clear();
     
     // Release wake lock when stopping playback (non-blocking)
     releaseWakeLock().catch(err => {
