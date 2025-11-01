@@ -22,7 +22,8 @@ window.MathJax = {
             <div class="card">
                 <div class="card-body">
                     <div class="mb-3">
-                        <button id="reset-btn" class="btn btn-danger mb-3">Reset Kalman Filter</button>
+                        <button id="play-pause-btn" class="btn btn-primary btn-lg mb-3">Play</button>
+                        <button id="reset-btn" class="btn btn-danger mb-3 ms-2">Reset Kalman Filter</button>
                     </div>
                     <div class="mb-3">
                         <h5>Stats</h5>
@@ -372,7 +373,21 @@ function scheduleNextBeat() {
     scheduleBeatsAhead();
 }
 
-// Start playback (auto-starts)
+// Update play/pause button state
+function updatePlayButton() {
+    const btn = document.getElementById('play-pause-btn');
+    if (btn) {
+        if (isPlaying) {
+            btn.textContent = 'Pause';
+            btn.className = 'btn btn-warning btn-lg mb-3';
+        } else {
+            btn.textContent = 'Play';
+            btn.className = 'btn btn-primary btn-lg mb-3';
+        }
+    }
+}
+
+// Start playback
 async function startPlayback() {
     if (!isPlaying) {
         isPlaying = true;
@@ -406,6 +421,8 @@ async function startPlayback() {
                 clearInterval(keepActiveInterval);
             }
         }, 5000);
+        
+        updatePlayButton();
     }
 }
 
@@ -427,6 +444,7 @@ async function stopPlayback() {
     }
     
     nextBeatTime = null;
+    updatePlayButton();
 }
 
 // Reset Kalman filter
@@ -448,6 +466,7 @@ document.addEventListener('DOMContentLoaded', async function() {
     // Load saved KF state
     loadKFState();
     updateDisplay();
+    updatePlayButton(); // Initialize button state
     
     // Load audio file before user interaction
     await initAudio();
@@ -463,49 +482,21 @@ document.addEventListener('DOMContentLoaded', async function() {
         }
     };
     
-    // Helper to start audio and playback on user interaction
-    let playbackStarted = false;
-    const ensurePlayback = async function() {
-        await startAudio();
-        if (!isPlaying && !playbackStarted) {
-            playbackStarted = true;
-            startPlayback();
+    // Play/Pause button handler
+    document.getElementById('play-pause-btn').addEventListener('click', async function() {
+        await startAudio(); // Ensure audio context is ready
+        
+        if (isPlaying) {
+            await stopPlayback();
+        } else {
+            await startPlayback();
         }
-    };
-    
-    // Reset button - also starts playback if needed
-    document.getElementById('reset-btn').addEventListener('click', async function() {
-        await ensurePlayback();
-        resetKF();
     });
     
-    // Auto-start playback after user interaction (click anywhere on page)
-    // Remove the listener after first successful start to avoid duplicate starts
-    const startOnce = async function(e) {
-        // Don't start if clicking the reset button (it handles it separately)
-        if (e.target && e.target.id === 'reset-btn') {
-            return;
-        }
-        await ensurePlayback();
-        
-        // Remove listener after starting to prevent duplicate starts
-        if (playbackStarted) {
-            document.removeEventListener('click', startOnce);
-            const card = document.querySelector('.card');
-            if (card) {
-                card.removeEventListener('click', startOnce);
-            }
-        }
-    };
-    
-    // Listen for clicks on the document (anywhere on page)
-    document.addEventListener('click', startOnce);
-    
-    // Also listen on the card specifically
-    const card = document.querySelector('.card');
-    if (card) {
-        card.addEventListener('click', startOnce);
-    }
+    // Reset button handler
+    document.getElementById('reset-btn').addEventListener('click', async function() {
+        resetKF();
+    });
     
     // Sync with server periodically (every 1 second for better accuracy)
     syncInterval = setInterval(syncWithServer, 1000);
