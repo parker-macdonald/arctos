@@ -114,11 +114,9 @@ let audioBuffer = null;  // Preloaded audio buffer for MP3
 let mediaStreamDestination = null;  // MediaStreamDestination for background playback on mobile
 let syncInterval = null;
 let wakeLock = null;  // Screen wake lock to prevent device sleep
-let activeSources = [];  // Track active audio sources for cleanup
-let lastPlayTime = 0;  // Track last play time to prevent rapid-fire playback
+let lastRTT = null;  // Store RTT value for throttled display update
 const STORAGE_KEY = 'stones_player_kf_state';
 const AUDIO_SELECT_KEY = 'stones_player_audio_select';
-const MIN_PLAY_INTERVAL = 50;  // Minimum 50ms between plays (prevents rapid-fire)
 
 // Audio file base paths (set at page load)
 const AUDIO_FILES = {
@@ -191,6 +189,7 @@ function saveAudioSelection() {
 // Update display with current KF state (without expensive MathJax re-rendering)
 let lastOffset = null;
 let lastCovariance = null;
+let lastDisplayedRTT = null;
 
 function updateDisplay(skipMathJax = true) {
     const offset = kalmanFilter.getState();
@@ -211,6 +210,15 @@ function updateDisplay(skipMathJax = true) {
             covEl.textContent = covariance.toFixed(6);
         }
         lastCovariance = covariance;
+    }
+    
+    // Update RTT display if available and changed
+    if (lastRTT !== null && lastRTT !== lastDisplayedRTT) {
+        const rttEl = document.getElementById('rtt');
+        if (rttEl) {
+            rttEl.textContent = lastRTT.toFixed(1);
+        }
+        lastDisplayedRTT = lastRTT;
     }
     
     // Only trigger MathJax rendering if explicitly requested (not on every update)
@@ -259,26 +267,7 @@ function playSound() {
         return;
     }
     
-    // Prevent rapid-fire playback (important for short sounds)
-    const now = Date.now();
-    if (now - lastPlayTime < MIN_PLAY_INTERVAL) {
-        console.log('Skipping rapid-fire play');
-        return;
-    }
-    lastPlayTime = now;
-    
     try {
-        // Clean up finished sources
-        activeSources = activeSources.filter(source => {
-            try {
-                // Check if source is still playing by attempting to get its playback state
-                // If we can't access it, assume it's done
-                return true; // Keep it for now, we'll clean on ended event
-            } catch {
-                return false; // Remove if access fails
-            }
-        });
-        
         // Ensure audio element is playing (mobile browsers may pause it)
         const audioElement = document.getElementById('audio-stream');
         if (audioElement && audioElement.paused) {
@@ -288,28 +277,12 @@ function playSound() {
         // Create a new buffer source for each play (required for multiple plays)
         const source = audioContext.createBufferSource();
         source.buffer = audioBuffer;
-        source.loop = false; // Explicitly disable looping
-        
-        // Handle source end to clean it up
-        source.onended = () => {
-            // Disconnect and remove from active sources
-            try {
-                source.disconnect();
-            } catch (e) {
-                // Ignore disconnect errors (source might already be disconnected)
-            }
-            activeSources = activeSources.filter(s => s !== source);
-        };
-        
         // Connect to MediaStreamDestination instead of audioContext.destination
         // This allows background playback on mobile devices
         source.connect(mediaStreamDestination);
         
-        // Add to active sources for tracking
-        activeSources.push(source);
-        
-        // Play immediately at current time (using audioContext time for precision)
-        source.start(audioContext.currentTime);
+        // Play immediately at current time
+        source.start(0);
     } catch (error) {
         console.error('Error playing sound:', error);
     }
@@ -338,12 +311,8 @@ async function syncWithServer() {
         // Save state to localStorage
         saveKFState();
         
-        // Update display (skip MathJax on sync updates for performance)
-        updateDisplay(true);
-        const rttEl = document.getElementById('rtt');
-        if (rttEl) {
-            rttEl.textContent = rtt.toFixed(1);
-        }
+        // Store RTT for throttled display update (don't update display here)
+        lastRTT = rtt;
         
         return { offset: kalmanFilter.getState(), rtt };
     } catch (error) {
@@ -509,19 +478,7 @@ function stopPlayback() {
         scheduledTimeout = null;
     }
     nextBeatTime = null;
-    lastPlayTime = 0; // Reset play time tracking
-    
-    // Stop all active sources
-    activeSources.forEach(source => {
-        try {
-            source.stop();
-            source.disconnect();
-        } catch (e) {
-            // Ignore errors (source might already be stopped/disconnected)
-        }
-    });
-    activeSources = [];
-    
+    // The throttledUpdate loop will stop automatically because isPlaying is false (base case)
     // Release wake lock when stopping playback (non-blocking)
     releaseWakeLock().catch(err => {
         console.log('Wake lock release failed (non-critical):', err);
@@ -614,15 +571,16 @@ document.addEventListener('DOMContentLoaded', async function() {
     });
     
     // Sync with server periodically (every 1 second for better accuracy)
-    syncInterval = setInterval(syncWithServer, 1000);
+    syncInterval = setInterval(syncWithServer, 750);
     
     // Initial sync
     await syncWithServer();
     
     // Update display periodically (throttled for mobile performance)
-    // Use requestAnimationFrame for better performance and throttle to ~500ms
-    let lastUpdateTime = 0;
-    const updateThrottle = 500; // Update at most every 500ms
+    // Uses requestAnimationFrame for smooth updates - not recursion, but an async loop
+    let lastUpdateTime = Date.now() - 1500; // Initialize so first update happens immediately
+    const updateThrottle = 1500; // Update at most every 1500ms
+    let animationFrameId = null; // Track animation frame for cleanup
     
     function throttledUpdate() {
         const now = Date.now();
@@ -630,13 +588,14 @@ document.addEventListener('DOMContentLoaded', async function() {
             updateDisplay(true); // Skip MathJax for frequent updates
             lastUpdateTime = now;
         }
-        if (isPlaying) {
-            requestAnimationFrame(throttledUpdate);
-        }
+        // Always continue the loop to keep display updated regularly
+        // (loop will stop automatically when page is closed/unloaded)
+        animationFrameId = requestAnimationFrame(throttledUpdate);
     }
     
-    // Start throttled updates
-    requestAnimationFrame(throttledUpdate);
+    // Start the update loop (runs continuously to keep display updated)
+    // First update will happen immediately due to lastUpdateTime initialization
+    animationFrameId = requestAnimationFrame(throttledUpdate);
     
     // Handle visibility changes - re-request wake lock when page becomes visible again
     document.addEventListener('visibilitychange', () => {
