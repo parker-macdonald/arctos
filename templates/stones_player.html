@@ -39,7 +39,7 @@ window.MathJax = {
                         <button id="reset-btn" class="btn btn-danger mb-3 ms-2">Reset Kalman Filter</button>
                     </div>
                     <!-- Hidden audio element for MediaStreamDestination (allows background playback on mobile) -->
-                    <audio id="audio-stream" autoplay></audio>
+                    <audio id="audio-stream"></audio>
                     <div class="mb-3">
                         <h5>Stats</h5>
                         <p>$\hat{x}$ : <span id="estimated-offset">0.000</span> s</p>
@@ -115,6 +115,7 @@ let mediaStreamDestination = null;  // MediaStreamDestination for background pla
 let syncInterval = null;
 let wakeLock = null;  // Screen wake lock to prevent device sleep
 let lastRTT = null;  // Store RTT value for throttled display update
+let audioElementStarted = false;  // Track if audio element has been started
 const STORAGE_KEY = 'stones_player_kf_state';
 const AUDIO_SELECT_KEY = 'stones_player_audio_select';
 
@@ -234,11 +235,27 @@ function generateToneBuffer(context, frequency = 440, duration = 0.1) {
     const buffer = context.createBuffer(1, numSamples, sampleRate);
     const data = buffer.getChannelData(0);
     
+    // Fade in/out envelope to prevent clicks
+    const fadeInDuration = 0.01; // 10ms fade in
+    const fadeOutDuration = 0.01; // 10ms fade out
+    const fadeInSamples = Math.floor(sampleRate * fadeInDuration);
+    const fadeOutSamples = Math.floor(sampleRate * fadeOutDuration);
+    
     for (let i = 0; i < numSamples; i++) {
-        // Generate a sine wave with envelope (fade out to prevent clicks)
         const t = i / sampleRate;
-        const fadeOut = 1 - (t / duration); // Fade out over the duration
-        data[i] = Math.sin(2 * Math.PI * frequency * t) * fadeOut * 0.5;
+        let envelope = 1.0;
+        
+        // Fade in
+        if (i < fadeInSamples) {
+            envelope = i / fadeInSamples;
+        }
+        // Fade out
+        else if (i >= numSamples - fadeOutSamples) {
+            envelope = (numSamples - i) / fadeOutSamples;
+        }
+        
+        // Generate sine wave with envelope
+        data[i] = Math.sin(2 * Math.PI * frequency * t) * envelope * 0.5;
     }
     
     return buffer;
@@ -283,10 +300,15 @@ function playSound() {
     }
     
     try {
-        // Ensure audio element is playing (mobile browsers may pause it)
-        const audioElement = document.getElementById('audio-stream');
-        if (audioElement && audioElement.paused) {
-            audioElement.play().catch(err => console.error('Error resuming audio element:', err));
+        // Start audio element only once (on first play)
+        if (!audioElementStarted) {
+            const audioElement = document.getElementById('audio-stream');
+            if (audioElement) {
+                audioElement.play().catch(err => {
+                    console.log('Audio element play failed (will retry):', err);
+                });
+                audioElementStarted = true;
+            }
         }
         
         // Create a new buffer source for each play (required for multiple plays)
@@ -295,6 +317,15 @@ function playSound() {
         // Connect to MediaStreamDestination instead of audioContext.destination
         // This allows background playback on mobile devices
         source.connect(mediaStreamDestination);
+        
+        // Clean up source when it finishes
+        source.onended = () => {
+            try {
+                source.disconnect();
+            } catch (e) {
+                // Ignore disconnect errors
+            }
+        };
         
         // Play immediately at current time
         source.start(0);
