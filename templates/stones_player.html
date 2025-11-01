@@ -228,10 +228,13 @@ function updateDisplay(skipMathJax = true) {
     }
 }
 
-// Generate a pure tone audio buffer (for testing pitch issues)
-function generateToneBuffer(context, frequency = 440, duration = 0.1) {
-    const sampleRate = context.sampleRate;
+// Generate a pure tone audio buffer at a specific sample rate (for testing pitch issues)
+function generateToneBufferAtSampleRate(context, frequency = 440, duration = 0.1, targetSampleRate = null) {
+    // Use target sample rate if provided, otherwise use context's sample rate
+    const sampleRate = targetSampleRate || context.sampleRate;
     const numSamples = Math.floor(sampleRate * duration);
+    
+    // Create buffer at the target sample rate
     const buffer = context.createBuffer(1, numSamples, sampleRate);
     const data = buffer.getChannelData(0);
     
@@ -283,10 +286,19 @@ async function initAudio() {
             }
         }
         
-        // Generate pure tone instead of loading MP3
+        // Get the actual sample rate that MediaStreamDestination uses
+        // This is usually 48kHz, but may differ on some devices
+        const streamTrack = mediaStreamDestination.stream.getAudioTracks()[0];
+        const streamSettings = streamTrack ? streamTrack.getSettings() : null;
+        const targetSampleRate = streamSettings?.sampleRate || audioContext.sampleRate;
+        
+        console.log('Sample rates - Context:', audioContext.sampleRate, 'Hz, Stream:', targetSampleRate, 'Hz');
+        
+        // Generate pure tone at the MediaStreamDestination's sample rate
+        // This prevents pitch/speed issues from resampling
         // Using 880Hz (A5) for a clear test tone
-        audioBuffer = generateToneBuffer(audioContext, 880, 0.1);
-        console.log('Pure tone generated:', audioContext.sampleRate, 'Hz sample rate,', audioBuffer.duration, 'seconds,', 880, 'Hz frequency');
+        audioBuffer = generateToneBufferAtSampleRate(audioContext, 880, 0.9, targetSampleRate);
+        console.log('Pure tone generated at', targetSampleRate, 'Hz sample rate:', audioBuffer.duration, 'seconds,', 880, 'Hz frequency');
     } catch (error) {
         console.error('Error initializing audio:', error);
     }
