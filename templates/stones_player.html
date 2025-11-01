@@ -396,8 +396,8 @@ document.addEventListener('DOMContentLoaded', async function() {
         card.addEventListener('click', startOnce);
     }
     
-    // Sync with server periodically (every 5 seconds)
-    syncInterval = setInterval(syncWithServer, 5000);
+    // Sync with server periodically (every 1 second for better accuracy)
+    syncInterval = setInterval(syncWithServer, 1000);
     
     // Initial sync
     await syncWithServer();
