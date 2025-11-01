@@ -19,12 +19,27 @@ window.MathJax = {
     <div class="row">
         <div class="col-12">
             <h1>Stones Player</h1>
+            <p>This page plays stones at the same time across all users by computing the clock offset between the server and the client. On mobile, the browser must be open and on this page in order for the audio to play properly.</p>
             <div class="card">
                 <div class="card-body">
+                    <!-- Sound selector slider -->
+                    <div class="mb-4">
+                        <label class="form-label mb-2">Sound:</label>
+                        <div class="btn-group w-100" role="group" id="audio-selector">
+                            <input type="radio" class="btn-check" name="audio-type" id="audio-classic" value="classic" autocomplete="off" checked>
+                            <label class="btn btn-outline-primary" for="audio-classic">Classic</label>
+                            
+                            <input type="radio" class="btn-check" name="audio-type" id="audio-snare" value="snare" autocomplete="off">
+                            <label class="btn btn-outline-primary" for="audio-snare">Snare</label>
+                        </div>
+                    </div>
+                    
                     <div class="mb-3">
                         <button id="play-pause-btn" class="btn btn-primary btn-lg mb-3">Play</button>
                         <button id="reset-btn" class="btn btn-danger mb-3 ms-2">Reset Kalman Filter</button>
                     </div>
+                    <!-- Hidden audio element for MediaStreamDestination (allows background playback on mobile) -->
+                    <audio id="audio-stream" autoplay></audio>
                     <div class="mb-3">
                         <h5>Stats</h5>
                         <p>$\hat{x}$ : <span id="estimated-offset">0.000</span> s</p>
@@ -96,9 +111,29 @@ let nextBeatTime = null;
 let scheduledTimeout = null;  // Track the current timeout to prevent duplicates
 let audioContext = null;
 let audioBuffer = null;  // Preloaded audio buffer for MP3
+let mediaStreamDestination = null;  // MediaStreamDestination for background playback on mobile
+let streamGainNode = null;  // Stable gain node connected to MediaStreamDestination
 let syncInterval = null;
+let wakeLock = null;  // Screen wake lock to prevent device sleep
+let activeSources = [];  // Track active audio sources for cleanup
+let lastPlayTime = 0;  // Track last play time to prevent rapid-fire playback
 const STORAGE_KEY = 'stones_player_kf_state';
-const AUDIO_FILE = '{{ url_for("static", filename="stone.mp3") }}';
+const AUDIO_SELECT_KEY = 'stones_player_audio_select';
+const MIN_PLAY_INTERVAL = 50;  // Minimum 50ms between plays (prevents rapid-fire)
+
+// Audio file base paths (set at page load)
+const AUDIO_FILES = {
+    classic: '{{ url_for("static", filename="classic_stone.mp3") }}',
+    snare: '{{ url_for("static", filename="snare_stone.mp3") }}'
+};
+
+// Get audio file path based on selection
+function getAudioFile() {
+    const classicRadio = document.getElementById('audio-classic');
+    const snareRadio = document.getElementById('audio-snare');
+    const selected = snareRadio && snareRadio.checked ? 'snare' : 'classic';
+    return AUDIO_FILES[selected];
+}
 
 // Load Kalman filter state from localStorage
 function loadKFState() {
@@ -121,6 +156,36 @@ function saveKFState() {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     } catch (error) {
         console.error('Error saving KF state:', error);
+    }
+}
+
+// Load audio selection from localStorage
+function loadAudioSelection() {
+    try {
+        const saved = localStorage.getItem(AUDIO_SELECT_KEY);
+        if (saved && (saved === 'classic' || saved === 'snare')) {
+            const classicRadio = document.getElementById('audio-classic');
+            const snareRadio = document.getElementById('audio-snare');
+            if (saved === 'snare' && snareRadio) {
+                snareRadio.checked = true;
+            } else if (classicRadio) {
+                classicRadio.checked = true;
+            }
+        }
+    } catch (error) {
+        console.error('Error loading audio selection:', error);
+    }
+}
+
+// Save audio selection to localStorage
+function saveAudioSelection() {
+    try {
+        const classicRadio = document.getElementById('audio-classic');
+        const snareRadio = document.getElementById('audio-snare');
+        const selected = snareRadio && snareRadio.checked ? 'snare' : 'classic';
+        localStorage.setItem(AUDIO_SELECT_KEY, selected);
+    } catch (error) {
+        console.error('Error saving audio selection:', error);
     }
 }
 
@@ -155,36 +220,160 @@ function updateDisplay(skipMathJax = true) {
     }
 }
 
+// Resample audio buffer to match target sample rate
+function resampleBuffer(sourceBuffer, targetSampleRate) {
+    const numberOfChannels = sourceBuffer.numberOfChannels;
+    const sourceSampleRate = sourceBuffer.sampleRate;
+    const targetLength = Math.round(sourceBuffer.length * targetSampleRate / sourceSampleRate);
+    const offlineContext = new OfflineAudioContext(numberOfChannels, targetLength, targetSampleRate);
+    const bufferSource = offlineContext.createBufferSource();
+    bufferSource.buffer = sourceBuffer;
+    bufferSource.connect(offlineContext.destination);
+    bufferSource.start(0);
+    return offlineContext.startRendering();
+}
+
 // Initialize audio context and load MP3 file
 async function initAudio() {
     try {
-        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        if (!audioContext) {
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        
+        // Create MediaStreamDestination for background playback on mobile
+        // This tricks Safari into thinking it's a live stream
+        if (!mediaStreamDestination) {
+            mediaStreamDestination = audioContext.createMediaStreamDestination();
+            
+            // Create a stable gain node that stays connected to MediaStreamDestination
+            // This helps stabilize audio routing on mobile devices
+            streamGainNode = audioContext.createGain();
+            streamGainNode.gain.value = 1.0;
+            streamGainNode.connect(mediaStreamDestination);
+            
+            // Connect to audio element via srcObject
+            const audioElement = document.getElementById('audio-stream');
+            if (audioElement) {
+                audioElement.srcObject = mediaStreamDestination.stream;
+                // Ensure audio element is ready
+                audioElement.volume = 1.0;
+                // Explicitly set playback rate to prevent pitch shifts on mobile
+                audioElement.playbackRate = 1.0;
+                console.log('MediaStreamDestination connected to audio element');
+            }
+        }
         
         // Load MP3 file into audio buffer
-        const response = await fetch(AUDIO_FILE);
+        const audioFile = getAudioFile();
+        const response = await fetch(audioFile);
         const arrayBuffer = await response.arrayBuffer();
-        audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-        console.log('Audio file loaded successfully');
+        const decodedBuffer = await audioContext.decodeAudioData(arrayBuffer);
+        
+        // Check for sample rate mismatch and resample if needed
+        if (decodedBuffer.sampleRate !== audioContext.sampleRate) {
+            console.log(`Sample rate mismatch: buffer=${decodedBuffer.sampleRate}Hz, context=${audioContext.sampleRate}Hz. Resampling...`);
+            // Resample the buffer to match audio context sample rate
+            try {
+                audioBuffer = await resampleBuffer(decodedBuffer, audioContext.sampleRate);
+                console.log(`Resampling complete: ${audioBuffer.sampleRate}Hz`);
+            } catch (error) {
+                console.warn('Resampling failed, using original buffer (Web Audio will handle conversion):', error);
+                // Fallback: use original buffer, Web Audio API will handle conversion
+                audioBuffer = decodedBuffer;
+            }
+        } else {
+            audioBuffer = decodedBuffer;
+        }
+        console.log('Audio file loaded successfully:', audioFile, `(${audioBuffer.sampleRate}Hz, ${audioBuffer.duration.toFixed(3)}s)`);
     } catch (error) {
         console.error('Error initializing audio:', error);
     }
 }
 
 // Play the MP3 sound
-function playSound() {
-    if (!audioContext || !audioBuffer) {
+async function playSound() {
+    if (!audioContext || !audioBuffer || !mediaStreamDestination || !streamGainNode) {
         console.error('Audio not initialized');
         return;
     }
     
+    // Ensure audio context is running (critical for consistent playback)
+    if (audioContext.state === 'suspended') {
+        try {
+            await audioContext.resume();
+        } catch (error) {
+            console.error('Failed to resume audio context:', error);
+            return;
+        }
+    }
+    
+    // Prevent rapid-fire playback (important for short sounds)
+    const now = Date.now();
+    if (now - lastPlayTime < MIN_PLAY_INTERVAL) {
+        console.log('Skipping rapid-fire play');
+        return;
+    }
+    lastPlayTime = now;
+    
     try {
+        // Clean up finished sources
+        activeSources = activeSources.filter(source => {
+            try {
+                // Check if source is still playing by attempting to get its playback state
+                // If we can't access it, assume it's done
+                return true; // Keep it for now, we'll clean on ended event
+            } catch {
+                return false; // Remove if access fails
+            }
+        });
+        
+        // Ensure audio element is playing (mobile browsers may pause it)
+        const audioElement = document.getElementById('audio-stream');
+        if (audioElement) {
+            if (audioElement.paused) {
+                audioElement.play().catch(err => console.error('Error resuming audio element:', err));
+            }
+            // Ensure playback rate stays at 1.0 (critical on mobile to prevent pitch shifts)
+            if (audioElement.playbackRate !== 1.0) {
+                try {
+                    audioElement.playbackRate = 1.0;
+                } catch (e) {
+                    // Some browsers may have read-only playbackRate
+                }
+            }
+        }
+        
+        // Get current time from audio context (more reliable after ensuring state)
+        const currentTime = audioContext.currentTime;
+        
         // Create a new buffer source for each play (required for multiple plays)
         const source = audioContext.createBufferSource();
         source.buffer = audioBuffer;
-        source.connect(audioContext.destination);
+        source.loop = false; // Explicitly disable looping
+        source.playbackRate.value = 1.0; // Explicitly set playback rate to prevent pitch shifts
         
-        // Play immediately at current time
-        source.start(0);
+        // Handle source end to clean it up
+        source.onended = () => {
+            // Disconnect and remove from active sources
+            try {
+                source.disconnect();
+            } catch (e) {
+                // Ignore disconnect errors (source might already be disconnected)
+            }
+            activeSources = activeSources.filter(s => s !== source);
+        };
+        
+        // Connect through the stable gain node to MediaStreamDestination
+        // This helps prevent pitch shifts on mobile by maintaining a stable routing path
+        source.connect(streamGainNode);
+        
+        // Add to active sources for tracking
+        activeSources.push(source);
+        
+        // Schedule playback with a tiny buffer (5ms) to ensure context is ready
+        // This helps prevent pitch shifts from context state changes
+        const scheduleTime = currentTime + 0.005;
+        source.start(scheduleTime);
     } catch (error) {
         console.error('Error playing sound:', error);
     }
@@ -271,10 +460,10 @@ function scheduleNextBeat() {
     
     nextBeatTime = actualNextBeat;
     
-    scheduledTimeout = setTimeout(() => {
+    scheduledTimeout = setTimeout(async () => {
         scheduledTimeout = null;  // Clear the timeout reference
         if (isPlaying) {
-            playSound();
+            await playSound();
             scheduleNextBeat(); // Schedule the next one
         }
     }, delay);
@@ -294,6 +483,53 @@ function updatePlayButton() {
     }
 }
 
+// Request wake lock to prevent device sleep
+async function requestWakeLock() {
+    try {
+        if ('wakeLock' in navigator) {
+            // If we already have a wake lock, don't request another
+            if (wakeLock) {
+                return;
+            }
+            
+            wakeLock = await navigator.wakeLock.request('screen');
+            console.log('Wake lock acquired');
+            
+            // Handle wake lock release (e.g., browser releases it automatically)
+            wakeLock.addEventListener('release', async () => {
+                console.log('Wake lock released by browser');
+                wakeLock = null;
+                
+                // If we're still playing and page is visible, try to re-acquire
+                if (isPlaying && document.visibilityState === 'visible') {
+                    console.log('Attempting to re-acquire wake lock...');
+                    await requestWakeLock();
+                }
+            });
+        }
+    } catch (error) {
+        // Wake lock may fail if:
+        // - Already active
+        // - Browser doesn't support it
+        // - Page is not visible
+        // This is fine, we'll just continue without it
+        console.log('Wake lock not available:', error.message);
+    }
+}
+
+// Release wake lock
+async function releaseWakeLock() {
+    try {
+        if (wakeLock) {
+            await wakeLock.release();
+            wakeLock = null;
+            console.log('Wake lock released');
+        }
+    } catch (error) {
+        console.error('Error releasing wake lock:', error);
+    }
+}
+
 // Start playback
 async function startPlayback() {
     if (!isPlaying) {
@@ -306,6 +542,19 @@ async function startPlayback() {
         if (!audioBuffer && audioContext) {
             await initAudio();
         }
+        // Explicitly play the audio element (required for mobile browsers)
+        const audioElement = document.getElementById('audio-stream');
+        if (audioElement) {
+            try {
+                await audioElement.play();
+            } catch (error) {
+                console.error('Error playing audio element:', error);
+            }
+        }
+        // Request wake lock to prevent device sleep (non-blocking)
+        requestWakeLock().catch(err => {
+            console.log('Wake lock request failed (non-critical):', err);
+        });
         // Clear any existing timeout before starting
         if (scheduledTimeout !== null) {
             clearTimeout(scheduledTimeout);
@@ -324,6 +573,23 @@ function stopPlayback() {
         scheduledTimeout = null;
     }
     nextBeatTime = null;
+    lastPlayTime = 0; // Reset play time tracking
+    
+    // Stop all active sources
+    activeSources.forEach(source => {
+        try {
+            source.stop();
+            source.disconnect();
+        } catch (e) {
+            // Ignore errors (source might already be stopped/disconnected)
+        }
+    });
+    activeSources = [];
+    
+    // Release wake lock when stopping playback (non-blocking)
+    releaseWakeLock().catch(err => {
+        console.log('Wake lock release failed (non-critical):', err);
+    });
     updatePlayButton();
 }
 
@@ -345,6 +611,9 @@ document.addEventListener('DOMContentLoaded', async function() {
     // Load saved KF state
     loadKFState();
     
+    // Load saved audio selection
+    loadAudioSelection();
+    
     // Wait for MathJax to load, then update display once
     if (window.MathJax && window.MathJax.startup) {
         window.MathJax.startup.promise.then(() => {
@@ -360,6 +629,26 @@ document.addEventListener('DOMContentLoaded', async function() {
     
     // Load audio file before user interaction
     await initAudio();
+    
+    // Audio selection change handler (for radio buttons)
+    const classicRadio = document.getElementById('audio-classic');
+    const snareRadio = document.getElementById('audio-snare');
+    const handleAudioChange = async function() {
+        saveAudioSelection();
+        // Reload audio buffer with new file
+        audioBuffer = null;
+        await initAudio();
+        // If playing, reschedule with new audio
+        if (isPlaying) {
+            scheduleNextBeat();
+        }
+    };
+    if (classicRadio) {
+        classicRadio.addEventListener('change', handleAudioChange);
+    }
+    if (snareRadio) {
+        snareRadio.addEventListener('change', handleAudioChange);
+    }
     
     // User interaction required for audio context (browser policy)
     const startAudio = async () => {
@@ -412,6 +701,27 @@ document.addEventListener('DOMContentLoaded', async function() {
     
     // Start throttled updates
     requestAnimationFrame(throttledUpdate);
+    
+    // Handle visibility changes - re-request wake lock when page becomes visible again
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible' && isPlaying) {
+            // Wake lock may have been released when page went to background
+            // Re-request it if we're still playing (non-blocking)
+            requestWakeLock().catch(err => {
+                console.log('Wake lock re-request failed (non-critical):', err);
+            });
+        }
+    });
+    
+    // Release wake lock when page unloads (non-blocking)
+    window.addEventListener('beforeunload', () => {
+        releaseWakeLock().catch(() => {});
+    });
+    
+    // Also handle pagehide for better mobile browser support (non-blocking)
+    window.addEventListener('pagehide', () => {
+        releaseWakeLock().catch(() => {});
+    });
 });
 </script>
 {% endblock %}
