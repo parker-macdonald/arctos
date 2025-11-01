@@ -4,7 +4,6 @@
 
 {% block content %}
 <!-- MathJax for LaTeX rendering -->
-<script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
 <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
 <script>
 window.MathJax = {
@@ -19,7 +18,7 @@ window.MathJax = {
     <div class="row">
         <div class="col-12">
             <h1>Stones Player</h1>
-            <p>This page plays stones at the same time across all users by computing the clock offset between the server and the client. On mobile, the browser must be open and on this page in order for the audio to play properly.</p>
+            <p>Usage Notes: On mobile, the browser must be open and on this page in order for the audio to play properly. </p>
             <div class="card">
                 <div class="card-body">
                     <!-- Sound selector slider -->
@@ -39,7 +38,7 @@ window.MathJax = {
                         <button id="reset-btn" class="btn btn-danger mb-3 ms-2">Reset Kalman Filter</button>
                     </div>
                     <!-- Hidden audio element for MediaStreamDestination (allows background playback on mobile) -->
-                    <audio id="audio-stream"></audio>
+                    <audio id="audio-stream" autoplay></audio>
                     <div class="mb-3">
                         <h5>Stats</h5>
                         <p>$\hat{x}$ : <span id="estimated-offset">0.000</span> s</p>
@@ -114,23 +113,16 @@ let audioBuffer = null;  // Preloaded audio buffer for MP3
 let mediaStreamDestination = null;  // MediaStreamDestination for background playback on mobile
 let syncInterval = null;
 let wakeLock = null;  // Screen wake lock to prevent device sleep
-let lastRTT = null;  // Store RTT value for throttled display update
-let audioElementStarted = false;  // Track if audio element has been started
 const STORAGE_KEY = 'stones_player_kf_state';
 const AUDIO_SELECT_KEY = 'stones_player_audio_select';
-
-// Audio file base paths (set at page load)
-const AUDIO_FILES = {
-    classic: '{{ url_for("static", filename="classic_stone.mp3") }}',
-    snare: '{{ url_for("static", filename="snare_stone.mp3") }}'
-};
 
 // Get audio file path based on selection
 function getAudioFile() {
     const classicRadio = document.getElementById('audio-classic');
     const snareRadio = document.getElementById('audio-snare');
     const selected = snareRadio && snareRadio.checked ? 'snare' : 'classic';
-    return AUDIO_FILES[selected];
+    const filename = selected === 'snare' ? 'snare_stone.mp3' : 'classic_stone.mp3';
+    return '{{ url_for("static", filename="") }}' + filename;
 }
 
 // Load Kalman filter state from localStorage
@@ -190,7 +182,6 @@ function saveAudioSelection() {
 // Update display with current KF state (without expensive MathJax re-rendering)
 let lastOffset = null;
 let lastCovariance = null;
-let lastDisplayedRTT = null;
 
 function updateDisplay(skipMathJax = true) {
     const offset = kalmanFilter.getState();
@@ -213,58 +204,13 @@ function updateDisplay(skipMathJax = true) {
         lastCovariance = covariance;
     }
     
-    // Update RTT display if available and changed
-    if (lastRTT !== null && lastRTT !== lastDisplayedRTT) {
-        const rttEl = document.getElementById('rtt');
-        if (rttEl) {
-            rttEl.textContent = lastRTT.toFixed(1);
-        }
-        lastDisplayedRTT = lastRTT;
-    }
-    
     // Only trigger MathJax rendering if explicitly requested (not on every update)
     if (!skipMathJax && window.MathJax && window.MathJax.typesetPromise) {
         window.MathJax.typesetPromise().catch((err) => console.error('MathJax error:', err));
     }
 }
 
-// Generate a pure tone audio buffer at a specific sample rate (for testing pitch issues)
-function generateToneBufferAtSampleRate(context, frequency = 440, duration = 0.1, targetSampleRate = null) {
-    // Use target sample rate if provided, otherwise use context's sample rate
-    const sampleRate = targetSampleRate || context.sampleRate;
-    const numSamples = Math.floor(sampleRate * duration);
-    
-    // Create buffer at the target sample rate
-    const buffer = context.createBuffer(1, numSamples, sampleRate);
-    const data = buffer.getChannelData(0);
-    
-    // Fade in/out envelope to prevent clicks
-    const fadeInDuration = 0.01; // 10ms fade in
-    const fadeOutDuration = 0.01; // 10ms fade out
-    const fadeInSamples = Math.floor(sampleRate * fadeInDuration);
-    const fadeOutSamples = Math.floor(sampleRate * fadeOutDuration);
-    
-    for (let i = 0; i < numSamples; i++) {
-        const t = i / sampleRate;
-        let envelope = 1.0;
-        
-        // Fade in
-        if (i < fadeInSamples) {
-            envelope = i / fadeInSamples;
-        }
-        // Fade out
-        else if (i >= numSamples - fadeOutSamples) {
-            envelope = (numSamples - i) / fadeOutSamples;
-        }
-        
-        // Generate sine wave with envelope
-        data[i] = Math.sin(2 * Math.PI * frequency * t) * envelope * 0.5;
-    }
-    
-    return buffer;
-}
-
-// Initialize audio context and generate pure tone
+// Initialize audio context and load MP3 file
 async function initAudio() {
     try {
         if (!audioContext) {
@@ -286,25 +232,18 @@ async function initAudio() {
             }
         }
         
-        // Get the actual sample rate that MediaStreamDestination uses
-        // This is usually 48kHz, but may differ on some devices
-        const streamTrack = mediaStreamDestination.stream.getAudioTracks()[0];
-        const streamSettings = streamTrack ? streamTrack.getSettings() : null;
-        const targetSampleRate = streamSettings?.sampleRate || audioContext.sampleRate;
-        
-        console.log('Sample rates - Context:', audioContext.sampleRate, 'Hz, Stream:', targetSampleRate, 'Hz');
-        
-        // Generate pure tone at the MediaStreamDestination's sample rate
-        // This prevents pitch/speed issues from resampling
-        // Using 880Hz (A5) for a clear test tone
-        audioBuffer = generateToneBufferAtSampleRate(audioContext, 880, 0.9, targetSampleRate);
-        console.log('Pure tone generated at', targetSampleRate, 'Hz sample rate:', audioBuffer.duration, 'seconds,', 880, 'Hz frequency');
+        // Load MP3 file into audio buffer
+        const audioFile = getAudioFile();
+        const response = await fetch(audioFile);
+        const arrayBuffer = await response.arrayBuffer();
+        audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+        console.log('Audio file loaded successfully:', audioFile);
     } catch (error) {
         console.error('Error initializing audio:', error);
     }
 }
 
-// Play the generated tone
+// Play the MP3 sound
 function playSound() {
     if (!audioContext || !audioBuffer || !mediaStreamDestination) {
         console.error('Audio not initialized');
@@ -312,15 +251,10 @@ function playSound() {
     }
     
     try {
-        // Start audio element only once (on first play)
-        if (!audioElementStarted) {
-            const audioElement = document.getElementById('audio-stream');
-            if (audioElement) {
-                audioElement.play().catch(err => {
-                    console.log('Audio element play failed (will retry):', err);
-                });
-                audioElementStarted = true;
-            }
+        // Ensure audio element is playing (mobile browsers may pause it)
+        const audioElement = document.getElementById('audio-stream');
+        if (audioElement && audioElement.paused) {
+            audioElement.play().catch(err => console.error('Error resuming audio element:', err));
         }
         
         // Create a new buffer source for each play (required for multiple plays)
@@ -329,15 +263,6 @@ function playSound() {
         // Connect to MediaStreamDestination instead of audioContext.destination
         // This allows background playback on mobile devices
         source.connect(mediaStreamDestination);
-        
-        // Clean up source when it finishes
-        source.onended = () => {
-            try {
-                source.disconnect();
-            } catch (e) {
-                // Ignore disconnect errors
-            }
-        };
         
         // Play immediately at current time
         source.start(0);
@@ -369,8 +294,12 @@ async function syncWithServer() {
         // Save state to localStorage
         saveKFState();
         
-        // Store RTT for throttled display update (don't update display here)
-        lastRTT = rtt;
+        // Update display (skip MathJax on sync updates for performance)
+        updateDisplay(true);
+        const rttEl = document.getElementById('rtt');
+        if (rttEl) {
+            rttEl.textContent = rtt.toFixed(1);
+        }
         
         return { offset: kalmanFilter.getState(), rtt };
     } catch (error) {
@@ -536,7 +465,6 @@ function stopPlayback() {
         scheduledTimeout = null;
     }
     nextBeatTime = null;
-    // The throttledUpdate loop will stop automatically because isPlaying is false (base case)
     // Release wake lock when stopping playback (non-blocking)
     releaseWakeLock().catch(err => {
         console.log('Wake lock release failed (non-critical):', err);
@@ -629,16 +557,15 @@ document.addEventListener('DOMContentLoaded', async function() {
     });
     
     // Sync with server periodically (every 1 second for better accuracy)
-    syncInterval = setInterval(syncWithServer, 750);
+    syncInterval = setInterval(syncWithServer, 1000);
     
     // Initial sync
     await syncWithServer();
     
     // Update display periodically (throttled for mobile performance)
-    // Uses requestAnimationFrame for smooth updates - not recursion, but an async loop
-    let lastUpdateTime = Date.now() - 1500; // Initialize so first update happens immediately
-    const updateThrottle = 1500; // Update at most every 1500ms
-    let animationFrameId = null; // Track animation frame for cleanup
+    // Use requestAnimationFrame for better performance and throttle to ~500ms
+    let lastUpdateTime = 0;
+    const updateThrottle = 500; // Update at most every 500ms
     
     function throttledUpdate() {
         const now = Date.now();
@@ -646,14 +573,13 @@ document.addEventListener('DOMContentLoaded', async function() {
             updateDisplay(true); // Skip MathJax for frequent updates
             lastUpdateTime = now;
         }
-        // Always continue the loop to keep display updated regularly
-        // (loop will stop automatically when page is closed/unloaded)
-        animationFrameId = requestAnimationFrame(throttledUpdate);
+        if (isPlaying) {
+            requestAnimationFrame(throttledUpdate);
+        }
     }
     
-    // Start the update loop (runs continuously to keep display updated)
-    // First update will happen immediately due to lastUpdateTime initialization
-    animationFrameId = requestAnimationFrame(throttledUpdate);
+    // Start throttled updates
+    requestAnimationFrame(throttledUpdate);
     
     // Handle visibility changes - re-request wake lock when page becomes visible again
     document.addEventListener('visibilitychange', () => {
