@@ -776,7 +776,7 @@ def complete_match(tournament_url):
     return jsonify({'success': True, 'match_id': match_id, 'status': 'COMPLETED'})
 
 
-@bp.route('/stones-player')
+@bp.route('/stones')
 def stones_player():
     """Stones audio player page with server time synchronization."""
     return render_template('stones_player.html')

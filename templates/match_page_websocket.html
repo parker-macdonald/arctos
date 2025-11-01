@@ -296,7 +296,7 @@ window.MathJax = {
     </div>
     
     <div class="col-md-4">
-        {% if current_user.is_authenticated and current_user.__class__.__name__ == 'Player' and is_head_ref(tournament.url, current_user.id) %}
+        {% if current_user.is_authenticated and current_user.__class__.__name__ == 'Player' and is_head_ref %}
         <div class="card">
             <div class="card-header">
                 <h5 class="mb-0">Head Ref Notes</h5>
@@ -321,18 +321,6 @@ window.MathJax = {
             </div>
         </div>
         {% endif %}
-        
-        <!-- Debug: Kalman Filter State -->
-        <div class="card mt-3">
-            <div class="card-header">
-                <h5 class="mb-0">Time Sync Debug</h5>
-            </div>
-            <div class="card-body">
-                <p>$\hat{x}$ : <span id="kf-offset">0.000</span> s</p>
-                <p>$P$ : <span id="kf-covariance">1.000</span> s²</p>
-                <p>round trip time: <span id="kf-rtt">-</span> ms</p>
-            </div>
-        </div>
     </div>
 </div>
 
@@ -442,9 +430,6 @@ async function syncWithServerTime() {
         // Save state to localStorage
         saveKFState();
         
-        // Update debug display
-        updateKFDisplay(rtt);
-        
         return { offset: kalmanFilter.getState(), rtt };
     } catch (error) {
         console.error('Error syncing with server:', error);
@@ -452,22 +437,6 @@ async function syncWithServerTime() {
     }
 }
 
-// Update KF state display
-function updateKFDisplay(rtt) {
-    const offset = kalmanFilter.getState();
-    const covariance = kalmanFilter.getCovariance();
-    
-    document.getElementById('kf-offset').textContent = offset.toFixed(6);
-    document.getElementById('kf-covariance').textContent = covariance.toFixed(6);
-    if (rtt !== undefined) {
-        document.getElementById('kf-rtt').textContent = rtt.toFixed(1);
-    }
-    
-    // Trigger MathJax rendering after updating values
-    if (window.MathJax && window.MathJax.typesetPromise) {
-        window.MathJax.typesetPromise().catch((err) => console.error('MathJax error:', err));
-    }
-}
 
 // Poll for match state updates
 function pollMatchState() {
@@ -790,7 +759,6 @@ document.addEventListener('DOMContentLoaded', async function() {
     
     // Load saved KF state
     loadKFState();
-    updateKFDisplay();
     
     // Start time synchronization (every 5 seconds)
     timeSyncInterval = setInterval(syncWithServerTime, 5000);
@@ -807,8 +775,6 @@ document.addEventListener('DOMContentLoaded', async function() {
     pollingInterval = setInterval(pollMatchState, 2000);
     {% endif %}
     
-    // Update KF display periodically
-    setInterval(updateKFDisplay, 100);
 });
 </script>
 {% endblock %}
