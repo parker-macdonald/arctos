@@ -17,8 +17,13 @@ window.MathJax = {
 <div class="container mt-4">
     <div class="row">
         <div class="col-12">
-            <h1>Stones Player</h1>
-            <p>Usage Notes: On mobile, the browser must be open and on this page in order for the audio to play properly. </p>
+            <h1>Stones Player [BETA]</h1>
+            <p>This is a stones player that plays globally synchronized stones: all devices on this page will (eventually) play stones at the same time. <br>Important Notes:
+                <ul>
+                    <li>It may take up to a minute for stones to synchronize across devices.</li>
+                    <li>On mobile, only the snare stones work properly.</li>
+                    <li>On mobile, the browser must be open and on thsi page or the timing utterly fails.</li>
+                </ul> On mobile, only the snare stones work properly, and the browser must be open and on this page otherwise the os removes resources from the app and the audio timing suffers.</p>
             <div class="card">
                 <div class="card-body">
                     <!-- Sound selector slider -->
@@ -108,11 +113,14 @@ let kalmanFilter = new KalmanFilter();
 let isPlaying = false;
 let nextBeatTime = null;
 let scheduledTimeout = null;  // Track the current timeout to prevent duplicates
+let scheduledTimes = new Set();  // Track scheduled audio times to prevent duplicates
+let scheduleInterval = null;  // Interval to check and schedule ahead
 let audioContext = null;
 let audioBuffer = null;  // Preloaded audio buffer for MP3
 let mediaStreamDestination = null;  // MediaStreamDestination for background playback on mobile
 let syncInterval = null;
 let wakeLock = null;  // Screen wake lock to prevent device sleep
+let audioContextStartTime = null;  // Wall clock time when audio context was created
 const STORAGE_KEY = 'stones_player_kf_state';
 const AUDIO_SELECT_KEY = 'stones_player_audio_select';
 
@@ -215,6 +223,8 @@ async function initAudio() {
     try {
         if (!audioContext) {
             audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            // Track when audio context was created for time conversion
+            audioContextStartTime = Date.now() / 1000;
         }
         
         // Create MediaStreamDestination for background playback on mobile
@@ -243,11 +253,19 @@ async function initAudio() {
     }
 }
 
-// Play the MP3 sound
-function playSound() {
+// Schedule a sound to play at a specific audio context time
+function scheduleSoundAt(audioContextTime) {
     if (!audioContext || !audioBuffer || !mediaStreamDestination) {
         console.error('Audio not initialized');
-        return;
+        return false;
+    }
+    
+    // Round to nearest 0.01 seconds for duplicate detection
+    const roundedTime = Math.round(audioContextTime * 100) / 100;
+    
+    // Prevent scheduling duplicates for the same time
+    if (scheduledTimes.has(roundedTime)) {
+        return false;
     }
     
     try {
@@ -264,11 +282,36 @@ function playSound() {
         // This allows background playback on mobile devices
         source.connect(mediaStreamDestination);
         
-        // Play immediately at current time
-        source.start(0);
+        // Schedule to play at the specified audio context time
+        const currentTime = audioContext.currentTime;
+        const delay = audioContextTime - currentTime;
+        
+        // Only schedule if the time is in the future and reasonable
+        if (delay > 0 && delay < 60) {  // Max 60 seconds ahead
+            source.start(audioContextTime);
+            scheduledTimes.add(roundedTime);
+            
+            // Clean up old scheduled times (older than 30 seconds) to prevent memory leak
+            const currentRounded = Math.round(audioContext.currentTime * 100) / 100;
+            for (const time of scheduledTimes) {
+                if (time < currentRounded - 30) {
+                    scheduledTimes.delete(time);
+                }
+            }
+            
+            return true;
+        }
     } catch (error) {
-        console.error('Error playing sound:', error);
+        console.error('Error scheduling sound:', error);
     }
+    
+    return false;
+}
+
+// Play sound immediately (for backwards compatibility if needed)
+function playSound() {
+    if (!audioContext) return;
+    scheduleSoundAt(audioContext.currentTime);
 }
 
 // Get server time and measure latency
@@ -326,39 +369,77 @@ function calculateNextBeat() {
     return nextBeat;
 }
 
-// Play sound at the next beat
-function scheduleNextBeat() {
-    if (!isPlaying) return;
+// Schedule beats ahead using Web Audio API timing
+function scheduleBeatsAhead() {
+    if (!isPlaying || !audioContext || !audioContextStartTime) return;
     
-    // Cancel any existing scheduled beat to prevent duplicates
-    if (scheduledTimeout !== null) {
-        clearTimeout(scheduledTimeout);
-        scheduledTimeout = null;
-    }
-    
-    const nextBeat = calculateNextBeat();
     const now = Date.now() / 1000;
-    let delay = (nextBeat - now) * 1000;
+    const audioNow = audioContext.currentTime;
+    const beatInterval = 1.5;
     
-    // If we're too close to or past the beat, skip to the next one (1.5 seconds later)
-    // Use a minimum delay to ensure proper timing and avoid scheduling conflicts
-    const MIN_DELAY = 10; // Minimum 10ms delay for scheduling
-    let actualNextBeat = nextBeat;
-    if (delay < MIN_DELAY) {
-        // Skip to the beat 1.5 seconds after this one
-        actualNextBeat = nextBeat + 1.5;
-        delay = Math.max(MIN_DELAY, (actualNextBeat - now) * 1000);
+    // Schedule beats up to 10 seconds ahead (keeps buffer filled)
+    const scheduleAheadTime = 10; // seconds in wall clock
+    const maxAheadWallClock = now + scheduleAheadTime;
+    
+    // Calculate how many beats we need to schedule
+    let beatTime = calculateNextBeat();
+    let scheduledCount = 0;
+    const maxScheduled = 20; // Safety limit
+    
+    // Convert wall clock beat times to audio context times
+    // audioContext.currentTime is relative to when the context was created
+    // So: audioContextTime = (beatTime - audioContextStartTime) + audioNow
+    // Actually, simpler: delay = beatTime - now, then audioContextTime = audioNow + delay
+    // But we need to account for audio context being paused/resumed
+    
+    while (beatTime <= maxAheadWallClock && scheduledCount < maxScheduled) {
+        // Calculate delay in wall clock seconds
+        const delay = beatTime - now;
+        
+        // Only schedule if it's reasonably in the future (at least 50ms)
+        if (delay > 0.05 && delay < 60) {
+            // Convert to audio context time
+            // audioContext.currentTime advances at real-time rate (when not suspended)
+            // So we can approximate: audioContextTime ≈ audioNow + delay
+            // But more accurately, we track the relationship
+            const audioContextTime = audioNow + delay;
+            
+            if (scheduleSoundAt(audioContextTime)) {
+                scheduledCount++;
+            }
+        }
+        
+        // Move to next beat
+        beatTime += beatInterval;
     }
     
-    nextBeatTime = actualNextBeat;
+    nextBeatTime = beatTime - beatInterval; // Store the last scheduled beat time
+}
+
+// Start the beat scheduling loop
+function startBeatScheduling() {
+    if (scheduleInterval) {
+        clearInterval(scheduleInterval);
+    }
     
-    scheduledTimeout = setTimeout(() => {
-        scheduledTimeout = null;  // Clear the timeout reference
+    // Schedule beats immediately
+    scheduleBeatsAhead();
+    
+    // Check and reschedule every 500ms to keep buffer filled
+    scheduleInterval = setInterval(() => {
         if (isPlaying) {
-            playSound();
-            scheduleNextBeat(); // Schedule the next one
+            scheduleBeatsAhead();
+        } else {
+            clearInterval(scheduleInterval);
+            scheduleInterval = null;
         }
-    }, delay);
+    }, 500);
+}
+
+// Legacy function name for compatibility
+function scheduleNextBeat() {
+    // Redirect to the new scheduling system
+    startBeatScheduling();
 }
 
 // Update play/pause button state
@@ -464,7 +545,12 @@ function stopPlayback() {
         clearTimeout(scheduledTimeout);
         scheduledTimeout = null;
     }
+    if (scheduleInterval !== null) {
+        clearInterval(scheduleInterval);
+        scheduleInterval = null;
+    }
     nextBeatTime = null;
+    scheduledTimes.clear();  // Reset scheduling tracker
     // Release wake lock when stopping playback (non-blocking)
     releaseWakeLock().catch(err => {
         console.log('Wake lock release failed (non-critical):', err);
