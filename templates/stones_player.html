@@ -21,8 +21,9 @@ window.MathJax = {
             <p>This is a stones player that plays globally synchronized stones: all devices on this page will (eventually) play stones at the same time. <br>Important Notes:
                 <ul>
                     <li>It may take up to a minute for stones to synchronize across devices.</li>
-                    <li>On mobile, the browser must be open and on this page or the timing utterly fails.</li>
-                </ul> On mobile, only the snare stones work properly, and the browser must be open and on this page otherwise the os removes resources from the app and the audio timing suffers.</p>
+                    <li>If you change the audio type while playing, there may be a few stones where you hear both. I'll fix this eventually but I'm lazy.</li>
+                </ul>
+            </p>
             <div class="card">
                 <div class="card-body">
                     <!-- Sound selector slider -->
@@ -60,7 +61,7 @@ window.MathJax = {
 class KalmanFilter {
     constructor() {
         this.x = 0;  // State estimate (time offset)
-        this.P = 1.0;  // Initial estimation error covariance (1 second squared)
+        this.P = 1e10;  // Initial estimation error covariance
         this.Q = 0.00001;  // Process noise covariance (clock drift)
         this.R = 0.05;   // Measurement noise covariance (~50ms std dev, accounts for network jitter)
     }
@@ -87,7 +88,7 @@ class KalmanFilter {
     
     reset() {
         this.x = 0;
-        this.P = 1.0;
+        this.P = 1e10;  // Reset to effectively infinite covariance (no prior knowledge)
     }
     
     // Save state to object for persistence
@@ -607,14 +608,11 @@ function stopPlayback() {
 
 // Reset Kalman filter
 function resetKF() {
-    if (confirm('Reset Kalman filter state? This will clear the saved state and start fresh.')) {
+    if (confirm('Reset Kalman filter state? This will clear the saved state and reload the page.')) {
         kalmanFilter.reset();
         saveKFState();
-        updateDisplay(false); // Trigger MathJax after reset
-        // Reschedule beat with new offset
-        if (isPlaying) {
-            scheduleNextBeat();
-        }
+        // Reload the page to reset everything cleanly
+        window.location.reload();
     }
 }
 
