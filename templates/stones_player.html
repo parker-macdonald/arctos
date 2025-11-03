@@ -21,8 +21,7 @@ window.MathJax = {
             <p>This is a stones player that plays globally synchronized stones: all devices on this page will (eventually) play stones at the same time. <br>Important Notes:
                 <ul>
                     <li>It may take up to a minute for stones to synchronize across devices.</li>
-                    <li>On mobile, only the snare stones work properly.</li>
-                    <li>On mobile, the browser must be open and on thsi page or the timing utterly fails.</li>
+                    <li>On mobile, the browser must be open and on this page or the timing utterly fails.</li>
                 </ul> On mobile, only the snare stones work properly, and the browser must be open and on this page otherwise the os removes resources from the app and the audio timing suffers.</p>
             <div class="card">
                 <div class="card-body">
@@ -114,6 +113,7 @@ let isPlaying = false;
 let nextBeatTime = null;
 let scheduledTimeout = null;  // Track the current timeout to prevent duplicates
 let scheduledTimes = new Set();  // Track scheduled audio times to prevent duplicates
+let scheduledSources = new Map();  // Track scheduled sources by time so we can stop them
 let scheduleInterval = null;  // Interval to check and schedule ahead
 let audioContext = null;
 let audioBuffer = null;  // Preloaded audio buffer for MP3
@@ -290,12 +290,32 @@ function scheduleSoundAt(audioContextTime) {
         if (delay > 0 && delay < 60) {  // Max 60 seconds ahead
             source.start(audioContextTime);
             scheduledTimes.add(roundedTime);
+            scheduledSources.set(roundedTime, source);
+            
+            // Set up cleanup when source finishes
+            source.onended = () => {
+                scheduledSources.delete(roundedTime);
+                // Keep scheduledTimes for a bit to prevent immediate rescheduling
+                setTimeout(() => {
+                    scheduledTimes.delete(roundedTime);
+                }, 100);
+            };
             
             // Clean up old scheduled times (older than 30 seconds) to prevent memory leak
             const currentRounded = Math.round(audioContext.currentTime * 100) / 100;
             for (const time of scheduledTimes) {
                 if (time < currentRounded - 30) {
                     scheduledTimes.delete(time);
+                    const oldSource = scheduledSources.get(time);
+                    if (oldSource) {
+                        try {
+                            oldSource.stop();
+                            oldSource.disconnect();
+                        } catch (e) {
+                            // Source may have already ended or been stopped
+                        }
+                        scheduledSources.delete(time);
+                    }
                 }
             }
             
@@ -306,6 +326,32 @@ function scheduleSoundAt(audioContextTime) {
     }
     
     return false;
+}
+
+// Clear all scheduled beats (stop sources and clear tracking)
+function clearScheduledBeats() {
+    // Stop all scheduled sources
+    for (const [time, source] of scheduledSources.entries()) {
+        try {
+            // Stop the source (works for both scheduled and playing sources)
+            source.stop();
+            source.disconnect();
+        } catch (e) {
+            // Source may have already ended or been stopped
+            // Try to disconnect anyway
+            try {
+                source.disconnect();
+            } catch (e2) {
+                // Already disconnected, ignore
+            }
+        }
+    }
+    
+    // Clear all tracking
+    scheduledSources.clear();
+    scheduledTimes.clear();
+    
+    console.log('Cleared all scheduled beats');
 }
 
 // Play sound immediately (for backwards compatibility if needed)
@@ -549,8 +595,9 @@ function stopPlayback() {
         clearInterval(scheduleInterval);
         scheduleInterval = null;
     }
+    // Clear all scheduled beats immediately
+    clearScheduledBeats();
     nextBeatTime = null;
-    scheduledTimes.clear();  // Reset scheduling tracker
     // Release wake lock when stopping playback (non-blocking)
     releaseWakeLock().catch(err => {
         console.log('Wake lock release failed (non-critical):', err);
@@ -600,11 +647,19 @@ document.addEventListener('DOMContentLoaded', async function() {
     const snareRadio = document.getElementById('audio-snare');
     const handleAudioChange = async function() {
         saveAudioSelection();
+        // Clear all scheduled beats with old audio
+        clearScheduledBeats();
         // Reload audio buffer with new file
         audioBuffer = null;
         await initAudio();
         // If playing, reschedule with new audio
         if (isPlaying) {
+            // Stop the scheduling interval temporarily
+            if (scheduleInterval !== null) {
+                clearInterval(scheduleInterval);
+                scheduleInterval = null;
+            }
+            // Restart scheduling with new audio
             scheduleNextBeat();
         }
     };
