@@ -28,6 +28,24 @@
             padding-right: 15px;
             width: 100%;
         }
+        /* Markdown admonitions */
+        .admonition {
+            border-left: 4px solid #6c757d;
+            background-color: #f8f9fa;
+            padding: 0.75rem 1rem;
+            margin: 1rem 0;
+            border-radius: 0.25rem;
+        }
+        .admonition .admonition-title {
+            font-weight: 600;
+            margin-bottom: 0.25rem;
+        }
+        .admonition p:last-child { margin-bottom: 0; }
+        .admonition.note { border-color: #0d6efd; background-color: #eff6ff; }
+        .admonition.info { border-color: #0dcaf0; background-color: #e7f9fd; }
+        .admonition.tip { border-color: #198754; background-color: #e9f7ef; }
+        .admonition.warning { border-color: #ffc107; background-color: #fff8e1; }
+        .admonition.danger { border-color: #dc3545; background-color: #fdecea; }
     </style>
 </head>
 <body>

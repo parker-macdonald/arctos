@@ -75,7 +75,7 @@
             </div>
             <div class="card-body">
                 {% if tournament.about %}
-                    {{ tournament.about|safe }}
+                    {{ tournament.about|markdown }}
                 {% else %}
                     <p>Tournament details coming soon!</p>
                 {% endif %}

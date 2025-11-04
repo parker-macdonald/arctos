@@ -39,7 +39,7 @@
                 {% endif %}
                 {% if team.about %}
                 <p><strong>About:</strong></p>
-                <p>{{ team.about }}</p>
+                <div>{{ team.about|markdown }}</div>
                 {% endif %}
             </div>
         </div>

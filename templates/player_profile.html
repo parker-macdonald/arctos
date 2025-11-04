@@ -38,7 +38,7 @@
                 {% if player.bio %}
                 <div class="mt-3">
                     <h6><strong>Bio:</strong></h6>
-                    <p>{{ player.bio }}</p>
+                    <div>{{ player.bio|markdown }}</div>
                 </div>
                 {% endif %}
             </div>
