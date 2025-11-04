@@ -20,6 +20,14 @@
         .navbar-brand { font-weight: bold; }
         .tournament-card { margin-bottom: 1rem; }
         .status-badge { font-size: 0.8em; }
+        .container-wide {
+            max-width: 1600px;
+            margin-left: auto;
+            margin-right: auto;
+            padding-left: 15px;
+            padding-right: 15px;
+            width: 100%;
+        }
     </style>
 </head>
 <body>
@@ -80,7 +88,7 @@
         </div>
     </nav>
 
-    <main class="container mt-4">
+    <main class="container-wide mt-4">
         {% with messages = get_flashed_messages() %}
             {% if messages %}
                 {% for message in messages %}

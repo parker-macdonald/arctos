@@ -167,6 +167,7 @@ class Match(db.Model):
     field = db.Column(db.String(100))
     nominal_start_time = db.Column(db.DateTime)
     confirmed_start_time = db.Column(db.DateTime)
+    completed_time = db.Column(db.DateTime)
     nominal_length = db.Column(db.Integer)  # minutes
     type = db.Column(db.String(20), default='SETS')  # SETS, STONES
     nsets = db.Column(db.Integer)
@@ -174,8 +175,12 @@ class Match(db.Model):
     status = db.Column(db.String(20), default='NOT_STARTED')  # NOT_STARTED, IN_PROGRESS, COMPLETED
     gamestate = db.Column(db.Text)
     dynamic = db.Column(db.Boolean, default=True)  # True for dynamic, False for static scheduling
+    previous_match = db.Column(db.String(36), db.ForeignKey('matches.uuid'), nullable=True)
+    next_match = db.Column(db.String(36), db.ForeignKey('matches.uuid'), nullable=True)
     
     # Relationships
+    previous_match_obj = db.relationship('Match', foreign_keys=[previous_match], remote_side=[uuid], post_update=True, backref='previous_of')
+    next_match_obj = db.relationship('Match', foreign_keys=[next_match], remote_side=[uuid], post_update=True, backref='next_of')
     team1_registration = db.relationship('TeamRegistration', 
                                        primaryjoin='and_(Match.team1 == foreign(TeamRegistration.team), Match.event == TeamRegistration.event)',
                                        uselist=False)

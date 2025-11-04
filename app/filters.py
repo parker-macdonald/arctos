@@ -1,6 +1,7 @@
 """
 Jinja2 template filters for the tournament site.
 """
+import json
 from flask import Blueprint
 from models import TeamRegistration, Tournament
 
@@ -31,4 +32,15 @@ def is_head_ref(tournament_url, player_id):
         return False
     head_refs_list = [ref.strip() for ref in tournament.head_refs.split(',')]
     return player_id in head_refs_list
+
+
+@bp.app_template_filter('from_json')
+def from_json(json_string):
+    """Parse JSON string to Python object."""
+    if not json_string:
+        return {}
+    try:
+        return json.loads(json_string)
+    except (json.JSONDecodeError, TypeError):
+        return {}
 

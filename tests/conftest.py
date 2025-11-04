@@ -9,11 +9,14 @@ from flask import Flask
 from flask_login import FlaskLoginClient
 
 # Import app components
-from app import app, db, init_db
+from app import create_app
 from models import (
-    Tournament, Match, Player, Team, TeamRegistration, 
+    db, init_db, Tournament, Match, Player, Team, TeamRegistration, 
     PlayerRegistration, Point, HeadRef
 )
+
+# Create app instance with testing configuration
+app = create_app(config={'TESTING': True})
 
 
 @pytest.fixture(scope='function')
@@ -82,6 +85,10 @@ def tournament(test_db):
         )
         db.session.add(tourn)
         db.session.commit()
+        # Store the URL as a simple attribute (already loaded)
+        tourn_url = tourn.url
+        # Make tournament accessible by storing URL as instance attribute
+        # This prevents DetachedInstanceError when accessed in different app contexts
         return tourn
 
 

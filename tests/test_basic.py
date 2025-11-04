@@ -2,7 +2,8 @@
 Basic tests for the application to verify the testing framework works.
 """
 import pytest
-from app import app
+# Import app from conftest where it's created
+from tests.conftest import app
 
 
 @pytest.mark.unit

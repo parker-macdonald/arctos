@@ -126,8 +126,8 @@
                     <div class="row mb-4">
                         <div class="col-md-6">
                             <h6>{{ match.team1_registration.pseudonym if match.team1_registration else match.team1 }} Captain Signature</h6>
-                            <div class="border p-3" style="height: 100px;">
-                                <canvas id="team1-signature" width="300" height="80"></canvas>
+                            <div class="border p-3" style="height: 150px;">
+                                <canvas id="team1-signature" style="width: 100%; height: 100%;"></canvas>
                             </div>
                             <div class="mt-2">
                                 <button type="button" class="btn btn-sm btn-outline-secondary" onclick="clearSignature('team1-signature', 'team1-signature-data')">Clear</button>
@@ -136,8 +136,8 @@
                         </div>
                         <div class="col-md-6">
                             <h6>{{ match.team2_registration.pseudonym if match.team2_registration else match.team2 }} Captain Signature</h6>
-                            <div class="border p-3" style="height: 100px;">
-                                <canvas id="team2-signature" width="300" height="80"></canvas>
+                            <div class="border p-3" style="height: 150px;">
+                                <canvas id="team2-signature" style="width: 100%; height: 100%;"></canvas>
                             </div>
                             <div class="mt-2">
                                 <button type="button" class="btn btn-sm btn-outline-secondary" onclick="clearSignature('team2-signature', 'team2-signature-data')">Clear</button>
@@ -185,52 +185,52 @@
 </div>
 
 <script>
-// Signature pad functionality
+// Signature pad functionality (responsive)
 function initSignaturePad(canvasId, hiddenInputId) {
     const canvas = document.getElementById(canvasId);
     const ctx = canvas.getContext('2d');
     const hiddenInput = document.getElementById(hiddenInputId);
-    
+
+    function resizeCanvas() {
+        const parent = canvas.parentElement;
+        const rect = parent.getBoundingClientRect();
+        canvas.width = Math.max(300, Math.floor(rect.width));
+        canvas.height = Math.max(100, Math.floor(rect.height));
+    }
+    resizeCanvas();
+    window.addEventListener('resize', resizeCanvas);
+
     let isDrawing = false;
     let lastX = 0;
     let lastY = 0;
-    
+
     canvas.addEventListener('mousedown', (e) => {
         isDrawing = true;
         const rect = canvas.getBoundingClientRect();
         lastX = e.clientX - rect.left;
         lastY = e.clientY - rect.top;
     });
-    
+
     canvas.addEventListener('mousemove', (e) => {
         if (!isDrawing) return;
-        
         const rect = canvas.getBoundingClientRect();
         const currentX = e.clientX - rect.left;
         const currentY = e.clientY - rect.top;
-        
         ctx.beginPath();
         ctx.moveTo(lastX, lastY);
         ctx.lineTo(currentX, currentY);
         ctx.stroke();
-        
         lastX = currentX;
         lastY = currentY;
-        
-        // Save signature data
         hiddenInput.value = canvas.toDataURL();
     });
-    
+
     canvas.addEventListener('mouseup', () => {
         isDrawing = false;
         hiddenInput.value = canvas.toDataURL();
     });
-    
-    canvas.addEventListener('mouseout', () => {
-        isDrawing = false;
-    });
-    
-    // Set up canvas
+    canvas.addEventListener('mouseout', () => { isDrawing = false; });
+
     ctx.strokeStyle = '#000';
     ctx.lineWidth = 2;
     ctx.lineCap = 'round';

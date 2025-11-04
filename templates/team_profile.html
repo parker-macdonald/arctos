@@ -58,6 +58,7 @@
                                     <th>Team Name</th>
                                     <th>Date</th>
                                     <th>Status</th>
+                                    <th>Payment</th>
                                     <th>Actions</th>
                                 </tr>
                             </thead>
@@ -87,8 +88,18 @@
                                         </span>
                                     </td>
                                     <td>
+                                        {% if reg.paid %}
+                                            <span class="badge bg-success">Paid</span>
+                                            {% if reg.amount_paid %}
+                                                <small class="text-muted">${{ "%.2f"|format(reg.amount_paid) }}</small>
+                                            {% endif %}
+                                        {% else %}
+                                            <span class="badge bg-warning">Unpaid</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
                                     {% if current_user.is_authenticated and current_user.id == team.id %}
-                                        <a href="/{{ reg.event }}/invitations" class="btn btn-sm btn-outline-primary">View Join Requests</a>
+                                        <a href="/{{ reg.event }}/invitations" class="btn btn-sm btn-outline-primary">Manage Roster</a>
                                     {% endif %}
                                     </td>
                                 </tr>

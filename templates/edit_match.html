@@ -49,9 +49,21 @@
                     <div class="row">
                         <div class="col-md-6">
                             <div class="mb-3">
-                                <label for="start_time" class="form-label">Start Time</label>
-                                <input type="datetime-local" class="form-control" id="start_time" name="start_time" 
-                                       value="{{ match.nominal_start_time.strftime('%Y-%m-%dT%H:%M') if match.nominal_start_time else '' }}">
+                                <label for="dynamic" class="form-label">Match Type</label>
+                                <select class="form-select" id="dynamic" name="dynamic">
+                                    <option value="false" {% if not match.dynamic and match.type not in ('BREAK', 'JOIN') %}selected{% endif %}>Static (starts at scheduled time)</option>
+                                    <option value="true" {% if match.dynamic and match.type not in ('BREAK', 'JOIN') %}selected{% endif %}>Dynamic (computed from dependencies)</option>
+                                    <option value="BREAK" {% if match.type == 'BREAK' %}selected{% endif %}>Break</option>
+                                    <option value="JOIN" {% if match.type == 'JOIN' %}selected{% endif %}>Join</option>
+                                </select>
+                                <div class="form-text" id="dynamic-help">
+                                    {% if match.dynamic %}
+                                    Dynamic matches compute start time from referenced matches (e.g., "Match Name winner"). 
+                                    Matches without dependencies must be static.
+                                    {% else %}
+                                    Static matches require a manual start time.
+                                    {% endif %}
+                                </div>
                             </div>
                         </div>
                         <div class="col-md-6">
@@ -64,16 +76,29 @@
                     
                     <div class="row">
                         <div class="col-md-6">
-                            <div class="mb-3">
-                                <label for="dynamic" class="form-label">Scheduling</label>
-                                <select class="form-select" id="dynamic" name="dynamic">
-                                    <option value="true" {% if match.dynamic %}selected{% endif %}>Dynamic (can start early if previous match ends)</option>
-                                    <option value="false" {% if not match.dynamic %}selected{% endif %}>Static (starts at scheduled time)</option>
+                            <div class="mb-3" id="start_time_container" {% if match.dynamic %}style="display: none;"{% endif %}>
+                                <label for="start_time" class="form-label">Start Time</label>
+                                <input type="datetime-local" class="form-control" id="start_time" name="start_time"
+                                       value="{{ match.nominal_start_time.strftime('%Y-%m-%dT%H:%M') if match.nominal_start_time and not match.dynamic else '' }}">
+                                <div class="form-text">Only applies to static matches</div>
+                            </div>
+                            <div class="mb-3" id="previous_match_container" {% if not match.dynamic and match.type not in ('BREAK', 'JOIN') %}style="display: none;"{% endif %}>
+                                <label for="previous_match" class="form-label">Previous Match</label>
+                                <select class="form-select" id="previous_match" name="previous_match">
+                                    <option value="">None (first match on field)</option>
+                                    {% for m in matches %}
+                                    {% if m.nominal_start_time %}
+                                    <option value="{{ m.uuid }}" data-field="{{ m.field }}" data-start-time="{{ m.nominal_start_time.isoformat() }}" data-length="{{ m.nominal_length or 0 }}" data-has-next="{{ 'true' if m.next_match else 'false' }}" {% if match.previous_match == m.uuid %}selected{% endif %}>{{ m.name }}{% if m.field %} ({{ m.field }}){% endif %}</option>
+                                    {% else %}
+                                    <option value="{{ m.uuid }}" data-field="{{ m.field }}" data-has-next="{{ 'true' if m.next_match else 'false' }}" {% if match.previous_match == m.uuid %}selected{% endif %}>{{ m.name }}{% if m.field %} ({{ m.field }}){% endif %}</option>
+                                    {% endif %}
+                                    {% endfor %}
                                 </select>
+                                <div class="form-text">Select the match that should precede this one on the field</div>
                             </div>
                         </div>
                         <div class="col-md-6">
-                            <div class="mb-3">
+                            <div class="mb-3" id="refs_container">
                                 <label for="refs" class="form-label">Referees</label>
                                 <input type="text" class="form-control autocomplete" id="refs" name="refs" 
                                        value="{{ match.refs_initial or '' }}" placeholder="Search teams, tags, or match results" data-multiple="true" autocomplete="off">
@@ -82,7 +107,7 @@
                         </div>
                     </div>
 
-                    <div class="row">
+                    <div class="row" id="teams_container">
                         <div class="col-md-6">
                             <div class="mb-3">
                                 <label for="team1" class="form-label">Team 1</label>
@@ -101,10 +126,10 @@
                         </div>
                     </div>
 
-                    <div class="row">
+                    <div class="row" id="match_type_row">
                         <div class="col-md-6">
                             <div class="mb-3">
-                                <label for="match_type" class="form-label">Match Type</label>
+                                <label for="match_type" class="form-label">Match Format</label>
                                 <select class="form-select" id="match_type" name="match_type">
                                     <option value="SETS" {% if match.type == 'SETS' %}selected{% endif %}>Sets</option>
                                     <option value="STONES" {% if match.type == 'STONES' %}selected{% endif %}>Stones</option>
@@ -112,7 +137,7 @@
                             </div>
                         </div>
                         <div class="col-md-6">
-                            <div class="mb-3">
+                            <div class="mb-3" id="nsets_container">
                                 <label for="nsets" class="form-label">Number of Sets</label>
                                 <input type="number" class="form-control" id="nsets" name="nsets" value="{{ match.nsets or 3 }}" min="1">
                             </div>
@@ -279,8 +304,8 @@
     });
     
                 function fetchSuggestions(query, suggestionsDiv, input) {
-                    // Use cached suggestions if available, otherwise fetch from server
-                    if (cachedSuggestions) {
+                    // Use cached suggestions only if we actually have some
+                    if (cachedSuggestions && cachedSuggestions.length > 0) {
                         const filteredSuggestions = cachedSuggestions.filter(suggestion => 
                             suggestion.value.toLowerCase().includes(query.toLowerCase())
                         );
@@ -303,7 +328,10 @@
                     fetch(`/${tournamentUrl}/api/autocomplete?q=`)
                         .then(response => response.json())
                         .then(suggestions => {
+                            // Only cache if backend provided a non-empty list
+                            if (Array.isArray(suggestions) && suggestions.length > 0) {
                             cachedSuggestions = suggestions;
+                            }
                         })
                         .catch(error => {
                             console.error('Error loading suggestions:', error);
@@ -388,6 +416,170 @@ document.addEventListener('DOMContentLoaded', function() {
     if (matchType.value === 'STONES') {
         stonesField.style.display = 'block';
     }
+    
+    // Handle dynamic/static scheduling toggle
+    const dynamicSelect = document.getElementById('dynamic');
+    const startTimeContainer = document.getElementById('start_time_container');
+    const previousMatchContainer = document.getElementById('previous_match_container');
+    const startTimeInput = document.getElementById('start_time');
+    const previousMatchSelect = document.getElementById('previous_match');
+    const fieldSelect = document.getElementById('field');
+    const dynamicHelp = document.getElementById('dynamic-help');
+    
+    function updatePreviousMatchOptions() {
+        const selectedField = fieldSelect ? fieldSelect.value : '';
+        const currentMatchId = '{{ match.uuid }}';
+        
+        // Show/hide options based on field selection, and exclude current match
+        const options = previousMatchSelect.querySelectorAll('option[data-field]');
+        options.forEach(option => {
+            const optionField = option.getAttribute('data-field') || '';
+            const optionValue = option.value;
+            if (optionValue === currentMatchId) {
+                option.style.display = 'none'; // Never show current match as previous
+            } else if (selectedField && optionField !== selectedField) {
+                option.style.display = 'none';
+            } else {
+                option.style.display = ''; // Reset to default (visible)
+            }
+        });
+    }
+    
+    function autofillPreviousMatch(fieldName) {
+        if (!fieldName || !previousMatchSelect) return;
+        
+        // Find all matches on this field that don't have a successor (next_match is null)
+        // and get the one with the latest end time
+        const allMatches = [];
+        const matchesWithoutTime = [];
+        const currentMatchId = '{{ match.uuid }}';
+        
+        // Get all options, checking field directly rather than relying on display style
+        previousMatchSelect.querySelectorAll('option[data-field]').forEach(option => {
+            const optionField = option.getAttribute('data-field') || '';
+            const hasNext = option.getAttribute('data-has-next') === 'true';
+            
+            // Only consider matches on the selected field that don't have a successor
+            if (optionField === fieldName && option.value !== currentMatchId && !hasNext && option.value !== '') {
+                const matchUuid = option.value;
+                const startTimeStr = option.getAttribute('data-start-time');
+                const lengthStr = option.getAttribute('data-length');
+                
+                // Handle matches with start time (including zero-length JOIN matches)
+                if (startTimeStr !== null && startTimeStr !== '') {
+                    try {
+                        const startTime = new Date(startTimeStr);
+                        const lengthMinutes = parseInt(lengthStr || '0', 10);
+                        const endTime = new Date(startTime.getTime() + lengthMinutes * 60000);
+                        
+                        if (!isNaN(endTime.getTime())) {
+                            allMatches.push({
+                                uuid: matchUuid,
+                                endTime: endTime
+                            });
+                        }
+                    } catch (e) {
+                        // Invalid date, skip
+                    }
+                } else {
+                    // Match without start time - keep as fallback
+                    matchesWithoutTime.push({
+                        uuid: matchUuid
+                    });
+                }
+            }
+        });
+        
+        if (allMatches.length > 0) {
+            // Sort by end time descending and get the latest
+            allMatches.sort((a, b) => b.endTime - a.endTime);
+            previousMatchSelect.value = allMatches[0].uuid;
+        } else if (matchesWithoutTime.length > 0) {
+            // If no matches with start time, use the first match without a successor
+            previousMatchSelect.value = matchesWithoutTime[0].uuid;
+        }
+    }
+    
+    function updateStartTimeVisibility() {
+        const matchTypeValue = dynamicSelect.value;
+        const isDynamic = matchTypeValue === 'true' || matchTypeValue === 'BREAK' || matchTypeValue === 'JOIN';
+        
+        if (isDynamic) {
+            startTimeContainer.style.display = 'none';
+            previousMatchContainer.style.display = 'block';
+            startTimeInput.value = ''; // Clear value for dynamic matches
+            
+            if (matchTypeValue === 'JOIN') {
+                dynamicHelp.textContent = 'Join matches are zero-length and synchronized with other joins of the same name.';
+            } else if (matchTypeValue === 'BREAK') {
+                dynamicHelp.textContent = 'Break matches compute start time from the previous match on the field.';
+            } else {
+                dynamicHelp.textContent = 'Dynamic matches compute start time from the previous match on the field.';
+            }
+            
+            updatePreviousMatchOptions();
+            
+            // Autofill disabled on edit page - user should manually select previous match
+        } else {
+            startTimeContainer.style.display = 'block';
+            previousMatchContainer.style.display = 'none';
+            previousMatchSelect.value = ''; // Clear previous match selection
+            dynamicHelp.textContent = 'Static matches require a manual start time and are automatically sequenced by time.';
+            // Restore original value if it exists and match was static
+            {% if match.nominal_start_time and not match.dynamic and match.type not in ('BREAK', 'JOIN') %}
+            startTimeInput.value = '{{ match.nominal_start_time.strftime('%Y-%m-%dT%H:%M') }}';
+            {% endif %}
+        }
+    }
+    
+    // Update previous match options when field changes
+    if (fieldSelect) {
+        fieldSelect.addEventListener('change', function() {
+            const matchTypeValue = dynamicSelect.value;
+            if (matchTypeValue === 'true' || matchTypeValue === 'BREAK' || matchTypeValue === 'JOIN') {
+                updatePreviousMatchOptions();
+                // Autofill disabled on edit page - user should manually select previous match
+            }
+        });
+    }
+    
+    // Handle match type changes to show/hide relevant fields
+    const matchTypeSelect = document.getElementById('match_type');
+    const matchTypeRow = document.getElementById('match_type_row');
+    const teamsContainer = document.getElementById('teams_container');
+    const refsContainer = document.getElementById('refs_container');
+    const nsetsContainer = document.getElementById('nsets_container');
+    const lengthInput = document.getElementById('length');
+    
+    function updateMatchTypeVisibility() {
+        const matchTypeValue = dynamicSelect.value;
+        const isBreakOrJoin = matchTypeValue === 'BREAK' || matchTypeValue === 'JOIN';
+        
+        // Hide match format (SETS/STONES), teams, refs, and nsets for BREAK and JOIN
+        if (matchTypeRow) matchTypeRow.style.display = isBreakOrJoin ? 'none' : 'flex';
+        if (teamsContainer) teamsContainer.style.display = isBreakOrJoin ? 'none' : 'flex';
+        if (refsContainer) refsContainer.style.display = isBreakOrJoin ? 'none' : 'block';
+        if (nsetsContainer) nsetsContainer.style.display = isBreakOrJoin ? 'none' : 'block';
+        
+        // JOIN has zero length, disable length input
+        if (matchTypeValue === 'JOIN') {
+            if (lengthInput) {
+                lengthInput.value = '0';
+                lengthInput.disabled = true;
+            }
+        } else {
+            if (lengthInput) lengthInput.disabled = false;
+        }
+        
+        // Update start time visibility based on match type selection
+        updateStartTimeVisibility();
+    }
+    
+    // Set initial state
+    updateMatchTypeVisibility();
+    
+    // Update on change
+    dynamicSelect.addEventListener('change', updateMatchTypeVisibility);
 });
 </script>
 {% endblock %}

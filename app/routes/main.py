@@ -3,7 +3,7 @@ Main routes (homepage, etc.)
 """
 from flask import Blueprint, render_template
 from flask_login import current_user
-from models import Tournament, TeamRegistration, TO
+from models import Tournament, TeamRegistration, PlayerRegistration, TO
 
 bp = Blueprint('main', __name__)
 
@@ -25,8 +25,38 @@ def index():
     team_counts = {}
     for t in published_tournaments:
         team_counts[t.url] = TeamRegistration.query.filter_by(event=t.url, status='CONFIRMED').count()
-    
-    return render_template('index.html', tournaments=published_tournaments, to_tournaments=to_tournaments, team_counts=team_counts)
+
+    # Compute current user's registration/payment status per tournament
+    user_reg_status = {}
+    if current_user.is_authenticated:
+        user_type = current_user.__class__.__name__
+        for t in published_tournaments:
+            if user_type == 'Team':
+                reg = TeamRegistration.query.filter_by(event=t.url, team=current_user.id).first()
+                if reg:
+                    user_reg_status[t.url] = {
+                        'type': 'team',
+                        'status': reg.status or '',
+                        'paid': bool(reg.paid),
+                        'amount_paid': reg.amount_paid or 0.0,
+                    }
+            elif user_type == 'Player':
+                reg = PlayerRegistration.query.filter_by(event=t.url, player=current_user.id).first()
+                if reg:
+                    user_reg_status[t.url] = {
+                        'type': 'player',
+                        'status': reg.status or '',
+                        'paid': bool(reg.paid),
+                        'amount_paid': reg.amount_paid or 0.0,
+                    }
+
+    return render_template(
+        'index.html',
+        tournaments=published_tournaments,
+        to_tournaments=to_tournaments,
+        team_counts=team_counts,
+        user_reg_status=user_reg_status,
+    )
 
 
 @bp.route('/teams')

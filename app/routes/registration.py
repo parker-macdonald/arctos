@@ -472,9 +472,34 @@ def tournament_invitations(tournament_url):
                 'player_registration': player_reg
             })
     
+    # Calculate current team size (confirmed players on this team)
+    current_team_size = PlayerRegistration.query.filter_by(
+        event=tournament_url,
+        team=current_user.id,
+        status='CONFIRMED'
+    ).count()
+    
+    # Get all player registrations for this team (all statuses)
+    all_player_registrations = PlayerRegistration.query.filter_by(
+        event=tournament_url,
+        team=current_user.id
+    ).all()
+    
+    team_roster = []
+    for reg in all_player_registrations:
+        player = Player.query.get(reg.player)
+        if player:
+            team_roster.append({
+                'player': player,
+                'registration': reg
+            })
+    
     return render_template('tournament_invitations.html',
                          tournament=tournament,
-                         invitations=invitations_with_players)
+                         team_registration=team_registration,
+                         invitations=invitations_with_players,
+                         current_team_size=current_team_size,
+                         team_roster=team_roster)
 
 
 @bp.route('/<tournament_url>/invitation/<int:invitation_id>/accept', methods=['POST'])

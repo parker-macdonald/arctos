@@ -37,7 +37,9 @@
                         <tr>
                             <td><a href="/{{ tournament.url }}/match?id={{ match.uuid }}" class="text-decoration-none">{{ match.name }}</a></td>
                             <td>
-                                {% if match.nominal_start_time %}
+                                {% if match.confirmed_start_time %}
+                                    {{ match.confirmed_start_time.strftime('%H:%M') }}
+                                {% elif match.nominal_start_time %}
                                     {{ match.nominal_start_time.strftime('%H:%M') }}
                                 {% else %}
                                     TBA
@@ -129,12 +131,24 @@
                                     {% endif %}">
                                     {{ match.status.replace('_', ' ').title() }}
                                 </span>
+                                {% set gs = match.gamestate|from_json if match.gamestate else {} %}
+                                {% if (not match.dynamic) or gs.get('time_finalized') %}
+                                    <span class="badge bg-primary ms-1" title="Time finalized - match start time is locked">Time Finalized</span>
+                                {% endif %}
+                                {% if gs.get('ready_to_start') %}
+                                    <span class="badge bg-success ms-1" title="Ready to start - all dependencies completed">Ready to Start</span>
+                                {% endif %}
                             </td>
                             <td>
                                 <a href="/{{ tournament.url }}/match?id={{ match.uuid }}" class="btn btn-sm btn-outline-primary">View</a>
                                 {% if current_user.is_authenticated and current_user.__class__.__name__ == 'Player' and is_head_ref %}
                                     {% if match.status == 'NOT_STARTED' and match.team1 and match.team2 and (match.refs or match.refs_initial) %}
-                                        <a href="/{{ tournament.url }}/start-match?id={{ match.uuid }}" class="btn btn-sm btn-success">Start Match</a>
+                                        {% set gs = match.gamestate|from_json if match.gamestate else {} %}
+                                        {% if (not match.dynamic) or gs.get('ready_to_start') %}
+                                            <a href="/{{ tournament.url }}/start-match?id={{ match.uuid }}" class="btn btn-sm btn-success">Start Match</a>
+                                        {% else %}
+                                            <span class="btn btn-sm btn-secondary disabled" title="Waiting on dependencies">Cannot Start</span>
+                                        {% endif %}
                                     {% elif match.status == 'NOT_STARTED' %}
                                         <span class="btn btn-sm btn-secondary disabled" title="Missing: team1={{ match.team1 }}, team2={{ match.team2 }}, refs={{ match.refs }}, refs_initial={{ match.refs_initial }}">Cannot Start</span>
                                     {% elif match.status == 'IN_PROGRESS' %}

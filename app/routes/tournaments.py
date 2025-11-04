@@ -9,6 +9,7 @@ from models import (
     Team, TO, db
 )
 from app.utils.helpers import check_tournament_access, resolve_team_name_to_id
+from app.utils.scheduling import compute_dynamic_match_nominal_start_time, validate_match_input, update_match_sequence, recompute_all_match_times, detect_match_conflicts
 from app.filters import is_head_ref
 
 bp = Blueprint('tournaments', __name__)
@@ -218,11 +219,19 @@ def tournament_setup(tournament_url):
         flash('You do not have permission to access tournament setup', 'error')
         return redirect(f'/{tournament_url}')
     
-    matches = Match.query.filter_by(event=tournament_url).order_by(Match.nominal_start_time).all()
+    from sqlalchemy.orm import joinedload
+    matches = Match.query.options(
+        joinedload(Match.previous_match_obj),
+        joinedload(Match.next_match_obj)
+    ).filter_by(event=tournament_url).order_by(Match.nominal_start_time).all()
     fields = Field.query.filter_by(event=tournament_url).all()
     tags = Tag.query.filter_by(event=tournament_url).all()
     team_registrations = TeamRegistration.query.filter_by(event=tournament_url).all()
-    return render_template('tournament_setup.html', tournament=tournament, matches=matches, fields=fields, tags=tags, team_registrations=team_registrations)
+    
+    # Detect conflicts across all matches
+    conflicts = detect_match_conflicts(tournament_url)
+    
+    return render_template('tournament_setup.html', tournament=tournament, matches=matches, fields=fields, tags=tags, team_registrations=team_registrations, conflicts=conflicts)
 
 
 @bp.route('/<tournament_url>/register')
@@ -290,11 +299,35 @@ def add_match(tournament_url):
     """Add a match to tournament."""
     tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
     
-    team1_name = request.form.get('team1', '')
-    team2_name = request.form.get('team2', '')
+    # Check if BREAK or JOIN is selected from the Match Type dropdown (renamed from 'dynamic')
+    match_type_value = request.form.get('dynamic', '')
     
-    team1_id = resolve_team_name_to_id(team1_name, tournament_url)
-    team2_id = resolve_team_name_to_id(team2_name, tournament_url)
+    if match_type_value == 'BREAK':
+        match_type = 'BREAK'
+        is_dynamic = True  # BREAK is always dynamic
+        nominal_length = int(request.form.get('length', 60))
+    elif match_type_value == 'JOIN':
+        match_type = 'JOIN'
+        is_dynamic = True  # JOIN is always dynamic
+        nominal_length = 0
+    else:
+        match_type = request.form.get('match_type', 'SETS')
+        is_dynamic = match_type_value == 'true'
+        nominal_length = int(request.form.get('length', 60))
+    
+    # BREAK and JOIN matches don't have teams/refs
+    if match_type in ('BREAK', 'JOIN'):
+        team1_id = None
+        team1_name = ''
+        team2_id = None
+        team2_name = ''
+        refs_initial = ''
+    else:
+        team1_name = request.form.get('team1', '')
+        team2_name = request.form.get('team2', '')
+        team1_id = resolve_team_name_to_id(team1_name, tournament_url)
+        team2_id = resolve_team_name_to_id(team2_name, tournament_url)
+        refs_initial = request.form.get('refs', '')
     
     match = Match(
         name=request.form['match_name'],
@@ -304,17 +337,38 @@ def add_match(tournament_url):
         team1_initial=team1_name,
         team2=team2_id,
         team2_initial=team2_name,
-        type=request.form.get('match_type', 'SETS'),
-        nsets=int(request.form.get('nsets', 3)),
-        nominal_length=int(request.form.get('length', 60)),
-        dynamic=request.form.get('dynamic') == 'true',
-        refs_initial=request.form.get('refs', '')
+        type=match_type,
+        nsets=int(request.form.get('nsets', 3)) if match_type not in ('BREAK', 'JOIN') else None,
+        nominal_length=nominal_length,
+        dynamic=is_dynamic,
+        refs_initial=refs_initial
     )
     
-    if request.form.get('start_time'):
-        match.nominal_start_time = datetime.strptime(request.form['start_time'], '%Y-%m-%dT%H:%M')
+    # For dynamic matches, set previous_match from form and compute start time from it
+    # For static matches, use the provided start_time
+    if is_dynamic:
+        # Get previous_match from form
+        prev_match_id = request.form.get('previous_match', '')
+        if prev_match_id:
+            match.previous_match = prev_match_id
+        match.nominal_start_time = compute_dynamic_match_nominal_start_time(match, tournament_url)
+    else:
+        # Static matches can have manual start time
+        if request.form.get('start_time'):
+            match.nominal_start_time = datetime.strptime(request.form['start_time'], '%Y-%m-%dT%H:%M')
+    
+    # Validate inputs and constraints
+    ok, err = validate_match_input(match, tournament_url)
+    if not ok:
+        flash(err, 'error')
+        return redirect(f'/{tournament_url}/setup')
     
     db.session.add(match)
+    db.session.flush()  # Flush to get UUID before updating sequence
+    
+    # Recompute all match times (for all dynamic matches that depend on this one)
+    recompute_all_match_times(tournament_url)
+    
     db.session.commit()
     
     flash('Match added successfully!', 'success')
@@ -467,9 +521,10 @@ def edit_match(tournament_url):
     
     tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
     match = Match.query.get_or_404(match_id)
+    matches = Match.query.filter_by(event=tournament_url).order_by(Match.nominal_start_time).all()
     fields = Field.query.filter_by(event=tournament_url).all()
     tags = Tag.query.filter_by(event=tournament_url).all()
-    return render_template('edit_match.html', tournament=tournament, match=match, fields=fields, tags=tags)
+    return render_template('edit_match.html', tournament=tournament, match=match, matches=matches, fields=fields, tags=tags)
 
 
 @bp.route('/<tournament_url>/update-match', methods=['POST'])
@@ -484,11 +539,32 @@ def update_match(tournament_url):
     match = Match.query.get_or_404(match_id)
     tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
     
-    team1_name = request.form.get('team1', '')
-    team2_name = request.form.get('team2', '')
+    # Check if BREAK or JOIN is selected from the Match Type dropdown (renamed from 'dynamic')
+    match_type_value = request.form.get('dynamic', '')
     
-    team1_id = resolve_team_name_to_id(team1_name, tournament_url)
-    team2_id = resolve_team_name_to_id(team2_name, tournament_url)
+    if match_type_value == 'BREAK':
+        match_type = 'BREAK'
+        is_dynamic = True  # BREAK is always dynamic
+    elif match_type_value == 'JOIN':
+        match_type = 'JOIN'
+        is_dynamic = True  # JOIN is always dynamic
+    else:
+        match_type = request.form.get('match_type', match.type)
+        is_dynamic = match_type_value == 'true'
+    
+    # BREAK and JOIN matches don't have teams/refs
+    if match_type in ('BREAK', 'JOIN'):
+        team1_id = None
+        team1_name = ''
+        team2_id = None
+        team2_name = ''
+        refs_initial = ''
+    else:
+        team1_name = request.form.get('team1', '')
+        team2_name = request.form.get('team2', '')
+        team1_id = resolve_team_name_to_id(team1_name, tournament_url)
+        team2_id = resolve_team_name_to_id(team2_name, tournament_url)
+        refs_initial = request.form.get('refs', '')
     
     match.name = request.form['match_name']
     match.field = request.form.get('field', '')
@@ -496,16 +572,66 @@ def update_match(tournament_url):
     match.team1_initial = team1_name
     match.team2 = team2_id
     match.team2_initial = team2_name
-    match.type = request.form.get('match_type', 'SETS')
-    match.nsets = int(request.form.get('nsets', 3))
-    match.nominal_length = int(request.form.get('length', 60))
-    match.dynamic = request.form.get('dynamic') == 'true'
-    match.refs_initial = request.form.get('refs', '')
+    match.type = match_type
     
-    if request.form.get('start_time'):
-        match.nominal_start_time = datetime.strptime(request.form['start_time'], '%Y-%m-%dT%H:%M')
+    # BREAK and JOIN don't have nsets
+    if match_type not in ('BREAK', 'JOIN'):
+        match.nsets = int(request.form.get('nsets', 3))
     else:
-        match.nominal_start_time = None
+        match.nsets = None
+    
+    # JOIN has zero length, BREAK can have length
+    if match_type == 'JOIN':
+        match.nominal_length = 0
+    elif match_type == 'BREAK':
+        match.nominal_length = int(request.form.get('length', match.nominal_length or 60))
+    else:
+        match.nominal_length = int(request.form.get('length', match.nominal_length or 60))
+    
+    match.dynamic = is_dynamic
+    match.refs_initial = refs_initial
+    
+    # For dynamic matches, set previous_match from form and compute start time from it
+    # For static matches, ensure previous_match is cleared and use provided start_time
+    if is_dynamic:
+        # Get previous_match from form
+        prev_match_id = request.form.get('previous_match', '')
+        old_prev = match.previous_match
+        if prev_match_id:
+            match.previous_match = prev_match_id
+            # Try to set the other match's next_match to this one if no conflict
+            try:
+                prev_m = Match.query.filter_by(uuid=prev_match_id, event=tournament_url).first()
+                if prev_m and (not prev_m.next_match or prev_m.next_match == match.uuid):
+                    prev_m.next_match = match.uuid
+                # If previous changed, clear old previous's next pointer if it pointed to this match
+                if old_prev and old_prev != prev_match_id:
+                    old_prev_m = Match.query.filter_by(uuid=old_prev, event=tournament_url).first()
+                    if old_prev_m and old_prev_m.next_match == match.uuid:
+                        old_prev_m.next_match = None
+            except Exception:
+                pass
+        else:
+            match.previous_match = None
+        match.nominal_start_time = compute_dynamic_match_nominal_start_time(match, tournament_url)
+    else:
+        # Static matches can have manual start time
+        match.previous_match = None
+        if request.form.get('start_time'):
+            match.nominal_start_time = datetime.strptime(request.form['start_time'], '%Y-%m-%dT%H:%M')
+        else:
+            match.nominal_start_time = None
+    
+    # Validate inputs and constraints
+    ok, err = validate_match_input(match, tournament_url)
+    if not ok:
+        flash(err, 'error')
+        return redirect(f'/{tournament_url}/edit-match?id={match_id}')
+    
+    db.session.flush()  # Flush before updating sequence
+    
+    # Recompute all match times (for all dynamic matches that depend on this one)
+    recompute_all_match_times(tournament_url)
     
     db.session.commit()
     flash('Match updated successfully!', 'success')
@@ -515,54 +641,156 @@ def update_match(tournament_url):
 @bp.route('/<tournament_url>/update-tags', methods=['POST'])
 @login_required
 def update_tags(tournament_url):
-    """Update match tags."""
-    match_id = request.form.get('match_id')
-    if not match_id:
-        return jsonify({'success': False, 'error': 'Match ID required'})
-    
-    match = Match.query.get_or_404(match_id)
-    tag_ids = request.form.getlist('tags[]')
-    
-    # Clear existing tags (assuming a many-to-many relationship)
-    # If tags are stored differently, adjust this
+    """Update all matches by converting tag names to team IDs in team1_initial, team2_initial, and refs_initial."""
     from models import Tag
-    match_tags = Tag.query.filter(Tag.event == tournament_url).filter(Tag.id.in_(tag_ids)).all()
     
-    # Update match tags based on your data model
-    # This is a placeholder - adjust based on your actual tag relationship
+    # Get all tags for this tournament
+    tags = Tag.query.filter_by(event=tournament_url).all()
+    
+    # Build mapping of tag names to team IDs
+    tag_to_team = {}
+    for tag in tags:
+        form_key = f'tag_{tag.id}'
+        team_id = request.form.get(form_key, '').strip()
+        if team_id:
+            tag_to_team[tag.name] = team_id
+    
+    if not tag_to_team:
+        flash('No tag conversions selected', 'error')
+        return redirect(f'/{tournament_url}/setup')
+    
+    # Get all matches for this tournament
+    matches = Match.query.filter_by(event=tournament_url).all()
+    updated_count = 0
+    
+    for match in matches:
+        changed = False
+        
+        # Update team1_initial
+        if match.team1_initial:
+            initial = match.team1_initial.strip()
+            if initial in tag_to_team:
+                match.team1_initial = tag_to_team[initial]
+                # Also set team1 if not already set
+                if not match.team1:
+                    match.team1 = tag_to_team[initial]
+                changed = True
+        
+        # Update team2_initial
+        if match.team2_initial:
+            initial = match.team2_initial.strip()
+            if initial in tag_to_team:
+                match.team2_initial = tag_to_team[initial]
+                # Also set team2 if not already set
+                if not match.team2:
+                    match.team2 = tag_to_team[initial]
+                changed = True
+        
+        # Update refs_initial (comma-separated)
+        if match.refs_initial:
+            refs_list = [r.strip() for r in match.refs_initial.split(',') if r.strip()]
+            updated_refs = []
+            refs_changed = False
+            for ref in refs_list:
+                if ref in tag_to_team:
+                    updated_refs.append(tag_to_team[ref])
+                    refs_changed = True
+                else:
+                    updated_refs.append(ref)
+            
+            if refs_changed:
+                match.refs_initial = ', '.join(updated_refs)
+                # Also update refs if not already set
+                if not match.refs:
+                    match.refs = ', '.join([r for r in updated_refs if r])
+                changed = True
+        
+        if changed:
+            updated_count += 1
+    
     db.session.commit()
     
-    return jsonify({'success': True})
+    if updated_count > 0:
+        flash(f'Successfully updated {updated_count} match(es) with tag conversions', 'success')
+    else:
+        flash('No matches were updated. No matches contain the selected tags.', 'info')
+    
+    return redirect(f'/{tournament_url}/setup')
 
 
 @bp.route('/<tournament_url>/api/autocomplete')
 def tournament_autocomplete(tournament_url):
-    """Autocomplete endpoint for tournament setup."""
-    query = request.args.get('q', '').lower()
-    if not query:
-        return jsonify([])
-    
-    # Autocomplete teams
-    team_regs = TeamRegistration.query.filter_by(event=tournament_url).all()
+    """Autocomplete endpoint for tournament setup.
+    Returns a list of suggestions with fields: type, value, label, id
+    """
+    q_raw = request.args.get('q', '')
+    query = (q_raw or '').strip().lower()
+
     suggestions = []
     
+    # Teams registered in this tournament
+    team_regs = TeamRegistration.query.filter_by(event=tournament_url).all()
     for reg in team_regs:
-        if query in reg.pseudonym.lower():
+        pseudonym = (reg.pseudonym or '').strip()
+        if not query or query in pseudonym.lower():
             suggestions.append({
                 'type': 'team',
-                'value': reg.pseudonym,
+                'value': pseudonym,
+                'label': pseudonym,
                 'id': reg.team
             })
     
-    # Autocomplete match names for dynamic references
+    # Tags for this tournament (by name)
+    tags = Tag.query.filter_by(event=tournament_url).all() if 'Tag' in globals() or True else []
+    try:
+        tags = Tag.query.filter_by(event=tournament_url).all()
+    except Exception:
+        tags = []
+    for t in tags:
+        name = (t.name or '').strip()
+        if not query or query in name.lower():
+            suggestions.append({
+                'type': 'tag',
+                'value': name,
+                'label': name,
+                'id': t.id
+            })
+
+    # Matches in this tournament (by name)
     matches = Match.query.filter_by(event=tournament_url).all()
-    for match in matches:
-        if query in match.name.lower():
+    for m in matches:
+        name = (m.name or '').strip()
+        if not query or query in name.lower():
             suggestions.append({
                 'type': 'match',
-                'value': match.name,
-                'id': match.uuid
+                'value': name,
+                'label': name,
+                'id': m.uuid
             })
     
-    return jsonify(suggestions[:10])  # Limit to 10 suggestions
+        # Also offer winner/loser variants to help dynamic references
+        winner_label = f"{name} winner"
+        loser_label = f"{name} loser"
+        if not query or query in winner_label.lower():
+            suggestions.append({
+                'type': 'result',
+                'value': winner_label,
+                'label': winner_label,
+                'id': m.uuid
+            })
+        if not query or query in loser_label.lower():
+            suggestions.append({
+                'type': 'result',
+                'value': loser_label,
+                'label': loser_label,
+                'id': m.uuid
+            })
+
+    # Limit and return
+    # When query is empty, return all suggestions (for preloading)
+    # When query is provided, limit to 50 for performance
+    if not query:
+        return jsonify(suggestions)
+    else:
+        return jsonify(suggestions[:50])
 

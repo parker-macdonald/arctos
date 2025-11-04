@@ -44,24 +44,23 @@
                                 {% for invitation in invitations %}
                                 <tr>
                                     <td>
-                                        <a href="/players/{{ invitation.player }}">{{ invitation.player }}</a>
+                                        <a href="/players/{{ invitation.player.id }}">{{ invitation.player.name }}</a>
                                     </td>
                                     <td>
-                                        {% set player_reg = player_registrations|selectattr('player', 'equalto', invitation.player)|first %}
-                                        {{ player_reg.jersey_name if player_reg else 'N/A' }}
+                                        {{ invitation.player_registration.jersey_name if invitation.player_registration and invitation.player_registration.jersey_name else 'N/A' }}
                                     </td>
                                     <td>
-                                        {{ player_reg.jersey_number if player_reg else 'N/A' }}
+                                        {{ invitation.player_registration.jersey_number if invitation.player_registration and invitation.player_registration.jersey_number else 'N/A' }}
                                     </td>
                                     <td>
                                         <div class="btn-group" role="group">
-                                            <form method="POST" action="/{{ tournament.url }}/invitation/{{ invitation.id }}/accept" style="display: inline;">
+                                            <form method="POST" action="/{{ tournament.url }}/invitation/{{ invitation.invitation.id }}/accept" style="display: inline;">
                                                 <button type="submit" class="btn btn-success btn-sm" 
                                                         {% if tournament.max_team_size and current_team_size >= tournament.max_team_size %}disabled{% endif %}>
                                                     Accept
                                                 </button>
                                             </form>
-                                            <form method="POST" action="/{{ tournament.url }}/invitation/{{ invitation.id }}/decline" style="display: inline;">
+                                            <form method="POST" action="/{{ tournament.url }}/invitation/{{ invitation.invitation.id }}/decline" style="display: inline;">
                                                 <button type="submit" class="btn btn-danger btn-sm">Decline</button>
                                             </form>
                                         </div>
@@ -76,6 +75,67 @@
                 {% endif %}
             </div>
         </div>
+        
+        {% if team_roster %}
+        <div class="card mt-3">
+            <div class="card-header">
+                <h5 class="mb-0">Team Roster</h5>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-striped">
+                        <thead>
+                            <tr>
+                                <th>Player</th>
+                                <th>Jersey Name</th>
+                                <th>Jersey Number</th>
+                                <th>Status</th>
+                                <th>Payment</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for roster_item in team_roster %}
+                            <tr>
+                                <td>
+                                    <a href="/players/{{ roster_item.player.id }}">{{ roster_item.player.name }}</a>
+                                </td>
+                                <td>
+                                    {{ roster_item.registration.jersey_name if roster_item.registration.jersey_name else 'N/A' }}
+                                </td>
+                                <td>
+                                    {{ roster_item.registration.jersey_number if roster_item.registration.jersey_number else 'N/A' }}
+                                </td>
+                                <td>
+                                    {% if roster_item.registration.status == 'CONFIRMED' %}
+                                        <span class="badge bg-success">Confirmed</span>
+                                    {% elif roster_item.registration.status == 'PENDING_TEAM_APPROVAL' %}
+                                        <span class="badge bg-warning">Pending Approval</span>
+                                    {% elif roster_item.registration.status == 'REJECTED' %}
+                                        <span class="badge bg-danger">Rejected</span>
+                                    {% elif roster_item.registration.status == 'CANCELLED' %}
+                                        <span class="badge bg-secondary">Cancelled</span>
+                                    {% else %}
+                                        <span class="badge bg-secondary">{{ roster_item.registration.status }}</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if roster_item.registration.paid %}
+                                        <span class="badge bg-success">Paid</span>
+                                        {% if roster_item.registration.amount_paid %}
+                                            <small class="text-muted">${{ "%.2f"|format(roster_item.registration.amount_paid) }}</small>
+                                        {% endif %}
+                                    {% else %}
+                                        <span class="badge bg-warning">Unpaid</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        {% endif %}
     </div>
     
     <div class="col-md-4">

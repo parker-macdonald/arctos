@@ -776,8 +776,10 @@ function togglePlayerAssignment() {
 }
 
 function handlePlayerAutocomplete() {
-    const input = document.getElementById('notePlayer');
+    // Support both point notes modal and main notes modal
+    const input = document.getElementById('pointNotePlayer') || document.getElementById('notePlayer');
     const suggestions = document.getElementById('playerSuggestions');
+    if (!input || !suggestions) return;
     const term = (input.value || '').toLowerCase();
     
     // Build a local array from server-rendered match_players for custom suggestions
@@ -810,13 +812,15 @@ function handlePlayerAutocomplete() {
 }
 
 function selectPlayerFromSuggestions(display, id) {
-    const input = document.getElementById('notePlayer');
-    input.value = display;
+    const input = document.getElementById('pointNotePlayer') || document.getElementById('notePlayer');
+    if (input) {
+        input.value = display;
+        // store selected id on input dataset for reliable retrieval
+        input.dataset.playerId = id;
+    }
     const suggestions = document.getElementById('playerSuggestions');
     suggestions.style.display = 'none';
     suggestions.innerHTML = '';
-    // store selected id on input dataset for reliable retrieval
-    input.dataset.playerId = id;
 }
 
 function hidePlayerSuggestions() {
@@ -935,10 +939,15 @@ function loadPointNotes(pointId) {
                     return `
                     <div class="border-bottom pb-2 mb-2">
                         <div class="d-flex justify-content-between align-items-start">
-                            <div>
+                            <div class="me-2">
                                 ${prefix}${note.text}
+                                <div class="small text-muted">${note.created_at ? new Date(note.created_at).toLocaleString() : 'Unknown time'}</div>
                             </div>
-                            <small class="text-muted">${note.created_at ? new Date(note.created_at).toLocaleString() : 'Unknown time'}</small>
+                            <div>
+                                <button type="button" class="btn btn-sm btn-outline-danger" title="Delete note" onclick="deletePointNote('${note.uuid}')">
+                                    <i class="fas fa-trash"></i>
+                                </button>
+                            </div>
                         </div>
                     </div>
                 `;
@@ -1229,14 +1238,12 @@ document.addEventListener('DOMContentLoaded', function() {
         }, 500);
     } catch (e) {}
 
-    // Start time elapsed timer using confirmed_start_time if present, else fallback cleanly
-    const startRaw = '{{ match.confirmed_start_time or match.nominal_start_time or match.stamp }}';
-    // Normalize to ISO without microseconds and ensure timezone
+    // Start time elapsed timer using confirmed_start_time (local) if present, else fallback cleanly
+    const startRaw = '{{ match.confirmed_start_time.strftime('%Y-%m-%dT%H:%M:%S') if match.confirmed_start_time else (match.nominal_start_time.strftime('%Y-%m-%dT%H:%M:%S') if match.nominal_start_time else '') }}';
+    // Parse as local time (no implicit UTC conversion)
     const normStart = (function(s){
-        if (!s || s === 'None') return null;
-        let x = String(s).replace(/\.(\d{3,6})/, '');
-        if (!/[zZ]|[\+\-]\d{2}:?\d{2}$/.test(x)) x += 'Z';
-        const d = new Date(x);
+        if (!s) return null;
+        const d = new Date(s);
         return isNaN(d.getTime()) ? null : d;
     })(startRaw);
     let startTime = normStart || new Date();

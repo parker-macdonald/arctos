@@ -11,7 +11,7 @@ from models import (
 from app.filters import is_head_ref
 from app.utils.helpers import check_tournament_access
 from app.utils.dependencies import apply_match_dependencies
-from app.utils.scheduling import update_dynamic_schedule_after_completion
+from app.utils.scheduling import update_dynamic_schedule_after_completion, mark_dependent_matches_time_finalized
 
 bp = Blueprint('matches', __name__)
 
@@ -46,12 +46,26 @@ def match_page(tournament_url):
     
     is_head_ref_flag = is_head_ref(tournament_url, current_user.id) if current_user.is_authenticated and current_user.__class__.__name__ == 'Player' else False
     
+    # Compute end time for display
+    computed_end_time = None
+    actual_end_time = match.completed_time
+    try:
+        if match.nominal_length:
+            base_start = match.confirmed_start_time or match.nominal_start_time
+            if base_start:
+                from datetime import timedelta
+                computed_end_time = base_start + timedelta(minutes=match.nominal_length)
+    except Exception:
+        computed_end_time = None
+
     return render_template('match_page_websocket.html', 
                          tournament=tournament, 
                          match=match, 
                          points=points,
                          gamestate=gamestate,
-                         is_head_ref=is_head_ref_flag)
+                         is_head_ref=is_head_ref_flag,
+                         computed_end_time=computed_end_time,
+                         actual_end_time=actual_end_time)
 
 
 @bp.route('/<tournament_url>/start-match')
@@ -80,6 +94,26 @@ def start_match(tournament_url):
         flash('Cannot start match - teams and refs not yet determined', 'error')
         return redirect(f'/{tournament_url}/schedule')
     
+    # For dynamic matches, require dependencies to be completed (or marked ready)
+    if match.dynamic:
+        try:
+            from app.utils.scheduling import get_match_dependencies
+            deps = get_match_dependencies(match, tournament_url)
+        except Exception:
+            deps = []
+        all_deps_finished = (len(deps) == 0) or all(d.status == 'COMPLETED' for d in deps)
+        # Also allow if gamestate says ready_to_start
+        is_ready_flag = False
+        if match.gamestate:
+            try:
+                gs = json.loads(match.gamestate)
+                is_ready_flag = bool(gs.get('ready_to_start'))
+            except Exception:
+                is_ready_flag = False
+        if not (all_deps_finished or is_ready_flag):
+            flash('This match cannot be started yet. Dependencies are not completed.', 'error')
+            return redirect(f'/{tournament_url}/schedule')
+
     tournament = Tournament.query.get(tournament_url)
     
     team1_players = db.session.query(PlayerRegistration, Player).join(
@@ -162,7 +196,9 @@ def get_selection_notes(tournament_url):
     from models import MatchNote
     player_notes = []
     if selected_player_ids:
-        player_notes = MatchNote.query.filter(
+        # Only include notes from matches in this tournament
+        player_notes = db.session.query(MatchNote).join(Match, Match.uuid == MatchNote.match).filter(
+            Match.event == tournament_url,
             MatchNote.player_id.in_(selected_player_ids)
         ).all()
 
@@ -239,13 +275,49 @@ def start_match_post(tournament_url):
         return redirect(f'/{tournament_url}/schedule')
     
     match.status = 'IN_PROGRESS'
-    confirmed_start = datetime.now(timezone.utc)
+    # Use local server time (naive) for display consistency on localhost
+    confirmed_start = datetime.now()
     match.confirmed_start_time = confirmed_start
     
+    # Parse selected players from hidden inputs (comma-separated)
+    raw_team1 = (request.form.get('team1_players') or '').strip()
+    raw_team2 = (request.form.get('team2_players') or '').strip()
+    team1_players = [pid for pid in (raw_team1.split(',') if raw_team1 else []) if pid]
+    team2_players = [pid for pid in (raw_team2.split(',') if raw_team2 else []) if pid]
+
+    # Enforce that no player appears on both teams
+    overlap = set(team1_players) & set(team2_players)
+    if overlap:
+        flash('A player cannot be selected for both teams', 'error')
+        return redirect(f'/{tournament_url}/start-match?id={match.uuid}')
+
+    # Enforce roster size if configured
+    tournament_obj = Tournament.query.get(tournament_url)
+    max_roster = getattr(tournament_obj, 'max_team_size_field', None)
+    try:
+        max_roster = int(max_roster) if max_roster is not None else None
+    except Exception:
+        max_roster = None
+    if max_roster and (len(team1_players) > max_roster or len(team2_players) > max_roster):
+        flash('Too many players selected for a team', 'error')
+        return redirect(f'/{tournament_url}/start-match?id={match.uuid}')
+
+    # Deduplicate preserving order
+    def dedup(seq):
+        seen = set()
+        out = []
+        for x in seq:
+            if x not in seen:
+                seen.add(x)
+                out.append(x)
+        return out
+    team1_players = dedup(team1_players)
+    team2_players = dedup(team2_players)
+
     gamestate = {
         'notes': request.form.get('match_notes', ''),
-        'team1_players': request.form.getlist('team1_players'),
-        'team2_players': request.form.getlist('team2_players'),
+        'team1_players': team1_players,
+        'team2_players': team2_players,
         'started_by': current_user.id,
         'started_at': datetime.utcnow().isoformat()
     }
@@ -263,6 +335,16 @@ def start_match_post(tournament_url):
     match.gamestate = json.dumps(gamestate)
     
     db.session.commit()
+    
+    # Mark dependent matches as time finalized when this match starts
+    try:
+        mark_dependent_matches_time_finalized(match, tournament_url)
+        # Also update predicted times immediately based on this start
+        from app.utils.scheduling import recompute_all_match_times
+        recompute_all_match_times(tournament_url)
+        db.session.commit()
+    except Exception as e:
+        print(f"Error marking dependent matches time finalized: {e}")
     
     flash('Match started successfully!', 'success')
     return redirect(f'/{tournament_url}/run-match?id={match.uuid}')
@@ -324,13 +406,26 @@ def run_match(tournament_url):
                 if player:
                     team2_players.append((pr, player))
     
+    # Build match_players for player autocomplete in notes modal
+    match_players = []
+    for pr, player in team1_players + team2_players:
+        display = player.name
+        if getattr(pr, 'jersey_name', None) and getattr(pr, 'jersey_number', None):
+            display = f"{pr.jersey_name} #{pr.jersey_number}"
+        elif getattr(pr, 'jersey_name', None):
+            display = pr.jersey_name
+        elif getattr(pr, 'jersey_number', None):
+            display = f"#{pr.jersey_number}"
+        match_players.append({'player_id': player.id, 'name': player.name, 'display': display})
+
     return render_template('run_match_websocket.html',
                          tournament=tournament,
                          match=match,
                          points=points,
                          gamestate=gamestate,
                          team1_players=team1_players,
-                         team2_players=team2_players)
+                         team2_players=team2_players,
+                         match_players=match_players)
 
 
 @bp.route('/<tournament_url>/finalize-match')
@@ -422,7 +517,8 @@ def finalize_match(tournament_url):
                          point_notes_map=point_notes_map,
                          stones_elapsed_map=stones_elapsed_map,
                          team1_score=team1_score,
-                         team2_score=team2_score)
+                         team2_score=team2_score,
+                         gamestate=gamestate)
 
 
 @bp.route('/<tournament_url>/finalize-match', methods=['POST'])
@@ -458,7 +554,8 @@ def finalize_match_post(tournament_url):
         except:
             gamestate = {}
     
-    gamestate['finalized_at'] = datetime.utcnow().isoformat()
+    # Record completion time on the match using local server time (naive)
+    match.completed_time = datetime.now()
     gamestate['finalized_by'] = current_user.id
     gamestate['final_notes'] = request.form.get('final_notes', '')
     gamestate['match_winner'] = match_winner
@@ -479,7 +576,7 @@ def finalize_match_post(tournament_url):
         'match_id': match_id,
         'status': 'COMPLETED',
         'winner': match_winner,
-        'finalized_at': gamestate['finalized_at']
+        'finalized_at': (match.completed_time.isoformat() if match.completed_time else None)
     }, room=f'match_{match_id}')
 
     try:

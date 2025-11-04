@@ -49,6 +49,13 @@ def create_app(config=None):
     db = db_instance
     db.init_app(app)
     init_db(db)
+    # Ensure tables exist (safe to call on startup)
+    try:
+        with app.app_context():
+            db.create_all()
+    except Exception:
+        # If creation fails, continue; errors will surface when accessed
+        pass
     
     # Initialize SocketIO
     socketio = SocketIO(app, cors_allowed_origins="*")
