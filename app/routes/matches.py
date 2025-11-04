@@ -6,7 +6,7 @@ from flask_login import login_required, current_user
 from datetime import datetime, timezone
 import json
 from models import (
-    Match, Tournament, Point, PlayerRegistration, Player, db
+    Match, Tournament, Point, PlayerRegistration, Player, Field, db
 )
 from app.filters import is_head_ref
 from app.utils.helpers import check_tournament_access
@@ -140,6 +140,13 @@ def match_page(tournament_url):
     except Exception:
         computed_end_time = None
 
+    # Get field camera URL if field is set
+    camera_url = None
+    if match.field:
+        field_obj = Field.query.filter_by(event=tournament_url, name=match.field).first()
+        if field_obj and field_obj.camera:
+            camera_url = field_obj.camera
+
     return render_template('match_page_websocket.html', 
                          tournament=tournament, 
                          match=match, 
@@ -149,7 +156,8 @@ def match_page(tournament_url):
                          computed_end_time=computed_end_time,
                          actual_end_time=actual_end_time,
                          match_notes=match_notes,
-                         point_notes_map=point_notes_map)
+                         point_notes_map=point_notes_map,
+                         camera_url=camera_url)
 
 
 @bp.route('/<tournament_url>/start-match')
@@ -775,13 +783,33 @@ def match_state(tournament_url):
     # Build points data
     points_data = []
     for p in points:
+        # Ensure timestamps are timezone-aware UTC for proper JavaScript parsing
+        # (timezone is already imported at top of file)
+        stamp_iso = None
+        end_stamp_iso = None
+        
+        if p.stamp:
+            # Convert naive UTC to timezone-aware UTC
+            if p.stamp.tzinfo is None:
+                stamp_dt = p.stamp.replace(tzinfo=timezone.utc)
+            else:
+                stamp_dt = p.stamp
+            stamp_iso = stamp_dt.isoformat().replace('+00:00', 'Z')
+        
+        if p.end_stamp:
+            if p.end_stamp.tzinfo is None:
+                end_stamp_dt = p.end_stamp.replace(tzinfo=timezone.utc)
+            else:
+                end_stamp_dt = p.end_stamp
+            end_stamp_iso = end_stamp_dt.isoformat().replace('+00:00', 'Z')
+        
         points_data.append({
             'uuid': p.uuid,
             'set_number': p.set_number,
             'winner': p.winner,
             'rerolled': p.rerolled,
-            'stamp': p.stamp.isoformat() if p.stamp else None,
-            'end_stamp': p.end_stamp.isoformat() if p.end_stamp else None,
+            'stamp': stamp_iso,
+            'end_stamp': end_stamp_iso,
         })
     
     # Get finalized_at from gamestate if match is completed
@@ -827,12 +855,31 @@ def add_point(tournament_url):
     db.session.add(new_point)
     db.session.commit()
     
+    # Ensure timestamps are timezone-aware UTC
+    # (timezone is already imported at top of file)
+    stamp_iso = None
+    end_stamp_iso = None
+    
+    if new_point.stamp:
+        if new_point.stamp.tzinfo is None:
+            stamp_dt = new_point.stamp.replace(tzinfo=timezone.utc)
+        else:
+            stamp_dt = new_point.stamp
+        stamp_iso = stamp_dt.isoformat().replace('+00:00', 'Z')
+    
+    if new_point.end_stamp:
+        if new_point.end_stamp.tzinfo is None:
+            end_stamp_dt = new_point.end_stamp.replace(tzinfo=timezone.utc)
+        else:
+            end_stamp_dt = new_point.end_stamp
+        end_stamp_iso = end_stamp_dt.isoformat().replace('+00:00', 'Z')
+    
     return jsonify({
         'success': True,
         'point_id': new_point.uuid,
         'set_number': new_point.set_number,
-        'stamp': new_point.stamp.isoformat(),
-        'end_stamp': new_point.end_stamp.isoformat() if new_point.end_stamp else None
+        'stamp': stamp_iso,
+        'end_stamp': end_stamp_iso
     })
 
 
@@ -999,4 +1046,91 @@ def server_time():
         'server_time': time.time(),
         'timestamp': datetime.now(timezone.utc).isoformat()
     })
+
+
+@bp.route('/youtube-stream-start')
+def youtube_stream_start():
+    """Get YouTube live stream start time."""
+    import re
+    import os
+    import requests
+    
+    video_id = request.args.get('video_id')
+    if not video_id:
+        return jsonify({'error': 'video_id required'}), 400
+    
+    # Extract video ID if full URL provided
+    patterns = [
+        r'(?:youtube\.com/watch\?v=|youtu\.be/|youtube\.com/embed/|youtube\.com/v/)([^&\n?#]+)',
+        r'^([a-zA-Z0-9_-]{11})$'
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, video_id)
+        if match:
+            video_id = match.group(1)
+            break
+    
+    # Try to get stream start time from YouTube Data API v3
+    api_key = os.environ.get('YOUTUBE_API_KEY')
+    if not api_key:
+        # If no API key, return null (client will handle gracefully)
+        return jsonify({
+            'start_time': None,
+            'error': 'YouTube API key not configured'
+        })
+    
+    try:
+        # Get video details from YouTube Data API v3
+        url = f'https://www.googleapis.com/youtube/v3/videos'
+        params = {
+            'id': video_id,
+            'part': 'liveStreamingDetails,snippet',
+            'key': api_key
+        }
+        response = requests.get(url, params=params, timeout=5)
+        response.raise_for_status()
+        data = response.json()
+        
+        if not data.get('items'):
+            return jsonify({
+                'start_time': None,
+                'error': 'Video not found'
+            })
+        
+        video = data['items'][0]
+        live_details = video.get('liveStreamingDetails', {})
+        
+        # Get actual start time if available
+        actual_start_time = live_details.get('actualStartTime')
+        if actual_start_time:
+            # YouTube API returns time in ISO 8601 format with 'Z' (UTC)
+            # Parse it and ensure it's timezone-aware
+            # (datetime and timezone are already imported at top of file)
+            start_dt = datetime.fromisoformat(actual_start_time.replace('Z', '+00:00'))
+            # Ensure it's UTC timezone-aware
+            if start_dt.tzinfo is None:
+                start_dt = start_dt.replace(tzinfo=timezone.utc)
+            # Return in ISO format with timezone info (ensures 'Z' suffix for UTC)
+            return jsonify({
+                'start_time': start_dt.isoformat().replace('+00:00', 'Z'),
+                'video_id': video_id,
+                'timezone': 'UTC'
+            })
+        
+        # Stream not started yet
+        return jsonify({
+            'start_time': None,
+            'error': 'Stream has not started'
+        })
+        
+    except requests.exceptions.RequestException as e:
+        return jsonify({
+            'start_time': None,
+            'error': f'Error fetching stream info: {str(e)}'
+        }), 500
+    except Exception as e:
+        return jsonify({
+            'start_time': None,
+            'error': f'Unexpected error: {str(e)}'
+        }), 500
 

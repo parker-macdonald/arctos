@@ -136,3 +136,21 @@ def localtime(dt, format_str='%Y-%m-%d %H:%M'):
     # Store the format string in a data attribute so JS knows how to format
     return Markup(f'<span class="utc-timestamp" data-utc="{iso_str}" data-format="{format_str}">{formatted}</span>')
 
+
+@bp.app_template_filter('utc_iso')
+def utc_iso(dt):
+    """Convert datetime to UTC ISO format with 'Z' suffix for JavaScript.
+    
+    Ensures the datetime is timezone-aware (UTC) and returns ISO format
+    with 'Z' suffix so JavaScript interprets it as UTC.
+    """
+    if not dt:
+        return ''
+    
+    # If datetime is naive (no timezone), assume it's UTC
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    
+    # Return ISO format with 'Z' suffix for UTC
+    return dt.isoformat().replace('+00:00', 'Z')
+

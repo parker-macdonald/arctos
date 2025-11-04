@@ -14,6 +14,18 @@ window.MathJax = {
     }
 };
 </script>
+<!-- YouTube IFrame API -->
+<script src="https://www.youtube.com/iframe_api"></script>
+<style>
+#youtube-player {
+    width: 100%;
+    max-width: 100%;
+    aspect-ratio: 16 / 9;
+}
+#youtube-player-container {
+    width: 100%;
+}
+</style>
 
 <div class="row">
     <div class="col-12">
@@ -275,7 +287,7 @@ window.MathJax = {
                             <tr id="live-point-row-{{ point.uuid }}">
                                 <td>{{ loop.index }}</td>
                                 <td>{{ point.set_number or 1 }}</td>
-                                <td id="live-stones-{{ point.uuid }}" data-stamp="{{ point.stamp.isoformat() if point.stamp }}" data-end="{{ point.end_stamp.isoformat() if point.end_stamp }}">0</td>
+                                <td id="live-stones-{{ point.uuid }}" data-stamp="{{ point.stamp | utc_iso if point.stamp }}" data-end="{{ point.end_stamp | utc_iso if point.end_stamp }}">0</td>
                                 <td>
                                     {% if point.winner == 'TEAM1' %}
                                         {{ match.team1_registration.pseudonym if match.team1_registration else match.team1 }}
@@ -343,6 +355,34 @@ window.MathJax = {
                 </div>
             </div>
         </div>
+        
+        {% if camera_url %}
+        <!-- Match Footage -->
+        <div class="card mt-3">
+            <div class="card-header">
+                <h5 class="mb-0">Match Footage</h5>
+            </div>
+            <div class="card-body">
+                <div id="youtube-stream-container">
+                    <div id="youtube-stream-not-started" style="display: none;">
+                        <p class="text-muted"><i class="fas fa-info-circle"></i> Stream not started</p>
+                    </div>
+                    <div id="youtube-player-container" style="display: none;">
+                        <div id="youtube-player"></div>
+                        <div class="mt-3 d-flex align-items-center flex-wrap gap-2">
+                            <span>Seek to point:</span>
+                            <select id="points-dropdown" class="form-select form-select-sm" style="width: auto;">
+                                <option value="">Select point...</option>
+                            </select>
+                            <button id="seek-go-btn" class="btn btn-sm btn-primary">Go</button>
+                            <button id="seek-prev-btn" class="btn btn-sm btn-secondary">Previous Point</button>
+                            <button id="seek-next-btn" class="btn btn-sm btn-secondary">Next Point</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endif %}
     </div>
     
     <div class="col-md-4">
@@ -687,14 +727,48 @@ function updatePointsTable(points) {
         // Update stones elapsed
         const stonesCell = document.getElementById(`live-stones-${point.uuid}`);
         if (stonesCell) {
-            if (point.stamp) stonesCell.setAttribute('data-stamp', point.stamp);
-            if (point.end_stamp) stonesCell.setAttribute('data-end', point.end_stamp);
+            // Ensure timestamps have timezone info (from API they should already have 'Z')
+            if (point.stamp) {
+                let stampStr = point.stamp;
+                // If doesn't have timezone, treat as UTC
+                if (!stampStr.match(/[zZ]|[\+\-]\d{2}:?\d{2}$/)) {
+                    stampStr = stampStr.replace(/\.\d+$/, '') + 'Z';
+                }
+                stonesCell.setAttribute('data-stamp', stampStr);
+            }
+            if (point.end_stamp) {
+                let endStampStr = point.end_stamp;
+                if (!endStampStr.match(/[zZ]|[\+\-]\d{2}:?\d{2}$/)) {
+                    endStampStr = endStampStr.replace(/\.\d+$/, '') + 'Z';
+                }
+                stonesCell.setAttribute('data-end', endStampStr);
+            }
             stonesCell.textContent = computeStonesElapsed(
                 stonesCell.getAttribute('data-stamp'),
                 stonesCell.getAttribute('data-end')
             );
         }
     });
+    
+    // Update YouTube points dropdown if it exists and stream is ready
+    // Only update if points actually changed (not on every poll)
+    {% if camera_url %}
+    const dropdown = document.getElementById('points-dropdown');
+    if (dropdown && typeof initializePointsControls === 'function' && typeof streamStartTime !== 'undefined' && streamStartTime !== null) {
+        // Check if points have actually changed by comparing count
+        const newPointsCount = points.length;
+        
+        // Only update if the number of points changed AND user is not actively interacting with dropdown
+        // Don't update if user is actively selecting from dropdown
+        if ((typeof lastPointsCount === 'undefined' || lastPointsCount !== newPointsCount) && !isUserSelectingPoint) {
+            try {
+                initializePointsControls();
+            } catch (error) {
+                console.error('Error updating points controls:', error);
+            }
+        }
+    }
+    {% endif %}
 }
 
 function updateMatchStatus(data) {
@@ -710,6 +784,16 @@ function updateMatchStatus(data) {
             if (liveStatusMessage) {
                 liveStatusMessage.innerHTML = '<i class="fas fa-check-circle"></i> Match completed - final results below';
                 liveStatusMessage.className = 'text-success';
+            }
+            
+            // Stop polling and time sync when match is completed
+            if (pollingInterval) {
+                clearInterval(pollingInterval);
+                pollingInterval = null;
+            }
+            if (timeSyncInterval) {
+                clearInterval(timeSyncInterval);
+                timeSyncInterval = null;
             }
             
             // Removed time elapsed UI
@@ -796,12 +880,589 @@ function formatDuration(totalSeconds) {
     return `${minutes.toString().padStart(2,'0')}:${seconds.toString().padStart(2,'0')}`;
 }
 
+// YouTube Live Stream Integration
+{% if camera_url %}
+let youtubePlayer = null;
+let streamStartTime = null;
+let pointsData = [];
+let currentPointIndex = -1;
+
+// Extract YouTube video ID from URL
+function extractVideoId(url) {
+    if (!url) return null;
+    const patterns = [
+        /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/v\/)([^&\n?#]+)/,
+        /^([a-zA-Z0-9_-]{11})$/  // Direct video ID
+    ];
+    for (const pattern of patterns) {
+        const match = url.match(pattern);
+        if (match) return match[1];
+    }
+    return null;
+}
+
+// Get YouTube stream start time using YouTube Data API v3
+async function getStreamStartTime(videoId) {
+    try {
+        // Note: This requires a YouTube Data API key. For now, we'll try to get it from the video metadata.
+        // The actual start time for live streams is available via the YouTube Data API v3.
+        // For this implementation, we'll use a workaround: check if the stream is live and get its start time.
+        // Since we don't have API key, we'll use the YouTube IFrame API to get basic info.
+        
+        // Alternative: Use oEmbed API (no key required) to check if video exists
+        const oembedUrl = `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`;
+        const response = await fetch(oembedUrl);
+        if (!response.ok) {
+            return null;
+        }
+        
+        // For live streams, we need to use YouTube Data API v3 to get actualStartTime
+        // Since we don't have an API key, we'll estimate based on match start time
+        // In a production environment, you'd make a server-side call with an API key
+        return null; // Will be handled by checking if stream is live
+    } catch (error) {
+        console.error('Error getting stream start time:', error);
+        return null;
+    }
+}
+
+// Initialize YouTube player
+function initializeYouTubePlayer() {
+    // Only initialize if the player container exists and is visible
+    const playerContainer = document.getElementById('youtube-player');
+    const playerContainerDiv = document.getElementById('youtube-player-container');
+    
+    if (!playerContainer || !playerContainerDiv) {
+        return; // Stream section doesn't exist, skip initialization
+    }
+    
+    // Don't initialize if player already exists
+    if (youtubePlayer) {
+        return;
+    }
+    
+    const videoId = extractVideoId('{{ camera_url }}');
+    if (!videoId) {
+        console.error('Could not extract YouTube video ID from camera URL');
+        return;
+    }
+
+    try {
+        youtubePlayer = new YT.Player('youtube-player', {
+            videoId: videoId,
+            playerVars: {
+                'autoplay': 0,
+                'controls': 1,
+                'rel': 0,
+                'modestbranding': 1,
+                'enablejsapi': 1,
+                'origin': window.location.origin,
+                'iv_load_policy': 1,
+                'playsinline': 1
+            },
+            events: {
+                'onReady': onPlayerReady,
+                'onStateChange': onPlayerStateChange,
+                'onError': function(event) {
+                    console.error('YouTube player error:', event.data);
+                },
+                'onPlaybackQualityChange': function(event) {
+                    console.log('Playback quality changed:', event.data);
+                }
+            }
+        });
+    } catch (error) {
+        console.error('Error initializing YouTube player:', error);
+        youtubePlayer = null;
+    }
+}
+
+// YouTube API callback - only initialize if elements exist
+function onYouTubeIframeAPIReady() {
+    // Wait a bit to ensure DOM is ready
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', function() {
+            {% if camera_url %}
+            initializeYouTubePlayer();
+            {% endif %}
+        });
+    } else {
+        {% if camera_url %}
+        // Small delay to ensure elements are rendered
+        setTimeout(initializeYouTubePlayer, 100);
+        {% endif %}
+    }
+}
+
+// Check if YouTube API is ready, or wait for it
+// Only if camera_url exists
+{% if camera_url %}
+if (typeof YT !== 'undefined' && YT.Player) {
+    onYouTubeIframeAPIReady();
+} else {
+    window.onYouTubeIframeAPIReady = onYouTubeIframeAPIReady;
+}
+{% endif %}
+
+function onPlayerReady(event) {
+    // Player is ready, but we've already checked stream status on page load
+    // This is just for confirmation
+    console.log('YouTube player ready');
+    
+    try {
+        // Check if this is a live stream
+        const duration = event.target.getDuration();
+        console.log('Video duration:', duration);
+        
+        // For live streams, duration is Infinity or a very large number
+        if (duration === Infinity || duration > 86400) {
+            console.log('This appears to be a live stream');
+            // Check if DVR is enabled (seeking is possible)
+            const currentTime = event.target.getCurrentTime();
+            console.log('Current time:', currentTime);
+        }
+    } catch (error) {
+        console.error('Error checking player info:', error);
+    }
+}
+
+function onPlayerStateChange(event) {
+    // Handle player state changes if needed
+}
+
+async function checkStreamStatus() {
+    // Check if stream section exists
+    const notStartedMsg = document.getElementById('youtube-stream-not-started');
+    const playerContainer = document.getElementById('youtube-player-container');
+    if (!notStartedMsg || !playerContainer) {
+        console.log('Stream section not found on page');
+        return; // Stream section doesn't exist, skip
+    }
+    
+    const videoId = extractVideoId('{{ camera_url }}');
+    if (!videoId) {
+        console.error('Could not extract video ID from camera URL: {{ camera_url }}');
+        return;
+    }
+    
+    console.log('Checking stream status for video:', videoId);
+    
+    try {
+        // Get stream start time from server
+        const response = await fetch(`/youtube-stream-start?video_id=${encodeURIComponent(videoId)}`);
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        console.log('Stream status response:', data);
+        
+        if (!data.start_time) {
+            // Stream hasn't started
+            console.log('Stream has not started yet');
+            notStartedMsg.style.display = 'block';
+            playerContainer.style.display = 'none';
+            return;
+        }
+        
+        // Store stream start time - ensure it's properly formatted
+        // Ensure it has timezone info (should already have 'Z' from API)
+        let streamStartStr = data.start_time;
+        if (!streamStartStr.match(/[zZ]|[\+\-]\d{2}:?\d{2}$/)) {
+            // If no timezone, treat as UTC
+            streamStartStr = streamStartStr.replace(/\.\d+$/, '') + 'Z';
+        }
+        streamStartTime = new Date(streamStartStr);
+        console.log('Stream start time stored:', {
+            raw: data.start_time,
+            processed: streamStartStr,
+            dateObject: streamStartTime,
+            iso: streamStartTime.toISOString(),
+            local: streamStartTime.toLocaleString(),
+            timestamp: streamStartTime.getTime()
+        });
+        
+        // Also store the raw string for debugging
+        window.streamStartTimeRaw = streamStartStr;
+        
+        // Show player and controls
+        playerContainer.style.display = 'block';
+        notStartedMsg.style.display = 'none';
+        
+        // Initialize YouTube player if not already initialized
+        if (!youtubePlayer) {
+            console.log('Initializing YouTube player');
+            initializeYouTubePlayer();
+        }
+        
+        // Initialize points data and dropdown
+        initializePointsControls();
+    } catch (error) {
+        console.error('Error checking stream status:', error);
+        notStartedMsg.style.display = 'block';
+        playerContainer.style.display = 'none';
+    }
+}
+
+let pointsObserver = null;
+let lastPointsCount = 0; // Track number of points to avoid unnecessary updates
+let isUserSelectingPoint = false; // Track if user is actively selecting a point
+
+function initializePointsControls() {
+    // Only initialize if YouTube stream section exists
+    const dropdown = document.getElementById('points-dropdown');
+    if (!dropdown) return; // Exit early if dropdown doesn't exist
+    
+    // Get points from the page
+    const pointsTable = document.getElementById('live-points-table');
+    if (!pointsTable) return;
+    
+    const rows = pointsTable.querySelectorAll('tr[id^="live-point-row-"]');
+    pointsData = [];
+    
+    rows.forEach((row, index) => {
+        const pointId = row.id.replace('live-point-row-', '');
+        const stonesCell = document.getElementById(`live-stones-${pointId}`);
+        if (stonesCell) {
+            const stamp = stonesCell.getAttribute('data-stamp');
+            if (stamp) {
+                // Log the stamp to verify it's correct
+                const stampDate = new Date(stamp);
+                console.log('Point data:', {
+                    index: index,
+                    pointId: pointId,
+                    stampRaw: stamp,
+                    stampISO: stampDate.toISOString(),
+                    stampLocal: stampDate.toLocaleString(),
+                    stampValid: !isNaN(stampDate.getTime())
+                });
+                
+                pointsData.push({
+                    uuid: pointId,
+                    index: index,
+                    stamp: stamp
+                });
+            }
+        }
+    });
+    
+    // Preserve the current selection before rebuilding
+    // Only preserve if user has actually selected something (not just default)
+    const currentSelection = dropdown.value;
+    const wasEmpty = !currentSelection || currentSelection === '';
+    const wasUserSelected = currentSelection && currentSelection !== '' && !wasEmpty;
+    
+    // Store the preserved selection index
+    const preservedIndex = wasUserSelected ? parseInt(currentSelection) : null;
+    
+    // Populate dropdown
+    dropdown.innerHTML = '<option value="">Select point...</option>';
+    pointsData.forEach((point, idx) => {
+        const option = document.createElement('option');
+        option.value = idx;
+        option.textContent = `Point ${idx + 1}`;
+        dropdown.appendChild(option);
+    });
+    
+    // Restore the previous selection if it was user-selected and still valid
+    if (wasUserSelected && preservedIndex !== null && preservedIndex < pointsData.length) {
+        dropdown.value = preservedIndex.toString();
+        currentPointIndex = preservedIndex;
+    } else if (pointsData.length > 0 && wasEmpty) {
+        // Only auto-select first point if nothing was selected before
+        // Don't auto-select if user had a selection that's now invalid
+        if (currentPointIndex < 0) {
+            currentPointIndex = 0;
+        }
+    } else if (pointsData.length > 0 && currentPointIndex < 0) {
+        // Initialize if not set
+        currentPointIndex = 0;
+    }
+    
+    // If user had a selection but it's now invalid (point was deleted), keep dropdown empty
+    if (wasUserSelected && preservedIndex !== null && preservedIndex >= pointsData.length) {
+        dropdown.value = '';
+        currentPointIndex = -1;
+    }
+    
+    // Update the last known count
+    lastPointsCount = pointsData.length;
+    
+    // Set up observer to watch for changes to the points table
+    // Only if observer doesn't exist and we have a valid table
+    if (!pointsObserver) {
+        try {
+            // Double-check that pointsTable is a valid Node
+            if (pointsTable && typeof pointsTable.nodeType !== 'undefined' && pointsTable.nodeType === Node.ELEMENT_NODE) {
+                pointsObserver = new MutationObserver(function(mutations) {
+                    // Only update if dropdown still exists and user is not selecting
+                    const dropdownCheck = document.getElementById('points-dropdown');
+                    if (dropdownCheck && !isUserSelectingPoint) {
+                        // Check if points count actually changed before updating
+                        const currentCount = pointsData.length;
+                        const tableRows = document.querySelectorAll('#live-points-table tr[id^="live-point-row-"]');
+                        const newCount = tableRows.length;
+                        
+                        // Only update if count changed
+                        if (currentCount !== newCount) {
+                            try {
+                                initializePointsControls();
+                            } catch (error) {
+                                console.error('Error in observer callback:', error);
+                            }
+                        }
+                    }
+                });
+                
+                pointsObserver.observe(pointsTable, { childList: true, subtree: true });
+            }
+        } catch (error) {
+            console.error('Error setting up points observer:', error);
+            pointsObserver = null; // Reset so we can try again
+        }
+    }
+}
+
+function calculateSeekTime(pointStamp) {
+    if (!streamStartTime || !pointStamp) {
+        console.error('Missing data in calculateSeekTime:', { streamStartTime, pointStamp });
+        return 0;
+    }
+    
+    // Calculate: point timestamp - stream start timestamp = duration into video
+    // Both timestamps should be in UTC
+    console.log('Raw timestamps:', {
+        pointStamp: pointStamp,
+        streamStartTime: streamStartTime,
+        streamStartTimeType: typeof streamStartTime
+    });
+    
+    // Parse point timestamp - if it doesn't have timezone, treat as UTC
+    let pointStampStr = pointStamp;
+    // If timestamp doesn't end with Z or timezone offset, assume it's UTC
+    if (!pointStampStr.match(/[zZ]|[\+\-]\d{2}:?\d{2}$/)) {
+        // Naive datetime - append Z to indicate UTC
+        pointStampStr = pointStampStr.replace(/\.\d+$/, '') + 'Z';
+    }
+    
+    // Parse stream start time - should already have timezone
+    let streamStartStr = streamStartTime;
+    if (typeof streamStartTime !== 'string') {
+        // If it's a Date object, convert to ISO string
+        streamStartStr = streamStartTime.toISOString();
+    }
+    
+    const pointTime = new Date(pointStampStr);
+    const streamStart = new Date(streamStartStr);
+    
+    // Validate dates
+    if (isNaN(pointTime.getTime()) || isNaN(streamStart.getTime())) {
+        console.error('Invalid date in calculateSeekTime:', {
+            pointStamp,
+            pointTime: pointTime,
+            streamStartTime,
+            streamStart: streamStart,
+            pointTimeValid: !isNaN(pointTime.getTime()),
+            streamStartValid: !isNaN(streamStart.getTime())
+        });
+        return 0;
+    }
+    
+    // Get timestamps in milliseconds
+    const pointMs = pointTime.getTime();
+    const streamMs = streamStart.getTime();
+    
+    // Calculate difference
+    const diffMs = pointMs - streamMs;
+    const seekSeconds = diffMs / 1000;
+    
+    // Log detailed information
+    console.log('Seek calculation details:', {
+        pointStampRaw: pointStamp,
+        pointTimeISO: pointTime.toISOString(),
+        pointTimeLocal: pointTime.toLocaleString(),
+        pointMs: pointMs,
+        streamStartTimeRaw: streamStartTime,
+        streamStartISO: streamStart.toISOString(),
+        streamStartLocal: streamStart.toLocaleString(),
+        streamMs: streamMs,
+        diffMs: diffMs,
+        seekSeconds: seekSeconds,
+        seekMinutes: (seekSeconds / 60).toFixed(2),
+        seekHours: (seekSeconds / 3600).toFixed(2)
+    });
+    
+    // Validate the calculation makes sense
+    if (seekSeconds < 0) {
+        console.warn('Point occurred before stream started!', {
+            pointTime: pointTime.toISOString(),
+            streamStart: streamStart.toISOString(),
+            difference: seekSeconds
+        });
+    }
+    
+    if (seekSeconds > 86400) { // More than 24 hours
+        console.warn('Seek time seems unusually long (more than 24 hours)', {
+            seekSeconds: seekSeconds,
+            seekHours: seekSeconds / 3600
+        });
+    }
+    
+    return Math.max(0, seekSeconds);
+}
+
+function seekToPoint(pointIndex) {
+    console.log('seekToPoint called with index:', pointIndex);
+    
+    if (!youtubePlayer) {
+        console.error('YouTube player not initialized');
+        return;
+    }
+    
+    if (pointIndex < 0 || pointIndex >= pointsData.length) {
+        console.error('Invalid point index:', pointIndex, 'pointsData length:', pointsData.length);
+        return;
+    }
+    
+    const point = pointsData[pointIndex];
+    console.log('Seeking to point:', point);
+    
+    const seekTime = calculateSeekTime(point.stamp);
+    console.log('Calculated seek time (seconds):', seekTime);
+    
+    if (seekTime <= 0) {
+        console.warn('Seek time is not positive:', seekTime);
+        return;
+    }
+    
+    try {
+        // Get current player state
+        const playerState = youtubePlayer.getPlayerState();
+        console.log('Current player state:', playerState);
+        
+        // Get current time in video
+        const currentTime = youtubePlayer.getCurrentTime();
+        console.log('Current time in video (seconds):', currentTime);
+        
+        // Get video duration
+        const duration = youtubePlayer.getDuration();
+        console.log('Video duration (seconds):', duration);
+        
+        // For live streams, check if seeking is possible
+        // YouTube live streams with DVR enabled allow seeking
+        if (seekTime > 0) {
+            console.log('Attempting to seek to:', seekTime, 'seconds');
+            youtubePlayer.seekTo(seekTime, true);
+            
+            // Verify seek happened
+            setTimeout(() => {
+                const newTime = youtubePlayer.getCurrentTime();
+                console.log('Time after seek:', newTime);
+                if (Math.abs(newTime - seekTime) > 2) {
+                    console.warn('Seek may have failed. Expected:', seekTime, 'Got:', newTime);
+                }
+            }, 500);
+        }
+    } catch (error) {
+        console.error('Error seeking to point:', error);
+    }
+}
+
+// Event handlers for controls
+document.addEventListener('DOMContentLoaded', function() {
+    {% if camera_url %}
+    const goBtn = document.getElementById('seek-go-btn');
+    const prevBtn = document.getElementById('seek-prev-btn');
+    const nextBtn = document.getElementById('seek-next-btn');
+    const dropdown = document.getElementById('points-dropdown');
+    
+    // Track when user is interacting with dropdown
+    if (dropdown) {
+        dropdown.addEventListener('focus', function() {
+            isUserSelectingPoint = true;
+        });
+        dropdown.addEventListener('blur', function() {
+            // Small delay to allow click events to process
+            setTimeout(() => {
+                isUserSelectingPoint = false;
+            }, 100);
+        });
+        dropdown.addEventListener('change', function() {
+            // User made a selection, mark as user-selected
+            isUserSelectingPoint = false;
+        });
+    }
+    
+    if (goBtn) {
+        goBtn.addEventListener('click', function() {
+            console.log('Go button clicked');
+            const selectedIndex = parseInt(dropdown.value);
+            console.log('Selected index from dropdown:', selectedIndex, 'dropdown value:', dropdown.value);
+            if (!isNaN(selectedIndex) && selectedIndex >= 0) {
+                currentPointIndex = selectedIndex;
+                seekToPoint(selectedIndex);
+            } else {
+                console.warn('Invalid selection from dropdown');
+            }
+        });
+    }
+    
+    if (prevBtn) {
+        prevBtn.addEventListener('click', function() {
+            console.log('Previous point button clicked, current index:', currentPointIndex);
+            if (currentPointIndex > 0) {
+                currentPointIndex--;
+                if (dropdown) dropdown.value = currentPointIndex;
+                seekToPoint(currentPointIndex);
+            } else {
+                console.log('Already at first point');
+            }
+        });
+    }
+    
+    if (nextBtn) {
+        nextBtn.addEventListener('click', function() {
+            console.log('Next point button clicked, current index:', currentPointIndex, 'pointsData length:', pointsData.length);
+            if (currentPointIndex >= 0 && currentPointIndex < pointsData.length - 1) {
+                currentPointIndex++;
+                if (dropdown) dropdown.value = currentPointIndex;
+                seekToPoint(currentPointIndex);
+            } else {
+                console.log('Already at last point');
+            }
+        });
+    }
+    
+    // Debug: log initial state
+    console.log('YouTube controls initialized:', {
+        goBtn: !!goBtn,
+        prevBtn: !!prevBtn,
+        nextBtn: !!nextBtn,
+        dropdown: !!dropdown,
+        pointsDataLength: pointsData.length
+    });
+    
+    // Set up observer to update points dropdown when table changes
+    // This will be initialized after the stream is ready
+    {% endif %}
+});
+{% endif %}
+
 // Initialize page
 document.addEventListener('DOMContentLoaded', async function() {
     // Removed time elapsed UI
 
     // Removed time elapsed UI
     
+    // Check YouTube stream status on page load (for all matches)
+    {% if camera_url %}
+    if (typeof checkStreamStatus === 'function') {
+        checkStreamStatus();
+    }
+    {% endif %}
+    
+    // Only start polling and time sync if match is in progress
+    {% if match.status == 'IN_PROGRESS' %}
     // Load saved KF state
     loadKFState();
     
@@ -811,13 +1472,12 @@ document.addEventListener('DOMContentLoaded', async function() {
     // Initial sync
     await syncWithServerTime();
     
-    // Start polling for match state updates (poll every 1 second if match is in progress, 2 seconds otherwise)
-    {% if match.status == 'IN_PROGRESS' %}
+    // Start polling for match state updates (poll every 1 second)
     pollMatchState(); // Initial poll
     pollingInterval = setInterval(pollMatchState, 1000);
     {% else %}
-    pollMatchState(); // Initial poll
-    pollingInterval = setInterval(pollMatchState, 2000);
+    // For completed or not started matches, just do one initial poll to get final state
+    pollMatchState();
     {% endif %}
     
 });

@@ -332,6 +332,16 @@ function pollMatchState() {
                 return;
             }
             
+            // Stop polling if match is completed
+            if (data.status && data.status === 'COMPLETED') {
+                if (pollingInterval) {
+                    clearInterval(pollingInterval);
+                    pollingInterval = null;
+                }
+                console.log('Match completed - stopping polling');
+                return;
+            }
+            
             // Skip if no updates
             if (lastPollTimestamp && data.timestamp === lastPollTimestamp) {
                 return;
@@ -342,10 +352,25 @@ function pollMatchState() {
             updateScoresFromPoll(data);
             
             // Update stones remaining
+            // Only update from polling if:
+            // 1. User is not actively editing (input doesn't have focus)
+            // 2. Current point is still ongoing (no end_stamp)
             if (data.stones_remaining !== null && data.stones_remaining !== undefined) {
                 const stonesInput = document.getElementById('stones-remaining');
                 if (stonesInput) {
-                    stonesInput.value = data.stones_remaining;
+                    // Check if user is actively editing
+                    const isBeingEdited = document.activeElement === stonesInput;
+                    
+                    // Check if current point is ended (find latest point and check for end_stamp)
+                    const latestPoint = data.points && data.points.length > 0 
+                        ? data.points[data.points.length - 1] 
+                        : null;
+                    const pointIsEnded = latestPoint && latestPoint.end_stamp;
+                    
+                    // Only update from server if user isn't editing and point isn't ended
+                    if (!isBeingEdited && !pointIsEnded) {
+                        stonesInput.value = data.stones_remaining;
+                    }
                 }
             }
             
@@ -454,11 +479,12 @@ function handlePointUpdated(data) {
     if (currentPoint && currentPoint.uuid === data.point_id) {
         if (data.end_stamp) {
             currentPoint.end_stamp = data.end_stamp;
+            // Stop the stones ticker when point ends - allows manual editing
+            stopStonesTicker();
             const button = document.getElementById('point-button');
             button.textContent = 'Start Point';
             button.className = 'btn btn-success btn-lg w-100';
             currentPoint = null;
-            stopStonesTicker();
         }
     }
     updatePointInTable(data);
@@ -701,6 +727,30 @@ function recomputeStonesFromEpoch() {
     if (!stonesTickerStartIso) return;
     const input = document.getElementById('stones-remaining');
     if (!input) return;
+    
+    // Don't auto-update if user is actively editing
+    if (document.activeElement === input) {
+        return;
+    }
+    
+    // Check if current point has ended - if so, stop auto-updating
+    const pointsTable = document.getElementById('points-table');
+    if (pointsTable) {
+        const rows = pointsTable.querySelectorAll('tbody tr');
+        if (rows.length > 0) {
+            const lastRow = rows[rows.length - 1];
+            const stonesCell = lastRow.querySelector('[id^="stones-"]');
+            if (stonesCell) {
+                const endStamp = stonesCell.getAttribute('data-end');
+                if (endStamp && endStamp !== '') {
+                    // Point has ended, stop automatic ticking
+                    stopStonesTicker();
+                    return;
+                }
+            }
+        }
+    }
+    
     if (stonesBaseline == null) {
         const currentDisplayed = parseInt(input.value || '0');
         stonesBaseline = isNaN(currentDisplayed) ? 0 : currentDisplayed;
