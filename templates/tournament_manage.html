@@ -71,7 +71,7 @@
                                         <span class="badge bg-secondary ms-1">Unpaid</span>
                                     {% endif %}
                                 </td>
-                                <td>{{ team_data.registration.registered_at.strftime('%Y-%m-%d') }}</td>
+                                <td>{{ team_data.registration.registered_at|localtime('%Y-%m-%d') }}</td>
                                 <td>
                                     {% if team_data.registration.status == 'CONFIRMED' %}
                                     <form method="POST" action="/{{ tournament.url }}/deregister-any-team" class="d-inline">
@@ -90,7 +90,7 @@
                                             <button type="submit" class="btn btn-sm btn-outline-primary">Save</button>
                                         </div>
                                         {% if team_data.registration.paid_at %}
-                                            <div class="form-text">Paid at {{ team_data.registration.paid_at.strftime('%Y-%m-%d %H:%M') }}</div>
+                                            <div class="form-text">Paid at {{ team_data.registration.paid_at|localtime }}</div>
                                         {% endif %}
                                     </form>
                                 </td>
@@ -161,7 +161,7 @@
                                         <span class="badge bg-secondary ms-1">Unpaid</span>
                                     {% endif %}
                                 </td>
-                                <td>{{ player_data.registration.registered_at.strftime('%Y-%m-%d') }}</td>
+                                <td>{{ player_data.registration.registered_at|localtime('%Y-%m-%d') }}</td>
                                 <td>
                                     {% if player_data.registration.status in ['PENDING_TEAM_APPROVAL', 'CONFIRMED'] %}
                                     <form method="POST" action="/{{ tournament.url }}/deregister-any-player" class="d-inline">
@@ -180,7 +180,7 @@
                                             <button type="submit" class="btn btn-sm btn-outline-primary">Save</button>
                                         </div>
                                         {% if player_data.registration.paid_at %}
-                                            <div class="form-text">Paid at {{ player_data.registration.paid_at.strftime('%Y-%m-%d %H:%M') }}</div>
+                                            <div class="form-text">Paid at {{ player_data.registration.paid_at|localtime }}</div>
                                         {% endif %}
                                     </form>
                                 </td>

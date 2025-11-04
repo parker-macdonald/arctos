@@ -176,6 +176,7 @@ function updatePlayerList(team) {
     const inputId = team + '_players_input';
     const allTeamPlayers = team === 'team1' ? team1AllPlayers : team2AllPlayers;
     const selectedPlayers = team === 'team1' ? team1Players : team2Players;
+    const otherTeamSelected = team === 'team1' ? team2Players : team1Players;
     
     
     const listDiv = document.getElementById(listId);
@@ -190,13 +191,15 @@ function updatePlayerList(team) {
             const player = allPlayers.find(p => p.id === playerId);
             if (player) {
                 const isSelected = selectedPlayers.includes(playerId);
+                const isSelectedOnOtherTeam = otherTeamSelected.includes(playerId);
                 const playerDiv = document.createElement('div');
                 playerDiv.className = 'form-check';
             const displayName = player.jersey_name && player.jersey_number ? 
                 `${player.jersey_name} #${player.jersey_number}` : 
                 player.name;
-                const disabledAttr = player.paid ? '' : 'disabled';
-                const mutedClass = player.paid ? '' : ' text-muted';
+                // Disable checkbox if: unpaid OR if already selected on other team (but allow adding to list)
+                const disabledAttr = (player.paid && !isSelectedOnOtherTeam) ? '' : 'disabled';
+                const mutedClass = (player.paid && !isSelectedOnOtherTeam) ? '' : ' text-muted';
                 const badge = player.paid ? '' : '<span class="badge bg-secondary ms-2">Unpaid</span>';
                 const injuriesHtml = (player.injuries && player.injuries.length) ? `<div class=\"small text-danger mt-1\">${player.injuries.join(' • ')}</div>` : '';
                 playerDiv.innerHTML = `
@@ -216,11 +219,20 @@ function updatePlayerList(team) {
 // Toggle player selection
 function togglePlayer(team, playerId) {
     const players = team === 'team1' ? team1Players : team2Players;
+    const otherTeamSelected = team === 'team1' ? team2Players : team1Players;
     const index = players.indexOf(playerId);
     
     if (index > -1) {
+        // Unchecking - remove from selected
         players.splice(index, 1);
     } else {
+        // Checking - make sure player isn't already selected on other team
+        if (otherTeamSelected.includes(playerId)) {
+            alert('This player is already selected for the other team. Uncheck them there first.');
+            document.getElementById(team + '_' + playerId).checked = false;
+            return;
+        }
+        
         if (players.length < maxRoster) {
             players.push(playerId);
         } else {
@@ -230,17 +242,19 @@ function togglePlayer(team, playerId) {
         }
     }
     
-    updatePlayerList(team);
+    // Update both team lists to reflect the change
+    updatePlayerList('team1');
+    updatePlayerList('team2');
 }
 
 // Search players
 function searchPlayers(team) {
     const searchTerm = document.getElementById(team + '_search').value.toLowerCase();
     const resultsDiv = document.getElementById(team + '_search_results');
-    const currentPlayers = team === 'team1' ? team1Players : team2Players;
-    const otherTeamPlayers = team === 'team1' ? team2Players : team1Players;
+    const currentAllPlayers = team === 'team1' ? team1AllPlayers : team2AllPlayers;
     
     // Filter players by real name, jersey name, or jersey number
+    // Allow showing players even if they're on the other team - just don't show if already added to this team
     const filteredPlayers = allPlayers.filter(player => {
         const realName = player.name.toLowerCase();
         const jerseyName = (player.jersey_name || '').toLowerCase();
@@ -250,18 +264,20 @@ function searchPlayers(team) {
         return (realName.includes(searchLower) || 
                 jerseyName.includes(searchLower) || 
                 jerseyNumber.includes(searchLower)) &&
-               !currentPlayers.includes(player.id) &&
-               !otherTeamPlayers.includes(player.id);
+               !currentAllPlayers.includes(player.id);
     });
+    
+    // Limit to 5 results
+    const limitedPlayers = filteredPlayers.slice(0, 5);
     
     resultsDiv.innerHTML = '';
     
-    if (filteredPlayers.length === 0) {
+    if (limitedPlayers.length === 0) {
         resultsDiv.innerHTML = '<p class="text-muted">No players found</p>';
         return;
     }
     
-    filteredPlayers.forEach(player => {
+    limitedPlayers.forEach(player => {
         const displayName = player.jersey_name && player.jersey_number ? 
             `${player.jersey_name} #${player.jersey_number}` : 
             player.name;
@@ -287,24 +303,23 @@ function addPlayer(team, playerId) {
     const players = team === 'team1' ? team1Players : team2Players;
     const allTeamPlayers = team === 'team1' ? team1AllPlayers : team2AllPlayers;
     const player = allPlayers.find(p => p.id === playerId);
+    
     if (player && !player.paid) {
-        alert('This player has not paid and cannot be selected.');
+        alert('This player has not paid and cannot be added.');
         return;
     }
     
-    if (players.length >= maxRoster) {
-        alert(`Maximum ${maxRoster} players per team`);
-        return;
-    }
-    
-    if (!players.includes(playerId)) {
-        players.push(playerId);
-        if (!allTeamPlayers.includes(playerId)) {
-            allTeamPlayers.push(playerId);
-        }
+    // Allow adding to the team's allPlayers list (so they show up in the list)
+    // But don't automatically select them if they're selected on the other team
+    if (!allTeamPlayers.includes(playerId)) {
+        allTeamPlayers.push(playerId);
         updatePlayerList(team);
         
         // Clear search
+        document.getElementById(team + '_search').value = '';
+        document.getElementById(team + '_search_results').innerHTML = '';
+    } else {
+        // Player already added to this team, just clear search
         document.getElementById(team + '_search').value = '';
         document.getElementById(team + '_search_results').innerHTML = '';
     }
@@ -336,7 +351,7 @@ function openNotesModal(team) {
                 } else if (n.player_name) {
                     target = n.player_name;
                 }
-                const prefix = (n.target && n.target !== 'MATCH') ? `<strong>${target}:</strong> ` : '';
+                const prefix = (n.target && n.target !== 'MATCH' && n.target !== 'match') ? `<strong>${target}:</strong> ` : '';
                 return `<div class="small text-muted border-start border-3 ps-2 mb-1">${prefix}${n.text}</div>`;
             }).join('');
         }

@@ -2,6 +2,7 @@
 Jinja2 template filters for the tournament site.
 """
 import json
+from datetime import timezone
 from flask import Blueprint
 from markupsafe import Markup
 from models import TeamRegistration, Tournament
@@ -110,4 +111,28 @@ def render_markdown(text):
     # Linkify plain URLs
     cleaned = _bleach.linkify(cleaned)
     return Markup(cleaned)
+
+
+@bp.app_template_filter('localtime')
+def localtime(dt, format_str='%Y-%m-%d %H:%M'):
+    """Convert UTC datetime to local time for display.
+    
+    Since the server doesn't know the user's timezone, this outputs
+    the datetime in a format that JavaScript can convert on the client side.
+    Returns a span with data-utc attribute for JS conversion.
+    """
+    if not dt:
+        return ''
+    
+    # If datetime is naive (no timezone), assume it's UTC
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    
+    # Output ISO format for JavaScript to parse
+    iso_str = dt.isoformat()
+    # Also provide a server-side formatted version as fallback
+    formatted = dt.strftime(format_str)
+    
+    # Store the format string in a data attribute so JS knows how to format
+    return Markup(f'<span class="utc-timestamp" data-utc="{iso_str}" data-format="{format_str}">{formatted}</span>')
 

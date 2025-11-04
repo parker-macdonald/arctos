@@ -46,6 +46,88 @@ def match_page(tournament_url):
     
     is_head_ref_flag = is_head_ref(tournament_url, current_user.id) if current_user.is_authenticated and current_user.__class__.__name__ == 'Player' else False
     
+    # Get match notes and point notes for head refs
+    match_notes = []
+    point_notes_map = {}
+    if is_head_ref_flag:
+        from models import MatchNote, PlayerRegistration, Player
+        # Get match-level notes (point_id is None)
+        notes = MatchNote.query.filter_by(match=match.uuid, point_id=None).order_by(MatchNote.created_at.desc()).all()
+        for note in notes:
+            player_name = None
+            player_display = None
+            if note.player_id:
+                player = Player.query.get(note.player_id)
+                if player:
+                    player_name = player.name
+                    reg = PlayerRegistration.query.filter_by(event=tournament_url, player=player.id).first()
+                    if reg:
+                        if getattr(reg, 'jersey_name', None) and getattr(reg, 'jersey_number', None):
+                            player_display = f"{reg.jersey_name} #{reg.jersey_number}"
+                        elif getattr(reg, 'jersey_name', None):
+                            player_display = reg.jersey_name
+                        elif getattr(reg, 'jersey_number', None):
+                            player_display = f"#{reg.jersey_number}"
+                    if not player_display:
+                        player_display = player.name
+            # Determine team_id if target is TEAM1 or TEAM2
+            team_id = None
+            if note.target in ['TEAM1', 'team1']:
+                team_id = match.team1
+            elif note.target in ['TEAM2', 'team2']:
+                team_id = match.team2
+            
+            match_notes.append({
+                'text': note.text,
+                'target': note.target,
+                'player_id': note.player_id,
+                'player_name': player_name,
+                'player_display': player_display,
+                'team_id': team_id,
+                'created_at': note.created_at.isoformat() if note.created_at else None,
+            })
+        
+        # Get point-specific notes
+        if points:
+            point_ids = [p.uuid for p in points if getattr(p, 'uuid', None)]
+            if point_ids:
+                point_notes = MatchNote.query.filter_by(match=match.uuid).filter(
+                    MatchNote.point_id.in_(point_ids)
+                ).order_by(MatchNote.created_at.asc()).all()
+                for n in point_notes:
+                    player_name = None
+                    player_display = None
+                    if n.player_id:
+                        pl = Player.query.get(n.player_id)
+                        if pl:
+                            player_name = pl.name
+                            reg = PlayerRegistration.query.filter_by(event=tournament_url, player=pl.id).first()
+                            if reg:
+                                if getattr(reg, 'jersey_name', None) and getattr(reg, 'jersey_number', None):
+                                    player_display = f"{reg.jersey_name} #{reg.jersey_number}"
+                                elif getattr(reg, 'jersey_name', None):
+                                    player_display = reg.jersey_name
+                                elif getattr(reg, 'jersey_number', None):
+                                    player_display = f"#{reg.jersey_number}"
+                            if not player_display:
+                                player_display = pl.name
+                    # Determine team_id if target is TEAM1 or TEAM2
+                    team_id = None
+                    if n.target in ['TEAM1', 'team1']:
+                        team_id = match.team1
+                    elif n.target in ['TEAM2', 'team2']:
+                        team_id = match.team2
+                    
+                    point_notes_map.setdefault(n.point_id, []).append({
+                        'text': n.text,
+                        'target': n.target,
+                        'player_id': n.player_id,
+                        'player_name': player_name,
+                        'player_display': player_display,
+                        'team_id': team_id,
+                        'created_at': n.created_at.isoformat() if getattr(n, 'created_at', None) else None,
+                    })
+    
     # Compute end time for display
     computed_end_time = None
     actual_end_time = match.completed_time
@@ -65,7 +147,9 @@ def match_page(tournament_url):
                          gamestate=gamestate,
                          is_head_ref=is_head_ref_flag,
                          computed_end_time=computed_end_time,
-                         actual_end_time=actual_end_time)
+                         actual_end_time=actual_end_time,
+                         match_notes=match_notes,
+                         point_notes_map=point_notes_map)
 
 
 @bp.route('/<tournament_url>/start-match')
@@ -237,11 +321,22 @@ def get_selection_notes(tournament_url):
                         player_display = f"#{reg.jersey_number}"
                 if not player_display:
                     player_display = p.name
+        # Get match to determine team_id
+        match_obj = Match.query.get(n.match) if n.match else None
+        team_id = None
+        if match_obj:
+            if n.target in ['TEAM1', 'team1']:
+                team_id = match_obj.team1
+            elif n.target in ['TEAM2', 'team2']:
+                team_id = match_obj.team2
+        
         notes_data.append({
             'text': n.text,
             'target': n.target,
+            'player_id': n.player_id,
             'player_name': player_name,
             'player_display': player_display,
+            'team_id': team_id,
         })
 
     try:
@@ -285,7 +380,7 @@ def start_match_post(tournament_url):
     team1_players = [pid for pid in (raw_team1.split(',') if raw_team1 else []) if pid]
     team2_players = [pid for pid in (raw_team2.split(',') if raw_team2 else []) if pid]
 
-    # Enforce that no player appears on both teams
+    # Enforce that no player appears on both teams (should be prevented by UI, but check server-side too)
     overlap = set(team1_players) & set(team2_players)
     if overlap:
         flash('A player cannot be selected for both teams', 'error')
@@ -362,6 +457,10 @@ def run_match(tournament_url):
     match = Match.query.get(match_id)
     if not match or match.event != tournament_url:
         flash('Match not found', 'error')
+        return redirect(f'/{tournament_url}/schedule')
+    
+    if match.status == 'COMPLETED':
+        flash('This match has already been completed', 'error')
         return redirect(f'/{tournament_url}/schedule')
     
     if not is_head_ref(tournament_url, current_user.id):
@@ -442,6 +541,10 @@ def finalize_match(tournament_url):
         flash('Match not found', 'error')
         return redirect(f'/{tournament_url}/schedule')
     
+    if match.status == 'COMPLETED':
+        flash('This match has already been completed', 'error')
+        return redirect(f'/{tournament_url}/schedule')
+    
     if not is_head_ref(tournament_url, current_user.id):
         flash('You are not authorized to finalize matches for this tournament', 'error')
         return redirect(f'/{tournament_url}/schedule')
@@ -492,11 +595,20 @@ def finalize_match(tournament_url):
                         if not player_display:
                             player_display = pl.name
 
+                # Determine team_id if target is TEAM1 or TEAM2
+                team_id = None
+                if n.target in ['TEAM1', 'team1']:
+                    team_id = match.team1
+                elif n.target in ['TEAM2', 'team2']:
+                    team_id = match.team2
+                
                 point_notes_map.setdefault(n.point_id, []).append({
                     'text': n.text,
                     'target': n.target,
+                    'player_id': n.player_id,
                     'player_name': player_name,
                     'player_display': player_display,
+                    'team_id': team_id,
                     'created_at': n.created_at.isoformat() if getattr(n, 'created_at', None) else None,
                 })
     

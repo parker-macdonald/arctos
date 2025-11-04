@@ -58,7 +58,7 @@
                         <div class="form-text">If you select a team, they will need to approve your request</div>
                     </div>
 
-                    {% if tournament.player_reg_fee %}
+                    {% if tournament.player_reg_fee and tournament.player_reg_fee > 0 %}
                     <div class="mb-3">
                         <div class="alert alert-info">
                             <h6>Registration Fee</h6>
@@ -67,19 +67,17 @@
                     </div>
                     {% endif %}
 
+                    {% if tournament.terms_link %}
                     <div class="mb-3">
                         <div class="form-check">
                             <input class="form-check-input" type="checkbox" id="agree_terms" name="agree_terms" required>
                             <label class="form-check-label" for="agree_terms">
                                 I agree to the 
-                                {% if tournament.terms_link %}
-                                    <a href="{{ tournament.terms_link }}" target="_blank" class="text-decoration-none">tournament terms and conditions</a>
-                                {% else %}
-                                    tournament terms and conditions
-                                {% endif %}
+                                <a href="{{ tournament.terms_link }}" target="_blank" class="text-decoration-none">tournament terms and conditions</a>
                             </label>
                         </div>
                     </div>
+                    {% endif %}
 
                     <div class="d-grid">
                         <button type="submit" class="btn btn-primary">Register as Player</button>
@@ -102,7 +100,7 @@
                         <div class="form-text">This is how your team will be referred to in this tournament</div>
                     </div>
 
-                    {% if tournament.team_reg_fee %}
+                    {% if tournament.team_reg_fee and tournament.team_reg_fee > 0 %}
                     <div class="mb-3">
                         <div class="alert alert-info">
                             <h6>Registration Fee</h6>
@@ -111,19 +109,17 @@
                     </div>
                     {% endif %}
 
+                    {% if tournament.terms_link %}
                     <div class="mb-3">
                         <div class="form-check">
                             <input class="form-check-input" type="checkbox" id="agree_terms" name="agree_terms" required>
                             <label class="form-check-label" for="agree_terms">
                                 I agree to the 
-                                {% if tournament.terms_link %}
-                                    <a href="{{ tournament.terms_link }}" target="_blank" class="text-decoration-none">tournament terms and conditions</a>
-                                {% else %}
-                                    tournament terms and conditions
-                                {% endif %}
+                                <a href="{{ tournament.terms_link }}" target="_blank" class="text-decoration-none">tournament terms and conditions</a>
                             </label>
                         </div>
                     </div>
+                    {% endif %}
 
                     <div class="d-grid">
                         <button type="submit" class="btn btn-primary">Register Team</button>

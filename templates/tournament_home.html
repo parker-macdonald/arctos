@@ -156,7 +156,7 @@
                                     {% endif %}
                                 </td>
                                 <td>
-                                    {{ team_data.team_registration.registered_at.strftime('%Y-%m-%d') }}
+                                    {{ team_data.team_registration.registered_at|localtime('%Y-%m-%d') }}
                                 </td>
                             </tr>
                             {% endfor %}
@@ -206,7 +206,7 @@
                                     {% endif %}
                                 </td>
                                 <td>
-                                    {{ player_data.registration.registered_at.strftime('%Y-%m-%d') }}
+                                    {{ player_data.registration.registered_at|localtime('%Y-%m-%d') }}
                                 </td>
                             </tr>
                             {% endfor %}

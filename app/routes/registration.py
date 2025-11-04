@@ -51,6 +51,12 @@ def register_team_for_tournament(tournament_url):
         pseudonym=request.form['pseudonym']
     )
     
+    # Auto-mark as paid if registration fee is zero
+    if not tournament.team_reg_fee or tournament.team_reg_fee == 0:
+        team_registration.paid = True
+        team_registration.amount_paid = 0.0
+        team_registration.paid_at = datetime.utcnow()
+    
     db.session.add(team_registration)
     db.session.commit()
     
@@ -95,6 +101,12 @@ def register_player_for_tournament(tournament_url):
         jersey_name=request.form.get('jersey_name', ''),
         status=status
     )
+    
+    # Auto-mark as paid if registration fee is zero
+    if not tournament.player_reg_fee or tournament.player_reg_fee == 0:
+        player_registration.paid = True
+        player_registration.amount_paid = 0.0
+        player_registration.paid_at = datetime.utcnow()
     
     db.session.add(player_registration)
     

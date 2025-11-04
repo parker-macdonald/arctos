@@ -184,7 +184,7 @@
     <!-- Action Buttons -->
     <div class="row mt-4">
         <div class="col-12">
-            <button class="btn btn-warning btn-lg w-100" onclick="endMatch()">Finalize Match</button>
+            <button id="finalize-match-btn" class="btn btn-warning btn-lg w-100" onclick="endMatch()">Finalize Match</button>
         </div>
     </div>
 </div>
@@ -216,7 +216,7 @@
                 <div class="mb-3">
                     <label for="pointNoteTarget" class="form-label">Target:</label>
                     <select class="form-select" id="pointNoteTarget" onchange="togglePointPlayerAssignment()">
-                        <option value="match">Match</option>
+                        <option value="match">Point</option>
                         <option value="team1">{{ match.team1_registration.pseudonym if match.team1_registration else match.team1 }}</option>
                         <option value="team2">{{ match.team2_registration.pseudonym if match.team2_registration else match.team2 }}</option>
                         <option value="player">Player</option>
@@ -224,12 +224,7 @@
                 </div>
                 <div class="mb-3" id="pointPlayerAssignmentSection" style="display: none;">
                     <label for="pointNotePlayer" class="form-label">Assign to Player:</label>
-                    <input list="matchPlayers" class="form-control" id="pointNotePlayer" placeholder="Type to search players..." autocomplete="off" oninput="handlePlayerAutocomplete()" onblur="setTimeout(()=>hidePlayerSuggestions(),150)" autocomplete="new-password">
-                    <datalist id="matchPlayers">
-                        {% for p in match_players %}
-                        <option data-player-id="{{ p.player_id }}" value="{{ p.display }}">{{ p.name }}</option>
-                        {% endfor %}
-                    </datalist>
+                    <input type="text" class="form-control" id="pointNotePlayer" placeholder="Type to search players..." autocomplete="off" oninput="handlePlayerAutocomplete()" onblur="setTimeout(()=>hidePlayerSuggestions(),150)">
                     <div id="playerSuggestions" class="list-group mt-1" style="max-height: 180px; overflow-y: auto; display:none;"></div>
                     <small class="text-muted">Selecting a player will tie this note to that player.</small>
                 </div>
@@ -404,11 +399,22 @@ async function startEndPoint() {
     const button = document.getElementById('point-button');
     
     if (button.textContent.trim() === 'Start Point') {
-        // Start a new point
+        // Start a new point - get set number from last point
+        let defaultSetNumber = 1;
+        const tbody = document.getElementById('points-table-body');
+        if (tbody && tbody.children.length > 0) {
+            // Get the last row's set number input
+            const lastRow = tbody.children[tbody.children.length - 1];
+            const lastSetInput = lastRow.querySelector('input[type="number"]');
+            if (lastSetInput) {
+                defaultSetNumber = parseInt(lastSetInput.value) || 1;
+            }
+        }
+        
         console.log('Starting new point...');
         const data = await apiRequest('/match-actions/add-point', {
             match_id: matchId,
-            set_number: 1
+            set_number: defaultSetNumber
         });
         if (data.success) {
             handlePointAdded(data);
@@ -481,13 +487,23 @@ function addPointToTable(data) {
         
         const rowCount = tbody.children.length;
         
+        // Get set number from last point if available
+        let defaultSetNumber = data.set_number || 1;
+        if (tbody.children.length > 0) {
+            const lastRow = tbody.children[tbody.children.length - 1];
+            const lastSetInput = lastRow.querySelector('input[type="number"]');
+            if (lastSetInput) {
+                defaultSetNumber = parseInt(lastSetInput.value) || 1;
+            }
+        }
+        
         const newRow = document.createElement('tr');
         newRow.id = `point-row-${data.point_id}`;
         newRow.innerHTML = `
             <td>${rowCount + 1}</td>
             <td>
                 <input type="number" class="form-control form-control-sm" 
-                       value="${data.set_number || 1}" 
+                       value="${defaultSetNumber}" 
                        onchange="updatePointSetNumber('${data.point_id}', this.value)"
                        style="width: 60px;">
             </td>
@@ -519,6 +535,9 @@ function addPointToTable(data) {
         
         tbody.appendChild(newRow);
         console.log('Point added to table successfully');
+        
+        // Update score by set table
+        updateScoreBySetTable();
     } catch (error) {
         console.error('Error adding point to table:', error);
     }
@@ -561,6 +580,8 @@ async function updatePointWinner(pointId, winner) {
     });
     if (data.success) {
         updatePointInTable(data);
+        // Update score by set table
+        updateScoreBySetTable();
     }
 }
 
@@ -571,6 +592,8 @@ async function toggleRerun(pointId, rerolled) {
     });
     if (data.success) {
         updatePointInTable(data);
+        // Update score by set table (rerolled points don't count)
+        updateScoreBySetTable();
     }
 }
 
@@ -581,6 +604,8 @@ async function updatePointSetNumber(pointId, setNumber) {
     });
     if (data.success) {
         updatePointInTable(data);
+        // Update score by set table
+        updateScoreBySetTable();
     }
     
     // Also update set separately
@@ -624,6 +649,8 @@ async function deletePoint(pointId) {
             if (row) {
                 row.remove();
             }
+            // Update score by set table
+            updateScoreBySetTable();
         }
     }
 }
@@ -721,23 +748,37 @@ function loadExistingNotes() {
                 notesList.innerHTML = data.notes.map(note => {
                     // Convert target to readable display
                     let targetDisplay = note.target;
-                    if (note.target === 'team1') {
+                    let linkUrl = '';
+                    if (note.target === 'team1' || note.target === 'TEAM1') {
                         targetDisplay = '{{ match.team1_registration.pseudonym if match.team1_registration else match.team1 }}';
-                    } else if (note.target === 'team2') {
+                        if (note.team_id) {
+                            linkUrl = `/teams/${note.team_id}`;
+                        }
+                    } else if (note.target === 'team2' || note.target === 'TEAM2') {
                         targetDisplay = '{{ match.team2_registration.pseudonym if match.team2_registration else match.team2 }}';
-                    } else if (note.target === 'MATCH') {
-                        targetDisplay = 'Match';
+                        if (note.team_id) {
+                            linkUrl = `/teams/${note.team_id}`;
+                        }
+                    } else if (note.target === 'MATCH' || note.target === 'match') {
+                        targetDisplay = '';
                     } else if (note.player_display) {
                         targetDisplay = note.player_display;
+                        if (note.player_id) {
+                            linkUrl = `/players/${note.player_id}`;
+                        }
                     } else if (note.player_name) {
                         targetDisplay = note.player_name;
+                        if (note.player_id) {
+                            linkUrl = `/players/${note.player_id}`;
+                        }
                     }
                     
+                    const prefix = targetDisplay ? (linkUrl ? `<strong><a href="${linkUrl}" class="text-decoration-none">${targetDisplay}</a>:</strong> ` : `<strong>${targetDisplay}:</strong> `) : '';
                     return `
                     <div class="border-bottom pb-2 mb-2">
                         <div class="d-flex justify-content-between align-items-start">
                             <div>
-                                <strong>${targetDisplay}:</strong> ${note.text}
+                                ${prefix}${note.text}
                                 <div>
                                     <button class="btn btn-sm btn-outline-danger mt-1" onclick="deletePointNote('${note.uuid}')">
                                         <i class="fas fa-trash"></i> Remove
@@ -839,13 +880,15 @@ function addNote() {
         if (playerInput && playerInput.dataset && playerInput.dataset.playerId) {
             playerId = playerInput.dataset.playerId;
         } else if (playerInput && playerInput.value) {
-            // Fallback: map the typed display back to player_id via datalist options
-            const options = document.querySelectorAll('#matchPlayers option');
-            for (const opt of options) {
-                if (opt.value === playerInput.value) {
-                    playerId = opt.getAttribute('data-player-id');
-                    break;
-                }
+            // Fallback: map the typed display back to player_id via match_players array
+            const players = [
+                {% for p in match_players %}
+                { display: {{ p.display|tojson }}, id: {{ p.player_id|tojson }}, name: {{ p.name|tojson }} },
+                {% endfor %}
+            ];
+            const matchedPlayer = players.find(p => p.display === playerInput.value || p.name === playerInput.value);
+            if (matchedPlayer) {
+                playerId = matchedPlayer.id;
             }
         }
         
@@ -892,9 +935,38 @@ function addNote() {
 }
 
 function endMatch() {
-    if (confirm('Are you sure you want to go to the finalization page?')) {
-        // Just redirect to finalization page without completing the match
-        window.location.href = '/{{ tournament.url }}/finalize-match?id={{ match.uuid }}';
+    // Just redirect to finalization page without completing the match
+    window.location.href = '/{{ tournament.url }}/finalize-match?id={{ match.uuid }}';
+}
+
+// Check if any point is in progress and disable finalize button
+function checkForInProgressPoint() {
+    const tbody = document.getElementById('points-table-body');
+    if (!tbody) return;
+    
+    let hasInProgressPoint = false;
+    for (let row of tbody.rows) {
+        if (row.id.startsWith('point-row-')) {
+            const stonesCell = row.querySelector('[id^="stones-"]');
+            if (stonesCell) {
+                const endStamp = stonesCell.getAttribute('data-end');
+                if (!endStamp || endStamp === '') {
+                    hasInProgressPoint = true;
+                    break;
+                }
+            }
+        }
+    }
+    
+    const finalizeBtn = document.getElementById('finalize-match-btn');
+    if (finalizeBtn) {
+        if (hasInProgressPoint) {
+            finalizeBtn.disabled = true;
+            finalizeBtn.textContent = 'Finalize Match (Point in Progress)';
+        } else {
+            finalizeBtn.disabled = false;
+            finalizeBtn.textContent = 'Finalize Match';
+        }
     }
 }
 
@@ -923,19 +995,32 @@ function loadPointNotes(pointId) {
                 notesList.innerHTML = data.notes.map(note => {
                     // Convert target to readable display
                     let targetDisplay = note.target;
+                    let linkUrl = '';
                     if (note.target === 'TEAM1' || note.target === 'team1') {
                         targetDisplay = '{{ match.team1_registration.pseudonym if match.team1_registration else match.team1 }}';
+                        if (note.team_id) {
+                            linkUrl = `/teams/${note.team_id}`;
+                        }
                     } else if (note.target === 'TEAM2' || note.target === 'team2') {
                         targetDisplay = '{{ match.team2_registration.pseudonym if match.team2_registration else match.team2 }}';
+                        if (note.team_id) {
+                            linkUrl = `/teams/${note.team_id}`;
+                        }
                     } else if (note.target === 'MATCH') {
                         targetDisplay = 'Match';
                     } else if (note.player_display) {
                         targetDisplay = note.player_display;
+                        if (note.player_id) {
+                            linkUrl = `/players/${note.player_id}`;
+                        }
                     } else if (note.player_name) {
                         targetDisplay = note.player_name;
+                        if (note.player_id) {
+                            linkUrl = `/players/${note.player_id}`;
+                        }
                     }
                     
-                    const prefix = (note.target && note.target !== 'MATCH') ? `<strong>${targetDisplay}:</strong> ` : '';
+                    const prefix = (note.target && note.target !== 'MATCH' && note.target !== 'match') ? (linkUrl ? `<strong><a href="${linkUrl}" class="text-decoration-none">${targetDisplay}</a>:</strong> ` : `<strong>${targetDisplay}:</strong> `) : '';
                     return `
                     <div class="border-bottom pb-2 mb-2">
                         <div class="d-flex justify-content-between align-items-start">
@@ -976,13 +1061,15 @@ function addPointNote() {
         if (playerInput && playerInput.dataset && playerInput.dataset.playerId) {
             playerId = playerInput.dataset.playerId;
         } else if (playerInput && playerInput.value) {
-            // Fallback: map the typed display back to player_id via datalist options
-            const options = document.querySelectorAll('#matchPlayers option');
-            for (const opt of options) {
-                if (opt.value === playerInput.value) {
-                    playerId = opt.getAttribute('data-player-id');
-                    break;
-                }
+            // Fallback: map the typed display back to player_id via match_players array
+            const players = [
+                {% for p in match_players %}
+                { display: {{ p.display|tojson }}, id: {{ p.player_id|tojson }}, name: {{ p.name|tojson }} },
+                {% endfor %}
+            ];
+            const matchedPlayer = players.find(p => p.display === playerInput.value || p.name === playerInput.value);
+            if (matchedPlayer) {
+                playerId = matchedPlayer.id;
             }
         }
         
@@ -1020,7 +1107,7 @@ function addPointNote() {
                 loadPointNotes(currentPointForNotes);
                 
                 // Update the point notes display in the table
-                updatePointNotesInTable();
+                updatePointNotesInTableForPoint(currentPointForNotes);
             } else {
                 alert('Error adding note: ' + data.error);
             }
@@ -1101,19 +1188,32 @@ function updatePointNotesInTableForPoint(pointId) {
                 notesContainer.innerHTML = data.notes.map(note => {
                     // Convert target to readable display
                     let targetDisplay = note.target;
+                    let linkUrl = '';
                     if (note.target === 'TEAM1' || note.target === 'team1') {
                         targetDisplay = '{{ match.team1_registration.pseudonym if match.team1_registration else match.team1 }}';
+                        if (note.team_id) {
+                            linkUrl = `/teams/${note.team_id}`;
+                        }
                     } else if (note.target === 'TEAM2' || note.target === 'team2') {
                         targetDisplay = '{{ match.team2_registration.pseudonym if match.team2_registration else match.team2 }}';
+                        if (note.team_id) {
+                            linkUrl = `/teams/${note.team_id}`;
+                        }
                     } else if (note.target === 'MATCH') {
                         targetDisplay = 'Match';
                     } else if (note.player_display) {
                         targetDisplay = note.player_display;
+                        if (note.player_id) {
+                            linkUrl = `/players/${note.player_id}`;
+                        }
                     } else if (note.player_name) {
                         targetDisplay = note.player_name;
+                        if (note.player_id) {
+                            linkUrl = `/players/${note.player_id}`;
+                        }
                     }
                     
-                    const prefix = (note.target && note.target !== 'MATCH') ? `<strong>${targetDisplay}:</strong> ` : '';
+                    const prefix = (note.target && note.target !== 'MATCH' && note.target !== 'match') ? (linkUrl ? `<strong><a href="${linkUrl}" class="text-decoration-none">${targetDisplay}</a>:</strong> ` : `<strong>${targetDisplay}:</strong> `) : '';
                     return `
                     <div class="small text-muted border-start border-3 ps-2 mb-1">
                         ${prefix}${note.text}
@@ -1140,13 +1240,107 @@ function updateSetDisplay(setNumber) {
     });
     
     // Update any set-specific score displays
-    updateSetScores(setNumber);
+    updateScoreBySetTable();
 }
 
-function updateSetScores(setNumber) {
-    // Update scores for the specific set
-    const setPoints = document.querySelectorAll(`[data-set="${setNumber}"]`);
-    console.log(`Found ${setPoints.length} elements for set ${setNumber}`);
+function updateScoreBySetTable() {
+    // Get all points from the table
+    const tbody = document.getElementById('points-table-body');
+    if (!tbody) return;
+    
+    const points = [];
+    const rows = tbody.querySelectorAll('tr[id^="point-row-"]');
+    
+    rows.forEach(row => {
+        const pointId = row.id.replace('point-row-', '');
+        const setInput = row.querySelector('input[type="number"]');
+        const winnerSelect = row.querySelector('select[onchange*="updatePointWinner"]');
+        const rerollCheckbox = row.querySelector('input[onchange*="toggleRerun"]');
+        
+        if (setInput && winnerSelect) {
+            const setNumber = parseInt(setInput.value) || 1;
+            const winner = winnerSelect.value;
+            const rerolled = rerollCheckbox ? rerollCheckbox.checked : false;
+            
+            points.push({
+                set_number: setNumber,
+                winner: winner,
+                rerolled: rerolled
+            });
+        }
+    });
+    
+    // Calculate scores by set
+    const scoresBySet = {};
+    points.forEach(point => {
+        if (point.rerolled) return; // Skip rerolled points
+        
+        const setNum = point.set_number;
+        if (!scoresBySet[setNum]) {
+            scoresBySet[setNum] = { team1: 0, team2: 0 };
+        }
+        
+        if (point.winner === 'TEAM1') {
+            scoresBySet[setNum].team1++;
+        } else if (point.winner === 'TEAM2') {
+            scoresBySet[setNum].team2++;
+        }
+    });
+    
+    // Get all set numbers (both existing and new)
+    const allSetNumbers = [...new Set(points.map(p => p.set_number))].sort((a, b) => a - b);
+    
+    // Get or create the score-by-set container
+    const container = document.getElementById('score-by-set');
+    if (!container) return;
+    
+    // Remove existing set rows (but keep the header)
+    const existingSetRows = container.querySelectorAll('.row.mb-0');
+    existingSetRows.forEach(row => row.remove());
+    
+    // If no sets, show message
+    if (allSetNumbers.length === 0) {
+        container.innerHTML = '<div class="text-muted text-center">No points yet</div>';
+        return;
+    }
+    
+    // Add header row if it doesn't exist
+    let headerRow = container.querySelector('.row.mb-1');
+    if (!headerRow) {
+        headerRow = document.createElement('div');
+        headerRow.className = 'row mb-1';
+        headerRow.innerHTML = `
+            <div class="col-5 text-center">
+                <small class="text-muted">{{ match.team1_registration.pseudonym if match.team1_registration else match.team1 }}</small>
+            </div>
+            <div class="col-2"></div>
+            <div class="col-5 text-center">
+                <small class="text-muted">{{ match.team2_registration.pseudonym if match.team2_registration else match.team2 }}</small>
+            </div>
+        `;
+        container.insertBefore(headerRow, container.firstChild);
+    }
+    
+    // Create rows for each set
+    allSetNumbers.forEach(setNum => {
+        const scores = scoresBySet[setNum] || { team1: 0, team2: 0 };
+        
+        const setRow = document.createElement('div');
+        setRow.className = 'row mb-0';
+        setRow.innerHTML = `
+            <div class="col-5 text-center">
+                <strong id="team1-set-${setNum}-score">${scores.team1}</strong>
+            </div>
+            <div class="col-2 text-center">
+                <small class="text-muted">Set ${setNum}</small>
+            </div>
+            <div class="col-5 text-center">
+                <strong id="team2-set-${setNum}-score">${scores.team2}</strong>
+            </div>
+        `;
+        
+        container.appendChild(setRow);
+    });
 }
 
 // Helper function for consistent time formatting
@@ -1216,6 +1410,10 @@ document.addEventListener('DOMContentLoaded', function() {
     // Start polling for match state updates (poll every 1 second)
     pollMatchState(); // Initial poll
     pollingInterval = setInterval(pollMatchState, 1000);
+    
+    // Check for in-progress points periodically and disable finalize button
+    checkForInProgressPoint();
+    setInterval(checkForInProgressPoint, 1000);
     
     // Compute initial stones elapsed and set periodic update for ongoing last point
     try {

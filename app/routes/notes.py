@@ -58,6 +58,13 @@ def get_notes(tournament_url):
             created_ts = created_ts.replace(tzinfo=timezone.utc)
         if created_ts:
             created_ts = created_ts.replace(microsecond=0)
+        # Determine team_id if target is TEAM1 or TEAM2
+        team_id = None
+        if note.target in ['TEAM1', 'team1']:
+            team_id = match.team1
+        elif note.target in ['TEAM2', 'team2']:
+            team_id = match.team2
+        
         notes_data.append({
             'uuid': note.uuid,
             'text': note.text,
@@ -66,7 +73,8 @@ def get_notes(tournament_url):
             'created_at': created_ts.isoformat() if created_ts else None,
             'player_id': note.player_id,
             'player_name': player_name,
-            'player_display': player_display
+            'player_display': player_display,
+            'team_id': team_id
         })
     
     return jsonify({'success': True, 'notes': notes_data})
@@ -218,6 +226,13 @@ def get_point_notes(tournament_url):
         if created_ts:
             created_ts = created_ts.replace(microsecond=0)
         
+        # Determine team_id if target is TEAM1 or TEAM2
+        team_id = None
+        if note.target in ['TEAM1', 'team1']:
+            team_id = match.team1
+        elif note.target in ['TEAM2', 'team2']:
+            team_id = match.team2
+        
         notes_data.append({
             'uuid': note.uuid,
             'text': note.text,
@@ -226,7 +241,8 @@ def get_point_notes(tournament_url):
             'created_at': created_ts.isoformat() if created_ts else None,
             'player_id': note.player_id,
             'player_name': player_name,
-            'player_display': player_display
+            'player_display': player_display,
+            'team_id': team_id
         })
     
     return jsonify({'success': True, 'notes': notes_data})

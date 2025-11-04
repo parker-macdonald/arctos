@@ -265,7 +265,9 @@ window.MathJax = {
                                 <th>Stones Elapsed</th>
                                 <th>Winner</th>
                                 <th>Rerun</th>
-                                
+                                {% if current_user.is_authenticated and current_user.__class__.__name__ == 'Player' and is_head_ref %}
+                                <th>Notes</th>
+                                {% endif %}
                             </tr>
                         </thead>
                         <tbody id="live-points-table">
@@ -290,7 +292,50 @@ window.MathJax = {
                                         <span class="badge bg-success">Normal</span>
                                     {% endif %}
                                 </td>
-                                
+                                {% if current_user.is_authenticated and current_user.__class__.__name__ == 'Player' and is_head_ref %}
+                                <td>
+                                    {% set pnotes = point_notes_map.get(point.uuid, []) %}
+                                    {% if pnotes %}
+                                        {% for n in pnotes %}
+                                            {% set targetDisplay = n.target %}
+                                            {% set linkUrl = '' %}
+                                            {% if n.target in ['TEAM1','team1'] %}
+                                                {% set targetDisplay = match.team1_registration.pseudonym if match.team1_registration else match.team1 %}
+                                                {% if n.team_id %}
+                                                    {% set linkUrl = url_for('teams.team_profile', team_id=n.team_id) %}
+                                                {% endif %}
+                                            {% elif n.target in ['TEAM2','team2'] %}
+                                                {% set targetDisplay = match.team2_registration.pseudonym if match.team2_registration else match.team2 %}
+                                                {% if n.team_id %}
+                                                    {% set linkUrl = url_for('teams.team_profile', team_id=n.team_id) %}
+                                                {% endif %}
+                                            {% elif n.target == 'MATCH' or n.target == 'match' %}
+                                                {% set targetDisplay = '' %}
+                                            {% elif n.player_display %}
+                                                {% set targetDisplay = n.player_display %}
+                                                {% if n.player_id %}
+                                                    {% set linkUrl = url_for('players.player_profile', player_id=n.player_id) %}
+                                                {% endif %}
+                                            {% elif n.player_name %}
+                                                {% set targetDisplay = n.player_name %}
+                                                {% if n.player_id %}
+                                                    {% set linkUrl = url_for('players.player_profile', player_id=n.player_id) %}
+                                                {% endif %}
+                                            {% endif %}
+                                            {% set prefix = '' if (n.target == 'MATCH' or n.target == 'match') else (targetDisplay ~ ': ') %}
+                                            <div class="small text-muted border-start border-3 ps-2 mb-1">
+                                                {% if linkUrl and prefix %}
+                                                    <a href="{{ linkUrl }}" class="text-decoration-none">{{ targetDisplay }}</a>: {{ n.text }}
+                                                {% else %}
+                                                    {{ prefix }}{{ n.text }}
+                                                {% endif %}
+                                            </div>
+                                        {% endfor %}
+                                    {% else %}
+                                        <span class="text-muted">—</span>
+                                    {% endif %}
+                                </td>
+                                {% endif %}
                             </tr>
                             {% endfor %}
                         </tbody>
@@ -315,7 +360,7 @@ window.MathJax = {
                         <div class="text-muted small">None</div>
                     {% endif %}
                 </div>
-                <div>
+                <div class="mb-3">
                     <h6 class="mb-1">Finalize Notes</h6>
                     {% if gamestate and gamestate.final_notes %}
                         <div class="small text-muted border-start border-3 ps-2">{{ gamestate.final_notes }}</div>
@@ -323,6 +368,51 @@ window.MathJax = {
                         <div class="text-muted small">None</div>
                     {% endif %}
                 </div>
+                {% if match_notes %}
+                <div>
+                    <h6 class="mb-1">Match Notes</h6>
+                    <div style="max-height: 300px; overflow-y: auto;">
+                        {% for note in match_notes %}
+                            {% set targetDisplay = note.target %}
+                            {% set linkUrl = '' %}
+                            {% if note.target in ['TEAM1','team1'] %}
+                                {% set targetDisplay = match.team1_registration.pseudonym if match.team1_registration else match.team1 %}
+                                {% if note.team_id %}
+                                    {% set linkUrl = url_for('teams.team_profile', team_id=note.team_id) %}
+                                {% endif %}
+                            {% elif note.target in ['TEAM2','team2'] %}
+                                {% set targetDisplay = match.team2_registration.pseudonym if match.team2_registration else match.team2 %}
+                                {% if note.team_id %}
+                                    {% set linkUrl = url_for('teams.team_profile', team_id=note.team_id) %}
+                                {% endif %}
+                            {% elif note.target == 'MATCH' or note.target == 'match' %}
+                                {% set targetDisplay = '' %}
+                            {% elif note.player_display %}
+                                {% set targetDisplay = note.player_display %}
+                                {% if note.player_id %}
+                                    {% set linkUrl = url_for('players.player_profile', player_id=note.player_id) %}
+                                {% endif %}
+                            {% elif note.player_name %}
+                                {% set targetDisplay = note.player_name %}
+                                {% if note.player_id %}
+                                    {% set linkUrl = url_for('players.player_profile', player_id=note.player_id) %}
+                                {% endif %}
+                            {% endif %}
+                            {% set prefix = '' if (note.target == 'MATCH' or note.target == 'match') else (targetDisplay ~ ': ') %}
+                            <div class="small text-muted border-start border-3 ps-2 mb-2">
+                                {% if linkUrl and prefix %}
+                                    <a href="{{ linkUrl }}" class="text-decoration-none">{{ targetDisplay }}</a>: {{ note.text }}
+                                {% else %}
+                                    {{ prefix }}{{ note.text }}
+                                {% endif %}
+                                {% if note.created_at %}
+                                <div class="text-muted" style="font-size: 0.75rem;">{{ note.created_at[:16]|replace('T', ' ') }}</div>
+                                {% endif %}
+                            </div>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endif %}
             </div>
         </div>
         {% endif %}
@@ -548,6 +638,9 @@ function updatePointsTable(points) {
         }
     }
     
+    // Check if notes column exists (head refs)
+    const hasNotesColumn = tbody.rows.length > 0 && tbody.rows[0].cells.length > 5;
+    
     // Update or add points
     points.forEach((point, index) => {
         let row = document.getElementById(`live-point-row-${point.uuid}`);
@@ -555,12 +648,17 @@ function updatePointsTable(points) {
             // Add new row
             row = tbody.insertRow();
             row.id = `live-point-row-${point.uuid}`;
+            let notesCell = '';
+            if (hasNotesColumn) {
+                notesCell = '<td><span class="text-muted">—</span></td>';
+            }
             row.innerHTML = `
                 <td>${index + 1}</td>
                 <td>${point.set_number || 1}</td>
                 <td id="live-stones-${point.uuid}" data-stamp="${point.stamp || ''}" data-end="${point.end_stamp || ''}">${computeStonesElapsed(point.stamp, point.end_stamp)}</td>
                 <td>-</td>
                 <td><span class="badge bg-success">Normal</span></td>
+                ${notesCell}
             `;
         }
         

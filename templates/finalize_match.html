@@ -63,20 +63,37 @@
                                     {% if pnotes %}
                                         {% for n in pnotes %}
                                             {% set targetDisplay = n.target %}
+                                            {% set linkUrl = '' %}
                                             {% if n.target in ['TEAM1','team1'] %}
                                                 {% set targetDisplay = match.team1_registration.pseudonym if match.team1_registration else match.team1 %}
+                                                {% if n.team_id %}
+                                                    {% set linkUrl = url_for('teams.team_profile', team_id=n.team_id) %}
+                                                {% endif %}
                                             {% elif n.target in ['TEAM2','team2'] %}
                                                 {% set targetDisplay = match.team2_registration.pseudonym if match.team2_registration else match.team2 %}
+                                                {% if n.team_id %}
+                                                    {% set linkUrl = url_for('teams.team_profile', team_id=n.team_id) %}
+                                                {% endif %}
                                             {% elif n.target == 'MATCH' %}
                                                 {% set targetDisplay = 'Match' %}
                                             {% elif n.player_display %}
                                                 {% set targetDisplay = n.player_display %}
+                                                {% if n.player_id %}
+                                                    {% set linkUrl = url_for('players.player_profile', player_id=n.player_id) %}
+                                                {% endif %}
                                             {% elif n.player_name %}
                                                 {% set targetDisplay = n.player_name %}
+                                                {% if n.player_id %}
+                                                    {% set linkUrl = url_for('players.player_profile', player_id=n.player_id) %}
+                                                {% endif %}
                                             {% endif %}
-                                            {% set prefix = '' if (n.target == 'MATCH') else (targetDisplay ~ ': ') %}
+                                            {% set prefix = '' if (n.target == 'MATCH' or n.target == 'match') else (targetDisplay ~ ': ') %}
                                             <div class="small text-muted border-start border-3 ps-2 mb-1">
-                                                <strong>{{ '' if n.target == 'MATCH' else targetDisplay ~ ': ' }}</strong>{{ n.text }}
+                                                {% if linkUrl and prefix %}
+                                                    <a href="{{ linkUrl }}" class="text-decoration-none">{{ targetDisplay }}</a>: {{ n.text }}
+                                                {% else %}
+                                                    {{ prefix }}{{ n.text }}
+                                                {% endif %}
                                             </div>
                                         {% endfor %}
                                     {% else %}
@@ -88,6 +105,44 @@
                         </tbody>
                     </table>
                 </div>
+            </div>
+        </div>
+        
+        <!-- Score by Set Summary -->
+        <div class="card mt-3">
+            <div class="card-header">
+                <h5 class="mb-0">Score by Set</h5>
+            </div>
+            <div class="card-body">
+                {% set sets = points | map(attribute='set_number') | unique | sort %}
+                {% if sets %}
+                <!-- Team names header -->
+                <div class="row mb-2">
+                    <div class="col-5 text-center">
+                        <small class="text-muted">{{ match.team1_registration.pseudonym if match.team1_registration else match.team1 }}</small>
+                    </div>
+                    <div class="col-2"></div>
+                    <div class="col-5 text-center">
+                        <small class="text-muted">{{ match.team2_registration.pseudonym if match.team2_registration else match.team2 }}</small>
+                    </div>
+                </div>
+                <!-- Scores for each set -->
+                {% for set_num in sets %}
+                <div class="row mb-1">
+                    <div class="col-5 text-center">
+                        <strong>{{ points | selectattr('set_number', 'equalto', set_num) | selectattr('winner', 'equalto', 'TEAM1') | rejectattr('rerolled', 'equalto', true) | list | length }}</strong>
+                    </div>
+                    <div class="col-2 text-center">
+                        <small class="text-muted">Set {{ set_num }}</small>
+                    </div>
+                    <div class="col-5 text-center">
+                        <strong>{{ points | selectattr('set_number', 'equalto', set_num) | selectattr('winner', 'equalto', 'TEAM2') | rejectattr('rerolled', 'equalto', true) | list | length }}</strong>
+                    </div>
+                </div>
+                {% endfor %}
+                {% else %}
+                <div class="text-muted text-center">No points yet</div>
+                {% endif %}
             </div>
         </div>
         
@@ -153,7 +208,7 @@
                     </div>
                     
                     <div class="d-grid">
-                        <button type="submit" class="btn btn-success btn-lg">Submit Match</button>
+                        <button type="submit" id="submit-match-btn" class="btn btn-success btn-lg">Submit Match</button>
                     </div>
                 </form>
             </div>
@@ -173,14 +228,20 @@
                 {% if match.nominal_length %}
                 <p><strong>Length:</strong> {{ match.nominal_length }} minutes</p>
                 {% endif %}
-                {% if gamestate.notes %}
-                <p><strong>Notes:</strong> {{ gamestate.notes }}</p>
-                {% endif %}
                 <p><strong>Started:</strong> {{ match.confirmed_start_time.strftime('%Y-%m-%d %H:%M') if match.confirmed_start_time else 'N/A' }}</p>
             </div>
         </div>
         
-        
+        {% if gamestate.notes %}
+        <div class="card mt-3">
+            <div class="card-header">
+                <h5 class="mb-0">Start Match Notes</h5>
+            </div>
+            <div class="card-body">
+                <p>{{ gamestate.notes }}</p>
+            </div>
+        </div>
+        {% endif %}
     </div>
 </div>
 
@@ -250,33 +311,20 @@ document.addEventListener('DOMContentLoaded', function() {
     initSignaturePad('team1-signature', 'team1-signature-data');
     initSignaturePad('team2-signature', 'team2-signature-data');
     
-    loadMatchNotes();
-});
-
-function loadMatchNotes() {
-    fetch('/{{ tournament.url }}/get-notes?match_id={{ match.uuid }}')
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            const notesList = document.getElementById('match-notes');
-            notesList.innerHTML = '';
+    // Check signature validation on form submit
+    const form = document.querySelector('form');
+    if (form) {
+        form.addEventListener('submit', function(e) {
+            const team1Sig = document.getElementById('team1-signature-data').value;
+            const team2Sig = document.getElementById('team2-signature-data').value;
             
-            if (data.notes.length === 0) {
-                notesList.innerHTML = '<p class="text-muted">No notes recorded</p>';
-                return;
+            if (!team1Sig || !team2Sig) {
+                e.preventDefault();
+                alert('Both team captains must sign before submitting the match.');
+                return false;
             }
-            
-            data.notes.forEach(note => {
-                const noteDiv = document.createElement('div');
-                noteDiv.className = 'mb-2 p-2 border rounded';
-                noteDiv.innerHTML = `
-                    <p class="mb-1">${note.text}</p>
-                    <small class="text-muted">${note.target} - ${new Date(note.stamp).toLocaleString()}</small>
-                `;
-                notesList.appendChild(noteDiv);
-            });
-        }
-    });
-}
+        });
+    }
+});
 </script>
 {% endblock %}

@@ -128,18 +128,9 @@
 
                     <div class="mb-3">
                         <label for="head_refs" class="form-label">Head Refs</label>
-                        <div class="row">
-                            <div class="col-md-8">
-                                <input type="text" class="form-control" id="head_refs" name="head_refs" 
-                                       value="{{ tournament.head_refs or '' }}" placeholder="player1, player2, player3">
-                                <div class="form-text">Comma-separated list of player IDs who can ref matches</div>
-                            </div>
-                            <div class="col-md-4">
-                                <button type="button" class="btn btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#manageHeadRefsModal">
-                                    Manage Head Refs
-                                </button>
-                            </div>
-                        </div>
+                        <input type="text" class="form-control" id="head_refs" name="head_refs" 
+                               value="{{ tournament.head_refs or '' }}" placeholder="player1, player2, player3">
+                        <div class="form-text">Comma-separated list of player IDs who can ref matches</div>
                     </div>
 
                     <div class="mb-3">
@@ -204,87 +195,4 @@
     </div>
 </div>
 
-<!-- Manage Head Refs Modal -->
-<div class="modal fade" id="manageHeadRefsModal" tabindex="-1" aria-labelledby="manageHeadRefsModalLabel" aria-hidden="true">
-    <div class="modal-dialog modal-lg">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title" id="manageHeadRefsModalLabel">Manage Head Refs</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-            </div>
-            <div class="modal-body">
-                <div class="row">
-                    <div class="col-md-6">
-                        <h6>Current Head Refs</h6>
-                        <div id="currentHeadRefs">
-                            {% if tournament.head_refs %}
-                                {% for player_id in tournament.head_refs.split(',') %}
-                                    {% if player_id.strip() %}
-                                    <div class="d-flex justify-content-between align-items-center mb-2">
-                                        <span>{{ player_id.strip() }}</span>
-                                        <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeHeadRef('{{ player_id.strip() }}')">Remove</button>
-                                    </div>
-                                    {% endif %}
-                                {% endfor %}
-                            {% else %}
-                                <p class="text-muted">No head refs assigned</p>
-                            {% endif %}
-                        </div>
-                    </div>
-                    <div class="col-md-6">
-                        <h6>Add New Head Ref</h6>
-                        <div class="mb-3">
-                            <label for="newHeadRef" class="form-label">Player ID</label>
-                            <input type="text" class="form-control" id="newHeadRef" placeholder="Enter player ID">
-                        </div>
-                        <button type="button" class="btn btn-primary" onclick="addHeadRef()">Add Head Ref</button>
-                    </div>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
-                <button type="button" class="btn btn-primary" onclick="saveHeadRefs()">Save Changes</button>
-            </div>
-        </div>
-    </div>
-</div>
-
-<script>
-let currentHeadRefs = {% if tournament.head_refs %}{{ tournament.head_refs.split(',') | tojson }}{% else %}[]{% endif %};
-
-function addHeadRef() {
-    const playerId = document.getElementById('newHeadRef').value.trim();
-    if (playerId && !currentHeadRefs.includes(playerId)) {
-        currentHeadRefs.push(playerId);
-        updateHeadRefsDisplay();
-        document.getElementById('newHeadRef').value = '';
-    }
-}
-
-function removeHeadRef(playerId) {
-    currentHeadRefs = currentHeadRefs.filter(id => id !== playerId);
-    updateHeadRefsDisplay();
-}
-
-function updateHeadRefsDisplay() {
-    const container = document.getElementById('currentHeadRefs');
-    if (currentHeadRefs.length === 0) {
-        container.innerHTML = '<p class="text-muted">No head refs assigned</p>';
-    } else {
-        container.innerHTML = currentHeadRefs.map(playerId => `
-            <div class="d-flex justify-content-between align-items-center mb-2">
-                <span>${playerId}</span>
-                <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeHeadRef('${playerId}')">Remove</button>
-            </div>
-        `).join('');
-    }
-}
-
-function saveHeadRefs() {
-    document.getElementById('head_refs').value = currentHeadRefs.join(', ');
-    // Close modal
-    const modal = bootstrap.Modal.getInstance(document.getElementById('manageHeadRefsModal'));
-    modal.hide();
-}
-</script>
 {% endblock %}

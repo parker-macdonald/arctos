@@ -122,6 +122,38 @@
     </main>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+    // Convert all UTC timestamps to local time
+    document.addEventListener('DOMContentLoaded', function() {
+        const utcTimestamps = document.querySelectorAll('.utc-timestamp');
+        utcTimestamps.forEach(function(span) {
+            const utcIso = span.getAttribute('data-utc');
+            const formatStr = span.getAttribute('data-format') || '%Y-%m-%d %H:%M';
+            if (utcIso) {
+                try {
+                    const utcDate = new Date(utcIso);
+                    
+                    // Format based on the format string
+                    const year = utcDate.getFullYear();
+                    const month = String(utcDate.getMonth() + 1).padStart(2, '0');
+                    const day = String(utcDate.getDate()).padStart(2, '0');
+                    const hours = String(utcDate.getHours()).padStart(2, '0');
+                    const minutes = String(utcDate.getMinutes()).padStart(2, '0');
+                    
+                    if (formatStr === '%Y-%m-%d') {
+                        // Date only
+                        span.textContent = `${year}-${month}-${day}`;
+                    } else {
+                        // Date and time
+                        span.textContent = `${year}-${month}-${day} ${hours}:${minutes}`;
+                    }
+                } catch (e) {
+                    console.error('Error converting UTC timestamp:', e);
+                }
+            }
+        });
+    });
+    </script>
     {% block scripts %}{% endblock %}
 </body>
 </html>
