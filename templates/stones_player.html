@@ -371,12 +371,21 @@ async function syncWithServer() {
         const data = await response.json();
         
         const serverTime = data.server_time;
-        const rtt = (clientReceiveTime - clientSendTime) * 1000;
-        const estimatedServerTime = serverTime + (rtt / 2000); // Half of RTT
+        const rtt = (clientReceiveTime - clientSendTime);
         
-        // Calculate offset: server time - client time
-        const clientTime = clientSendTime + (rtt / 2000);
-        const offset = estimatedServerTime - clientTime;
+        // NTP-style offset calculation:
+        // serverTime is when the server processed the request
+        // Assuming symmetric latency (RTT/2 each direction):
+        // - serverTime was captured RTT/2 ago from the client's perspective
+        // - So current server time ≈ serverTime + RTT/2
+        // - Current client time = clientReceiveTime
+        // - Offset = (serverTime + RTT/2) - clientReceiveTime
+        // This simplifies to: offset = serverTime - clientReceiveTime + RTT/2
+        
+        // More accurate: use the receive time as reference point
+        // The server timestamp represents the time when the request was processed,
+        // which is approximately RTT/2 before we receive it (assuming symmetric latency)
+        const offset = serverTime - clientReceiveTime + (rtt / 2);
         
         // Update Kalman filter
         kalmanFilter.update(offset);
@@ -388,10 +397,10 @@ async function syncWithServer() {
         updateDisplay(true);
         const rttEl = document.getElementById('rtt');
         if (rttEl) {
-            rttEl.textContent = rtt.toFixed(1);
+            rttEl.textContent = (rtt * 1000).toFixed(1);
         }
         
-        return { offset: kalmanFilter.getState(), rtt };
+        return { offset: kalmanFilter.getState(), rtt: rtt * 1000 };
     } catch (error) {
         console.error('Error syncing with server:', error);
         return null;
