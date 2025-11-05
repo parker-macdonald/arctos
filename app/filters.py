@@ -2,7 +2,7 @@
 Jinja2 template filters for the tournament site.
 """
 import json
-from datetime import timezone
+from datetime import timezone, timedelta
 from flask import Blueprint
 from markupsafe import Markup
 from models import TeamRegistration, Tournament
@@ -153,4 +153,31 @@ def utc_iso(dt):
     
     # Return ISO format with 'Z' suffix for UTC
     return dt.isoformat().replace('+00:00', 'Z')
+
+
+@bp.app_template_filter('add_minutes')
+def add_minutes(dt, minutes):
+    """Add minutes to a datetime."""
+    if not dt or not minutes:
+        return dt
+    # Store original timezone state
+    was_naive = dt.tzinfo is None
+    # Ensure naive datetimes are treated as UTC for consistency
+    if was_naive:
+        dt = dt.replace(tzinfo=timezone.utc)
+    result = dt + timedelta(minutes=int(minutes))
+    # Return naive datetime if original was naive (for compatibility)
+    if was_naive:
+        return result.replace(tzinfo=None)
+    return result
+
+@bp.app_template_filter('to_utc')
+def to_utc(dt):
+    """Normalize datetime to UTC (timezone-aware)."""
+    if not dt:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    # If already timezone-aware, convert to UTC
+    return dt.astimezone(timezone.utc)
 

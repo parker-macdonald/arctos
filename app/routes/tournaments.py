@@ -3,7 +3,7 @@ Tournament management routes.
 """
 from flask import Blueprint, render_template, request, redirect, flash, jsonify
 from flask_login import login_required, current_user
-from datetime import datetime
+from datetime import datetime, timedelta
 from models import (
     Tournament, Match, Field, Tag, TeamRegistration, PlayerRegistration,
     Team, TO, db
@@ -163,7 +163,8 @@ def tournament_schedule(tournament_url):
             return redirect(f'/{tournament_url}')
     
     matches = Match.query.filter_by(event=tournament_url).order_by(Match.nominal_start_time).all()
-    return render_template('tournament_schedule.html', tournament=tournament, matches=matches, is_head_ref=is_head_ref_flag)
+    fields = Field.query.filter_by(event=tournament_url).order_by(Field.name).all()
+    return render_template('tournament_schedule.html', tournament=tournament, matches=matches, fields=fields, is_head_ref=is_head_ref_flag)
 
 
 @bp.route('/<tournament_url>/results')

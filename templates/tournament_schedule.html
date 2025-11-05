@@ -15,163 +15,682 @@
     </div>
 </div>
 
-<div class="row">
-    <div class="col-12">
-        {% if matches %}
-            <div class="table-responsive">
-                <table class="table table-striped">
-                    <thead>
-                        <tr>
-                            <th>Match</th>
-                            <th>Time</th>
-                            <th>Field</th>
-                            <th>Team 1</th>
-                            <th>Team 2</th>
-                            <th>Refs</th>
-                            <th>Status</th>
-                            <th>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for match in matches %}
-                        <tr>
-                            <td><a href="/{{ tournament.url }}/match?id={{ match.uuid }}" class="text-decoration-none">{{ match.name }}</a></td>
-                            <td>
-                                {% if match.confirmed_start_time %}
-                                    {{ match.confirmed_start_time.strftime('%H:%M') }}
-                                {% elif match.nominal_start_time %}
-                                    {{ match.nominal_start_time.strftime('%H:%M') }}
-                                {% else %}
-                                    TBA
-                                {% endif %}
-                            </td>
-                            <td>{{ match.field or 'TBA' }}</td>
-                            <td>
-                                {% set team1_won = (match.status == 'COMPLETED' and (match.gamestate and ('"match_winner"\u003a "TEAM1"' in match.gamestate or 'match_winner":"TEAM1' in match.gamestate))) %}
-                                <div class="p-1 {% if team1_won %}border border-3 border-success rounded{% endif %}">
-                                {% if match.team1 %}
-                                    {% set team1_registration = match.team1_registration %}
-                                    {% if team1_registration %}
-                                        <a href="/teams/{{ match.team1 }}" class="text-decoration-none">{{ team1_registration.pseudonym }}</a>
-                                    {% else %}
-                                        <a href="/teams/{{ match.team1 }}" class="text-decoration-none">{{ match.team1 }}</a>
-                                    {% endif %}
-                                {% else %}
-                                    {% set team1_display = match.team1_initial or 'TBA' %}
-                                    {% if team1_display.endswith(' winner') or team1_display.endswith(' loser') %}
-                                        {% set match_ref = team1_display.rsplit(' ', 1)[0] %}
-                                        <a href="/{{ tournament.url }}/match?name={{ match_ref }}" class="text-decoration-none">{{ team1_display }}</a>
-                                    {% else %}
-                                        {{ team1_display }}
-                                    {% endif %}
-                                {% endif %}
-                                </div>
-                            </td>
-                            <td>
-                                {% set team2_won = (match.status == 'COMPLETED' and (match.gamestate and ('"match_winner"\u003a "TEAM2"' in match.gamestate or 'match_winner":"TEAM2' in match.gamestate))) %}
-                                <div class="p-1 {% if team2_won %}border border-3 border-success rounded{% endif %}">
-                                {% if match.team2 %}
-                                    {% set team2_registration = match.team2_registration %}
-                                    {% if team2_registration %}
-                                        <a href="/teams/{{ match.team2 }}" class="text-decoration-none">{{ team2_registration.pseudonym }}</a>
-                                    {% else %}
-                                        <a href="/teams/{{ match.team2 }}" class="text-decoration-none">{{ match.team2 }}</a>
-                                    {% endif %}
-                                {% else %}
-                                    {% set team2_display = match.team2_initial or 'TBA' %}
-                                    {% if team2_display.endswith(' winner') or team2_display.endswith(' loser') %}
-                                        {% set match_ref = team2_display.rsplit(' ', 1)[0] %}
-                                        <a href="/{{ tournament.url }}/match?name={{ match_ref }}" class="text-decoration-none">{{ team2_display }}</a>
-                                    {% else %}
-                                        {{ team2_display }}
-                                    {% endif %}
-                                {% endif %}
-                                </div>
-                            </td>
-                            <td>
-                                {% if match.refs %}
-                                    {% set refs_display = match.refs %}
-                                {% else %}
-                                    {% set refs_display = match.refs_initial or 'TBA' %}
-                                {% endif %}
-                                
-                                {% if refs_display != 'TBA' %}
-                                    {% set refs_list = refs_display.split(',') %}
-                                    {% for ref in refs_list %}
-                                        {% set ref_trimmed = ref.strip() %}
-                                        {% if ref_trimmed.endswith(' winner') or ref_trimmed.endswith(' loser') %}
-                                            {% set match_ref = ref_trimmed.rsplit(' ', 1)[0] %}
-                                            <a href="/{{ tournament.url }}/match?name={{ match_ref }}" class="text-decoration-none">{{ ref_trimmed }}</a>{% if not loop.last %}, {% endif %}
-                                        {% elif ref_trimmed != 'TBA' and ref_trimmed != '' %}
-                                            {% set ref_registration = ref_trimmed|team_registration_for_tournament(tournament.url) %}
-                                            {% if ref_registration %}
-                                                <a href="/teams/{{ ref_trimmed }}" class="text-decoration-none">{{ ref_registration.pseudonym }}</a>{% if not loop.last %}, {% endif %}
-                                            {% else %}
-                                                {# Try to find team by pseudonym if not found by ID #}
-                                                {% set ref_by_pseudonym = ref_trimmed|team_by_pseudonym_for_tournament(tournament.url) %}
-                                                {% if ref_by_pseudonym %}
-                                                    <a href="/teams/{{ ref_by_pseudonym.team }}" class="text-decoration-none">{{ ref_by_pseudonym.pseudonym }}</a>{% if not loop.last %}, {% endif %}
-                                                {% else %}
-                                                    {{ ref_trimmed }}{% if not loop.last %}, {% endif %}
-                                                {% endif %}
-                                            {% endif %}
-                                        {% else %}
-                                            {{ ref_trimmed }}{% if not loop.last %}, {% endif %}
-                                        {% endif %}
-                                    {% endfor %}
-                                {% else %}
-                                    {{ refs_display }}
-                                {% endif %}
-                            </td>
-                            <td>
-                                {% set gs = match.gamestate|from_json if match.gamestate else {} %}
-                                {% set is_special = match.type in ['BREAK','JOIN'] %}
-                                {% set can_start = (match.team1 and match.team2 and (match.refs or match.refs_initial)) and ((not match.dynamic) or gs.get('ready_to_start')) %}
-                                {% if match.status == 'NOT_STARTED' and can_start and (not is_special) %}
-                                    <span class="badge bg-warning">Waiting for Teams</span>
-                                {% else %}
-                                    <span class="badge 
-                                        {% if match.status == 'NOT_STARTED' %}bg-secondary
-                                        {% elif match.status == 'IN_PROGRESS' %}bg-warning
-                                        {% elif match.status == 'COMPLETED' %}bg-success
-                                        {% endif %}">
-                                        {{ match.status.replace('_', ' ').title() }}
-                                    </span>
-                                {% endif %}
-                                {% if match.status != 'COMPLETED' and ((not match.dynamic) or gs.get('time_finalized')) %}
-                                    <span class="badge bg-primary ms-1" title="Time finalized - match start time is locked">Time Finalized</span>
-                                {% endif %}
-                            </td>
-                            <td>
-                                <a href="/{{ tournament.url }}/match?id={{ match.uuid }}" class="btn btn-sm btn-outline-primary">View</a>
-                                {% if current_user.is_authenticated and current_user.__class__.__name__ == 'Player' and is_head_ref %}
-                                    {% if match.status == 'NOT_STARTED' and match.team1 and match.team2 and (match.refs or match.refs_initial) %}
-                                        {% set gs = match.gamestate|from_json if match.gamestate else {} %}
-                                        {% if (not match.dynamic) or gs.get('ready_to_start') %}
-                                            <a href="/{{ tournament.url }}/start-match?id={{ match.uuid }}" class="btn btn-sm btn-success">Start Match</a>
-                                        {% else %}
-                                            <span class="btn btn-sm btn-secondary disabled" title="Waiting on dependencies">Cannot Start</span>
-                                        {% endif %}
-                                    {% elif match.status == 'NOT_STARTED' %}
-                                        <span class="btn btn-sm btn-secondary disabled" title="Missing: team1={{ match.team1 }}, team2={{ match.team2 }}, refs={{ match.refs }}, refs_initial={{ match.refs_initial }}">Cannot Start</span>
-                                    {% elif match.status == 'IN_PROGRESS' %}
-                                        <a href="/{{ tournament.url }}/run-match?id={{ match.uuid }}" class="btn btn-sm btn-warning">Run Match</a>
-                                    {% elif match.status == 'COMPLETED' %}
-                                        <span class="btn btn-sm btn-success disabled">Completed</span>
-                                    {% endif %}
-                                {% endif %}
-                            </td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
+{% if matches %}
+    {# Calculate timeline bounds - normalize all to UTC for consistent calculations #}
+    {% set ns = namespace(min_time=None, max_time=None) %}
+    {% for match in matches %}
+        {% set match_start = match.confirmed_start_time or match.nominal_start_time %}
+        {% if match_start %}
+            {% set match_start_utc = match_start|to_utc %}
+            {% if not ns.min_time or match_start_utc < ns.min_time %}
+                {% set ns.min_time = match_start_utc %}
+            {% endif %}
+            {% set match_end = None %}
+            {% if match.completed_time %}
+                {% set match_end = match.completed_time|to_utc %}
+            {% elif match_start and match.nominal_length %}
+                {% set match_end = match_start_utc|add_minutes(match.nominal_length)|to_utc %}
+            {% endif %}
+            {% if match_end %}
+                {% set match_end_utc = match_end|to_utc %}
+                {% if match_end_utc %}
+                    {% if not ns.max_time or match_end_utc > ns.max_time %}
+                        {% set ns.max_time = match_end_utc %}
+                    {% endif %}
+                {% endif %}
+            {% endif %}
+        {% endif %}
+    {% endfor %}
+    {% set min_time = ns.min_time %}
+    {% set max_time = ns.max_time %}
+    
+    {# Ensure we have a time range #}
+    {% if not min_time %}
+        {% set min_time = tournament.start_date|to_utc if tournament.start_date else None %}
+    {% endif %}
+    {% if not max_time %}
+        {% if tournament.end_date %}
+            {% set max_time = tournament.end_date|to_utc %}
+        {% elif tournament.start_date %}
+            {% set max_time = tournament.start_date|to_utc %}
         {% else %}
+            {% set max_time = min_time|add_minutes(480) if min_time else None %}
+        {% endif %}
+    {% endif %}
+    {% if min_time and max_time %}
+        {% set time_range_seconds = (max_time - min_time).total_seconds() %}
+    {% else %}
+        {% set time_range_seconds = 28800 %}
+    {% endif %}
+    {% if time_range_seconds <= 0 %}
+        {% set time_range_seconds = 28800 %}
+        {% set max_time = min_time|add_minutes(480)|to_utc %}
+    {% endif %}
+    {% set time_range_minutes = (time_range_seconds / 60) | int %}
+    {% set time_range_minutes = time_range_minutes if time_range_minutes > 0 else 480 %}
+    
+    
+    
+    {# Group joins by name #}
+    {% set join_groups = {} %}
+    {% for match in matches %}
+        {% if match.type == 'JOIN' %}
+            {% if match.name not in join_groups %}
+                {% set _ = join_groups.update({match.name: []}) %}
+            {% endif %}
+            {% set _ = join_groups[match.name].append(match) %}
+        {% endif %}
+    {% endfor %}
+    
+    <div class="row mb-3">
+        <div class="col-12">
+            <div class="schedule-timeline-container" id="schedule-timeline">
+                <div class="schedule-timeline-header">
+                    <div class="schedule-time-column">
+                        <div class="schedule-time-label">Time</div>
+                    </div>
+                    {% for field in fields %}
+                        <div class="schedule-field-column">
+                            <div class="schedule-field-label">{{ field.name }}</div>
+                        </div>
+                    {% endfor %}
+                </div>
+                
+                <div class="schedule-timeline-body">
+                    {# Time markers on the left - every 30 minutes #}
+                    <div class="schedule-time-column">
+                        <div class="schedule-time-markers">
+                            {# Generate time markers: every 30 minutes from min_time rounded down to nearest 30 min #}
+                            {# Work with UTC-aware datetimes throughout for consistency #}
+                            {% set min_time_utc = min_time|to_utc %}
+                            {% set min_time_for_calc = min_time_utc.replace(tzinfo=None) %}
+                            {% set min_minute = min_time_for_calc.minute %}
+                            {% set rounded_minute = (min_minute // 30) * 30 %}
+                            {% set first_marker_time_naive = min_time_for_calc.replace(minute=rounded_minute, second=0, microsecond=0) %}
+                            {# If rounding down moved us forward (shouldn't happen), move back 30 min #}
+                            {% if first_marker_time_naive > min_time_for_calc %}
+                                {% set first_marker_time_naive = first_marker_time_naive|add_minutes(-30) %}
+                            {% endif %}
+                            {% set first_marker_time = first_marker_time_naive|to_utc %}
+                            {# Generate markers from first_marker_time up to max_time + 30 min #}
+                            {% set total_30min_intervals = ((time_range_minutes + 60) / 30) | int + 1 %}
+                            {% for interval_offset in range(0, total_30min_intervals) %}
+                                {% set marker_time_utc = first_marker_time|add_minutes(interval_offset * 30)|to_utc %}
+                                {% set marker_offset_seconds = (marker_time_utc - min_time).total_seconds() %}
+                                {# Only show markers from min_time onwards (no negative offsets) #}
+                                {% if marker_offset_seconds >= 0 and marker_offset_seconds <= time_range_seconds + 1800 %}
+                                    {% if time_range_seconds > 0 %}
+                                        {% set marker_offset_percent = (marker_offset_seconds / time_range_seconds * 100) %}
+                                    {% else %}
+                                        {% set marker_offset_percent = 0 %}
+                                    {% endif %}
+                                    {% set marker_time_display = marker_time_utc.replace(tzinfo=None) %}
+                                    <div class="schedule-time-marker" 
+                                         style="top: {{ marker_offset_percent }}%;"
+                                         data-time="{{ marker_time_utc|utc_iso }}">
+                                        {{ marker_time_display.strftime('%H:%M') }}
+                                    </div>
+                                {% endif %}
+                            {% endfor %}
+                        </div>
+                    </div>
+                    
+                    {# Field columns #}
+                    {% for field in fields %}
+                        <div class="schedule-field-column" data-field="{{ field.name }}">
+                            <div class="schedule-field-content">
+                                {% for match in matches %}
+                                    {% if match.field == field.name %}
+                                        {% set match_start = match.confirmed_start_time or match.nominal_start_time %}
+                                        {% if match_start %}
+                                            {% set match_start_utc = match_start|to_utc %}
+                                            {# DEBUG: Ensure min_time and match_start_utc are both UTC-aware #}
+                                            {% if not min_time or not match_start_utc %}
+                                                {# Skip if either is None #}
+                                            {% else %}
+                                            {% set start_offset_seconds = (match_start_utc - min_time).total_seconds() %}
+                                            {% if time_range_seconds > 0 %}
+                                                {% set start_offset_percent = (start_offset_seconds / time_range_seconds * 100) %}
+                                            {% else %}
+                                                {% set start_offset_percent = 0 %}
+                                            {% endif %}
+                                            
+                                            {% set match_end = None %}
+                                            {% if match.completed_time %}
+                                                {% set match_end = match.completed_time|to_utc %}
+                                            {% elif match_start and match.nominal_length %}
+                                                {% set match_end = match_start_utc|add_minutes(match.nominal_length)|to_utc %}
+                                            {% endif %}
+                                            
+                                            {% if match_end %}
+                                                {% set match_end_utc = match_end|to_utc %}
+                                                {% if match_end_utc %}
+                                                    {% set end_offset_seconds = (match_end_utc - min_time).total_seconds() %}
+                                                    {% set duration_seconds = end_offset_seconds - start_offset_seconds %}
+                                                {% else %}
+                                                    {% set duration_seconds = 0 %}
+                                                {% endif %}
+                                                {% if time_range_seconds > 0 %}
+                                                    {% set duration_percent = (duration_seconds / time_range_seconds * 100) %}
+                                                {% else %}
+                                                    {% set duration_percent = 5 %}
+                                                {% endif %}
+                                            {% else %}
+                                                {% set duration_percent = 5 %}
+                                            {% endif %}
+                                            
+                                            {% if match.type == 'JOIN' %}
+                                                {# Joins will be handled separately #}
+                                            {% else %}
+                                                <div class="schedule-match-block 
+                                                    {% if match.type == 'BREAK' %}schedule-break{% endif %}
+                                                    schedule-status-{{ match.status|lower|replace('_', '-') }}"
+                                                    style="top: {{ start_offset_percent }}%; height: {{ duration_percent }}%;"
+                                                    data-match-uuid="{{ match.uuid }}"
+                                                    data-start-time="{{ match_start_utc|utc_iso }}"
+                                                    data-end-time="{{ match_end_utc|utc_iso if match_end_utc else '' }}">
+                                                    {% if match.type != 'BREAK' %}
+                                                        <a href="/{{ tournament.url }}/match?id={{ match.uuid }}" class="stretched-link" aria-label="Open match {{ match.name }}"></a>
+                                                    {% endif %}
+                                                    <div class="schedule-match-content">
+                                                        {% if match.type != 'BREAK' %}
+                                                            {% set team1_pseudonym = 'TBA' %}
+                                                            {% if match.team1 %}
+                                                                {% set team1_reg = match.team1_registration %}
+                                                                {% if team1_reg %}
+                                                                    {% set team1_pseudonym = team1_reg.pseudonym %}
+                                                                {% endif %}
+                                                            {% elif match.team1_initial %}
+                                                                {% set team1_pseudonym = match.team1_initial %}
+                                                            {% endif %}
+                                                            
+                                                            {% set team2_pseudonym = 'TBA' %}
+                                                            {% if match.team2 %}
+                                                                {% set team2_reg = match.team2_registration %}
+                                                                {% if team2_reg %}
+                                                                    {% set team2_pseudonym = team2_reg.pseudonym %}
+                                                                {% endif %}
+                                                            {% elif match.team2_initial %}
+                                                                {% set team2_pseudonym = match.team2_initial %}
+                                                            {% endif %}
+                                                            
+                                                            <div class="schedule-match-title">
+                                                                <strong>{{ match.name }}:</strong> 
+                                                                {{ team1_pseudonym }}
+                                                                vs 
+                                                                {{ team2_pseudonym }}
+                                                            </div>
+                                                            
+                                                            {% set refs_display = match.refs or match.refs_initial or '' %}
+                                                            {% if refs_display and refs_display != 'TBA' %}
+                                                                <div class="schedule-match-refs">
+                                                                    <strong>refs:</strong> 
+                                                                    {% set refs_list = refs_display.split(',') %}
+                                                                    {% for ref in refs_list %}
+                                                                        {% set ref_trimmed = ref.strip() %}
+                                                                        {% if ref_trimmed and ref_trimmed != 'TBA' %}
+                                                                            {% if ref_trimmed.endswith(' winner') or ref_trimmed.endswith(' loser') %}
+                                                                                {{ ref_trimmed }}{% if not loop.last %}, {% endif %}
+                                                                            {% else %}
+                                                                                {% set ref_registration = ref_trimmed|team_registration_for_tournament(tournament.url) %}
+                                                                                {% if ref_registration %}
+                                                                                    {{ ref_registration.pseudonym }}{% if not loop.last %}, {% endif %}
+                                                                                {% else %}
+                                                                                    {% set ref_by_pseudonym = ref_trimmed|team_by_pseudonym_for_tournament(tournament.url) %}
+                                                                                    {% if ref_by_pseudonym %}
+                                                                                        {{ ref_by_pseudonym.pseudonym }}{% if not loop.last %}, {% endif %}
+                                                                                    {% else %}
+                                                                                        {{ ref_trimmed }}{% if not loop.last %}, {% endif %}
+                                                                                    {% endif %}
+                                                                                {% endif %}
+                                                                            {% endif %}
+                                                                        {% endif %}
+                                                                    {% endfor %}
+                                                                </div>
+                                                            {% endif %}
+                                                            
+                                                            {% set gs = match.gamestate|from_json if match.gamestate else {} %}
+                                                            {% set is_special = match.type in ['BREAK','JOIN'] %}
+                                                            {% set can_start = (match.team1 and match.team2 and (match.refs or match.refs_initial)) and ((not match.dynamic) or gs.get('ready_to_start')) %}
+                                                            
+                                                            <div class="schedule-match-status">
+                                                                {% if match.status == 'NOT_STARTED' and can_start and (not is_special) %}
+                                                                    <span class="badge bg-warning">Waiting for Teams</span>
+                                                                {% else %}
+                                                                    <span class="badge 
+                                                                        {% if match.status == 'NOT_STARTED' %}bg-secondary
+                                                                        {% elif match.status == 'IN_PROGRESS' %}bg-warning
+                                                                        {% elif match.status == 'COMPLETED' %}bg-success
+                                                                        {% endif %}">
+                                                                        {{ match.status.replace('_', ' ').title() }}
+                                                                    </span>
+                                                                {% endif %}
+                                                                {% if match.status != 'COMPLETED' and ((not match.dynamic) or gs.get('time_finalized')) %}
+                                                                    <span class="badge bg-primary ms-1" title="Time finalized">Time Finalized</span>
+                                                                {% endif %}
+                                                            </div>
+                                                            
+                                                            <div class="schedule-match-actions">
+                                                                {% if current_user.is_authenticated and current_user.__class__.__name__ == 'Player' and is_head_ref %}
+                                                                    {% if match.status == 'NOT_STARTED' and match.team1 and match.team2 and (match.refs or match.refs_initial) %}
+                                                                        {% if (not match.dynamic) or gs.get('ready_to_start') %}
+                                                                            <a href="/{{ tournament.url }}/start-match?id={{ match.uuid }}" class="btn btn-sm btn-success">Start Match</a>
+                                                                        {% else %}
+                                                                            <span class="btn btn-sm btn-secondary disabled" title="Waiting on dependencies">Cannot Start</span>
+                                                                        {% endif %}
+                                                                    {% elif match.status == 'NOT_STARTED' %}
+                                                                        <span class="btn btn-sm btn-secondary disabled">Cannot Start</span>
+                                                                    {% elif match.status == 'IN_PROGRESS' %}
+                                                                        <a href="/{{ tournament.url }}/run-match?id={{ match.uuid }}" class="btn btn-sm btn-warning">Run Match</a>
+                                                                    {% elif match.status == 'COMPLETED' %}
+                                                                        <span class="btn btn-sm btn-success disabled">Completed</span>
+                                                                    {% endif %}
+                                                                {% endif %}
+                                                            </div>
+                                                        {% else %}
+                                                            {# Break #}
+                                                            <div class="schedule-match-title">
+                                                                <strong>{{ match.name }}</strong>
+                                                            </div>
+                                                            {% set gs = match.gamestate|from_json if match.gamestate else {} %}
+                                                            <div class="schedule-match-status">
+                                                                <span class="badge 
+                                                                    {% if match.status == 'NOT_STARTED' %}bg-secondary
+                                                                    {% elif match.status == 'IN_PROGRESS' %}bg-warning
+                                                                    {% elif match.status == 'COMPLETED' %}bg-success
+                                                                    {% endif %}">
+                                                                    {{ match.status.replace('_', ' ').title() }}
+                                                                </span>
+                                                            </div>
+                                                        {% endif %}
+                                                    </div>
+                                                </div>
+                                            {% endif %} {# Close if match.type == 'JOIN' from line 206 #}
+                                            {% endif %} {# Close if/else from lines 172/174 #}
+                                        {% endif %} {# Close if match_start from line 169 #}
+                                    {% endif %} {# Close if match.field from line 167 #}
+                                {% endfor %}
+                            </div>
+                        </div>
+                    {% endfor %}
+                    
+                    {# Join lines (spanning all fields) - place inside body to align with markers/matches #}
+                {% for join_name, join_matches in join_groups.items() %}
+                    {% if join_matches %}
+                        {% set join_match = join_matches[0] %}
+                        {% set join_start = join_match.confirmed_start_time or join_match.nominal_start_time %}
+                        {% if join_start %}
+                            {% set join_start_utc = join_start|to_utc %}
+                            {# Place join line exactly at the join's scheduled start time #}
+                            {% set join_offset_seconds = (join_start_utc - min_time).total_seconds() %}
+                            {% if time_range_seconds > 0 %}
+                                {% set join_offset_percent = (join_offset_seconds / time_range_seconds * 100) %}
+                            {% else %}
+                                {% set join_offset_percent = 0 %}
+                            {% endif %}
+                            {# Span the line across ALL fields for clear visibility #}
+                            {% set first_field_index = 0 %}
+                            {% set last_field_index = (fields|length) - 1 %}
+                            <div class="schedule-join-line" 
+                                 style="top: {{ join_offset_percent }}%;"
+                                 data-join-name="{{ join_name }}"
+                                 data-first-field="{{ first_field_index }}"
+                                 data-last-field="{{ last_field_index }}">
+                                <div class="schedule-join-label">join: {{ join_name }} @ {{ join_start_utc.replace(tzinfo=None).strftime('%H:%M') }}</div>
+                            </div>
+                        {% endif %}
+                    {% endif %}
+                {% endfor %}
+                </div>
+                
+                {# Current time indicator #}
+                <div class="schedule-now-line" id="schedule-now-line"></div>
+            </div>
+        </div>
+    </div>
+    
+    <style>
+        .schedule-timeline-container {
+            position: relative;
+            border: 1px solid #dee2e6;
+            border-radius: 0.25rem;
+            overflow: auto;
+            background: white;
+        }
+        
+        .schedule-timeline-header {
+            display: flex;
+            background: #f8f9fa;
+            border-bottom: 2px solid #dee2e6;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+        
+        .schedule-time-column {
+            width: 100px;
+            min-width: 100px;
+            border-right: 1px solid #dee2e6;
+            background: #f8f9fa;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .schedule-field-column {
+            flex: 1;
+            min-width: 200px;
+            border-right: 1px solid #dee2e6;
+            position: relative;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .schedule-time-label,
+        .schedule-field-label {
+            padding: 0.75rem;
+            font-weight: bold;
+            text-align: center;
+            border-bottom: 1px solid #dee2e6;
+        }
+        
+        .schedule-timeline-body {
+            display: flex;
+            align-items: stretch;
+            position: relative;
+            height: {{ (time_range_minutes / 60 * 200) | int }}px;
+            min-height: {{ (time_range_minutes / 60 * 200) | int }}px;
+        }
+        
+        .schedule-time-markers {
+            position: relative;
+            height: {{ (time_range_minutes / 60 * 200) | int }}px;
+            width: 100%;
+            flex: 1 1 auto;
+        }
+        
+        .schedule-time-marker {
+            position: absolute;
+            left: 0;
+            right: 0;
+            padding: 0.25rem 0.5rem;
+            font-size: 0.85rem;
+            color: #6c757d;
+            border-top: 1px solid #e9ecef;
+            background: #f8f9fa;
+            z-index: 1;
+        }
+        
+        .schedule-field-content {
+            position: relative;
+            height: {{ (time_range_minutes / 60 * 200) | int }}px;
+            width: 100%;
+            flex: 1 1 auto;
+        }
+        
+        .schedule-match-block {
+            position: absolute;
+            left: 2px;
+            right: 2px;
+            border: 1px solid rgba(0,0,0,0.2);
+            border-radius: 0.25rem;
+            overflow: hidden;
+            cursor: pointer;
+            transition: box-shadow 0.2s;
+        }
+        
+        .schedule-match-block:hover {
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+            z-index: 5;
+        }
+        
+        .schedule-break {
+            background: #e9ecef !important;
+            border-style: dashed !important;
+        }
+        
+        .schedule-status-not-started {
+            background: #f8f9fa;
+            border-color: #6c757d;
+        }
+        
+        .schedule-status-in-progress {
+            background: #fff3cd;
+            border-color: #ffc107;
+        }
+        
+        .schedule-status-completed {
+            background: #d1e7dd;
+            border-color: #198754;
+        }
+        
+        .schedule-match-content {
+            padding: 0.5rem;
+            font-size: 1rem;
+            height: 100%;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .schedule-match-title {
+            font-weight: 500;
+            margin-bottom: 0.25rem;
+            line-height: 1.2;
+        }
+        
+        .schedule-match-refs {
+            font-size: 0.9rem;
+            color: #6c757d;
+            margin-bottom: 0.25rem;
+            line-height: 1.2;
+        }
+        
+        .schedule-match-status {
+            margin-bottom: 0.25rem;
+            flex-shrink: 0;
+        }
+        
+        .schedule-match-actions {
+            margin-top: auto;
+            display: flex;
+            gap: 0.25rem;
+            flex-wrap: wrap;
+        }
+        
+        .schedule-match-actions .btn {
+            font-size: 0.7rem;
+            padding: 0.15rem 0.4rem;
+        }
+        
+        .schedule-now-line {
+            position: absolute;
+            left: 100px;
+            right: 0;
+            height: 2px;
+            background: #dc3545;
+            z-index: 20;
+            pointer-events: none;
+            box-shadow: 0 0 4px rgba(220, 53, 69, 0.5);
+            display: none;
+        }
+        
+        .schedule-now-line::before {
+            content: 'Now';
+            position: absolute;
+            left: -50px;
+            top: -8px;
+            background: #dc3545;
+            color: white;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 0.7rem;
+            font-weight: bold;
+        }
+        
+        .schedule-join-line {
+            position: absolute;
+            left: 100px;
+            height: 3px;
+            background: #0d6efd;
+            z-index: 15;
+            pointer-events: none;
+            border-top: 2px solid #0d6efd;
+            border-bottom: 2px solid #0d6efd;
+        }
+        
+        .schedule-join-label {
+            position: absolute;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            top: 50%;
+            background: #0d6efd;
+            color: white;
+            padding: 3px 10px;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: bold;
+            white-space: nowrap;
+            z-index: 16;
+        }
+    </style>
+    
+    <script>
+        (function() {
+            const timeline = document.getElementById('schedule-timeline');
+            if (!timeline) return;
+            
+            const timelineBody = timeline.querySelector('.schedule-timeline-body');
+
+            // Make the calendar (timeline container) fill the remaining viewport height
+            function setTimelineHeight() {
+                const container = timeline; // schedule-timeline-container
+                const rect = container.getBoundingClientRect();
+                const bottomPadding = 12; // small breathing room
+                const available = window.innerHeight - rect.top - bottomPadding;
+                if (available > 200) {
+                    container.style.height = available + 'px';
+                }
+            }
+            setTimelineHeight();
+            window.addEventListener('resize', setTimelineHeight);
+            
+            const nowLine = document.getElementById('schedule-now-line');
+            
+            function updateNowLine() {
+                const now = new Date();
+                const timeMarkers = timeline.querySelectorAll('.schedule-time-marker');
+                
+                if (timeMarkers.length < 2) return;
+                
+                const firstMarker = timeMarkers[0];
+                const lastMarker = timeMarkers[timeMarkers.length - 1];
+                const firstTime = new Date(firstMarker.getAttribute('data-time'));
+                const lastTime = new Date(lastMarker.getAttribute('data-time'));
+                
+                // Check if current time is within an hour of the tournament
+                const hour = 60 * 60 * 1000;
+                const withinHour = (now >= firstTime - hour && now <= lastTime + hour);
+                
+                if (!withinHour || now < firstTime || now > lastTime) {
+                    nowLine.style.display = 'none';
+                    return;
+                }
+                
+                nowLine.style.display = 'block';
+                
+                const timeRange = lastTime - firstTime;
+                const elapsed = now - firstTime;
+                const percent = (elapsed / timeRange) * 100;
+                
+                nowLine.style.top = percent + '%';
+                
+                // Auto-scroll if within an hour of any match
+                const matchBlocks = timeline.querySelectorAll('.schedule-match-block');
+                let shouldScroll = false;
+                
+                for (const block of matchBlocks) {
+                    const startTimeStr = block.getAttribute('data-start-time');
+                    const endTimeStr = block.getAttribute('data-end-time');
+                    if (!startTimeStr) continue;
+                    
+                    const startTime = new Date(startTimeStr);
+                    const endTime = endTimeStr ? new Date(endTimeStr) : null;
+                    
+                    if (now >= startTime - hour && now <= (endTime || startTime) + hour) {
+                        shouldScroll = true;
+                        break;
+                    }
+                }
+                
+                if (shouldScroll) {
+                    const timelineContainer = timeline.closest('.row').querySelector('.col-12');
+                    const timelineTop = timeline.offsetTop;
+                    const nowLineTop = timelineTop + (timelineBody.offsetHeight * percent / 100);
+                    const viewportHeight = window.innerHeight;
+                    const targetScroll = nowLineTop - viewportHeight * 0.2; // Position "now" at 20% from top
+                    
+                    if (Math.abs(window.scrollY - targetScroll) > 50) {
+                        window.scrollTo({
+                            top: targetScroll,
+                            behavior: 'smooth'
+                        });
+                    }
+                }
+            }
+            
+            function updateJoinLines() {
+                const joinLines = timeline.querySelectorAll('.schedule-join-line');
+                const fieldColumns = timeline.querySelectorAll('.schedule-timeline-body .schedule-field-column');
+                
+                joinLines.forEach(line => {
+                    const firstIndex = parseInt(line.getAttribute('data-first-field'));
+                    const lastIndex = parseInt(line.getAttribute('data-last-field'));
+                    
+                    if (isNaN(firstIndex) || isNaN(lastIndex) || fieldColumns.length === 0) return;
+                    
+                    // Measure based on the body time column to avoid header/body border offsets
+                    const timeCol = timeline.querySelector('.schedule-timeline-body .schedule-time-column');
+                    // Base left is the right edge of the time column within the same positioning context
+                    const baseLeft = timeCol ? (timeCol.offsetLeft + timeCol.offsetWidth) : 100;
+                    
+                    let firstFieldLeft = baseLeft;
+                    let lastFieldRight = baseLeft;
+                    
+                    for (let i = 0; i <= firstIndex && i < fieldColumns.length; i++) {
+                        firstFieldLeft += fieldColumns[i].offsetWidth;
+                    }
+                    firstFieldLeft -= fieldColumns[firstIndex].offsetWidth;
+                    
+                    for (let i = 0; i <= lastIndex && i < fieldColumns.length; i++) {
+                        lastFieldRight += fieldColumns[i].offsetWidth;
+                    }
+                    
+                    line.style.left = firstFieldLeft + 'px';
+                    line.style.width = (lastFieldRight - firstFieldLeft) + 'px';
+                });
+            }
+            
+            // Update now line immediately and every minute
+            if (nowLine) {
+                updateNowLine();
+                setInterval(updateNowLine, 60000);
+            }
+            
+            // Update join lines on load and resize
+            updateJoinLines();
+            window.addEventListener('resize', updateJoinLines);
+        })();
+    </script>
+{% else %}
+    <div class="row">
+        <div class="col-12">
             <div class="alert alert-info">
                 <h4>No matches scheduled yet</h4>
                 <p>The tournament schedule will be posted here once it's available.</p>
             </div>
-        {% endif %}
+        </div>
     </div>
-</div>
+{% endif %}
 {% endblock %}

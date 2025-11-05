@@ -94,15 +94,20 @@ window.MathJax = {
                                     {% for ref_trimmed in match.refs.split(',') %}
                                         {% set ref_trimmed = ref_trimmed.strip() %}
                                         {% if ref_trimmed %}
-                                            {% set team_registration = ref_trimmed | team_registration_for_tournament(tournament.url) %}
-                                            {% if team_registration %}
-                                                <a href="/teams/{{ ref_trimmed }}" class="text-decoration-none">{{ team_registration.pseudonym }}</a>{% if not loop.last %}, {% endif %}
+                                            {% if ref_trimmed.endswith(' winner') or ref_trimmed.endswith(' loser') %}
+                                                {% set match_ref = ref_trimmed.rsplit(' ', 1)[0] %}
+                                                <a href="/{{ tournament.url }}/match?name={{ match_ref }}" class="text-decoration-none">{{ ref_trimmed }}</a>{% if not loop.last %}, {% endif %}
                                             {% else %}
-                                                {% set team_by_pseudonym = ref_trimmed | team_by_pseudonym_for_tournament(tournament.url) %}
-                                                {% if team_by_pseudonym %}
-                                                    <a href="/teams/{{ team_by_pseudonym.team }}" class="text-decoration-none">{{ team_by_pseudonym.pseudonym }}</a>{% if not loop.last %}, {% endif %}
+                                                {% set team_registration = ref_trimmed | team_registration_for_tournament(tournament.url) %}
+                                                {% if team_registration %}
+                                                    <a href="/teams/{{ ref_trimmed }}" class="text-decoration-none">{{ team_registration.pseudonym }}</a>{% if not loop.last %}, {% endif %}
                                                 {% else %}
-                                                    {{ ref_trimmed }}{% if not loop.last %}, {% endif %}
+                                                    {% set team_by_pseudonym = ref_trimmed | team_by_pseudonym_for_tournament(tournament.url) %}
+                                                    {% if team_by_pseudonym %}
+                                                        <a href="/teams/{{ team_by_pseudonym.team }}" class="text-decoration-none">{{ team_by_pseudonym.pseudonym }}</a>{% if not loop.last %}, {% endif %}
+                                                    {% else %}
+                                                        {{ ref_trimmed }}{% if not loop.last %}, {% endif %}
+                                                    {% endif %}
                                                 {% endif %}
                                             {% endif %}
                                         {% endif %}
@@ -111,15 +116,20 @@ window.MathJax = {
                                     {% for ref_trimmed in match.refs_initial.split(',') %}
                                         {% set ref_trimmed = ref_trimmed.strip() %}
                                         {% if ref_trimmed %}
-                                            {% set team_registration = ref_trimmed | team_registration_for_tournament(tournament.url) %}
-                                            {% if team_registration %}
-                                                <a href="/teams/{{ ref_trimmed }}" class="text-decoration-none">{{ team_registration.pseudonym }}</a>{% if not loop.last %}, {% endif %}
+                                            {% if ref_trimmed.endswith(' winner') or ref_trimmed.endswith(' loser') %}
+                                                {% set match_ref = ref_trimmed.rsplit(' ', 1)[0] %}
+                                                <a href="/{{ tournament.url }}/match?name={{ match_ref }}" class="text-decoration-none">{{ ref_trimmed }}</a>{% if not loop.last %}, {% endif %}
                                             {% else %}
-                                                {% set team_by_pseudonym = ref_trimmed | team_by_pseudonym_for_tournament(tournament.url) %}
-                                                {% if team_by_pseudonym %}
-                                                    <a href="/teams/{{ team_by_pseudonym.team }}" class="text-decoration-none">{{ team_by_pseudonym.pseudonym }}</a>{% if not loop.last %}, {% endif %}
+                                                {% set team_registration = ref_trimmed | team_registration_for_tournament(tournament.url) %}
+                                                {% if team_registration %}
+                                                    <a href="/teams/{{ ref_trimmed }}" class="text-decoration-none">{{ team_registration.pseudonym }}</a>{% if not loop.last %}, {% endif %}
                                                 {% else %}
-                                                    {{ ref_trimmed }}{% if not loop.last %}, {% endif %}
+                                                    {% set team_by_pseudonym = ref_trimmed | team_by_pseudonym_for_tournament(tournament.url) %}
+                                                    {% if team_by_pseudonym %}
+                                                        <a href="/teams/{{ team_by_pseudonym.team }}" class="text-decoration-none">{{ team_by_pseudonym.pseudonym }}</a>{% if not loop.last %}, {% endif %}
+                                                    {% else %}
+                                                        {{ ref_trimmed }}{% if not loop.last %}, {% endif %}
+                                                    {% endif %}
                                                 {% endif %}
                                             {% endif %}
                                         {% endif %}
