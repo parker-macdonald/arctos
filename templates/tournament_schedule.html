@@ -85,14 +85,40 @@
     <div class="row mb-3">
         <div class="col-12">
             <div class="schedule-timeline-container" id="schedule-timeline">
+                <form class="row g-2 p-2 align-items-end" method="get" action="/{{ tournament.url }}/schedule">
+                    <div class="col-auto">
+                        <label for="fieldFilter" class="form-label mb-0">Field</label>
+                        <select id="fieldFilter" name="field" class="form-select form-select-sm">
+                            <option value="">All fields</option>
+                            {% for f in fields %}
+                                <option value="{{ f.name }}" {% if filter_field and filter_field == f.name %}selected{% endif %}>{{ f.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-auto">
+                        <label for="teamFilter" class="form-label mb-0">Highlight team</label>
+                        <input id="teamFilter" name="team" class="form-control form-control-sm" placeholder="Team name" value="{{ highlight_team or '' }}" list="teamOptions" />
+                        <datalist id="teamOptions">
+                            {% for team in team_options %}
+                                <option value="{{ team.pseudonym }}">{{ team.pseudonym }}</option>
+                            {% endfor %}
+                        </datalist>
+                    </div>
+                    <div class="col-auto">
+                        <button type="submit" class="btn btn-sm btn-primary">Apply</button>
+                        <a href="/{{ tournament.url }}/schedule" class="btn btn-sm btn-outline-secondary">Reset</a>
+                    </div>
+                </form>
                 <div class="schedule-timeline-header">
                     <div class="schedule-time-column">
                         <div class="schedule-time-label">Time</div>
                     </div>
                     {% for field in fields %}
+                        {% if (not filter_field) or (field.name == filter_field) %}
                         <div class="schedule-field-column">
                             <div class="schedule-field-label">{{ field.name }}</div>
                         </div>
+                        {% endif %}
                     {% endfor %}
                 </div>
                 
@@ -137,6 +163,7 @@
                     
                     {# Field columns #}
                     {% for field in fields %}
+                        {% if (not filter_field) or (field.name == filter_field) %}
                         <div class="schedule-field-column" data-field="{{ field.name }}">
                             <div class="schedule-field-content">
                                 {% for match in matches %}
@@ -184,7 +211,17 @@
                                             {% else %}
                                                 <div class="schedule-match-block 
                                                     {% if match.type == 'BREAK' %}schedule-break{% endif %}
-                                                    schedule-status-{{ match.status|lower|replace('_', '-') }}"
+                                                    schedule-status-{{ match.status|lower|replace('_', '-') }}
+                                                    {% set hl = False %}
+                                                    {% set t1_name = team1_pseudonym %}
+                                                    {% set t2_name = team2_pseudonym %}
+                                                    {% if highlight_team %}
+                                                        {% set query = highlight_team.lower() %}
+                                                        {% if (match.team1 and match.team1|lower == query) or (match.team2 and match.team2|lower == query) or (t1_name and t1_name|lower == query) or (t2_name and t2_name|lower == query) %}
+                                                            {% set hl = True %}
+                                                        {% endif %}
+                                                    {% endif %}
+                                                    {% if hl %} schedule-highlight{% endif %}"
                                                     style="top: {{ start_offset_percent }}%; height: {{ duration_percent }}%;"
                                                     data-match-uuid="{{ match.uuid }}"
                                                     data-start-time="{{ match_start_utc|utc_iso }}"
@@ -312,6 +349,7 @@
                                 {% endfor %}
                             </div>
                         </div>
+                        {% endif %}
                     {% endfor %}
                     
                     {# Join lines (spanning all fields) - place inside body to align with markers/matches #}
@@ -438,6 +476,9 @@
             overflow: hidden;
             cursor: pointer;
             transition: box-shadow 0.2s;
+        }
+        .schedule-highlight {
+            box-shadow: 0 0 0 3px rgba(13,110,253,0.5) inset, 0 0 0 2px rgba(13,110,253,0.4);
         }
         
         .schedule-match-block:hover {

@@ -73,7 +73,12 @@ def compute_dynamic_match_nominal_start_time(match: Match, tournament_url: str) 
                     start_time = prev_match.nominal_start_time
                     if start_time.tzinfo is None:
                         start_time = start_time.replace(tzinfo=timezone.utc)
-                    end_time = start_time + timedelta(minutes=(prev_match.nominal_length or 60))
+                    # JOIN matches have zero length
+                    if prev_match.type == 'JOIN':
+                        length_minutes = 0
+                    else:
+                        length_minutes = (prev_match.nominal_length or 60)
+                    end_time = start_time + timedelta(minutes=length_minutes)
                     end_times.append(end_time)
             
             # Check referenced matches for each join
@@ -89,7 +94,12 @@ def compute_dynamic_match_nominal_start_time(match: Match, tournament_url: str) 
                         start_time = ref_match.nominal_start_time
                         if start_time.tzinfo is None:
                             start_time = start_time.replace(tzinfo=timezone.utc)
-                        end_time = start_time + timedelta(minutes=(ref_match.nominal_length or 60))
+                        # JOIN matches have zero length
+                        if ref_match.type == 'JOIN':
+                            length_minutes = 0
+                        else:
+                            length_minutes = (ref_match.nominal_length or 60)
+                        end_time = start_time + timedelta(minutes=length_minutes)
                         end_times.append(end_time)
     else:
         # Regular match: only check its own dependencies
@@ -100,7 +110,12 @@ def compute_dynamic_match_nominal_start_time(match: Match, tournament_url: str) 
                 start_time = prev_match.nominal_start_time
                 if start_time.tzinfo is None:
                     start_time = start_time.replace(tzinfo=timezone.utc)
-                end_time = start_time + timedelta(minutes=(prev_match.nominal_length or 60))
+                # JOIN matches have zero length
+                if prev_match.type == 'JOIN':
+                    length_minutes = 0
+                else:
+                    length_minutes = (prev_match.nominal_length or 60)
+                end_time = start_time + timedelta(minutes=length_minutes)
                 end_times.append(end_time)
         
         # Check referenced matches from team1_initial, team2_initial, refs_initial
@@ -353,7 +368,12 @@ def detect_match_conflicts(tournament_url: str) -> dict[str, list[str]]:
             continue
         
         this_start = match.nominal_start_time
-        this_end = this_start + timedelta(minutes=(match.nominal_length or 60))
+        # JOIN matches have zero length
+        if match.type == 'JOIN':
+            this_length_minutes = 0
+        else:
+            this_length_minutes = (match.nominal_length or 60)
+        this_end = this_start + timedelta(minutes=this_length_minutes)
         
         # Collect all teams/refs for this match
         this_teams = set()
@@ -378,7 +398,12 @@ def detect_match_conflicts(tournament_url: str) -> dict[str, list[str]]:
                 continue
             
             other_start = other.nominal_start_time
-            other_end = other_start + timedelta(minutes=(other.nominal_length or 60))
+            # JOIN matches have zero length
+            if other.type == 'JOIN':
+                other_length_minutes = 0
+            else:
+                other_length_minutes = (other.nominal_length or 60)
+            other_end = other_start + timedelta(minutes=other_length_minutes)
             
             # Check for field overlap
             if match.field and other.field == match.field:
@@ -422,7 +447,12 @@ def _predicted_end_time(m: Match) -> datetime | None:
     if not m or not m.nominal_start_time:
         return None
     start_time = m.nominal_start_time
-    return start_time + timedelta(minutes=(m.nominal_length or 60))
+    # JOIN matches have zero length
+    if m.type == 'JOIN':
+        length_minutes = 0
+    else:
+        length_minutes = (m.nominal_length or 60)
+    return start_time + timedelta(minutes=length_minutes)
 
 
 def _extract_refs_from_text(text: str) -> list[tuple[str, str]]:
@@ -673,7 +703,12 @@ def mark_dependent_matches_time_finalized(started_match: Match, tournament_url: 
                     if jm_last_dep is None:
                         group_ready = False
                         break
-                    jm_finalized = jm_last_start + timedelta(minutes=(jm_last_dep.nominal_length or 60))
+                    # JOIN matches have zero length
+                    if jm_last_dep.type == 'JOIN':
+                        dep_length_minutes = 0
+                    else:
+                        dep_length_minutes = (jm_last_dep.nominal_length or 60)
+                    jm_finalized = jm_last_start + timedelta(minutes=dep_length_minutes)
                     group_finalized_candidates.append(jm_finalized)
                 if group_ready and group_finalized_candidates:
                     group_finalized_start = max(group_finalized_candidates)
@@ -706,7 +741,12 @@ def mark_dependent_matches_time_finalized(started_match: Match, tournament_url: 
                 
                 if last_dep:
                     # Compute finalized start time: last dependency start + its duration
-                    finalized_start = last_dep_start + timedelta(minutes=(last_dep.nominal_length or 60))
+                    # JOIN matches have zero length
+                    if last_dep.type == 'JOIN':
+                        dep_length_minutes = 0
+                    else:
+                        dep_length_minutes = (last_dep.nominal_length or 60)
+                    finalized_start = last_dep_start + timedelta(minutes=dep_length_minutes)
                     
                     # Update gamestate (do not set confirmed_start_time here)
                     try:
@@ -765,7 +805,12 @@ def mark_dependent_matches_ready_to_start(completed_match: Match, tournament_url
                                 last_dep = dep
                                 break
                     if last_dep:
-                        finalized_start = last_dep_start + timedelta(minutes=(last_dep.nominal_length or 60))
+                        # JOIN matches have zero length
+                        if last_dep.type == 'JOIN':
+                            dep_length_minutes = 0
+                        else:
+                            dep_length_minutes = (last_dep.nominal_length or 60)
+                        finalized_start = last_dep_start + timedelta(minutes=dep_length_minutes)
                         gs['time_finalized'] = True
                         gs['time_finalized_at'] = datetime.now(timezone.utc).isoformat()
                         gs['finalized_start_time'] = finalized_start.isoformat()
@@ -820,7 +865,11 @@ def auto_complete_break_match(completed_match: Match, tournament_url: str) -> No
         break_start = break_start.replace(tzinfo=timezone.utc)
     
     # Break ends at start + length
-    break_length_minutes = next_match.nominal_length or 60
+    # JOIN matches have zero length
+    if next_match.type == 'JOIN':
+        break_length_minutes = 0
+    else:
+        break_length_minutes = next_match.nominal_length or 60
     break_end = break_start + timedelta(minutes=break_length_minutes)
     
     # Mark break as completed
@@ -938,7 +987,12 @@ def auto_complete_join_matches(tournament_url: str) -> None:
                 if start_time:
                     if start_time.tzinfo is None:
                         start_time = start_time.replace(tzinfo=timezone.utc)
-                    dep_end = start_time + timedelta(minutes=(dep_match.nominal_length or 60))
+                    # JOIN matches have zero length
+                    if dep_match.type == 'JOIN':
+                        dep_length_minutes = 0
+                    else:
+                        dep_length_minutes = (dep_match.nominal_length or 60)
+                    dep_end = start_time + timedelta(minutes=dep_length_minutes)
             
             if dep_end:
                 if latest_end_time is None or dep_end > latest_end_time:
@@ -1111,7 +1165,12 @@ def update_dynamic_schedule_after_completion(tournament_url: str, completed_matc
         default_minutes = 60
 
         # Start pointer at end_ts + next_match.nominal_length, but do not set next_match time
-        pointer = end_ts + timedelta(minutes=(next_match.nominal_length or default_minutes))
+        # JOIN matches have zero length, so use 0 for them
+        if next_match.type == 'JOIN':
+            next_match_length = 0
+        else:
+            next_match_length = (next_match.nominal_length or default_minutes)
+        pointer = end_ts + timedelta(minutes=next_match_length)
 
         for m in dynamic_chain[1:]:
             if m.status in ('IN_PROGRESS', 'COMPLETED'):
@@ -1156,7 +1215,11 @@ def update_dynamic_schedule_after_completion(tournament_url: str, completed_matc
             m.nominal_start_time = effective_start
 
             # Advance pointer by this match's nominal length from effective_start
-            minutes = m.nominal_length or default_minutes
+            # JOIN matches have zero length
+            if m.type == 'JOIN':
+                minutes = 0
+            else:
+                minutes = m.nominal_length or default_minutes
             pointer = effective_start + timedelta(minutes=minutes)
 
         db.session.commit()

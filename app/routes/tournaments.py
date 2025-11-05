@@ -164,7 +164,57 @@ def tournament_schedule(tournament_url):
     
     matches = Match.query.filter_by(event=tournament_url).order_by(Match.nominal_start_time).all()
     fields = Field.query.filter_by(event=tournament_url).order_by(Field.name).all()
-    return render_template('tournament_schedule.html', tournament=tournament, matches=matches, fields=fields, is_head_ref=is_head_ref_flag)
+
+    # Optional filters/highlighting
+    filter_field = request.args.get('field', '').strip() or None
+    highlight_team = request.args.get('team', '').strip() or None
+
+    # Get all teams for autocomplete (team IDs and pseudonyms)
+    from models import TeamRegistration
+    team_registrations = TeamRegistration.query.filter_by(
+        event=tournament_url,
+        status='CONFIRMED'
+    ).all()
+    
+    # Build list of team options (ID and pseudonym)
+    team_options = []
+    seen_teams = set()
+    for team_reg in team_registrations:
+        if team_reg.team not in seen_teams:
+            team_options.append({
+                'id': team_reg.team,
+                'pseudonym': team_reg.pseudonym
+            })
+            seen_teams.add(team_reg.team)
+    
+    # Also include any team IDs/pseudonyms from match initial values
+    for match in matches:
+        if match.team1_initial and match.team1_initial not in seen_teams:
+            # Check if it's a dependency reference (ends with "winner" or "loser")
+            if not (match.team1_initial.endswith(' winner') or match.team1_initial.endswith(' loser')):
+                team_options.append({
+                    'id': match.team1_initial,
+                    'pseudonym': match.team1_initial
+                })
+                seen_teams.add(match.team1_initial)
+        if match.team2_initial and match.team2_initial not in seen_teams:
+            if not (match.team2_initial.endswith(' winner') or match.team2_initial.endswith(' loser')):
+                team_options.append({
+                    'id': match.team2_initial,
+                    'pseudonym': match.team2_initial
+                })
+                seen_teams.add(match.team2_initial)
+
+    return render_template(
+        'tournament_schedule.html',
+        tournament=tournament,
+        matches=matches,
+        fields=fields,
+        is_head_ref=is_head_ref_flag,
+        filter_field=filter_field,
+        highlight_team=highlight_team,
+        team_options=team_options,
+    )
 
 
 @bp.route('/<tournament_url>/results')
