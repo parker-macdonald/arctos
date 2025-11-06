@@ -74,10 +74,54 @@
                 <h5 class="mb-0">Tournament Information</h5>
             </div>
             <div class="card-body">
+                <div class="row mb-3">
+                    <div class="col-md-6">
+                        <p><strong>Start Date:</strong> 
+                            {% if tournament.start_date %}
+                                {{ tournament.start_date.strftime('%B %d, %Y') }}
+                            {% else %}
+                                TBA
+                            {% endif %}
+                        </p>
+                        <p><strong>End Date:</strong> 
+                            {% if tournament.end_date %}
+                                {{ tournament.end_date.strftime('%B %d, %Y') }}
+                            {% else %}
+                                TBA
+                            {% endif %}
+                        </p>
+                        <p><strong>Number of Fields:</strong> {{ tournament.num_fields or 1 }}</p>
+                    </div>
+                    <div class="col-md-6">
+                        {% if tournament.n_max_teams %}
+                        <p><strong>Max Teams:</strong> {{ tournament.n_max_teams }}</p>
+                        {% endif %}
+                        {% if tournament.max_team_size_roster %}
+                        <p><strong>Max Team Size (Roster):</strong> {{ tournament.max_team_size_roster }}</p>
+                        {% endif %}
+                        {% if tournament.max_team_size_field %}
+                        <p><strong>Max Team Size (Field):</strong> {{ tournament.max_team_size_field }}</p>
+                        {% endif %}
+                    </div>
+                </div>
+                
+                {% if tournament.registration_open and (tournament.team_reg_fee or tournament.player_reg_fee) %}
+                <div class="alert alert-info mb-3">
+                    <h6 class="mb-2">Registration Fees</h6>
+                    {% if tournament.team_reg_fee %}
+                    <p class="mb-1"><strong>Team Registration:</strong> ${{ "%.2f"|format(tournament.team_reg_fee) }}</p>
+                    {% endif %}
+                    {% if tournament.player_reg_fee %}
+                    <p class="mb-0"><strong>Player Registration:</strong> ${{ "%.2f"|format(tournament.player_reg_fee) }}</p>
+                    {% endif %}
+                </div>
+                {% endif %}
+                
                 {% if tournament.about %}
-                    {{ tournament.about|markdown }}
+                    <hr>
+                    <div>{{ tournament.about|markdown }}</div>
                 {% else %}
-                    <p>Tournament details coming soon!</p>
+                    <p class="text-muted">Tournament details coming soon!</p>
                 {% endif %}
             </div>
         </div>
