@@ -23,20 +23,31 @@
     {% if teams %}
         {% for team in teams %}
         <div class="col-md-6 col-lg-4 mb-4">
-            <div class="card">
-                <div class="card-body">
-                    <h5 class="card-title">{{ team.name }}</h5>
-                    <p class="card-text">
-                        {% if team.location %}
-                        <i class="fas fa-map-marker-alt"></i> {{ team.location }}<br>
-                        {% endif %}
-                        {% if team.website %}
-                        <i class="fas fa-globe"></i> <a href="{{ team.website }}" target="_blank">Website</a><br>
-                        {% endif %}
-                    </p>
-                    <a href="/teams/{{ team.id }}" class="btn btn-primary">View Profile</a>
+            <a href="/teams/{{ team.id }}" class="text-decoration-none text-reset">
+                <div class="card h-100 team-card-link">
+                    <div class="card-body">
+                        <div class="d-flex">
+                            <div class="flex-shrink-0 me-3">
+                                {% if team.profile_photo %}
+                                    <img src="{{ url_for('static', filename=team.profile_photo) }}" alt="{{ team.name }}" class="rounded" style="width: 80px; height: 80px; object-fit: cover;">
+                                {% else %}
+                                    <div class="d-flex align-items-center justify-content-center bg-secondary rounded-circle" style="width: 80px; height: 80px;">
+                                        <i class="fas fa-users fa-2x text-white"></i>
+                                    </div>
+                                {% endif %}
+                            </div>
+                            <div class="flex-grow-1">
+                                <h5 class="card-title mb-2">{{ team.name }}</h5>
+                                {% if team.location %}
+                                <p class="card-text mb-0">
+                                    <i class="fas fa-map-marker-alt"></i> {{ team.location }}
+                                </p>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
                 </div>
-            </div>
+            </a>
         </div>
         {% endfor %}
     {% else %}
@@ -49,4 +60,16 @@
         </div>
     {% endif %}
 </div>
+
+<style>
+.team-card-link {
+    cursor: pointer;
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.team-card-link:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+}
+</style>
 {% endblock %}

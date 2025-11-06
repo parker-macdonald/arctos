@@ -102,7 +102,7 @@ def upload_player_photo(player_id):
     
     if file:
         try:
-            upload_dir = os.path.join(current_app.root_path, "static", "uploads")
+            upload_dir = os.path.join(current_app.root_path, "../static", "uploads")
             os.makedirs(upload_dir, exist_ok=True)
             filename = f"player_{player_id}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.jpg"
             file_path = os.path.join(upload_dir, filename)

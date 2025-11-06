@@ -5,6 +5,7 @@ from flask import Blueprint, render_template, request, redirect, flash
 from flask_login import login_user, logout_user, login_required, current_user
 from models import Player, Team, db, Tournament, TO
 from datetime import datetime
+from app.utils.helpers import is_valid_url_username
 
 bp = Blueprint('auth', __name__)
 
@@ -37,10 +38,15 @@ def login():
 def register():
     """User registration page."""
     if request.method == 'POST':
-        username = request.form['username'].lower()  # Force lowercase
+        username = request.form['username'].strip().lower()  # Force lowercase and strip whitespace
         password = request.form['password']
         name = request.form['name']
         user_type = request.form.get('user_type', 'player')
+        
+        # Validate username is URL-safe
+        if not is_valid_url_username(username):
+            flash('Username must be URL-safe: only letters, numbers, hyphens, and underscores. Cannot start or end with hyphen or underscore.', 'error')
+            return render_template('register.html', user_type=user_type)
         
         if user_type == 'player':
             if Player.query.filter_by(id=username).first():

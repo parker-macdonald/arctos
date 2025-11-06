@@ -3,6 +3,7 @@ General helper functions for the tournament site.
 """
 import hmac
 import hashlib
+import re
 from flask import current_app
 from flask_login import current_user
 from models import Tournament
@@ -119,4 +120,39 @@ def validate_permission_key(url_slug, provided_key, secret_key=None):
     
     # Use constant-time comparison to prevent timing attacks
     return hmac.compare_digest(provided_key, expected_key.lower())
+
+
+def is_valid_url_username(username):
+    """
+    Validate that a username is URL-safe.
+    
+    Rules:
+    - Only alphanumeric characters, hyphens, and underscores
+    - Must be at least 1 character long
+    - Cannot start or end with hyphen or underscore
+    - Cannot contain spaces or special characters
+    
+    Args:
+        username: The username to validate
+    
+    Returns:
+        True if valid, False otherwise
+    """
+    if not username or len(username) == 0:
+        return False
+    
+    # Check length (reasonable limit)
+    if len(username) > 50:
+        return False
+    
+    # Must start and end with alphanumeric
+    if not (username[0].isalnum() and username[-1].isalnum()):
+        return False
+    
+    # Only allow alphanumeric, hyphens, and underscores
+    pattern = r'^[a-zA-Z0-9_-]+$'
+    if not re.match(pattern, username):
+        return False
+    
+    return True
 

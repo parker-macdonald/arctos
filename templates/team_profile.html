@@ -24,7 +24,7 @@
             <div class="card-body">
                 {% if team.profile_photo %}
                 <div class="text-center mb-3">
-                    <img src="{{ url_for('static', filename=team.profile_photo) }}" alt="Team Photo" class="rounded" style="width: 150px; height: 100px; object-fit: cover;">
+                    <img src="{{ url_for('static', filename=team.profile_photo) }}" alt="Team Photo" class="rounded" style="width: 150px; height: 150px; object-fit: cover;">
                 </div>
                 {% endif %}
                 <p><strong>Team Name:</strong> {{ team.name }}</p>
@@ -166,17 +166,30 @@
                     <h6><a href="/{{ tournament_url }}">{{ tournament_url }}</a></h6>
                     {% if players %}
                         <div class="row">
-                            {% for player_reg in players %}
+                            {% for player_data in players %}
                             <div class="col-md-6 mb-2">
                                 <div class="card card-body py-2">
-                                    <div class="d-flex justify-content-between align-items-center">
-                                        <div>
-                                            <strong>{{ player_reg.jersey_name }}</strong>
-                                            {% if player_reg.jersey_number %}
-                                            <span class="text-muted">#{{ player_reg.jersey_number }}</span>
+                                    <div class="d-flex align-items-center">
+                                        <div class="flex-shrink-0 me-2">
+                                            {% if player_data.player and player_data.player.profile_photo %}
+                                                <img src="{{ url_for('static', filename=player_data.player.profile_photo) }}" alt="{{ player_data.player.name if player_data.player else player_data.registration.player }}" class="rounded-circle" style="width: 40px; height: 40px; object-fit: cover;">
+                                            {% else %}
+                                                <div class="d-flex align-items-center justify-content-center bg-secondary rounded-circle" style="width: 40px; height: 40px;">
+                                                    <i class="fas fa-user text-white"></i>
+                                                </div>
                                             {% endif %}
                                         </div>
-                                        <small class="text-muted">{{ player_reg.player }}</small>
+                                        <div class="flex-grow-1">
+                                            <div class="d-flex justify-content-between align-items-center">
+                                                <div>
+                                                    <strong>{{ player_data.registration.jersey_name }}</strong>
+                                                    {% if player_data.registration.jersey_number %}
+                                                    <span class="text-muted">#{{ player_data.registration.jersey_number }}</span>
+                                                    {% endif %}
+                                                </div>
+                                                <small class="text-muted">{{ player_data.registration.player }}</small>
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
                             </div>

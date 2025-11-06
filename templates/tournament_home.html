@@ -145,9 +145,22 @@
                             {% for team_data in teams_with_counts %}
                             <tr>
                                 <td>
-                                    <a href="/teams/{{ team_data.team_registration.team }}" class="text-decoration-none">
-                                        <strong>{{ team_data.team_registration.pseudonym }}</strong>
-                                    </a>
+                                    <div class="d-flex align-items-center">
+                                        <div class="flex-shrink-0 me-2">
+                                            {% if team_data.team and team_data.team.profile_photo %}
+                                                <img src="{{ url_for('static', filename=team_data.team.profile_photo) }}" alt="{{ team_data.team_registration.pseudonym }}" class="rounded-circle" style="width: 40px; height: 40px; object-fit: cover;">
+                                            {% else %}
+                                                <div class="d-flex align-items-center justify-content-center bg-secondary rounded-circle" style="width: 40px; height: 40px;">
+                                                    <i class="fas fa-users text-white"></i>
+                                                </div>
+                                            {% endif %}
+                                        </div>
+                                        <div class="flex-grow-1">
+                                            <a href="/teams/{{ team_data.team_registration.team }}" class="text-decoration-none">
+                                                <strong>{{ team_data.team_registration.pseudonym }}</strong>
+                                            </a>
+                                        </div>
+                                    </div>
                                 </td>
                                 <td>
                                     <span class="badge bg-primary">{{ team_data.player_count }}</span>
@@ -190,9 +203,22 @@
                             {% for player_data in unattached_players %}
                             <tr>
                                 <td>
-                                    <a href="/players/{{ player_data.registration.player }}" class="text-decoration-none">
-                                        <strong>{{ player_data.player.name }}</strong>
-                                    </a>
+                                    <div class="d-flex align-items-center">
+                                        <div class="flex-shrink-0 me-2">
+                                            {% if player_data.player.profile_photo %}
+                                                <img src="{{ url_for('static', filename=player_data.player.profile_photo) }}" alt="{{ player_data.player.name }}" class="rounded-circle" style="width: 40px; height: 40px; object-fit: cover;">
+                                            {% else %}
+                                                <div class="d-flex align-items-center justify-content-center bg-secondary rounded-circle" style="width: 40px; height: 40px;">
+                                                    <i class="fas fa-user text-white"></i>
+                                                </div>
+                                            {% endif %}
+                                        </div>
+                                        <div class="flex-grow-1">
+                                            <a href="/players/{{ player_data.registration.player }}" class="text-decoration-none">
+                                                <strong>{{ player_data.player.name }}</strong>
+                                            </a>
+                                        </div>
+                                    </div>
                                 </td>
                                 <td>
                                     {% if player_data.registration.jersey_name and player_data.registration.jersey_number %}

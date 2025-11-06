@@ -24,13 +24,22 @@ def team_profile(team_id):
     
     tournament_players = {}
     if current_user.is_authenticated and current_user.id == team_id and current_user.__class__.__name__ == 'Team':
+        from models import Player
         for team_reg in team_registrations:
             accepted_players = PlayerRegistration.query.filter_by(
                 event=team_reg.event,
                 team=team_id,
                 status='CONFIRMED'
             ).all()
-            tournament_players[team_reg.event] = accepted_players
+            # Include Player objects for profile photos
+            players_with_data = []
+            for player_reg in accepted_players:
+                player = Player.query.get(player_reg.player)
+                players_with_data.append({
+                    'registration': player_reg,
+                    'player': player
+                })
+            tournament_players[team_reg.event] = players_with_data
     
     is_head_ref_flag = is_head_ref_any(team_id)
     team_notes = []

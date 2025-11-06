@@ -93,9 +93,11 @@ def tournament_home(tournament_url):
             status='CONFIRMED'
         ).count()
         
+        team = Team.query.get(team_reg.team)
         teams_with_counts.append({
             'team_registration': team_reg,
-            'player_count': player_count
+            'player_count': player_count,
+            'team': team
         })
     
     unattached_players = []
