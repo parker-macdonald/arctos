@@ -43,7 +43,8 @@ def team_profile(team_id):
     
     is_head_ref_flag = is_head_ref_any(team_id)
     team_notes = []
-    if current_user.is_authenticated and (current_user.id == team_id or is_head_ref_flag):
+    # Only show notes to the team themselves, not to head refs
+    if current_user.is_authenticated and current_user.id == team_id:
         try:
             candidate_notes = MatchNote.query.filter(or_(MatchNote.target=='TEAM1', MatchNote.target=='TEAM2')).order_by(MatchNote.created_at.desc()).all()
             match_to_points = {}
