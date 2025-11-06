@@ -8,7 +8,7 @@ from models import (
     Tournament, Match, Field, Tag, TeamRegistration, PlayerRegistration,
     Team, TO, db
 )
-from app.utils.helpers import check_tournament_access, resolve_team_name_to_id
+from app.utils.helpers import check_tournament_access, resolve_team_name_to_id, validate_permission_key
 from app.utils.scheduling import compute_dynamic_match_nominal_start_time, validate_match_input, update_match_sequence, recompute_all_match_times, detect_match_conflicts
 from app.filters import is_head_ref
 
@@ -28,6 +28,12 @@ def create_tournament():
     """Create a new tournament."""
     name = request.form['name']
     url = request.form['url']
+    permission_key = request.form.get('permission_key', '').strip()
+    
+    # Validate permission key
+    if not validate_permission_key(url, permission_key):
+        flash('Invalid permission key. Please contact reid@xz.ax to request a permission key for your tournament URL slug.', 'error')
+        return redirect('/new-tournament')
     
     if Tournament.query.filter_by(url=url).first():
         flash('Tournament URL already exists', 'error')

@@ -1,6 +1,9 @@
 """
 General helper functions for the tournament site.
 """
+import hmac
+import hashlib
+from flask import current_app
 from flask_login import current_user
 from models import Tournament
 
@@ -63,4 +66,57 @@ def check_tournament_access(tournament_url):
         return False, tournament
     
     return True, tournament
+
+
+def generate_permission_key(url_slug, secret_key=None):
+    """
+    Generate a permission key for a specific URL slug.
+    
+    Args:
+        url_slug: The tournament URL slug
+        secret_key: Optional secret key (defaults to app SECRET_KEY)
+    
+    Returns:
+        A short hex string (first 16 characters of HMAC-SHA256)
+    """
+    if secret_key is None:
+        secret_key = current_app.config.get('SECRET_KEY', 'default-secret-key')
+    
+    # Normalize the URL slug (lowercase, strip whitespace)
+    normalized_slug = url_slug.lower().strip()
+    
+    # Generate HMAC-SHA256 hash
+    hmac_obj = hmac.new(
+        secret_key.encode('utf-8'),
+        normalized_slug.encode('utf-8'),
+        hashlib.sha256
+    )
+    
+    # Return first 16 characters of hex digest for easier sharing
+    return hmac_obj.hexdigest()[:16]
+
+
+def validate_permission_key(url_slug, provided_key, secret_key=None):
+    """
+    Validate a permission key for a specific URL slug.
+    
+    Args:
+        url_slug: The tournament URL slug
+        provided_key: The permission key provided by the user
+        secret_key: Optional secret key (defaults to app SECRET_KEY)
+    
+    Returns:
+        True if the key is valid, False otherwise
+    """
+    if not provided_key or not url_slug:
+        return False
+    
+    # Normalize the provided key (strip whitespace, lowercase)
+    provided_key = provided_key.strip().lower()
+    
+    # Generate expected key
+    expected_key = generate_permission_key(url_slug, secret_key)
+    
+    # Use constant-time comparison to prevent timing attacks
+    return hmac.compare_digest(provided_key, expected_key.lower())
 
