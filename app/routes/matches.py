@@ -259,6 +259,9 @@ def start_match(tournament_url):
 @bp.route('/<tournament_url>/get-selection-notes')
 @login_required
 def get_selection_notes(tournament_url):
+    if not is_head_ref(tournament_url, current_user.id):
+        return jsonify({'success': False, 'error': 'bruh ur not a head ref'})
+        
     """Get notes relevant to team and selected players."""
     match_id = request.args.get('match_id')
     team_side = request.args.get('team')

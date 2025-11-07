@@ -14,7 +14,14 @@ from app.filters import is_head_ref
 
 bp = Blueprint('tournaments', __name__)
 
-
+def is_not_TO(tournament_url, message='You are not a TO, fuck off!!1!!1'):
+    if not TO.query.filter_by(user_id=current_user.id,
+                              user_type=current_user.__class__.__name__.lower(),
+                              event=tournament_url).first():
+        flash(message, 'error')
+        return True
+    return False
+    
 @bp.route('/new-tournament')
 @login_required
 def new_tournament():
@@ -247,6 +254,9 @@ def tournament_results(tournament_url):
 @login_required
 def tournament_settings(tournament_url):
     """Tournament settings page."""
+    if is_not_TO(tournament_url):
+        return redirect(f'/{tournament_url}')
+    
     tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
     
     to_entry = TO.query.filter_by(
@@ -287,14 +297,7 @@ def tournament_setup(tournament_url):
     """Tournament setup page."""
     tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
     
-    to_entry = TO.query.filter_by(
-        user_id=current_user.id,
-        user_type=current_user.__class__.__name__.lower(),
-        event=tournament_url
-    ).first()
-    
-    if not to_entry:
-        flash('You do not have permission to access tournament setup', 'error')
+    if is_not_TO(tournament_url):
         return redirect(f'/{tournament_url}')
     
     from sqlalchemy.orm import joinedload
@@ -341,6 +344,9 @@ def tournament_register(tournament_url):
 @login_required
 def update_tournament_settings(tournament_url):
     """Update tournament settings."""
+    if is_not_TO(tournament_url):
+        return redirect(f'/{tournament_url}')
+    
     tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
     
     tournament.name = request.form['name']
@@ -375,8 +381,9 @@ def update_tournament_settings(tournament_url):
 @login_required
 def add_match(tournament_url):
     """Add a match to tournament."""
-    tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
-    
+    if is_not_TO(tournament_url):
+        return redirect(f'/{tournament_url}')
+        
     # Check if BREAK or JOIN is selected from the Match Type dropdown (renamed from 'dynamic')
     match_type_value = request.form.get('dynamic', '')
     
@@ -457,6 +464,9 @@ def add_match(tournament_url):
 @login_required
 def add_field(tournament_url):
     """Add a field to tournament."""
+    if is_not_TO(tournament_url):
+        return redirect(f'/{tournament_url}')
+    
     tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
     
     field = Field(
@@ -481,6 +491,9 @@ def add_field(tournament_url):
 @login_required
 def edit_field(tournament_url):
     """Edit field page."""
+    if is_not_TO(tournament_url):
+        return redirect(f'/{tournament_url}')
+    
     field_id = request.args.get('id')
     if not field_id:
         flash('Field ID is required', 'error')
@@ -494,6 +507,9 @@ def edit_field(tournament_url):
 @login_required
 def update_field(tournament_url):
     """Update field."""
+    if is_not_TO(tournament_url):
+        return redirect(f'/{tournament_url}')
+    
     field_id = request.form.get('field_id')
     if not field_id:
         flash('Field ID is required', 'error')
@@ -512,6 +528,9 @@ def update_field(tournament_url):
 @login_required
 def delete_field(tournament_url):
     """Delete field."""
+    if is_not_TO(tournament_url):
+        return redirect(f'/{tournament_url}')
+    
     field_id = request.form.get('field_id')
     if not field_id:
         flash('Field ID is required', 'error')
@@ -528,7 +547,8 @@ def delete_field(tournament_url):
 @login_required
 def add_tag(tournament_url):
     """Add a tag to tournament."""
-    tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
+    if is_not_TO(tournament_url):
+        return redirect(f'/{tournament_url}')
     
     tag = Tag(
         event=tournament_url,
@@ -546,6 +566,9 @@ def add_tag(tournament_url):
 @login_required
 def edit_tag(tournament_url):
     """Edit tag page."""
+    if is_not_TO(tournament_url):
+        return redirect(f'/{tournament_url}')
+    
     tag_id = request.args.get('id')
     if not tag_id:
         flash('Tag ID is required', 'error')
@@ -559,6 +582,9 @@ def edit_tag(tournament_url):
 @login_required
 def update_tag(tournament_url):
     """Update tag."""
+    if is_not_TO(tournament_url):
+        return redirect(f'/{tournament_url}')
+
     tag_id = request.form.get('tag_id')
     if not tag_id:
         flash('Tag ID is required', 'error')
@@ -576,6 +602,9 @@ def update_tag(tournament_url):
 @login_required
 def delete_tag(tournament_url):
     """Delete tag."""
+    if is_not_TO(tournament_url):
+        return redirect(f'/{tournament_url}')
+    
     tag_id = request.form.get('tag_id')
     if not tag_id:
         flash('Tag ID is required', 'error')
@@ -592,6 +621,9 @@ def delete_tag(tournament_url):
 @login_required
 def edit_match(tournament_url):
     """Edit match page."""
+    if is_not_TO(tournament_url):
+        return redirect(f'/{tournament_url}')
+    
     match_id = request.args.get('id')
     if not match_id:
         flash('Match ID is required', 'error')
@@ -609,6 +641,9 @@ def edit_match(tournament_url):
 @login_required
 def update_match(tournament_url):
     """Update match."""
+    if is_not_TO(tournament_url):
+        return redirect(f'/{tournament_url}')
+    
     match_id = request.form.get('match_id')
     if not match_id:
         flash('Match ID is required', 'error')
@@ -720,6 +755,9 @@ def update_match(tournament_url):
 @login_required
 def update_tags(tournament_url):
     """Update all matches by converting tag names to team IDs in team1_initial, team2_initial, and refs_initial."""
+    if is_not_TO(tournament_url):
+        return redirect(f'/{tournament_url}')
+    
     from models import Tag
     
     # Get all tags for this tournament
@@ -877,18 +915,10 @@ def tournament_autocomplete(tournament_url):
 @login_required
 def delete_tournament(tournament_url):
     """Delete a tournament and all related data."""
-    tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
-    
-    # Check if user is a TO
-    to_entry = TO.query.filter_by(
-        user_id=current_user.id,
-        user_type=current_user.__class__.__name__.lower(),
-        event=tournament_url
-    ).first()
-    
-    if not to_entry:
-        flash('You do not have permission to delete this tournament', 'error')
+    if is_not_TO(tournament_url):
         return redirect(f'/{tournament_url}')
+    
+    tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
     
     # Verify confirmation URL slug
     confirm_url = request.form.get('confirm_url', '').strip()
@@ -983,18 +1013,9 @@ def delete_tournament(tournament_url):
 @login_required
 def add_to(tournament_url):
     """Add a TO to the tournament."""
-    tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
     
-    # Check if user is a TO
-    to_entry = TO.query.filter_by(
-        user_id=current_user.id,
-        user_type=current_user.__class__.__name__.lower(),
-        event=tournament_url
-    ).first()
-    
-    if not to_entry:
-        flash('You do not have permission to manage TOs for this tournament', 'error')
-        return redirect(f'/{tournament_url}/settings')
+    if is_not_TO(tournament_url):
+        return redirect(f'/{tournament_url}')
     
     user_id = request.form.get('user_id', '').strip()
     user_type = request.form.get('user_type', '').strip().lower()
@@ -1045,18 +1066,9 @@ def add_to(tournament_url):
 @login_required
 def remove_to(tournament_url):
     """Remove a TO from the tournament."""
-    tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
-    
-    # Check if user is a TO
-    to_entry = TO.query.filter_by(
-        user_id=current_user.id,
-        user_type=current_user.__class__.__name__.lower(),
-        event=tournament_url
-    ).first()
-    
-    if not to_entry:
-        flash('You do not have permission to manage TOs for this tournament', 'error')
-        return redirect(f'/{tournament_url}/settings')
+
+    if is_not_TO(tournament_url):
+        return redirect(f'/{tournament_url}')
     
     to_id = request.form.get('to_id')
     if not to_id:

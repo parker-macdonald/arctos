@@ -26,7 +26,7 @@ def index():
         all_tournament_urls.update(to_tournament_urls)
     
     # Get all tournaments to display
-    tournaments = Tournament.query.filter(Tournament.url.in_(list(all_tournament_urls))).order_by(Tournament.start_date.desc()).all()
+    tournaments = Tournament.query.filter(Tournament.url.in_(list(all_tournament_urls))).order_by(Tournament.start_date.asc()).all()
     
     # Compute registered team counts per tournament
     team_counts = {}
