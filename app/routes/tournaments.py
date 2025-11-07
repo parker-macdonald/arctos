@@ -153,7 +153,7 @@ def tournament_schedule(tournament_url):
     
     is_head_ref_flag = False
     if current_user.is_authenticated and current_user.__class__.__name__ == 'Player':
-        is_head_ref_flag = tournament.head_refs and current_user.id.lower() in [ref.strip().lower() for ref in tournament.head_refs.split(',')]
+        is_head_ref_flag = tournament.head_refs and current_user.id in [ref.strip() for ref in tournament.head_refs.split(',')]
     
     if not tournament.schedule_published:
         if not current_user.is_authenticated:

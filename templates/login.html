@@ -16,21 +16,23 @@
                 </div>
             </div>
             <div class="card-body">
-                <form method="POST">
+                <form method="POST" id="loginForm">
                     <input type="hidden" name="user_type" value="{{ user_type }}">
                     
                     <div class="mb-3">
                         <label for="username" class="form-label">Username</label>
                         <input type="text" class="form-control" id="username" name="username" required>
+                        <div class="invalid-feedback"></div>
                     </div>
                     
                     <div class="mb-3">
                         <label for="password" class="form-label">Password</label>
                         <input type="password" class="form-control" id="password" name="password" required>
+                        <div class="invalid-feedback"></div>
                     </div>
                     
                     <div class="d-grid">
-                        <button type="submit" class="btn btn-primary">Login</button>
+                        <button type="submit" class="btn btn-primary" id="submitBtn">Login</button>
                     </div>
                 </form>
                 
@@ -43,4 +45,115 @@
         </div>
     </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function() {
+    const form = document.getElementById('loginForm');
+    const usernameInput = document.getElementById('username');
+    const passwordInput = document.getElementById('password');
+    const submitBtn = document.getElementById('submitBtn');
+    
+    // Validation functions
+    function validateUsername(username) {
+        if (!username || username.trim().length === 0) {
+            return { valid: false, message: 'Username is required' };
+        }
+        
+        // Check URL-safe format: only alphanumeric, hyphens, underscores
+        // Cannot start or end with hyphen or underscore
+        const pattern = /^[a-zA-Z0-9][a-zA-Z0-9_-]*[a-zA-Z0-9]$|^[a-zA-Z0-9]$/;
+        if (!pattern.test(username)) {
+            return { 
+                valid: false, 
+                message: 'Username must be URL-safe: only letters, numbers, hyphens, and underscores. Cannot start or end with hyphen or underscore.' 
+            };
+        }
+        
+        if (username.length > 50) {
+            return { valid: false, message: 'Username must be 50 characters or less' };
+        }
+        
+        return { valid: true, message: '' };
+    }
+    
+    function validatePassword(password) {
+        if (!password || password.length === 0) {
+            return { valid: false, message: 'Password is required' };
+        }
+        return { valid: true, message: '' };
+    }
+    
+    function showFieldError(input, message) {
+        input.classList.add('is-invalid');
+        input.classList.remove('is-valid');
+        // Find the invalid-feedback div in the parent container
+        const feedback = input.parentElement.querySelector('.invalid-feedback');
+        if (feedback) {
+            feedback.textContent = message;
+            feedback.style.display = 'block';
+        }
+    }
+    
+    function showFieldValid(input) {
+        input.classList.remove('is-invalid');
+        input.classList.add('is-valid');
+        // Clear any error messages
+        const feedback = input.parentElement.querySelector('.invalid-feedback');
+        if (feedback) {
+            feedback.textContent = '';
+            feedback.style.display = 'none';
+        }
+    }
+    
+    function validateForm() {
+        const usernameResult = validateUsername(usernameInput.value);
+        const passwordResult = validatePassword(passwordInput.value);
+        
+        if (usernameResult.valid) {
+            showFieldValid(usernameInput);
+        } else {
+            showFieldError(usernameInput, usernameResult.message);
+        }
+        
+        if (passwordResult.valid) {
+            showFieldValid(passwordInput);
+        } else {
+            showFieldError(passwordInput, passwordResult.message);
+        }
+        
+        return usernameResult.valid && passwordResult.valid;
+    }
+    
+    // Live validation on input
+    usernameInput.addEventListener('input', function() {
+        const result = validateUsername(this.value);
+        if (result.valid) {
+            showFieldValid(this);
+        } else {
+            showFieldError(this, result.message);
+        }
+    });
+    
+    passwordInput.addEventListener('input', function() {
+        const result = validatePassword(this.value);
+        if (result.valid) {
+            showFieldValid(this);
+        } else {
+            showFieldError(this, result.message);
+        }
+    });
+    
+    // Validate on form submit
+    form.addEventListener('submit', function(e) {
+        // Add was-validated class to show validation messages
+        form.classList.add('was-validated');
+        if (!validateForm()) {
+            e.preventDefault();
+            return false;
+        }
+    });
+})();
+</script>
 {% endblock %}

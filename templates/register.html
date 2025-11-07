@@ -16,28 +16,38 @@
                 </div>
             </div>
             <div class="card-body">
-                <form method="POST">
+                <form method="POST" id="registerForm">
                     <input type="hidden" name="user_type" value="{{ user_type }}">
                     
                     <div class="mb-3">
                         <label for="username" class="form-label">Username</label>
                         <input type="text" class="form-control" id="username" name="username" required pattern="[a-zA-Z0-9][a-zA-Z0-9_-]*[a-zA-Z0-9]|[a-zA-Z0-9]">
                         <div class="form-text">This will be your unique identifier. Must be URL-safe: only letters, numbers, hyphens, and underscores. Cannot start or end with hyphen or underscore.</div>
+                        <div class="invalid-feedback"></div>
+                        <div class="valid-feedback"></div>
                     </div>
                     
                     <div class="mb-3">
                         <label for="name" class="form-label">Display Name</label>
                         <input type="text" class="form-control" id="name" name="name" required>
                         <div class="form-text">Your public display name</div>
+                        <div class="invalid-feedback"></div>
                     </div>
                     
                     <div class="mb-3">
                         <label for="password" class="form-label">Password</label>
                         <input type="password" class="form-control" id="password" name="password" required>
+                        <div class="invalid-feedback"></div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="confirm_password" class="form-label">Confirm Password</label>
+                        <input type="password" class="form-control" id="confirm_password" name="confirm_password" required>
+                        <div class="invalid-feedback"></div>
                     </div>
                     
                     <div class="d-grid">
-                        <button type="submit" class="btn btn-primary">Register</button>
+                        <button type="submit" class="btn btn-primary" id="submitBtn">Register</button>
                     </div>
                 </form>
                 
@@ -50,4 +60,312 @@
         </div>
     </div>
 </div>
+{% endblock %}
+{% block scripts %}
+<script>
+(function() {
+    const form = document.getElementById('registerForm');
+    const usernameInput = document.getElementById('username');
+    const nameInput = document.getElementById('name');
+    const passwordInput = document.getElementById('password');
+    const confirmPasswordInput = document.getElementById('confirm_password');
+    const submitBtn = document.getElementById('submitBtn');
+    const checkUsernameUrl = "{{ url_for('auth.check_username') }}";
+    
+    let usernameCheckTimeout = null;
+    let isCheckingUsername = false;
+    let isSubmitting = false;
+    
+    // Validation functions
+    function validateUsername(username) {
+        if (!username || username.trim().length === 0) {
+            return { valid: false, message: 'Username is required' };
+        }
+        
+        // Check URL-safe format: only alphanumeric, hyphens, underscores
+        // Cannot start or end with hyphen or underscore
+        const pattern = /^[a-zA-Z0-9][a-zA-Z0-9_-]*[a-zA-Z0-9]$|^[a-zA-Z0-9]$/;
+        if (!pattern.test(username)) {
+            return { 
+                valid: false, 
+                message: 'Username must be URL-safe: only letters, numbers, hyphens, and underscores. Cannot start or end with hyphen or underscore.' 
+            };
+        }
+        
+        if (username.length > 50) {
+            return { valid: false, message: 'Username must be 50 characters or less' };
+        }
+        
+        return { valid: true, message: '' };
+    }
+    
+    function validateName(name) {
+        if (!name || name.trim().length === 0) {
+            return { valid: false, message: 'Display name is required' };
+        }
+        return { valid: true, message: '' };
+    }
+    
+    function validatePassword(password) {
+        if (!password || password.length === 0) {
+            return { valid: false, message: 'Password is required' };
+        }
+        return { valid: true, message: '' };
+    }
+    
+    function validateConfirmPassword(confirmPassword, password) {
+        if (!confirmPassword || confirmPassword.length === 0) {
+            return { valid: false, message: 'Please confirm your password' };
+        }
+        if (confirmPassword !== password) {
+            return { valid: false, message: 'Passwords do not match' };
+        }
+        return { valid: true, message: '' };
+    }
+    
+    function showFieldError(input, message) {
+        input.classList.add('is-invalid');
+        input.classList.remove('is-valid');
+        // Find the invalid-feedback div in the parent container
+        const feedback = input.parentElement.querySelector('.invalid-feedback');
+        if (feedback) {
+            feedback.textContent = message;
+            feedback.style.display = 'block';
+        }
+        // Also clear valid-feedback div
+        const validFeedback = input.parentElement.querySelector('.valid-feedback');
+        if (validFeedback) {
+            validFeedback.textContent = '';
+            validFeedback.style.display = 'none';
+        }
+    }
+    
+    function showFieldValid(input, message = '') {
+        input.classList.remove('is-invalid');
+        input.classList.add('is-valid');
+        // Clear any error messages
+        const feedback = input.parentElement.querySelector('.invalid-feedback');
+        if (feedback) {
+            feedback.textContent = '';
+            feedback.style.display = 'none';
+        }
+        // Show message in valid-feedback if available
+        const validFeedback = input.parentElement.querySelector('.valid-feedback');
+        if (validFeedback) {
+            if (message) {
+                validFeedback.textContent = message;
+                validFeedback.style.display = 'block';
+            } else {
+                validFeedback.textContent = '';
+                validFeedback.style.display = 'none';
+            }
+        }
+    }
+    
+    function clearFieldValidation(input) {
+        input.classList.remove('is-invalid', 'is-valid');
+        const feedback = input.parentElement.querySelector('.invalid-feedback');
+        if (feedback) {
+            feedback.textContent = '';
+            feedback.style.display = 'none';
+        }
+        const validFeedback = input.parentElement.querySelector('.valid-feedback');
+        if (validFeedback) {
+            validFeedback.textContent = '';
+            validFeedback.style.display = 'none';
+        }
+    }
+    
+    async function checkUsernameAvailability(username) {
+        if (isCheckingUsername) {
+            return;
+        }
+        
+        const formatResult = validateUsername(username);
+        if (!formatResult.valid) {
+            showFieldError(usernameInput, formatResult.message);
+            return;
+        }
+        
+        isCheckingUsername = true;
+        usernameInput.classList.add('is-valid'); // Show loading state
+        usernameInput.classList.remove('is-invalid');
+        
+        try {
+            const response = await fetch(`${checkUsernameUrl}?username=${encodeURIComponent(username)}`);
+            const data = await response.json();
+            
+            if (data.available) {
+                showFieldValid(usernameInput, 'Username is available');
+            } else {
+                showFieldError(usernameInput, data.message || 'Username is not available');
+            }
+        } catch (error) {
+            console.error('Error checking username:', error);
+            // Don't show error on network failure, just clear validation
+            clearFieldValidation(usernameInput);
+        } finally {
+            isCheckingUsername = false;
+        }
+    }
+    
+    function validateForm() {
+        const usernameResult = validateUsername(usernameInput.value);
+        const nameResult = validateName(nameInput.value);
+        const passwordResult = validatePassword(passwordInput.value);
+        const confirmPasswordResult = validateConfirmPassword(confirmPasswordInput.value, passwordInput.value);
+        
+        if (usernameResult.valid) {
+            showFieldValid(usernameInput);
+        } else {
+            showFieldError(usernameInput, usernameResult.message);
+        }
+        
+        if (nameResult.valid) {
+            showFieldValid(nameInput);
+        } else {
+            showFieldError(nameInput, nameResult.message);
+        }
+        
+        if (passwordResult.valid) {
+            showFieldValid(passwordInput);
+        } else {
+            showFieldError(passwordInput, passwordResult.message);
+        }
+        
+        if (confirmPasswordResult.valid) {
+            showFieldValid(confirmPasswordInput);
+        } else {
+            showFieldError(confirmPasswordInput, confirmPasswordResult.message);
+        }
+        
+        return usernameResult.valid && nameResult.valid && passwordResult.valid && confirmPasswordResult.valid;
+    }
+    
+    // Live validation on input
+    usernameInput.addEventListener('input', function() {
+        const username = this.value.trim();
+        
+        // Clear previous timeout
+        if (usernameCheckTimeout) {
+            clearTimeout(usernameCheckTimeout);
+        }
+        
+        // Immediate format validation
+        const formatResult = validateUsername(username);
+        if (!formatResult.valid) {
+            showFieldError(this, formatResult.message);
+            return;
+        }
+        
+        // Clear validation while waiting
+        clearFieldValidation(this);
+        
+        // Debounce username availability check (wait 500ms after user stops typing)
+        if (username.length > 0) {
+            usernameCheckTimeout = setTimeout(() => {
+                checkUsernameAvailability(username);
+            }, 500);
+        } else {
+            clearFieldValidation(this);
+        }
+    });
+    
+    nameInput.addEventListener('input', function() {
+        const result = validateName(this.value);
+        if (result.valid) {
+            showFieldValid(this);
+        } else {
+            showFieldError(this, result.message);
+        }
+    });
+    
+    passwordInput.addEventListener('input', function() {
+        const result = validatePassword(this.value);
+        if (result.valid) {
+            showFieldValid(this);
+        } else {
+            showFieldError(this, result.message);
+        }
+        // Also re-validate confirm password when password changes
+        if (confirmPasswordInput.value.length > 0) {
+            const confirmResult = validateConfirmPassword(confirmPasswordInput.value, this.value);
+            if (confirmResult.valid) {
+                showFieldValid(confirmPasswordInput);
+            } else {
+                showFieldError(confirmPasswordInput, confirmResult.message);
+            }
+        }
+    });
+    
+    confirmPasswordInput.addEventListener('input', function() {
+        const result = validateConfirmPassword(this.value, passwordInput.value);
+        if (result.valid) {
+            showFieldValid(this);
+        } else {
+            showFieldError(this, result.message);
+        }
+    });
+    
+    // Validate on form submit
+    const handleSubmit = async function(e) {
+        // Prevent infinite loop if already submitting
+        if (isSubmitting) {
+            return;
+        }
+        
+        e.preventDefault();
+        
+        // Add was-validated class to show validation messages
+        form.classList.add('was-validated');
+        
+        // Final validation
+        if (!validateForm()) {
+            return false;
+        }
+        
+        // Check username availability one more time before submit
+        const username = usernameInput.value.trim();
+        const formatResult = validateUsername(username);
+        if (!formatResult.valid) {
+            showFieldError(usernameInput, formatResult.message);
+            return false;
+        }
+        
+        // Wait for username check if in progress
+        if (isCheckingUsername) {
+            await new Promise(resolve => {
+                const checkInterval = setInterval(() => {
+                    if (!isCheckingUsername) {
+                        clearInterval(checkInterval);
+                        resolve();
+                    }
+                }, 100);
+            });
+        }
+        
+        // Final username availability check
+        try {
+            const response = await fetch(`${checkUsernameUrl}?username=${encodeURIComponent(username)}`);
+            const data = await response.json();
+            
+            if (!data.available) {
+                showFieldError(usernameInput, data.message || 'Username is not available');
+                return false;
+            }
+        } catch (error) {
+            console.error('Error checking username:', error);
+            // Allow submission even if check fails (backend will validate)
+        }
+        
+        // If all validations pass, submit the form
+        isSubmitting = true;
+        // Remove event listener to prevent loop, then submit
+        form.removeEventListener('submit', handleSubmit);
+        HTMLFormElement.prototype.submit.call(form);
+    };
+    
+    form.addEventListener('submit', handleSubmit);
+})();
+</script>
 {% endblock %}

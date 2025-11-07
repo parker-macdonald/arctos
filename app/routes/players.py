@@ -16,7 +16,6 @@ bp = Blueprint('players', __name__)
 @bp.route('/players/<player_id>')
 def player_profile(player_id):
     """Display player profile."""
-    player_id = player_id.lower()  # Force lowercase
     player = Player.query.get_or_404(player_id)
     registrations = PlayerRegistration.query.filter_by(player=player_id).all()
     injuries = Injury.query.filter_by(player=player_id).order_by(Injury.stamp.desc()).all()
