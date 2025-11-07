@@ -145,6 +145,7 @@
                     <a href="/{{ tournament.url }}/settings" class="btn btn-outline-secondary">Settings</a>
                     <a href="/{{ tournament.url }}/setup" class="btn btn-outline-secondary">Setup Matches</a>
                     <a href="/{{ tournament.url }}/manage" class="btn btn-outline-warning">Registration Management</a>
+                    <button type="button" class="btn btn-outline-danger" data-bs-toggle="modal" data-bs-target="#deleteTournamentModal">Delete Tournament</button>
                 </div>
             </div>
         </div>
@@ -287,5 +288,63 @@
         </div>
     </div>
 </div>
+{% endif %}
+
+{% if is_to %}
+<!-- Delete Tournament Modal -->
+<div class="modal fade" id="deleteTournamentModal" tabindex="-1" aria-labelledby="deleteTournamentModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="deleteTournamentModalLabel">Delete Tournament</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-danger">
+                    <strong>Warning:</strong> This action cannot be undone. Deleting this tournament will permanently remove:
+                    <ul class="mb-0 mt-2">
+                        <li>All matches and points</li>
+                        <li>All registrations (teams and players)</li>
+                        <li>All tournament organizers (TOs)</li>
+                        <li>All invitations</li>
+                        <li>All fields and tags</li>
+                        <li>All notes</li>
+                        <li>All head refs</li>
+                        <li>All side competitions and results</li>
+                        <li>All team and player records</li>
+                    </ul>
+                </div>
+                <p>To confirm deletion, please type the tournament URL slug exactly as shown:</p>
+                <p class="text-center"><strong>{{ tournament.url }}</strong></p>
+                <form method="POST" action="/{{ tournament.url }}/delete" id="deleteTournamentForm">
+                    <div class="mb-3">
+                        <label for="confirmUrl" class="form-label">Tournament URL Slug:</label>
+                        <input type="text" class="form-control" id="confirmUrl" name="confirm_url" required>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="submit" form="deleteTournamentForm" class="btn btn-danger" id="deleteTournamentSubmit" disabled>Delete Tournament</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const confirmInput = document.getElementById('confirmUrl');
+    const submitButton = document.getElementById('deleteTournamentSubmit');
+    const tournamentUrl = '{{ tournament.url }}';
+    
+    confirmInput.addEventListener('input', function() {
+        if (confirmInput.value === tournamentUrl) {
+            submitButton.disabled = false;
+        } else {
+            submitButton.disabled = true;
+        }
+    });
+});
+</script>
 {% endif %}
 {% endblock %}

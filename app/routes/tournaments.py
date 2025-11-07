@@ -259,7 +259,26 @@ def tournament_settings(tournament_url):
         flash('You do not have permission to access tournament settings', 'error')
         return redirect(f'/{tournament_url}')
     
-    return render_template('tournament_settings.html', tournament=tournament)
+    # Get all TOs for this tournament with their user info
+    from models import Player, Team
+    to_entries = TO.query.filter_by(event=tournament_url).all()
+    tos_with_info = []
+    for to_entry in to_entries:
+        if to_entry.user_type == 'player':
+            user = Player.query.get(to_entry.user_id)
+            user_name = user.name if user else to_entry.user_id
+        else:  # team
+            user = Team.query.get(to_entry.user_id)
+            user_name = user.name if user else to_entry.user_id
+        
+        tos_with_info.append({
+            'to': to_entry,
+            'user': user,
+            'user_name': user_name,
+            'is_current_user': to_entry.user_id == current_user.id and to_entry.user_type == current_user.__class__.__name__.lower()
+        })
+    
+    return render_template('tournament_settings.html', tournament=tournament, tos_with_info=tos_with_info)
 
 
 @bp.route('/<tournament_url>/setup')
@@ -852,4 +871,223 @@ def tournament_autocomplete(tournament_url):
         return jsonify(suggestions)
     else:
         return jsonify(suggestions[:50])
+
+
+@bp.route('/<tournament_url>/delete', methods=['POST'])
+@login_required
+def delete_tournament(tournament_url):
+    """Delete a tournament and all related data."""
+    tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
+    
+    # Check if user is a TO
+    to_entry = TO.query.filter_by(
+        user_id=current_user.id,
+        user_type=current_user.__class__.__name__.lower(),
+        event=tournament_url
+    ).first()
+    
+    if not to_entry:
+        flash('You do not have permission to delete this tournament', 'error')
+        return redirect(f'/{tournament_url}')
+    
+    # Verify confirmation URL slug
+    confirm_url = request.form.get('confirm_url', '').strip()
+    if confirm_url != tournament_url:
+        flash('Confirmation URL does not match. Tournament not deleted.', 'error')
+        return redirect(f'/{tournament_url}')
+    
+    # Import all necessary models
+    from models import (
+        Point, MatchNote, TeamRecord, PlayerRecord, Match,
+        HeadRef, TeamInvitation, PlayerRegistration, TeamRegistration,
+        Field, Tag, SideComp, SideCompResult
+    )
+    
+    # Delete in order to respect foreign key constraints
+    
+    # 1. Delete SideCompResult (depends on SideComp)
+    side_comps = SideComp.query.filter_by(event=tournament_url).all()
+    side_comp_ids = [sc.id for sc in side_comps]
+    if side_comp_ids:
+        SideCompResult.query.filter(SideCompResult.comp.in_(side_comp_ids)).delete(synchronize_session=False)
+    
+    # 2. Delete SideComp (depends on Tournament)
+    SideComp.query.filter_by(event=tournament_url).delete(synchronize_session=False)
+    
+    # 3. Get all matches for this tournament
+    matches = Match.query.filter_by(event=tournament_url).all()
+    match_uuids = [m.uuid for m in matches]
+    
+    # 4. Delete Point (depends on Match)
+    if match_uuids:
+        Point.query.filter(Point.match.in_(match_uuids)).delete(synchronize_session=False)
+    
+    # 5. Delete MatchNote (depends on Match)
+    if match_uuids:
+        MatchNote.query.filter(MatchNote.match.in_(match_uuids)).delete(synchronize_session=False)
+    
+    # 6. Delete TeamRecord (depends on Match and Tournament)
+    if match_uuids:
+        TeamRecord.query.filter(
+            TeamRecord.event == tournament_url
+        ).filter(
+            TeamRecord.match.in_(match_uuids)
+        ).delete(synchronize_session=False)
+    # Also delete TeamRecords that don't have a match
+    TeamRecord.query.filter_by(event=tournament_url, match=None).delete(synchronize_session=False)
+    
+    # 7. Delete PlayerRecord (depends on Match and Tournament)
+    if match_uuids:
+        PlayerRecord.query.filter(
+            PlayerRecord.event == tournament_url
+        ).filter(
+            PlayerRecord.match.in_(match_uuids)
+        ).delete(synchronize_session=False)
+    # Also delete PlayerRecords that don't have a match
+    PlayerRecord.query.filter_by(event=tournament_url, match=None).delete(synchronize_session=False)
+    
+    # 8. Delete Match (depends on Tournament)
+    Match.query.filter_by(event=tournament_url).delete(synchronize_session=False)
+    
+    # 9. Delete HeadRef (depends on Tournament)
+    HeadRef.query.filter_by(event=tournament_url).delete(synchronize_session=False)
+    
+    # 10. Delete TeamInvitation (depends on Tournament)
+    TeamInvitation.query.filter_by(event=tournament_url).delete(synchronize_session=False)
+    
+    # 11. Delete PlayerRegistration (depends on Tournament)
+    PlayerRegistration.query.filter_by(event=tournament_url).delete(synchronize_session=False)
+    
+    # 12. Delete TeamRegistration (depends on Tournament)
+    TeamRegistration.query.filter_by(event=tournament_url).delete(synchronize_session=False)
+    
+    # 13. Delete Field (depends on Tournament)
+    Field.query.filter_by(event=tournament_url).delete(synchronize_session=False)
+    
+    # 14. Delete Tag (depends on Tournament)
+    Tag.query.filter_by(event=tournament_url).delete(synchronize_session=False)
+    
+    # 15. Delete TO (depends on Tournament)
+    TO.query.filter_by(event=tournament_url).delete(synchronize_session=False)
+    
+    # 16. Delete Tournament (last)
+    db.session.delete(tournament)
+    
+    db.session.commit()
+    
+    flash(f'Tournament "{tournament.name}" has been permanently deleted.', 'success')
+    return redirect('/')
+
+
+@bp.route('/<tournament_url>/add-to', methods=['POST'])
+@login_required
+def add_to(tournament_url):
+    """Add a TO to the tournament."""
+    tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
+    
+    # Check if user is a TO
+    to_entry = TO.query.filter_by(
+        user_id=current_user.id,
+        user_type=current_user.__class__.__name__.lower(),
+        event=tournament_url
+    ).first()
+    
+    if not to_entry:
+        flash('You do not have permission to manage TOs for this tournament', 'error')
+        return redirect(f'/{tournament_url}/settings')
+    
+    user_id = request.form.get('user_id', '').strip()
+    user_type = request.form.get('user_type', '').strip().lower()
+    
+    if not user_id or user_type not in ['player', 'team']:
+        flash('Invalid user ID or type', 'error')
+        return redirect(f'/{tournament_url}/settings')
+    
+    # Verify the user exists
+    from models import Player, Team
+    if user_type == 'player':
+        user = Player.query.get(user_id)
+        if not user:
+            flash(f'Player with ID "{user_id}" not found', 'error')
+            return redirect(f'/{tournament_url}/settings')
+    else:  # team
+        user = Team.query.get(user_id)
+        if not user:
+            flash(f'Team with ID "{user_id}" not found', 'error')
+            return redirect(f'/{tournament_url}/settings')
+    
+    # Check if TO already exists
+    existing_to = TO.query.filter_by(
+        user_id=user_id,
+        user_type=user_type,
+        event=tournament_url
+    ).first()
+    
+    if existing_to:
+        flash(f'This user is already a TO for this tournament', 'error')
+        return redirect(f'/{tournament_url}/settings')
+    
+    # Create new TO entry
+    new_to = TO(
+        user_id=user_id,
+        user_type=user_type,
+        event=tournament_url
+    )
+    db.session.add(new_to)
+    db.session.commit()
+    
+    user_name = user.name if user else user_id
+    flash(f'Successfully added {user_name} as a TO', 'success')
+    return redirect(f'/{tournament_url}/settings')
+
+
+@bp.route('/<tournament_url>/remove-to', methods=['POST'])
+@login_required
+def remove_to(tournament_url):
+    """Remove a TO from the tournament."""
+    tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
+    
+    # Check if user is a TO
+    to_entry = TO.query.filter_by(
+        user_id=current_user.id,
+        user_type=current_user.__class__.__name__.lower(),
+        event=tournament_url
+    ).first()
+    
+    if not to_entry:
+        flash('You do not have permission to manage TOs for this tournament', 'error')
+        return redirect(f'/{tournament_url}/settings')
+    
+    to_id = request.form.get('to_id')
+    if not to_id:
+        flash('TO ID is required', 'error')
+        return redirect(f'/{tournament_url}/settings')
+    
+    # Get the TO entry to remove
+    to_to_remove = TO.query.get_or_404(to_id)
+    
+    # Verify it's for this tournament
+    if to_to_remove.event != tournament_url:
+        flash('Invalid TO entry', 'error')
+        return redirect(f'/{tournament_url}/settings')
+    
+    # Prevent removing yourself (optional - you might want to allow this)
+    if to_to_remove.user_id == current_user.id and to_to_remove.user_type == current_user.__class__.__name__.lower():
+        flash('You cannot remove yourself as a TO', 'error')
+        return redirect(f'/{tournament_url}/settings')
+    
+    # Get user info for flash message
+    from models import Player, Team
+    if to_to_remove.user_type == 'player':
+        user = Player.query.get(to_to_remove.user_id)
+    else:
+        user = Team.query.get(to_to_remove.user_id)
+    user_name = user.name if user else to_to_remove.user_id
+    
+    # Delete the TO entry
+    db.session.delete(to_to_remove)
+    db.session.commit()
+    
+    flash(f'Successfully removed {user_name} as a TO', 'success')
+    return redirect(f'/{tournament_url}/settings')
 

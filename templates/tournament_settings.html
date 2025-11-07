@@ -192,6 +192,61 @@
                 <p><strong>Max Teams:</strong> {{ tournament.n_max_teams or 'Unlimited' }}</p>
             </div>
         </div>
+        
+        <div class="card mt-3">
+            <div class="card-header">
+                <h5 class="mb-0">Tournament Organizers</h5>
+            </div>
+            <div class="card-body">
+                {% if tos_with_info %}
+                    <ul class="list-group list-group-flush mb-3">
+                        {% for to_info in tos_with_info %}
+                        <li class="list-group-item d-flex justify-content-between align-items-center">
+                            <div>
+                                <strong>{{ to_info.user_name }}</strong>
+                                <br>
+                                <small class="text-muted">
+                                    {{ to_info.to.user_type|title }} ({{ to_info.to.user_id }})
+                                    {% if to_info.is_current_user %}
+                                        <span class="badge bg-primary">You</span>
+                                    {% endif %}
+                                </small>
+                            </div>
+                            {% if not to_info.is_current_user %}
+                            <form method="POST" action="/{{ tournament.url }}/remove-to" class="d-inline">
+                                <input type="hidden" name="to_id" value="{{ to_info.to.id }}">
+                                <button type="submit" class="btn btn-sm btn-outline-danger" onclick="return confirm('Are you sure you want to remove {{ to_info.user_name }} as a TO?')">Remove</button>
+                            </form>
+                            {% endif %}
+                        </li>
+                        {% endfor %}
+                    </ul>
+                {% else %}
+                    <p class="text-muted">No TOs found</p>
+                {% endif %}
+                
+                <hr>
+                
+                <h6 class="mb-3">Add New TO</h6>
+                <form method="POST" action="/{{ tournament.url }}/add-to">
+                    <div class="mb-3">
+                        <label for="user_type" class="form-label">User Type</label>
+                        <select class="form-select" id="user_type" name="user_type" required>
+                            <option value="">Select type...</option>
+                            <option value="player">Player</option>
+                            <option value="team">Team</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label for="user_id" class="form-label">User ID</label>
+                        <input type="text" class="form-control" id="user_id" name="user_id" 
+                               placeholder="Enter player or team ID" required>
+                        <div class="form-text">Enter the exact user ID (case-sensitive)</div>
+                    </div>
+                    <button type="submit" class="btn btn-primary w-100">Add TO</button>
+                </form>
+            </div>
+        </div>
     </div>
 </div>
 
