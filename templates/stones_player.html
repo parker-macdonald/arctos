@@ -116,6 +116,7 @@ let scheduledTimeout = null;  // Track the current timeout to prevent duplicates
 let scheduledTimes = new Set();  // Track scheduled audio times to prevent duplicates
 let scheduledSources = new Map();  // Track scheduled sources by time so we can stop them
 let scheduleInterval = null;  // Interval to check and schedule ahead
+let lastScheduledBeatTime = null;  // Track the last scheduled beat time to prevent duplicates
 let audioContext = null;
 let audioBuffer = null;  // Preloaded audio buffer for MP3
 let mediaStreamDestination = null;  // MediaStreamDestination for background playback on mobile
@@ -261,12 +262,16 @@ function scheduleSoundAt(audioContextTime) {
         return false;
     }
     
-    // Round to nearest 0.01 seconds for duplicate detection
-    const roundedTime = Math.round(audioContextTime * 100) / 100;
+    // Round to nearest 0.001 seconds (1ms) for more precise duplicate detection
+    const roundedTime = Math.round(audioContextTime * 1000) / 1000;
     
-    // Prevent scheduling duplicates for the same time
-    if (scheduledTimes.has(roundedTime)) {
-        return false;
+    // Check for duplicates - both exact matches and nearby times (within 50ms)
+    // This prevents scheduling beats too close together
+    const minGap = 1.0; // 50ms minimum gap between scheduled beats
+    for (const scheduledTime of scheduledTimes) {
+        if (Math.abs(scheduledTime - roundedTime) < minGap) {
+            return false; // Too close to an already scheduled beat
+        }
     }
     
     try {
@@ -303,7 +308,7 @@ function scheduleSoundAt(audioContextTime) {
             };
             
             // Clean up old scheduled times (older than 30 seconds) to prevent memory leak
-            const currentRounded = Math.round(audioContext.currentTime * 100) / 100;
+            const currentRounded = Math.round(audioContext.currentTime * 1000) / 1000;
             for (const time of scheduledTimes) {
                 if (time < currentRounded - 30) {
                     scheduledTimes.delete(time);
@@ -351,6 +356,7 @@ function clearScheduledBeats() {
     // Clear all tracking
     scheduledSources.clear();
     scheduledTimes.clear();
+    lastScheduledBeatTime = null; // Reset beat tracking
     
     console.log('Cleared all scheduled beats');
 }
@@ -434,13 +440,21 @@ function scheduleBeatsAhead() {
     const beatInterval = 1.5;
     
     // Schedule beats up to 10 seconds ahead (keeps buffer filled)
-    const scheduleAheadTime = 10; // seconds in wall clock
+    const scheduleAheadTime = 7; // seconds in wall clock
     const maxAheadWallClock = now + scheduleAheadTime;
     
-    // Calculate how many beats we need to schedule
-    let beatTime = calculateNextBeat();
+    // Start from the last scheduled beat time, or calculate the next beat if we haven't scheduled any yet
+    let beatTime;
+    if (lastScheduledBeatTime !== null && lastScheduledBeatTime > now - beatInterval) {
+        // Continue from where we left off
+        beatTime = lastScheduledBeatTime + beatInterval;
+    } else {
+        // First time or we've fallen behind, calculate the next beat
+        beatTime = calculateNextBeat();
+    }
+    
     let scheduledCount = 0;
-    const maxScheduled = 20; // Safety limit
+    const maxScheduled = 5; // Safety limit
     
     // Convert wall clock beat times to audio context times
     // audioContext.currentTime is relative to when the context was created
@@ -462,6 +476,8 @@ function scheduleBeatsAhead() {
             
             if (scheduleSoundAt(audioContextTime)) {
                 scheduledCount++;
+                // Track the last successfully scheduled beat time
+                lastScheduledBeatTime = beatTime;
             }
         }
         
@@ -608,6 +624,7 @@ function stopPlayback() {
     // Clear all scheduled beats immediately
     clearScheduledBeats();
     nextBeatTime = null;
+    lastScheduledBeatTime = null; // Reset tracking for next playback
     // Release wake lock when stopping playback (non-blocking)
     releaseWakeLock().catch(err => {
         console.log('Wake lock release failed (non-critical):', err);
@@ -704,8 +721,8 @@ document.addEventListener('DOMContentLoaded', async function() {
         resetKF();
     });
     
-    // Sync with server periodically (every 1 second for better accuracy)
-    syncInterval = setInterval(syncWithServer, 1000);
+    // Sync with server periodically (every 1 almost 1 second for better accuracy, prime # of ms so all requests won't be synced between many users.)
+    syncInterval = setInterval(syncWithServer, 997);
     
     // Initial sync
     await syncWithServer();
