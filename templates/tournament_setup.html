@@ -140,11 +140,11 @@
                                             {% endif %}">
                                             {{ match.status.replace('_', ' ').title() }}
                                         </span>
+                                        {% if match.time_finalized %}
+                                            <span class="badge bg-primary ms-1" title="Time finalized - match start time is locked">Time Finalized</span>
+                                        {% endif %}
                                         {% if match.gamestate %}
                                             {% set gs = match.gamestate|from_json %}
-                                            {% if gs.get('time_finalized') %}
-                                                <span class="badge bg-primary ms-1" title="Time finalized - match start time is locked">Time Finalized</span>
-                                            {% endif %}
                                             {% if gs.get('ready_to_start') %}
                                                 <span class="badge bg-success ms-1" title="Ready to start - all dependencies completed">Ready to Start</span>
                                             {% endif %}

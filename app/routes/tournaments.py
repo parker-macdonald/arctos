@@ -826,6 +826,14 @@ def update_tags(tournament_url):
     
     db.session.commit()
     
+    # Recompute all match times after tag updates (may affect dependencies)
+    if updated_count > 0:
+        try:
+            recompute_all_match_times(tournament_url)
+            db.session.commit()
+        except Exception as e:
+            print(f"Error recomputing match times after tag update: {e}")
+    
     if updated_count > 0:
         flash(f'Successfully updated {updated_count} match(es) with tag conversions', 'success')
     else:

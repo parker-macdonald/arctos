@@ -707,10 +707,18 @@ def finalize_match_post(tournament_url):
     except Exception as e:
         print(f"Dependency update error for match {match.name}: {e}")
     
+    # try:
+    #     update_dynamic_schedule_after_completion(tournament_url, match)
+    # except Exception as e:
+    #     print(f"Dynamic scheduling update error for match {match.name}: {e}")
+    
+    # Recompute all match times with the new algorithm
     try:
-        update_dynamic_schedule_after_completion(tournament_url, match)
+        from app.utils.scheduling import recompute_all_match_times
+        recompute_all_match_times(tournament_url)
+        db.session.commit()
     except Exception as e:
-        print(f"Dynamic scheduling update error for match {match.name}: {e}")
+        print(f"Error recomputing match times: {e}")
     
     flash('Match finalized successfully!', 'success')
     return redirect(f'/{tournament_url}/schedule')

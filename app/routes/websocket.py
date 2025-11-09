@@ -288,6 +288,15 @@ def init_websocket_handlers(socketio_instance):
         match.status = 'COMPLETED'
         db.session.commit()
         
+        # Recompute all match times after match completion
+        try:
+            from app.utils.scheduling import recompute_all_match_times
+            tournament_url = match.event
+            recompute_all_match_times(tournament_url)
+            db.session.commit()
+        except Exception as e:
+            print(f"Error recomputing match times after websocket completion: {e}")
+        
         emit('match_completed', {
             'match_id': match_id,
             'status': 'COMPLETED'

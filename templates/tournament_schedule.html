@@ -302,22 +302,14 @@
                                                                         {{ match.status.replace('_', ' ').title() }}
                                                                     </span>
                                                                 {% endif %}
-                                                                {% if match.status != 'COMPLETED' and ((not match.dynamic) or gs.get('time_finalized')) %}
+                                                                {% if match.status != 'COMPLETED' and ((not match.dynamic) or match.time_finalized) %}
                                                                     <span class="badge bg-primary ms-1" title="Time finalized">Time Finalized</span>
                                                                 {% endif %}
                                                             </div>
                                                             
                                                             <div class="schedule-match-actions">
                                                                 {% if current_user.is_authenticated and current_user.__class__.__name__ == 'Player' and is_head_ref %}
-                                                                    {% if match.status == 'NOT_STARTED' and match.team1 and match.team2 and (match.refs or match.refs_initial) %}
-                                                                        {% if (not match.dynamic) or gs.get('ready_to_start') %}
-                                                                            <a href="/{{ tournament.url }}/start-match?id={{ match.uuid }}" class="btn btn-sm btn-success">Start Match</a>
-                                                                        {% else %}
-                                                                            <span class="btn btn-sm btn-secondary disabled" title="Waiting on dependencies">Cannot Start</span>
-                                                                        {% endif %}
-                                                                    {% elif match.status == 'NOT_STARTED' %}
-                                                                        <span class="btn btn-sm btn-secondary disabled">Cannot Start</span>
-                                                                    {% elif match.status == 'IN_PROGRESS' %}
+                                                                    {% if match.status == 'IN_PROGRESS' %}
                                                                         <a href="/{{ tournament.url }}/run-match?id={{ match.uuid }}" class="btn btn-sm btn-warning">Run Match</a>
                                                                     {% elif match.status == 'COMPLETED' %}
                                                                         <span class="btn btn-sm btn-success disabled">Completed</span>

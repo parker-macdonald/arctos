@@ -175,6 +175,7 @@ class Match(db.Model):
     status = db.Column(db.String(20), default='NOT_STARTED')  # NOT_STARTED, IN_PROGRESS, COMPLETED
     gamestate = db.Column(db.Text)
     dynamic = db.Column(db.Boolean, default=True)  # True for dynamic, False for static scheduling
+    time_finalized = db.Column(db.Boolean, default=False)  # True when start time is finalized (all dependencies started)
     previous_match = db.Column(db.String(36), db.ForeignKey('matches.uuid'), nullable=True)
     next_match = db.Column(db.String(36), db.ForeignKey('matches.uuid'), nullable=True)
     
