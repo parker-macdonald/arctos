@@ -64,11 +64,31 @@ class KalmanFilter {
         this.P = 1e10;  // Initial estimation error covariance
         this.Q = 0.0001;  // Process noise covariance (clock drift)
         this.R = 0.1;   // Measurement noise covariance (~50ms std dev, accounts for network jitter)
+        this.outlierThreshold = 3.0;  // Number of standard deviations for outlier rejection
+        this.minConfidenceForRejection = 1.0;  // Only reject outliers if P < this (have some confidence)
+        this.rejectedCount = 0;  // Track rejected measurements for debugging
     }
     
     update(measurement) {
         // Predict
         this.P = this.P + this.Q;
+        
+        // Outlier rejection: only reject if we have some confidence in our estimate
+        // Skip rejection during initial convergence (when P is very large)
+        if (this.P < this.minConfidenceForRejection) {
+            const innovation = measurement - this.x;
+            const innovationCovariance = this.P + this.R;  // Total uncertainty
+            const stdDev = Math.sqrt(innovationCovariance);
+            const zScore = Math.abs(innovation) / stdDev;
+            
+            if (zScore > this.outlierThreshold) {
+                // Reject outlier - don't update the filter
+                this.rejectedCount++;
+                console.log(`Rejected outlier measurement: ${measurement.toFixed(6)}s, z-score: ${zScore.toFixed(2)}, current estimate: ${this.x.toFixed(6)}s`);
+                // Still return current state
+                return this.x;
+            }
+        }
         
         // Update
         const K = this.P / (this.P + this.R);  // Kalman gain
@@ -89,6 +109,7 @@ class KalmanFilter {
     reset() {
         this.x = 0;
         this.P = 1e10;  // Reset to effectively infinite covariance (no prior knowledge)
+        this.rejectedCount = 0;  // Reset rejected count
     }
     
     // Save state to object for persistence
