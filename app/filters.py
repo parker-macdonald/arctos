@@ -6,6 +6,7 @@ from datetime import timezone, timedelta
 from flask import Blueprint
 from markupsafe import Markup
 from models import TeamRegistration, Tournament
+from app.utils.helpers import can_head_ref_match
 
 try:
     import markdown as _markdown
@@ -35,12 +36,14 @@ def team_by_pseudonym_for_tournament(pseudonym, tournament_url):
 
 @bp.app_template_filter('is_head_ref')
 def is_head_ref(tournament_url, player_id):
-    """Check if a player is a head ref for a tournament"""
-    tournament = Tournament.query.get(tournament_url)
-    if not tournament or not tournament.head_refs:
-        return False
-    head_refs_list = [ref.strip() for ref in tournament.head_refs.split(',')]
-    return player_id in head_refs_list
+    """Check if a player is a head ref for a tournament (without match context)"""
+    return can_head_ref_match(tournament_url, player_id, match=None)
+
+
+@bp.app_template_filter('can_head_ref_match')
+def can_head_ref_match_filter(tournament_url, player_id, match=None):
+    """Check if a player can head ref a specific match"""
+    return can_head_ref_match(tournament_url, player_id, match=match)
 
 
 @bp.app_template_filter('from_json')

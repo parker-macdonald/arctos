@@ -6,6 +6,7 @@ from flask_login import login_required, current_user
 from datetime import timezone
 from models import Match, MatchNote, Player, PlayerRegistration, Point, db
 from app.filters import is_head_ref
+from app.utils.helpers import can_head_ref_match
 
 bp = Blueprint('notes', __name__)
 
@@ -23,7 +24,7 @@ def get_notes(tournament_url):
     if not match or match.event != tournament_url:
         return jsonify({'success': False, 'error': 'Match not found'})
     
-    if not is_head_ref(tournament_url, current_user.id):
+    if not can_head_ref_match(tournament_url, current_user.id, match=match):
         return jsonify({'success': False, 'error': 'Not authorized'})
     
     point_id = request.args.get('point_id')
@@ -96,7 +97,7 @@ def add_note(tournament_url):
     if not match or match.event != tournament_url:
         return jsonify({'success': False, 'error': 'Match not found'})
     
-    if not is_head_ref(tournament_url, current_user.id):
+    if not can_head_ref_match(tournament_url, current_user.id, match=match):
         return jsonify({'success': False, 'error': 'Not authorized'})
     
     note = MatchNote(
@@ -196,7 +197,7 @@ def get_point_notes(tournament_url):
     if not match or match.event != tournament_url:
         return jsonify({'success': False, 'error': 'Match not found'})
     
-    if not is_head_ref(tournament_url, current_user.id):
+    if not can_head_ref_match(tournament_url, current_user.id, match=match):
         return jsonify({'success': False, 'error': 'Not authorized'})
     
     notes = MatchNote.query.filter_by(match=match_id, point_id=point_id).order_by(MatchNote.created_at.desc()).all()
@@ -265,7 +266,7 @@ def add_point_note(tournament_url):
     if not match or match.event != tournament_url:
         return jsonify({'success': False, 'error': 'Match not found'})
     
-    if not is_head_ref(tournament_url, current_user.id):
+    if not can_head_ref_match(tournament_url, current_user.id, match=match):
         return jsonify({'success': False, 'error': 'Not authorized'})
     
     point = Point.query.get(point_id)

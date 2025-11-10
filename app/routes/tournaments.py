@@ -158,9 +158,10 @@ def tournament_schedule(tournament_url):
     """Tournament schedule page."""
     tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
     
+    from app.utils.helpers import can_head_ref_match
     is_head_ref_flag = False
     if current_user.is_authenticated and current_user.__class__.__name__ == 'Player':
-        is_head_ref_flag = tournament.head_refs and current_user.id in [ref.strip() for ref in tournament.head_refs.split(',')]
+        is_head_ref_flag = can_head_ref_match(tournament_url, current_user.id, match=None)
     
     if not tournament.schedule_published:
         if not current_user.is_authenticated:
@@ -359,7 +360,10 @@ def update_tournament_settings(tournament_url):
     tournament.player_reg_fee = float(request.form.get('player_reg_fee', 0))
     tournament.about = request.form.get('about', '')
     tournament.terms_link = request.form.get('terms_link', '')
-    tournament.head_refs = request.form.get('head_refs', '')
+    tournament.head_refs = request.form.get('head_refs', '')  # Keep for backward compatibility
+    tournament.head_refs_allowed_list = request.form.get('head_refs_allowed_list', '')
+    tournament.head_refs_allow_reffing_teams = 'head_refs_allow_reffing_teams' in request.form
+    tournament.head_refs_allow_anyone = 'head_refs_allow_anyone' in request.form
     tournament.published = 'published' in request.form
     tournament.schedule_published = 'schedule_published' in request.form
     tournament.registration_open = 'registration_open' in request.form

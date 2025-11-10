@@ -389,26 +389,28 @@ def recompute_all_match_times(tournament_url: str) -> None:
                     match.confirmed_start_time = now
                     match.completed_time = now
                     match.status = 'COMPLETED'
-        elif match.type == 'BREAK':
-            # BREAK matches
-            # Set time_finalized if all dependencies have confirmed_start_time
-            if deps:
-                all_deps_confirmed = all(dep.confirmed_start_time is not None for dep in deps)
-                match.time_finalized = all_deps_confirmed
+        
+        # Update gamestate.ready_to_start based on dependency completion state
+        try:
+            gs = json.loads(match.gamestate) if match.gamestate else {}
+        except Exception:
+            gs = {}
+        if deps:
+            all_deps_completed = all(dep.status == 'COMPLETED' or getattr(dep, 'completed_time', None) is not None for dep in deps)
+            if all_deps_completed:
+                # Mark as ready to start and set timestamp if not already present
+                gs['ready_to_start'] = True
+                if 'ready_to_start_at' not in gs or not gs.get('ready_to_start_at'):
+                    from datetime import timezone as _tz
+                    gs['ready_to_start_at'] = datetime.now(_tz.utc).isoformat()
             else:
-                # No dependencies means time is not finalized
-                match.time_finalized = False
-            
-            # If all dependencies have completed_time, auto-complete the BREAK
-            if deps:
-                all_deps_completed = all(dep.completed_time is not None for dep in deps)
-                if all_deps_completed and match.status != 'COMPLETED':
-                    now = datetime.now()
-                    match.confirmed_start_time = now
-                    # BREAK has nominal_length, so completed_time = now + length
-                    length_minutes = match.nominal_length or 60
-                    match.completed_time = now + timedelta(minutes=length_minutes)
-                    match.status = 'COMPLETED'
+                # Explicitly clear readiness if dependencies are not yet completed
+                gs['ready_to_start'] = False
+                # Do not clear the timestamp to retain historical info
+        else:
+            # No dependencies: readiness should be False here; static UI uses other conditions
+            gs['ready_to_start'] = False
+        match.gamestate = json.dumps(gs)
     
     # Update sequence relationships for all fields
     for match in all_matches:

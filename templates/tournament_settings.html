@@ -22,7 +22,7 @@
                 <h5 class="mb-0">Tournament Information</h5>
             </div>
             <div class="card-body">
-                <form method="POST" action="/{{ tournament.url }}/update-settings">
+                <form method="POST" action="/{{ tournament.url }}/update-settings" onsubmit="enableDisabledFields()">
                     <div class="row">
                         <div class="col-md-6">
                             <div class="mb-3">
@@ -127,11 +127,82 @@
                     </div>
 
                     <div class="mb-3">
-                        <label for="head_refs" class="form-label">Head Refs</label>
-                        <input type="text" class="form-control" id="head_refs" name="head_refs" 
-                               value="{{ tournament.head_refs or '' }}" placeholder="player1, player2, player3">
-                        <div class="form-text">Comma-separated list of player IDs who can ref matches</div>
+                        <label class="form-label">Head Ref Options</label>
+                        
+                        <div class="mb-3">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="head_refs_allow_anyone" name="head_refs_allow_anyone" 
+                                       {% if tournament.head_refs_allow_anyone %}checked{% endif %}
+                                       onchange="toggleHeadRefOptions()">
+                                <label class="form-check-label" for="head_refs_allow_anyone">
+                                    Allow anyone [registered] to run all matches
+                                </label>
+                                <div class="form-text">When enabled, any registered player can head ref any match</div>
+                            </div>
+                        </div>
+                        
+                        <div id="head_ref_specific_options" {% if tournament.head_refs_allow_anyone %}style="opacity: 0.5; pointer-events: none;"{% endif %}>
+                            <div class="mb-3">
+                                <label for="head_refs_allowed_list" class="form-label">Explicit List of Allowed Usernames</label>
+                                <input type="text" class="form-control" id="head_refs_allowed_list" name="head_refs_allowed_list" 
+                                       value="{{ tournament.head_refs_allowed_list or '' }}" placeholder="player1, player2, player3"
+                                       {% if tournament.head_refs_allow_anyone %}disabled{% endif %}>
+                                <div class="form-text">Comma-separated list of player IDs who can ref matches</div>
+                            </div>
+                            
+                            <div class="mb-3">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="head_refs_allow_reffing_teams" name="head_refs_allow_reffing_teams" 
+                                           {% if tournament.head_refs_allow_reffing_teams %}checked{% endif %}
+                                           {% if tournament.head_refs_allow_anyone %}disabled{% endif %}>
+                                    <label class="form-check-label" for="head_refs_allow_reffing_teams">
+                                        Allow reffing teams and their members to head ref matches they're assigned to ref
+                                    </label>
+                                    <div class="form-text">When enabled, players on teams assigned to ref a match can head ref that match</div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
+                    
+                    <script>
+                    function toggleHeadRefOptions() {
+                        const allowAnyone = document.getElementById('head_refs_allow_anyone').checked;
+                        const specificOptions = document.getElementById('head_ref_specific_options');
+                        const allowedList = document.getElementById('head_refs_allowed_list');
+                        const allowReffingTeams = document.getElementById('head_refs_allow_reffing_teams');
+                        
+                        if (allowAnyone) {
+                            specificOptions.style.opacity = '0.5';
+                            specificOptions.style.pointerEvents = 'none';
+                            allowedList.disabled = true;
+                            allowReffingTeams.disabled = true;
+                        } else {
+                            specificOptions.style.opacity = '1';
+                            specificOptions.style.pointerEvents = 'auto';
+                            allowedList.disabled = false;
+                            allowReffingTeams.disabled = false;
+                        }
+                    }
+                    
+                    function enableDisabledFields() {
+                        // Enable disabled fields before form submission so they're included
+                        const allowedList = document.getElementById('head_refs_allowed_list');
+                        const allowReffingTeams = document.getElementById('head_refs_allow_reffing_teams');
+                        const allowAnyone = document.getElementById('head_refs_allow_anyone');
+                        
+                        if (allowAnyone.checked) {
+                            // Clear the other fields when allow anyone is checked
+                            allowedList.disabled = false;
+                            allowedList.value = '';
+                            allowReffingTeams.disabled = false;
+                            allowReffingTeams.checked = false;
+                        } else {
+                            // Just enable them so they submit
+                            allowedList.disabled = false;
+                            allowReffingTeams.disabled = false;
+                        }
+                    }
+                    </script>
 
                     <div class="mb-3">
                         <div class="form-check">

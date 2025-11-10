@@ -9,7 +9,7 @@ from models import (
     Match, Tournament, Point, PlayerRegistration, Player, Field, db
 )
 from app.filters import is_head_ref
-from app.utils.helpers import check_tournament_access
+from app.utils.helpers import check_tournament_access, can_head_ref_match
 from app.utils.dependencies import apply_match_dependencies
 from app.utils.scheduling import update_dynamic_schedule_after_completion, mark_dependent_matches_time_finalized
 
@@ -44,7 +44,7 @@ def match_page(tournament_url):
         except:
             gamestate = {}
     
-    is_head_ref_flag = is_head_ref(tournament_url, current_user.id) if current_user.is_authenticated and current_user.__class__.__name__ == 'Player' else False
+    is_head_ref_flag = can_head_ref_match(tournament_url, current_user.id, match=match) if current_user.is_authenticated and current_user.__class__.__name__ == 'Player' else False
     
     # Get match notes and point notes for head refs
     match_notes = []
@@ -174,7 +174,7 @@ def start_match(tournament_url):
         flash('Match not found', 'error')
         return redirect(f'/{tournament_url}/schedule')
     
-    if not is_head_ref(tournament_url, current_user.id):
+    if not can_head_ref_match(tournament_url, current_user.id, match=match):
         flash('You are not authorized to start matches for this tournament', 'error')
         return redirect(f'/{tournament_url}/schedule')
     
@@ -259,9 +259,6 @@ def start_match(tournament_url):
 @bp.route('/<tournament_url>/get-selection-notes')
 @login_required
 def get_selection_notes(tournament_url):
-    if not is_head_ref(tournament_url, current_user.id):
-        return jsonify({'success': False, 'error': 'bruh ur not a head ref'})
-        
     """Get notes relevant to team and selected players."""
     match_id = request.args.get('match_id')
     team_side = request.args.get('team')
@@ -274,8 +271,8 @@ def get_selection_notes(tournament_url):
     if not match or match.event != tournament_url:
         return jsonify({'success': False, 'error': 'Match not found'})
 
-    if not is_head_ref(tournament_url, current_user.id):
-        return jsonify({'success': False, 'error': 'Not authorized'})
+    if not can_head_ref_match(tournament_url, current_user.id, match=match):
+        return jsonify({'success': False, 'error': 'bruh ur not a head ref'})
 
     team_id = match.team1 if team_side == 'team1' else match.team2
     if not team_id:
@@ -372,7 +369,7 @@ def start_match_post(tournament_url):
         flash('Match not found', 'error')
         return redirect(f'/{tournament_url}/schedule')
     
-    if not is_head_ref(tournament_url, current_user.id):
+    if not can_head_ref_match(tournament_url, current_user.id, match=match):
         flash('You are not authorized to start matches for this tournament', 'error')
         return redirect(f'/{tournament_url}/schedule')
     
@@ -433,11 +430,14 @@ def start_match_post(tournament_url):
         if stones_per_set:
             try:
                 stones_per_set = int(stones_per_set)
-                gamestate['stones_per_set'] = stones_per_set
-                gamestate['stones_remaining'] = stones_per_set
             except ValueError:
                 flash('Invalid stones per set value', 'error')
                 return redirect(f'/{tournament_url}/start-match?id={match.uuid}')
+        else:
+            # Use match's nstonesperset value or default to 100
+            stones_per_set = match.nstonesperset or 100
+        gamestate['stones_per_set'] = stones_per_set
+        gamestate['stones_remaining'] = stones_per_set
     match.gamestate = json.dumps(gamestate)
     
     db.session.commit()
@@ -474,7 +474,7 @@ def run_match(tournament_url):
         flash('This match has already been completed', 'error')
         return redirect(f'/{tournament_url}/schedule')
     
-    if not is_head_ref(tournament_url, current_user.id):
+    if not can_head_ref_match(tournament_url, current_user.id, match=match):
         flash('You are not authorized to run matches for this tournament', 'error')
         return redirect(f'/{tournament_url}/schedule')
     
@@ -556,7 +556,7 @@ def finalize_match(tournament_url):
         flash('This match has already been completed', 'error')
         return redirect(f'/{tournament_url}/schedule')
     
-    if not is_head_ref(tournament_url, current_user.id):
+    if not can_head_ref_match(tournament_url, current_user.id, match=match):
         flash('You are not authorized to finalize matches for this tournament', 'error')
         return redirect(f'/{tournament_url}/schedule')
     
@@ -658,7 +658,7 @@ def finalize_match_post(tournament_url):
         flash('Match not found', 'error')
         return redirect(f'/{tournament_url}/schedule')
     
-    if not is_head_ref(tournament_url, current_user.id):
+    if not can_head_ref_match(tournament_url, current_user.id, match=match):
         flash('You are not authorized to finalize matches for this tournament', 'error')
         return redirect(f'/{tournament_url}/schedule')
     
@@ -736,7 +736,7 @@ def get_points(tournament_url):
     if not match or match.event != tournament_url:
         return jsonify({'success': False, 'error': 'Match not found'})
     
-    if not is_head_ref(tournament_url, current_user.id):
+    if not can_head_ref_match(tournament_url, current_user.id, match=match):
         return jsonify({'success': False, 'error': 'Not authorized'})
     
     points = Point.query.filter_by(match=match_id).order_by(Point.stamp).all()
@@ -855,7 +855,7 @@ def add_point(tournament_url):
     if not match or match.event != tournament_url:
         return jsonify({'success': False, 'error': 'Match not found'}), 404
     
-    if not is_head_ref(tournament_url, current_user.id):
+    if not can_head_ref_match(tournament_url, current_user.id, match=match):
         return jsonify({'success': False, 'error': 'Not authorized'}), 403
     
     new_point = Point(
@@ -910,7 +910,7 @@ def update_point(tournament_url):
     if not match or match.event != tournament_url:
         return jsonify({'success': False, 'error': 'Match not found'}), 404
     
-    if not is_head_ref(tournament_url, current_user.id):
+    if not can_head_ref_match(tournament_url, current_user.id, match=match):
         return jsonify({'success': False, 'error': 'Not authorized'}), 403
     
     data = request.json
@@ -954,7 +954,7 @@ def delete_point_action(tournament_url):
     if not match or match.event != tournament_url:
         return jsonify({'success': False, 'error': 'Match not found'}), 404
     
-    if not is_head_ref(tournament_url, current_user.id):
+    if not can_head_ref_match(tournament_url, current_user.id, match=match):
         return jsonify({'success': False, 'error': 'Not authorized'}), 403
     
     match_id = point.match
@@ -978,7 +978,7 @@ def update_stones(tournament_url):
     if not match or match.event != tournament_url:
         return jsonify({'success': False, 'error': 'Match not found'}), 404
     
-    if not is_head_ref(tournament_url, current_user.id):
+    if not can_head_ref_match(tournament_url, current_user.id, match=match):
         return jsonify({'success': False, 'error': 'Not authorized'}), 403
     
     gamestate = {}
@@ -1013,7 +1013,7 @@ def update_set(tournament_url):
     if not match or match.event != tournament_url:
         return jsonify({'success': False, 'error': 'Match not found'}), 404
     
-    if not is_head_ref(tournament_url, current_user.id):
+    if not can_head_ref_match(tournament_url, current_user.id, match=match):
         return jsonify({'success': False, 'error': 'Not authorized'}), 403
     
     point.set_number = set_number
@@ -1034,7 +1034,7 @@ def complete_match(tournament_url):
     if not match or match.event != tournament_url:
         return jsonify({'success': False, 'error': 'Match not found'}), 404
     
-    if not is_head_ref(tournament_url, current_user.id):
+    if not can_head_ref_match(tournament_url, current_user.id, match=match):
         return jsonify({'success': False, 'error': 'Not authorized'}), 403
     
     match.status = 'COMPLETED'

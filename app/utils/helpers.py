@@ -6,7 +6,62 @@ import hashlib
 import re
 from flask import current_app
 from flask_login import current_user
-from models import Tournament
+from models import Tournament, PlayerRegistration, Match
+
+
+def can_head_ref_match(tournament_url: str, player_id: str, match=None) -> bool:
+    """
+    Check if a player can head ref matches for a tournament.
+    
+    Args:
+        tournament_url: The tournament URL
+        player_id: The player ID to check
+        match: Optional Match object for match-specific checks (reffing teams)
+    
+    Returns:
+        True if the player can head ref, False otherwise
+    """
+    tournament = Tournament.query.get(tournament_url)
+    if not tournament:
+        return False
+    
+    # If allow anyone is enabled, check if player is registered
+    if tournament.head_refs_allow_anyone:
+        player_reg = PlayerRegistration.query.filter_by(
+            event=tournament_url,
+            player=player_id,
+            status='CONFIRMED'
+        ).first()
+        return player_reg is not None
+    
+    # Check explicit allowed list
+    if tournament.head_refs_allowed_list:
+        allowed_list = [ref.strip() for ref in tournament.head_refs_allowed_list.split(',') if ref.strip()]
+        if player_id in allowed_list:
+            return True
+    
+    # Check reffing teams (requires match context)
+    if tournament.head_refs_allow_reffing_teams and match:
+        if match.refs:
+            ref_teams = [team.strip() for team in match.refs.split(',') if team.strip()]
+            # Check if player is registered on any of the ref teams
+            for team_id in ref_teams:
+                player_reg = PlayerRegistration.query.filter_by(
+                    event=tournament_url,
+                    player=player_id,
+                    team=team_id,
+                    status='CONFIRMED'
+                ).first()
+                if player_reg:
+                    return True
+    
+    # Backward compatibility: check old head_refs field
+    if tournament.head_refs:
+        head_refs_list = [ref.strip() for ref in tournament.head_refs.split(',') if ref.strip()]
+        if player_id in head_refs_list:
+            return True
+    
+    return False
 
 
 def is_head_ref_any(viewed_player_id: str) -> bool:
@@ -16,10 +71,8 @@ def is_head_ref_any(viewed_player_id: str) -> bool:
     try:
         tournaments = Tournament.query.all()
         for t in tournaments:
-            if t.head_refs:
-                head_refs_list = [ref.strip() for ref in t.head_refs.split(',') if ref.strip()]
-                if current_user.id in head_refs_list:
-                    return True
+            if can_head_ref_match(t.url, current_user.id):
+                return True
     except Exception:
         return False
     return False
