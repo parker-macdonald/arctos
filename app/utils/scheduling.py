@@ -371,7 +371,7 @@ def recompute_all_match_times(tournament_url: str) -> None:
             else:
                 # No dependencies means time is not finalized
                 match.time_finalized = False
-        elif match.type == 'JOIN':
+        else:
             # JOIN matches
             # Set time_finalized if all dependencies have confirmed_start_time
             if deps:
@@ -387,7 +387,7 @@ def recompute_all_match_times(tournament_url: str) -> None:
                 if all_deps_completed and match.status != 'COMPLETED':
                     now = datetime.now()
                     match.confirmed_start_time = now
-                    match.completed_time = now
+                    match.completed_time = now if match.type == 'JOIN' else now + timedelta(minutes=match.nominal_length)
                     match.status = 'COMPLETED'
         
         # Update gamestate.ready_to_start based on dependency completion state
