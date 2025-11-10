@@ -17,7 +17,9 @@ class Player(UserMixin, db.Model):
     
     id = db.Column(db.String(50), primary_key=True)
     name = db.Column(db.String(100), nullable=False)
-    pw_hash = db.Column(db.String(255), nullable=False)
+    pw_hash = db.Column(db.String(255), nullable=True)  # Nullable for Google OAuth users
+    google_id = db.Column(db.String(255), unique=True, nullable=True)  # Google OAuth ID
+    email = db.Column(db.String(255), nullable=True)  # Email from Google
     phone = db.Column(db.String(20))
     profile_photo = db.Column(db.String(255))
     bio = db.Column(db.Text)
@@ -27,6 +29,8 @@ class Player(UserMixin, db.Model):
         self.pw_hash = generate_password_hash(password)
     
     def check_password(self, password):
+        if not self.pw_hash:
+            return False
         return check_password_hash(self.pw_hash, password)
 
 class Team(UserMixin, db.Model):
@@ -34,9 +38,10 @@ class Team(UserMixin, db.Model):
     
     id = db.Column(db.String(50), primary_key=True)
     name = db.Column(db.String(100), nullable=False)
-    pw_hash = db.Column(db.String(255), nullable=False)
+    pw_hash = db.Column(db.String(255), nullable=True)  # Nullable for Google OAuth users
+    google_id = db.Column(db.String(255), unique=True, nullable=True)  # Google OAuth ID
     phone = db.Column(db.String(20))
-    email = db.Column(db.String(100))
+    email = db.Column(db.String(255), nullable=True)  # Updated to match Player, can be from Google
     icon = db.Column(db.Text)  # base64 image
     profile_photo = db.Column(db.String(255))  # Path to uploaded photo
     socials = db.Column(db.Text)
@@ -48,6 +53,8 @@ class Team(UserMixin, db.Model):
         self.pw_hash = generate_password_hash(password)
     
     def check_password(self, password):
+        if not self.pw_hash:
+            return False
         return check_password_hash(self.pw_hash, password)
 
 class Injury(db.Model):

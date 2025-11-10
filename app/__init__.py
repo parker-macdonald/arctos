@@ -36,6 +36,10 @@ def create_app(config=None):
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
     app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 10MB max file size
     
+    # Google OAuth configuration
+    app.config['GOOGLE_CLIENT_ID'] = os.environ.get('GOOGLE_CLIENT_ID', '')
+    app.config['GOOGLE_CLIENT_SECRET'] = os.environ.get('GOOGLE_CLIENT_SECRET', '')
+    
     # Handle subpath deployment
     if 'SCRIPT_NAME' in os.environ:
         app.config['APPLICATION_ROOT'] = os.environ['SCRIPT_NAME']
@@ -43,6 +47,22 @@ def create_app(config=None):
     # Override with custom config if provided
     if config:
         app.config.update(config)
+    
+    # Initialize OAuth (after config is finalized)
+    from app.routes.auth import oauth
+    oauth.init_app(app)
+    
+    # Register Google OAuth client
+    if app.config.get('GOOGLE_CLIENT_ID') and app.config.get('GOOGLE_CLIENT_SECRET'):
+        oauth.register(
+            name='google',
+            client_id=app.config['GOOGLE_CLIENT_ID'],
+            client_secret=app.config['GOOGLE_CLIENT_SECRET'],
+            server_metadata_url='https://accounts.google.com/.well-known/openid-configuration',
+            client_kwargs={
+                'scope': 'openid email profile'
+            }
+        )
     
     # Initialize database
     from models import db as db_instance, init_db
