@@ -30,11 +30,14 @@ window.MathJax = {
                     <div class="mb-4">
                         <label class="form-label mb-2">Sound:</label>
                         <div class="btn-group w-100" role="group" id="audio-selector">
-                            <input type="radio" class="btn-check" name="audio-type" id="audio-classic" value="classic" autocomplete="off" checked>
-                            <label class="btn btn-outline-primary" for="audio-classic">Classic</label>
-                            
-                            <input type="radio" class="btn-check" name="audio-type" id="audio-snare" value="snare" autocomplete="off">
-                            <label class="btn btn-outline-primary" for="audio-snare">Snare</label>
+                            {% if mp3_files %}
+                                {% for mp3_file in mp3_files %}
+                                <input type="radio" class="btn-check" name="audio-type" id="audio-{{ loop.index0 }}" value="{{ mp3_file.filename_encoded }}" data-filename="{{ mp3_file.filename }}" autocomplete="off" {% if loop.first %}checked{% endif %}>
+                                <label class="btn btn-outline-primary" for="audio-{{ loop.index0 }}">{{ mp3_file.display_name|safe }}</label>
+                                {% endfor %}
+                            {% else %}
+                                <p class="text-muted">No MP3 files found in static/stones directory.</p>
+                            {% endif %}
                         </div>
                     </div>
                     
@@ -149,11 +152,26 @@ const AUDIO_SELECT_KEY = 'stones_player_audio_select';
 
 // Get audio file path based on selection
 function getAudioFile() {
-    const classicRadio = document.getElementById('audio-classic');
-    const snareRadio = document.getElementById('audio-snare');
-    const selected = snareRadio && snareRadio.checked ? 'snare' : 'classic';
-    const filename = selected === 'snare' ? 'snare_stone.mp3' : 'classic_stone.mp3';
-    return '{{ url_for("static", filename="") }}' + filename;
+    const audioSelector = document.getElementById('audio-selector');
+    const checkedRadio = audioSelector.querySelector('input[name="audio-type"]:checked');
+    if (checkedRadio) {
+        // Get the original filename from data attribute and construct URL properly
+        const originalFilename = checkedRadio.getAttribute('data-filename');
+        // Use Flask's url_for approach - encode the full path
+        const baseUrl = '{{ url_for("static", filename="") }}';
+        // URL-encode the filename part (but not the path separator)
+        const encodedFilename = encodeURIComponent(originalFilename);
+        return baseUrl + 'stones/' + encodedFilename;
+    }
+    // Fallback to first option if nothing is checked
+    const firstRadio = audioSelector.querySelector('input[name="audio-type"]');
+    if (firstRadio) {
+        const originalFilename = firstRadio.getAttribute('data-filename');
+        const baseUrl = '{{ url_for("static", filename="") }}';
+        const encodedFilename = encodeURIComponent(originalFilename);
+        return baseUrl + 'stones/' + encodedFilename;
+    }
+    return '';
 }
 
 // Load Kalman filter state from localStorage
@@ -184,13 +202,23 @@ function saveKFState() {
 function loadAudioSelection() {
     try {
         const saved = localStorage.getItem(AUDIO_SELECT_KEY);
-        if (saved && (saved === 'classic' || saved === 'snare')) {
-            const classicRadio = document.getElementById('audio-classic');
-            const snareRadio = document.getElementById('audio-snare');
-            if (saved === 'snare' && snareRadio) {
-                snareRadio.checked = true;
-            } else if (classicRadio) {
-                classicRadio.checked = true;
+        if (saved) {
+            const audioSelector = document.getElementById('audio-selector');
+            const radios = audioSelector.querySelectorAll('input[name="audio-type"]');
+            // Try to match by encoded filename first (new format)
+            for (const radio of radios) {
+                if (radio.value === saved) {
+                    radio.checked = true;
+                    return;
+                }
+            }
+            // Fallback: try to match by original filename (old format compatibility)
+            for (const radio of radios) {
+                const originalFilename = radio.getAttribute('data-filename');
+                if (originalFilename === saved) {
+                    radio.checked = true;
+                    return;
+                }
             }
         }
     } catch (error) {
@@ -201,10 +229,13 @@ function loadAudioSelection() {
 // Save audio selection to localStorage
 function saveAudioSelection() {
     try {
-        const classicRadio = document.getElementById('audio-classic');
-        const snareRadio = document.getElementById('audio-snare');
-        const selected = snareRadio && snareRadio.checked ? 'snare' : 'classic';
-        localStorage.setItem(AUDIO_SELECT_KEY, selected);
+        const audioSelector = document.getElementById('audio-selector');
+        const checkedRadio = audioSelector.querySelector('input[name="audio-type"]:checked');
+        if (checkedRadio) {
+            // Save the original filename (not the encoded one) for compatibility
+            const originalFilename = checkedRadio.getAttribute('data-filename');
+            localStorage.setItem(AUDIO_SELECT_KEY, originalFilename);
+        }
     } catch (error) {
         console.error('Error saving audio selection:', error);
     }
@@ -688,8 +719,8 @@ document.addEventListener('DOMContentLoaded', async function() {
     await initAudio();
     
     // Audio selection change handler (for radio buttons)
-    const classicRadio = document.getElementById('audio-classic');
-    const snareRadio = document.getElementById('audio-snare');
+    const audioSelector = document.getElementById('audio-selector');
+    const radios = audioSelector.querySelectorAll('input[name="audio-type"]');
     const handleAudioChange = async function() {
         saveAudioSelection();
         // Clear all scheduled beats with old audio
@@ -708,11 +739,8 @@ document.addEventListener('DOMContentLoaded', async function() {
             scheduleNextBeat();
         }
     };
-    if (classicRadio) {
-        classicRadio.addEventListener('change', handleAudioChange);
-    }
-    if (snareRadio) {
-        snareRadio.addEventListener('change', handleAudioChange);
+    for (const radio of radios) {
+        radio.addEventListener('change', handleAudioChange);
     }
     
     // User interaction required for audio context (browser policy)

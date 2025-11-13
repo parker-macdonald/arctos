@@ -1046,7 +1046,58 @@ def complete_match(tournament_url):
 @bp.route('/stones')
 def stones_player():
     """Stones audio player page with server time synchronization."""
-    return render_template('stones_player.html')
+    import os
+    from flask import current_app
+    from flask_login import current_user
+    
+    # Hardcoded list of usernames that can see all audio files
+    ALLOWED_USERS = os.environ.get('SILLY_USERS', '').split(':')  # Add usernames here
+    
+    # Get the static folder path
+    static_folder = current_app.static_folder
+    stones_dir = os.path.join(static_folder, 'stones')
+    
+    # List all MP3 files in the stones directory
+    import re
+    mp3_files = []
+    if os.path.exists(stones_dir) and os.path.isdir(stones_dir):
+        for filename in os.listdir(stones_dir):
+            if filename.lower().endswith('.mp3'):
+                # Remove extension
+                name_without_ext = os.path.splitext(filename)[0]
+                # Remove numeric prefix (e.g., "1_", "2_", etc.) for display name
+                display_name = re.sub(r'^\d+_', '', name_without_ext)
+                # Extract numeric prefix for sorting (default to 0 if no prefix)
+                match = re.match(r'^(\d+)_', name_without_ext)
+                sort_order = int(match.group(1)) if match else 999999
+                # URL-encode the filename for use in URLs
+                from urllib.parse import quote
+                filename_encoded = quote(filename, safe='')
+                
+                mp3_files.append({
+                    'filename': filename,
+                    'filename_encoded': filename_encoded,
+                    'display_name': display_name,
+                    'sort_order': sort_order
+                })
+        # Sort by numeric prefix (sort_order), then by filename for consistent ordering
+        mp3_files.sort(key=lambda x: (x['sort_order'], x['filename']))
+    
+    # Filter files based on user permissions
+    # Only show "Classic" and "Snare" unless user is in the allowed list
+    user_can_see_all = (
+        current_user.is_authenticated and 
+        current_user.id in ALLOWED_USERS
+    )
+    
+    if not user_can_see_all:
+        # Filter to only show "Classic" and "Snare" (case-insensitive)
+        mp3_files = [
+            f for f in mp3_files 
+            if f['display_name'].lower() in ['classic', 'snare']
+        ]
+    
+    return render_template('stones_player.html', mp3_files=mp3_files)
 
 
 @bp.route('/server-time')
