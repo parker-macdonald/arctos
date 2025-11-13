@@ -7,12 +7,8 @@
     <div class="col-md-6">
         <div class="card">
             <div class="card-header">
-                <div class="d-flex justify-content-between align-items-center">
-                    <h3 class="mb-0">Complete Your Profile</h3>
-                    <div class="btn-group btn-group-sm" role="group">
-                        <span class="btn btn-outline-secondary disabled">{{ user_type.title() }}</span>
-                    </div>
-                </div>
+                <h3 class="mb-0">Complete Your Profile</h3>
+                <p class="mb-0 text-muted"><small>Creating a {{ user_type.title() }} account</small></p>
             </div>
             <div class="card-body">
                 <p class="text-muted">You're signing in with Google as <strong>{{ email }}</strong>. Please choose your username and display name to complete your account setup.</p>

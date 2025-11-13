@@ -89,12 +89,8 @@
                         </ul>
                     </li>
                     {% else %}
-                    <li class="nav-item dropdown">
-                        <a class="nav-link dropdown-toggle" href="#" id="loginDropdown" role="button" data-bs-toggle="dropdown">Login</a>
-                        <ul class="dropdown-menu">
-                            <li><a class="dropdown-item" href="{{ url_for('auth.login', type='player') }}">Login as Player</a></li>
-                            <li><a class="dropdown-item" href="{{ url_for('auth.login', type='team') }}">Login as Team</a></li>
-                        </ul>
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('auth.login') }}">Login</a>
                     </li>
                     <li class="nav-item dropdown">
                         <a class="nav-link dropdown-toggle" href="#" id="registerDropdown" role="button" data-bs-toggle="dropdown">Register</a>

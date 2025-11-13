@@ -17,14 +17,14 @@ oauth = OAuth()
 
 @bp.route('/login', methods=['GET', 'POST'])
 def login():
-    """User login page."""
+    """User login page (works for both players and teams)."""
     if request.method == 'POST':
         username = request.form['username']
         password = request.form['password']
-        user_type = request.form.get('user_type', 'player')
-        if user_type == 'player':
-            user = Player.query.filter_by(id=username).first()
-        else:
+        
+        # Check both Player and Team tables (usernames are unique across both)
+        user = Player.query.filter_by(id=username).first()
+        if not user:
             user = Team.query.filter_by(id=username).first()
         
         if user and user.check_password(password):
@@ -34,8 +34,7 @@ def login():
         else:
             flash('Invalid username or password', 'error')
     
-    user_type = request.args.get('type', 'player')
-    return render_template('login.html', user_type=user_type)
+    return render_template('login.html')
 
 
 @bp.route('/register', methods=['GET', 'POST'])
@@ -115,15 +114,10 @@ def logout():
 @bp.route('/auth/google/login')
 def google_login():
     """Initiate Google OAuth login."""
-    user_type = request.args.get('type', 'player')
-    
-    # Store user_type in session for callback
-    session['oauth_user_type'] = user_type
-    
     # Check if Google OAuth is configured
     if not current_app.config.get('GOOGLE_CLIENT_ID') or not current_app.config.get('GOOGLE_CLIENT_SECRET'):
         flash('Google sign-in is not configured. Please contact the administrator.', 'error')
-        return redirect(url_for('auth.login', type=user_type))
+        return redirect(url_for('auth.login'))
     
     # Get the redirect URI
     redirect_uri = url_for('auth.google_callback', _external=True)
@@ -137,8 +131,6 @@ def google_login():
 @bp.route('/auth/google/callback')
 def google_callback():
     """Handle Google OAuth callback."""
-    user_type = session.get('oauth_user_type', 'player')
-    
     try:
         # Get OAuth client
         google = oauth.google
@@ -164,12 +156,11 @@ def google_callback():
         
         if not google_id:
             flash('Failed to authenticate with Google', 'error')
-            return redirect(url_for('auth.login', type=user_type))
+            return redirect(url_for('auth.login'))
         
-        # Check if user already exists with this Google ID
-        if user_type == 'player':
-            user = Player.query.filter_by(google_id=google_id).first()
-        else:
+        # Check if user already exists with this Google ID (check both Player and Team)
+        user = Player.query.filter_by(google_id=google_id).first()
+        if not user:
             user = Team.query.filter_by(google_id=google_id).first()
         
         if user:
@@ -178,18 +169,41 @@ def google_callback():
             flash('Successfully logged in with Google!', 'success')
             return redirect('/')
         
-        # New user - store Google info in session and redirect to username selection
+        # New user - store Google info in session and redirect to account type selection
         session['google_oauth_data'] = {
             'google_id': google_id,
             'email': email,
-            'name': name,
-            'user_type': user_type
+            'name': name
         }
-        return redirect(url_for('auth.google_complete_profile'))
+        return redirect(url_for('auth.google_choose_account_type'))
         
     except Exception as e:
         flash(f'Error during Google authentication: {str(e)}', 'error')
-        return redirect(url_for('auth.login', type=user_type))
+        return redirect(url_for('auth.login'))
+
+
+@bp.route('/auth/google/choose-account-type', methods=['GET', 'POST'])
+def google_choose_account_type():
+    """Choose account type (Player or Team) for new Google OAuth users."""
+    oauth_data = session.get('google_oauth_data')
+    
+    if not oauth_data:
+        flash('Session expired. Please try signing in again.', 'error')
+        return redirect(url_for('auth.login'))
+    
+    if request.method == 'POST':
+        user_type = request.form.get('user_type')
+        if user_type not in ['player', 'team']:
+            flash('Please select an account type', 'error')
+            return render_template('google_choose_account_type.html', email=oauth_data.get('email', ''))
+        
+        # Store user type in session (need to mark session as modified for nested dict changes)
+        oauth_data['user_type'] = user_type
+        session['google_oauth_data'] = oauth_data
+        session.modified = True
+        return redirect(url_for('auth.google_complete_profile'))
+    
+    return render_template('google_choose_account_type.html', email=oauth_data.get('email', ''))
 
 
 @bp.route('/auth/google/complete-profile', methods=['GET', 'POST'])
@@ -199,9 +213,12 @@ def google_complete_profile():
     
     if not oauth_data:
         flash('Session expired. Please try signing in again.', 'error')
-        return redirect(url_for('auth.login', type='player'))
+        return redirect(url_for('auth.login'))
     
-    user_type = oauth_data.get('user_type', 'player')
+    user_type = oauth_data.get('user_type')
+    if not user_type:
+        # Redirect to account type selection if not set
+        return redirect(url_for('auth.google_choose_account_type'))
     email = oauth_data.get('email', '')
     suggested_name = oauth_data.get('name', email.split('@')[0] if email else 'User')
     
