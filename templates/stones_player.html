@@ -38,6 +38,15 @@ window.MathJax = {
                             {% else %}
                                 <p class="text-muted">No MP3 files found in static/stones directory.</p>
                             {% endif %}
+                            <!-- Custom audio option -->
+                            <input type="radio" class="btn-check" name="audio-type" id="audio-custom" value="custom" data-filename="custom" autocomplete="off">
+                            <label class="btn btn-outline-primary" style="min-width: fit-content;" for="audio-custom">Custom</label>
+                        </div>
+                        <!-- Custom file input (shown when Custom is selected) -->
+                        <div id="custom-audio-container" class="mt-3" style="display: none;">
+                            <label for="custom-audio-file" class="form-label">Upload MP3 file (must be less than 1.5 seconds):</label>
+                            <input type="file" class="form-control" id="custom-audio-file" accept="audio/mpeg,audio/mp3,.mp3">
+                            <div id="custom-audio-status" class="form-text mt-2"></div>
                         </div>
                     </div>
                     
@@ -143,6 +152,7 @@ let scheduleInterval = null;  // Interval to check and schedule ahead
 let lastScheduledBeatTime = null;  // Track the last scheduled beat time to prevent duplicates
 let audioContext = null;
 let audioBuffer = null;  // Preloaded audio buffer for MP3
+let customAudioBuffer = null;  // Cached custom audio buffer (persists when switching types)
 let mediaStreamDestination = null;  // MediaStreamDestination for background playback on mobile
 let syncInterval = null;
 let wakeLock = null;  // Screen wake lock to prevent device sleep
@@ -150,11 +160,16 @@ let audioContextStartTime = null;  // Wall clock time when audio context was cre
 const STORAGE_KEY = 'stones_player_kf_state';
 const AUDIO_SELECT_KEY = 'stones_player_audio_select';
 
-// Get audio file path based on selection
+// Get audio file path based on selection (returns null for custom files)
 function getAudioFile() {
     const audioSelector = document.getElementById('audio-selector');
     const checkedRadio = audioSelector.querySelector('input[name="audio-type"]:checked');
     if (checkedRadio) {
+        const value = checkedRadio.value;
+        // Return null for custom files (they're handled separately)
+        if (value === 'custom') {
+            return null;
+        }
         // Get the original filename from data attribute and construct URL properly
         const originalFilename = checkedRadio.getAttribute('data-filename');
         // Use Flask's url_for approach - encode the full path
@@ -165,13 +180,13 @@ function getAudioFile() {
     }
     // Fallback to first option if nothing is checked
     const firstRadio = audioSelector.querySelector('input[name="audio-type"]');
-    if (firstRadio) {
+    if (firstRadio && firstRadio.value !== 'custom') {
         const originalFilename = firstRadio.getAttribute('data-filename');
         const baseUrl = '{{ url_for("static", filename="") }}';
         const encodedFilename = encodeURIComponent(originalFilename);
         return baseUrl + 'stones/' + encodedFilename;
     }
-    return '';
+    return null;
 }
 
 // Load Kalman filter state from localStorage
@@ -298,10 +313,20 @@ async function initAudio() {
         
         // Load MP3 file into audio buffer
         const audioFile = getAudioFile();
-        const response = await fetch(audioFile);
-        const arrayBuffer = await response.arrayBuffer();
-        audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-        console.log('Audio file loaded successfully:', audioFile);
+        if (audioFile === null) {
+            // Custom file - use cached custom buffer
+            if (!customAudioBuffer) {
+                throw new Error('No custom audio file selected');
+            }
+            audioBuffer = customAudioBuffer;
+            console.log('Using cached custom audio file');
+        } else {
+            // Standard file - fetch and decode
+            const response = await fetch(audioFile);
+            const arrayBuffer = await response.arrayBuffer();
+            audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+            console.log('Audio file loaded successfully:', audioFile);
+        }
     } catch (error) {
         console.error('Error initializing audio:', error);
     }
@@ -635,6 +660,14 @@ async function startPlayback() {
         if (audioContext && audioContext.state === 'suspended') {
             await audioContext.resume();
         }
+        // Check if custom is selected but no file loaded
+        const checkedRadio = document.querySelector('#audio-selector input[name="audio-type"]:checked');
+        if (checkedRadio && checkedRadio.value === 'custom' && !customAudioBuffer) {
+            alert('Please upload a custom audio file first.');
+            isPlaying = false;
+            updatePlayButton();
+            return;
+        }
         // Ensure audio buffer is loaded
         if (!audioBuffer && audioContext) {
             await initAudio();
@@ -725,9 +758,26 @@ document.addEventListener('DOMContentLoaded', async function() {
         saveAudioSelection();
         // Clear all scheduled beats with old audio
         clearScheduledBeats();
-        // Reload audio buffer with new file
-        audioBuffer = null;
-        await initAudio();
+        
+        // Check if switching away from custom
+        const checkedRadio = audioSelector.querySelector('input[name="audio-type"]:checked');
+        if (checkedRadio && checkedRadio.value === 'custom') {
+            // Switching to custom - restore cached custom buffer if available
+            if (customAudioBuffer) {
+                audioBuffer = customAudioBuffer;
+                console.log('Restored cached custom audio buffer');
+            } else {
+                // No custom file loaded yet
+                audioBuffer = null;
+                console.log('Custom selected but no file loaded yet');
+            }
+        } else {
+            // Switching to standard file - cache current buffer if it was custom, then load standard
+            // (Note: we don't need to cache standard buffers since they're loaded from URLs)
+            audioBuffer = null;
+            await initAudio();
+        }
+        
         // If playing, reschedule with new audio
         if (isPlaying) {
             // Stop the scheduling interval temporarily
@@ -741,6 +791,100 @@ document.addEventListener('DOMContentLoaded', async function() {
     };
     for (const radio of radios) {
         radio.addEventListener('change', handleAudioChange);
+    }
+    
+    // Handle Custom audio option selection
+    const customRadio = document.getElementById('audio-custom');
+    const customContainer = document.getElementById('custom-audio-container');
+    const customFileInput = document.getElementById('custom-audio-file');
+    const customStatus = document.getElementById('custom-audio-status');
+    
+    // Show/hide custom file input based on selection
+    function updateCustomFileVisibility() {
+        if (customRadio && customRadio.checked) {
+            customContainer.style.display = 'block';
+        } else {
+            customContainer.style.display = 'none';
+        }
+    }
+    
+    // Check all radios for initial state
+    for (const radio of radios) {
+        radio.addEventListener('change', updateCustomFileVisibility);
+    }
+    updateCustomFileVisibility(); // Initial check
+    
+    // Handle custom file upload and validation
+    async function handleCustomFileUpload(file) {
+        if (!file) {
+            return;
+        }
+        
+        // Check file type
+        if (!file.type.startsWith('audio/') && !file.name.toLowerCase().endsWith('.mp3')) {
+            customStatus.textContent = 'Error: Please select an MP3 file.';
+            customStatus.className = 'form-text mt-2 text-danger';
+            customAudioBuffer = null;
+            audioBuffer = null;
+            return;
+        }
+        
+        try {
+            // Ensure audio context exists
+            if (!audioContext) {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                audioContextStartTime = Date.now() / 1000;
+            }
+            
+            // Read file as array buffer
+            const arrayBuffer = await file.arrayBuffer();
+            
+            // Decode audio to check duration
+            const decodedAudio = await audioContext.decodeAudioData(arrayBuffer.slice(0));
+            const duration = decodedAudio.duration;
+            
+            // Validate duration (must be less than 1.5 seconds)
+            if (duration >= 1.5) {
+                customStatus.textContent = `Error: File is ${duration.toFixed(2)} seconds. Must be less than 1.5 seconds.`;
+                customStatus.className = 'form-text mt-2 text-danger';
+                customAudioBuffer = null;
+                audioBuffer = null;
+                return;
+            }
+            
+            // Store the audio buffer in both customAudioBuffer (cache) and audioBuffer (current)
+            customAudioBuffer = decodedAudio;
+            audioBuffer = decodedAudio;
+            customStatus.textContent = `Success! File loaded (${duration.toFixed(2)}s).`;
+            customStatus.className = 'form-text mt-2 text-success';
+            console.log('Custom audio file loaded:', file.name, 'Duration:', duration.toFixed(2), 's');
+            
+            // If playing, reload audio
+            if (isPlaying) {
+                clearScheduledBeats();
+                if (scheduleInterval !== null) {
+                    clearInterval(scheduleInterval);
+                    scheduleInterval = null;
+                }
+                scheduleNextBeat();
+            }
+        } catch (error) {
+            console.error('Error loading custom audio file:', error);
+            customStatus.textContent = 'Error: Could not load audio file. Please try a different file.';
+            customStatus.className = 'form-text mt-2 text-danger';
+            customAudioBuffer = null;
+            audioBuffer = null;
+        }
+    }
+    
+    // Handle file input change
+    if (customFileInput) {
+        customFileInput.addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (file) {
+                handleCustomFileUpload(file);
+            }
+        });
     }
     
     // User interaction required for audio context (browser policy)
