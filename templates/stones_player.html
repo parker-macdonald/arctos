@@ -29,11 +29,11 @@ window.MathJax = {
                     <!-- Sound selector slider -->
                     <div class="mb-4">
                         <label class="form-label mb-2">Sound:</label>
-                        <div class="btn-group w-100" role="group" id="audio-selector">
+                        <div class="d-flex flex-wrap gap-2" role="group" id="audio-selector">
                             {% if mp3_files %}
                                 {% for mp3_file in mp3_files %}
                                 <input type="radio" class="btn-check" name="audio-type" id="audio-{{ loop.index0 }}" value="{{ mp3_file.filename_encoded }}" data-filename="{{ mp3_file.filename }}" autocomplete="off" {% if loop.first %}checked{% endif %}>
-                                <label class="btn btn-outline-primary" for="audio-{{ loop.index0 }}">{{ mp3_file.display_name|safe }}</label>
+                                <label class="btn btn-outline-primary" style="min-width: fit-content;" for="audio-{{ loop.index0 }}">{{ mp3_file.display_name|safe }}</label>
                                 {% endfor %}
                             {% else %}
                                 <p class="text-muted">No MP3 files found in static/stones directory.</p>
