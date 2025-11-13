@@ -413,19 +413,49 @@ function scheduleSoundAt(audioContextTime) {
 
 // Clear all scheduled beats (stop sources and clear tracking)
 function clearScheduledBeats() {
+    if (!audioContext) {
+        scheduledSources.clear();
+        scheduledTimes.clear();
+        return;
+    }
+    
+    const currentTime = audioContext.currentTime;
+    
     // Stop all scheduled sources
     for (const [time, source] of scheduledSources.entries()) {
         try {
-            // Stop the source (works for both scheduled and playing sources)
-            source.stop();
-            source.disconnect();
+            // Stop the source first (before disconnecting)
+            // For sources scheduled in the future, stop at current time to prevent them from starting
+            // For sources that may have started, stop immediately
+            if (time > currentTime + 0.001) {
+                // Source is scheduled for the future - stop it at current time to prevent it from starting
+                try {
+                    source.stop(currentTime);
+                } catch (e) {
+                    // If stop fails, source might not be started yet - that's okay, try disconnect
+                }
+            } else {
+                // Source may have already started or is about to start - try to stop it immediately
+                try {
+                    source.stop();
+                } catch (e) {
+                    // Source may have already ended - that's okay
+                }
+            }
+            
+            // Then disconnect to ensure no audio flows
+            try {
+                source.disconnect();
+            } catch (e) {
+                // Already disconnected, ignore
+            }
         } catch (e) {
-            // Source may have already ended or been stopped
+            // Source may have already been stopped/disconnected
             // Try to disconnect anyway
             try {
                 source.disconnect();
             } catch (e2) {
-                // Already disconnected, ignore
+                // Ignore - source is already stopped/disconnected
             }
         }
     }
@@ -675,6 +705,10 @@ async function startPlayback() {
         // Explicitly play the audio element (required for mobile browsers)
         const audioElement = document.getElementById('audio-stream');
         if (audioElement) {
+            // Reconnect MediaStreamDestination if it was disconnected
+            if (!audioElement.srcObject && mediaStreamDestination) {
+                audioElement.srcObject = mediaStreamDestination.stream;
+            }
             try {
                 await audioElement.play();
             } catch (error) {
@@ -697,19 +731,41 @@ async function startPlayback() {
 
 // Stop playback
 function stopPlayback() {
+    // Set isPlaying to false FIRST to prevent any new scheduling
     isPlaying = false;
-    if (scheduledTimeout !== null) {
-        clearTimeout(scheduledTimeout);
-        scheduledTimeout = null;
-    }
+    
+    // Clear scheduling interval and timeout immediately
     if (scheduleInterval !== null) {
         clearInterval(scheduleInterval);
         scheduleInterval = null;
     }
-    // Clear all scheduled beats immediately
+    if (scheduledTimeout !== null) {
+        clearTimeout(scheduledTimeout);
+        scheduledTimeout = null;
+    }
+    
+    // Clear all scheduled beats immediately (this stops and disconnects all sources)
     clearScheduledBeats();
+    
+    // Pause the audio element (important for mobile - stops MediaStreamDestination playback)
+    const audioElement = document.getElementById('audio-stream');
+    if (audioElement && !audioElement.paused) {
+        audioElement.pause();
+        // Clear the srcObject to stop any buffered audio from playing
+        // We'll reconnect it when playback resumes
+        audioElement.srcObject = null;
+    }
+    
+    // Suspend audio context on mobile to prevent any lingering audio
+    if (audioContext && audioContext.state !== 'suspended') {
+        audioContext.suspend().catch(err => {
+            console.log('Error suspending audio context:', err);
+        });
+    }
+    
     nextBeatTime = null;
     lastScheduledBeatTime = null; // Reset tracking for next playback
+    
     // Release wake lock when stopping playback (non-blocking)
     releaseWakeLock().catch(err => {
         console.log('Wake lock release failed (non-critical):', err);
