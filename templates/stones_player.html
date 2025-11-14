@@ -44,7 +44,7 @@ window.MathJax = {
                         </div>
                         <!-- Custom file input (shown when Custom is selected) -->
                         <div id="custom-audio-container" class="mt-3" style="display: none;">
-                            <label for="custom-audio-file" class="form-label">Upload MP3 file (must be less than 1.5 seconds):</label>
+                            <label for="custom-audio-file" class="form-label">Upload MP3 file (must be less than 1.5s):</label>
                             <input type="file" class="form-control" id="custom-audio-file" accept="audio/mpeg,audio/mp3,.mp3">
                             <div id="custom-audio-status" class="form-text mt-2"></div>
                         </div>
@@ -69,22 +69,21 @@ window.MathJax = {
 </div>
 
 <script>
-// Kalman Filter for time offset estimation
+
 class KalmanFilter {
     constructor() {
-        this.x = 0;  // State estimate (time offset)
-        this.P = 1e10;  // Initial estimation error covariance
-        this.Q = 0.0001;  // Process noise covariance (clock drift)
-        this.R = 0.1;   // Measurement noise covariance (~50ms std dev, accounts for network jitter)
-        this.outlierThreshold = 3.0;  // Number of standard deviations for outlier rejection
-        this.minConfidenceForRejection = 1.0;  // Only reject outliers if P < this (have some confidence)
-        this.rejectedCount = 0;  // Track rejected measurements for debugging
+        this.x = 0;  // prior state
+        this.P = 1e10;  // prior cov
+        this.Q = 0.00000001; // dynamics are xdot=f(x)=0 lmao. clock drift is very very small.
+        this.R = 0.0015; 
+        this.outlierThreshold = 2.0;  // unit is stdevs
+        this.minConfidenceForRejection = 1.0;  // reject outliers if P < this (outlier measurement is better than nothing)
+        this.rejectedCount = 0;
     }
     
     update(measurement) {
         // Predict
         this.P = this.P + this.Q;
-        
         // Outlier rejection: only reject if we have some confidence in our estimate
         // Skip rejection during initial convergence (when P is very large)
         if (this.P < this.minConfidenceForRejection) {
@@ -120,8 +119,8 @@ class KalmanFilter {
     
     reset() {
         this.x = 0;
-        this.P = 1e10;  // Reset to effectively infinite covariance (no prior knowledge)
-        this.rejectedCount = 0;  // Reset rejected count
+        this.P = 1e10;
+        this.rejectedCount = 0;
     }
     
     // Save state to object for persistence
