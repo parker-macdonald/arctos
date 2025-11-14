@@ -360,7 +360,6 @@ def update_tournament_settings(tournament_url):
     tournament.player_reg_fee = float(request.form.get('player_reg_fee', 0))
     tournament.about = request.form.get('about', '')
     tournament.terms_link = request.form.get('terms_link', '')
-    tournament.head_refs = request.form.get('head_refs', '')  # Keep for backward compatibility
     tournament.head_refs_allowed_list = request.form.get('head_refs_allowed_list', '')
     tournament.head_refs_allow_reffing_teams = 'head_refs_allow_reffing_teams' in request.form
     tournament.head_refs_allow_anyone = 'head_refs_allow_anyone' in request.form

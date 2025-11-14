@@ -88,7 +88,6 @@ class Tournament(db.Model):
     registration_open = db.Column(db.Boolean, default=False)
     about = db.Column(db.Text)
     terms_link = db.Column(db.String(500))
-    head_refs = db.Column(db.Text)  # comma-separated player IDs (deprecated, use head_refs_allowed_list)
     head_refs_allowed_list = db.Column(db.Text)  # comma-separated list of allowed usernames
     head_refs_allow_reffing_teams = db.Column(db.Boolean, default=False)  # allow reffing teams and their members
     head_refs_allow_anyone = db.Column(db.Boolean, default=False)  # allow anyone registered

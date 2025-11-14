@@ -30,7 +30,7 @@ def can_head_ref_match(tournament_url: str, player_id: str, match=None) -> bool:
         player_reg = PlayerRegistration.query.filter_by(
             event=tournament_url,
             player=player_id,
-            status='CONFIRMED'
+            status='CONFIRMED',
         ).first()
         return player_reg is not None
     
@@ -50,16 +50,10 @@ def can_head_ref_match(tournament_url: str, player_id: str, match=None) -> bool:
                     event=tournament_url,
                     player=player_id,
                     team=team_id,
-                    status='CONFIRMED'
+                    status='CONFIRMED',
                 ).first()
                 if player_reg:
                     return True
-    
-    # Backward compatibility: check old head_refs field
-    if tournament.head_refs:
-        head_refs_list = [ref.strip() for ref in tournament.head_refs.split(',') if ref.strip()]
-        if player_id in head_refs_list:
-            return True
     
     return False
 
