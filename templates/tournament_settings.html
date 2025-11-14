@@ -22,7 +22,7 @@
                 <h5 class="mb-0">Tournament Information</h5>
             </div>
             <div class="card-body">
-                <form method="POST" action="/{{ tournament.url }}/update-settings" onsubmit="enableDisabledFields()">
+                <form method="POST" action="/{{ tournament.url }}/update-settings">
                     <div class="row">
                         <div class="col-md-6">
                             <div class="mb-3">
@@ -117,6 +117,7 @@
                     <div class="mb-3">
                         <label for="about" class="form-label">About</label>
                         <textarea class="form-control" id="about" name="about" rows="4">{{ tournament.about or '' }}</textarea>
+                        <div class="form-text">supports <a href="https://www.markdownguide.org/basic-syntax/">markdown</a>, including most of the <a href="https://www.markdownguide.org/extended-syntax/">extended syntax</a>. Images can be inserted with <code>![alt text](https://image_url)</code>, and links with <code>[text](link)</code>.</div>
                     </div>
 
                     <div class="mb-3">
@@ -130,82 +131,46 @@
                         <h3><label class="form-label">Head Ref Options</label></h3>
                         <p>
                             This website was designed around having dedicated head refs. However, this is not always 
-                            feasible, so there are a few other options: you can just allow anyone in the tournament 
-                            to be a head ref, or if you want to be a bit more careful, you can only allow players to 
-                            ref if theyre from teams assigned to ref. If you do either of these, please make sure to 
-                            communicate to players how the system works, and in particular that <i>you cannot un-
-                            start a match!</i>
+                            feasible, so there are a few other options. If you do any of these, please make sure to 
+                            communicate to players how the system works, in particular that <i>you cannot un-start
+                            a match!</i>
+                            <br>
+                            Explicitly listed player usernames will always be allowed, regardless of their registration status.
+                            Anyone else must be registered if they want to head ref.
+                            <br>
+                            <b>Please note that only players are allowed to head ref, not teams. This is to enforce accountability for ref responsibilities, as team accounts are/can be shared.</b>
                         </p>
-                        <div class="mb-3">
-                            <div class="form-check">
-                                <input class="form-check-input" type="checkbox" id="head_refs_allow_anyone" name="head_refs_allow_anyone" 
-                                       {% if tournament.head_refs_allow_anyone %}checked{% endif %}
-                                       onchange="toggleHeadRefOptions()">
-                                <label class="form-check-label" for="head_refs_allow_anyone">
-                                    Allow anyone to run matches
-                                </label>
-                                <div class="form-text">When enabled, players who are registered and marked paid can head ref all matches.</div>
-                            </div>
-                        </div>
-                        
                         <div class="mb-3">
                             <label for="head_refs_allowed_list" class="form-label">Explicit List of Allowed Usernames</label>
                             <input type="text" class="form-control" id="head_refs_allowed_list" name="head_refs_allowed_list" 
-                                   value="{{ tournament.head_refs_allowed_list or '' }}" placeholder="player1,player2,player3"
-                                   {% if tournament.head_refs_allow_anyone %}disabled{% endif %}>
-                            <div class="form-text">Comma-separated list of player IDs who can ref matches</div>
+                                   value="{{ tournament.head_refs_allowed_list or '' }}" placeholder="player1,player2,player3">                            <div class="form-text">Comma-separated list of player IDs who can ref matches</div>
                         </div>
+                        <div class="mb-3">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="head_refs_allow_anyone" name="head_refs_allow_anyone" 
+                                       {% if tournament.head_refs_allow_anyone %}checked{% endif %}>
+                                <label class="form-check-label" for="head_refs_allow_anyone">
+                                    Allow anyone to run matches
+                                </label>
+                                <div class="form-text">When enabled, players who are registered for the tournament can head ref all matches.</div>
+                            </div>
+                        </div>
+                        
                         <div id="head_ref_specific_options">
                             <div class="mb-3">
                                 <div class="form-check">
                                     <input class="form-check-input" type="checkbox" id="head_refs_allow_reffing_teams" name="head_refs_allow_reffing_teams" 
                                            {% if tournament.head_refs_allow_reffing_teams %}checked{% endif %}
                                     <label class="form-check-label" for="head_refs_allow_reffing_teams">
-                                        Allow reffing teams and their members to head ref matches they're assigned to ref
+                                        Only allow reffing teams to head ref
                                     </label>
-                                    <div class="form-text">When enabled, players on teams assigned to ref a match can head ref that match</div>
+                                    <div class="form-text">When enabled, players on teams assigned to ref a match can head ref that match.</div>
                                 </div>
                             </div>
                         </div>
                     </div>
                     
-                    <script>
-                    function toggleHeadRefOptions() {
-                        const allowAnyone = document.getElementById('head_refs_allow_anyone').checked;
-                        const specificOptions = document.getElementById('head_ref_specific_options');
-                        const allowedList = document.getElementById('head_refs_allowed_list');
-                        const allowReffingTeams = document.getElementById('head_refs_allow_reffing_teams');
-                        allowedList.disabled = false;
-                        if (allowAnyone) {
-                            specificOptions.style.opacity = '0.5';
-                            specificOptions.style.pointerEvents = 'none';
-                            allowReffingTeams.disabled = true;
-                        } else {
-                            specificOptions.style.opacity = '1';
-                            specificOptions.style.pointerEvents = 'auto';
-                            allowReffingTeams.disabled = false;
-                        }
-                    }
-                    
-                    function enableDisabledFields() {
-                        // Enable disabled fields before form submission so they're included
-                        const allowedList = document.getElementById('head_refs_allowed_list');
-                        const allowReffingTeams = document.getElementById('head_refs_allow_reffing_teams');
-                        const allowAnyone = document.getElementById('head_refs_allow_anyone');
-                        
-                        if (allowAnyone.checked) {
-                            // Clear the other fields when allow anyone is checked
-                            allowedList.disabled = false;
-                            allowedList.value = '';
-                            allowReffingTeams.disabled = false;
-                            allowReffingTeams.checked = false;
-                        } else {
-                            // Just enable them so they submit
-                            allowedList.disabled = false;
-                            allowReffingTeams.disabled = false;
-                        }
-                    }
-                    </script>
+
                     <h3>Publication Status</h3>
                     <div class="mb-3">
                         <div class="form-check">

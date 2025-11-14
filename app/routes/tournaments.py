@@ -845,6 +845,56 @@ def update_tags(tournament_url):
     return redirect(f'/{tournament_url}/setup')
 
 
+@bp.route('/<tournament_url>/recompute-schedule', methods=['POST'])
+@login_required
+def recompute_schedule(tournament_url):
+    """Recompute all match times for troubleshooting."""
+    if is_not_TO(tournament_url):
+        return redirect(f'/{tournament_url}')
+    
+    try:
+        recompute_all_match_times(tournament_url)
+        db.session.commit()
+        flash('Schedule recomputed successfully', 'success')
+    except Exception as e:
+        flash(f'Error recomputing schedule: {str(e)}', 'error')
+        print(f"Error recomputing schedule: {e}")
+    
+    return redirect(f'/{tournament_url}/setup')
+
+
+@bp.route('/<tournament_url>/update-all-references', methods=['POST'])
+@login_required
+def update_all_references(tournament_url):
+    """Update all match references (winner/loser) for troubleshooting."""
+    if is_not_TO(tournament_url):
+        return redirect(f'/{tournament_url}')
+    
+    from app.utils.dependencies import apply_match_dependencies
+    
+    # Get all completed matches
+    completed_matches = Match.query.filter_by(
+        event=tournament_url,
+        status='COMPLETED'
+    ).all()
+    
+    updated_count = 0
+    for match in completed_matches:
+        if match.match_winner in ('TEAM1', 'TEAM2'):
+            try:
+                apply_match_dependencies(tournament_url, match)
+                updated_count += 1
+            except Exception as e:
+                print(f"Error updating references for match {match.name}: {e}")
+    
+    if updated_count > 0:
+        flash(f'Updated references for {updated_count} completed matches', 'success')
+    else:
+        flash('No references were updated', 'info')
+    
+    return redirect(f'/{tournament_url}/setup')
+
+
 @bp.route('/<tournament_url>/api/autocomplete')
 def tournament_autocomplete(tournament_url):
     """Autocomplete endpoint for tournament setup.

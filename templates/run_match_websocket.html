@@ -89,7 +89,7 @@
                                     <div class="text-center">
                                         <input type="number" class="form-control-plaintext text-center display-4 m-0 p-0" id="stones-remaining" 
                                                style="width: 6ch; line-height: 1;" 
-                                               value="{{ gamestate.stones_remaining if gamestate.stones_remaining else match.nstonesperset or 100 }}" 
+                                               value="{{ match.stones_remaining if match.stones_remaining else match.nstonesperset or 100 }}" 
                                                onchange="updateStonesRemaining(this.value)">
                                     </div>
                                 </div>
@@ -224,7 +224,7 @@
                 </div>
                 <div class="mb-3" id="pointPlayerAssignmentSection" style="display: none;">
                     <label for="pointNotePlayer" class="form-label">Assign to Player:</label>
-                    <input type="text" class="form-control" id="pointNotePlayer" placeholder="Type to search players..." autocomplete="off" oninput="handlePlayerAutocomplete()" onblur="setTimeout(()=>hidePlayerSuggestions(),150)">
+                    <input type="text" class="form-control" id="pointNotePlayer" placeholder="Type to search players..." autocomplete="off" oninput="handlePlayerAutocomplete()" onblur="setTimeout(()=>hidePlayerSuggestions(),200)">
                     <div id="playerSuggestions" class="list-group mt-1" style="max-height: 180px; overflow-y: auto; display:none;"></div>
                     <small class="text-muted">Selecting a player will tie this note to that player.</small>
                 </div>
@@ -894,12 +894,28 @@ function handlePlayerAutocomplete() {
         suggestions.innerHTML = '';
         return;
     }
-    suggestions.innerHTML = filtered.map(p => `
-        <button type="button" class="list-group-item list-group-item-action" data-player-id="${p.id}" onclick="selectPlayerFromSuggestions('${p.display}', '${p.id}')">
+    // Build HTML with proper escaping
+    suggestions.innerHTML = filtered.map(p => {
+        // Escape HTML in display and name for safe rendering
+        const displayEscaped = p.display.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        const nameEscaped = p.name.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        return `<button type="button" class="list-group-item list-group-item-action" data-player-id="${p.id}" data-player-display="${displayEscaped}">
             ${p.display} <small class="text-muted">(${p.name})</small>
-        </button>
-    `).join('');
+        </button>`;
+    }).join('');
     suggestions.style.display = 'block';
+    
+    // Add click handlers using mousedown (fires before blur event)
+    const buttons = suggestions.querySelectorAll('button');
+    buttons.forEach(button => {
+        button.addEventListener('mousedown', function(e) {
+            e.preventDefault(); // Prevent input blur from firing
+            e.stopPropagation(); // Stop event bubbling
+            const display = button.dataset.playerDisplay;
+            const id = button.dataset.playerId;
+            selectPlayerFromSuggestions(display, id);
+        });
+    });
 }
 
 function selectPlayerFromSuggestions(display, id) {

@@ -302,11 +302,18 @@
                                                                 {% set team2_pseudonym = match.team2_initial %}
                                                             {% endif %}
                                                             
+                                                            {% set match_winner = match.match_winner %}
                                                             <div class="schedule-match-title">
                                                                 <strong>{{ match.name }}:</strong> 
                                                                 {{ team1_pseudonym }}
+                                                                {% if match.status == 'COMPLETED' and match_winner == 'TEAM1' %}
+                                                                    <span class="badge bg-success ms-1" style="font-size: 0.7em;">Winner</span>
+                                                                {% endif %}
                                                                 vs 
                                                                 {{ team2_pseudonym }}
+                                                                {% if match.status == 'COMPLETED' and match_winner == 'TEAM2' %}
+                                                                    <span class="badge bg-success ms-1" style="font-size: 0.7em;">Winner</span>
+                                                                {% endif %}
                                                             </div>
                                                             
                                                             {% set refs_display = match.refs or match.refs_initial or '' %}
@@ -337,9 +344,8 @@
                                                                 </div>
                                                             {% endif %}
                                                             
-                                                            {% set gs = match.gamestate|from_json if match.gamestate else {} %}
                                                             {% set is_special = match.type in ['BREAK','JOIN'] %}
-                                                            {% set can_start = (match.team1 and match.team2 and (match.refs or match.refs_initial)) and ((not match.dynamic) or gs.get('ready_to_start')) %}
+                                                            {% set can_start = (match.team1 and match.team2 and (match.refs or match.refs_initial)) and ((not match.dynamic) or match.ready_to_start) %}
                                                             
                                                             <div class="schedule-match-status">
                                                                 {% if match.status == 'NOT_STARTED' and can_start and (not is_special) %}
@@ -372,7 +378,6 @@
                                                             <div class="schedule-match-title">
                                                                 <strong>{{ match.name }}</strong>
                                                             </div>
-                                                            {% set gs = match.gamestate|from_json if match.gamestate else {} %}
                                                             <div class="schedule-match-status">
                                                                 <span class="badge 
                                                                     {% if match.status == 'NOT_STARTED' %}bg-secondary

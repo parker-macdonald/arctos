@@ -232,13 +232,13 @@
             </div>
         </div>
         
-        {% if gamestate.notes %}
+        {% if match.initial_notes %}
         <div class="card mt-3">
             <div class="card-header">
                 <h5 class="mb-0">Start Match Notes</h5>
             </div>
             <div class="card-body">
-                <p>{{ gamestate.notes }}</p>
+                <p>{{ match.initial_notes }}</p>
             </div>
         </div>
         {% endif %}

@@ -90,7 +90,8 @@ def render_markdown(text):
         'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
         'ul', 'ol', 'li',
         'strong', 'em', 'del', 'span',
-        'table', 'thead', 'tbody', 'tr', 'th', 'td'
+        'table', 'thead', 'tbody', 'tr', 'th', 'td',
+        'img'
     })
     allowed_attrs = {
         **_bleach.sanitizer.ALLOWED_ATTRIBUTES,

@@ -143,11 +143,8 @@
                                         {% if match.time_finalized %}
                                             <span class="badge bg-primary ms-1" title="Time finalized - match start time is locked">Time Finalized</span>
                                         {% endif %}
-                                        {% if match.gamestate %}
-                                            {% set gs = match.gamestate|from_json %}
-                                            {% if gs.get('ready_to_start') %}
-                                                <span class="badge bg-success ms-1" title="Ready to start - all dependencies completed">Ready to Start</span>
-                                            {% endif %}
+                                        {% if match.ready_to_start %}
+                                            <span class="badge bg-success ms-1" title="Ready to start - all dependencies completed">Ready to Start</span>
                                         {% endif %}
                                     </td>
                                     <td>
@@ -298,7 +295,10 @@
     <div class="col-md-4">
         <div class="card">
             <div class="card-header">
-                <h5 class="mb-0">Fields</h5>
+                <h5 class="mb-0 d-inline">Fields</h5>
+                <a href="#" class="text-muted text-decoration-none ms-2" data-bs-toggle="modal" data-bs-target="#fieldsHelpModal" style="font-size: 0.85em;">
+                    <small>(what's this?)</small>
+                </a>
             </div>
             <div class="card-body">
                 {% if fields %}
@@ -340,7 +340,10 @@
 
         <div class="card mt-3">
             <div class="card-header">
-                <h5 class="mb-0">Tags</h5>
+                <h5 class="mb-0 d-inline">Tags</h5>
+                <a href="#" class="text-muted text-decoration-none ms-2" data-bs-toggle="modal" data-bs-target="#tagsHelpModal" style="font-size: 0.85em;">
+                    <small>(what's this?)</small>
+                </a>
             </div>
             <div class="card-body">
                 {% if tags %}
@@ -371,8 +374,30 @@
                 </div>
             </div>
         </div>
-
-        {# Quick Actions removed; keep Update Tags near Tags section #}
+        
+        <!-- Troubleshooting Section -->
+        <div class="card mt-3">
+            <div class="card-header bg-opacity-10">
+                <h5 class="mb-0">Utilities</h5>
+            </div>
+            <div class="card-body">
+                <p class="text-muted small mb-3">
+                    These tools may be useful while building your schedule, but you shouldn't need to use them while running a tournament.
+                </p>
+                <div class="d-flex gap-2">
+                    <form method="POST" action="/{{ tournament.url }}/recompute-schedule" class="d-inline">
+                        <button type="submit" class="btn btn-outline-warning btn-sm" onclick="return confirm('Are you sure you want to recompute the schedule? This will update match times based on dependencies (does not update matches that are completed or have had their start times finalized).')">
+                            Recompute Schedule
+                        </button>
+                    </form>
+                    <form method="POST" action="/{{ tournament.url }}/update-all-references" class="d-inline">
+                        <button type="submit" class="btn btn-outline-warning btn-sm" onclick="return confirm('Are you sure you want to update all references? This will resolve all winner/loser placeholders in completed matches.')">
+                            Update All References
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
     </div>
 </div>
 
@@ -486,6 +511,64 @@
                     <button type="submit" class="btn btn-primary">Update Tags</button>
                 </div>
             </form>
+        </div>
+    </div>
+</div>
+
+<!-- Fields Help Modal -->
+<div class="modal fade" id="fieldsHelpModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">What are Fields?</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p>
+                    "Fields" here refers to the actual bits of grass you play on. The names you give them here will be 
+                    shown on the schedule when telling teams where to go. If you need more than the max number of fields,
+                    just increase the field count in the event settings.
+                </p><p>
+                    The "stream" attribute is if you're live streaming that field on YouTube. If you are, we'll 
+                    automatically link points to their starting timestamps in the stream so it's easy to review footage 
+                    directly from the match pages. To get the link, go to your stream, click Share → Embed, and get the 
+                    link inside <code>src="..."</code>.
+                </p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Tags Help Modal -->
+<div class="modal fade" id="tagsHelpModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">What are Tags?</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p>
+                    Tags are how you can set up a schedule without knowing what teams are actually playing. 
+                    A tag is like a generic team; whenever you want, you can use the "update tags" button 
+                    to replace all instances of any given tag with a specific team.
+                </p>
+                <p>
+                    This is most obviously helpful before you know who has registered, but it's also a 
+                    very powerful tool in general! This was how we handled the trials/finals seeding at 
+                    Fog of War 2025 - teams for day 2 were set to tags like "seed 1", "seed 2", etc., 
+                    and after day 1, we compiled the results, completed the rankings, and updated the tags accordingly.
+                </p><p>
+                    This is meant to be a very generic tool because this website has been designed to be 
+                    very unopinionated--I'm not trying to tell you how you should do rankings, so you can just do it however you'd like.
+                </p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
         </div>
     </div>
 </div>

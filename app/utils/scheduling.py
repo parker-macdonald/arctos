@@ -390,27 +390,22 @@ def recompute_all_match_times(tournament_url: str) -> None:
                     match.completed_time = now if match.type == 'JOIN' else now + timedelta(minutes=match.nominal_length)
                     match.status = 'COMPLETED'
         
-        # Update gamestate.ready_to_start based on dependency completion state
-        try:
-            gs = json.loads(match.gamestate) if match.gamestate else {}
-        except Exception:
-            gs = {}
+        # Update ready_to_start based on dependency completion state
         if deps:
             all_deps_completed = all(dep.status == 'COMPLETED' or getattr(dep, 'completed_time', None) is not None for dep in deps)
             if all_deps_completed:
                 # Mark as ready to start and set timestamp if not already present
-                gs['ready_to_start'] = True
-                if 'ready_to_start_at' not in gs or not gs.get('ready_to_start_at'):
+                match.ready_to_start = True
+                if not match.ready_to_start_at:
                     from datetime import timezone as _tz
-                    gs['ready_to_start_at'] = datetime.now(_tz.utc).isoformat()
+                    match.ready_to_start_at = datetime.now(_tz.utc)
             else:
                 # Explicitly clear readiness if dependencies are not yet completed
-                gs['ready_to_start'] = False
+                match.ready_to_start = False
                 # Do not clear the timestamp to retain historical info
         else:
             # No dependencies: readiness should be False here; static UI uses other conditions
-            gs['ready_to_start'] = False
-        match.gamestate = json.dumps(gs)
+            match.ready_to_start = False
     
     # Update sequence relationships for all fields
     for match in all_matches:
@@ -767,13 +762,8 @@ def get_last_dependency_end_time(match: Match, tournament_url: str) -> datetime 
                 pass
             return d
         if m.status == 'COMPLETED':
-            try:
-                gs = json.loads(m.gamestate) if m.gamestate else {}
-                finalized_str = gs.get('finalized_at')
-                if finalized_str:
-                    return parse_iso(finalized_str)
-            except Exception:
-                pass
+            if m.finalized_at:
+                return m.finalized_at
         return None
     
     end_times = []
@@ -865,14 +855,7 @@ def mark_dependent_matches_time_finalized(started_match: Match, tournament_url: 
                 if group_ready and group_finalized_candidates:
                     group_finalized_start = max(group_finalized_candidates)
                     for jm in join_group:
-                        try:
-                            gs = json.loads(jm.gamestate) if jm.gamestate else {}
-                        except Exception:
-                            gs = {}
                         jm.time_finalized = True
-                        gs['time_finalized_at'] = datetime.now(timezone.utc).isoformat()
-                        gs['finalized_start_time'] = group_finalized_start.isoformat()
-                        jm.gamestate = json.dumps(gs)
                 # If group not ready, do nothing for JOIN yet
                 continue
 
@@ -900,15 +883,8 @@ def mark_dependent_matches_time_finalized(started_match: Match, tournament_url: 
                         dep_length_minutes = (last_dep.nominal_length or 60)
                     finalized_start = last_dep_start + timedelta(minutes=dep_length_minutes)
                     
-                    # Update gamestate (do not set confirmed_start_time here)
-                    try:
-                        gs = json.loads(match.gamestate) if match.gamestate else {}
-                    except Exception:
-                        gs = {}
+                    # Update time_finalized (do not set confirmed_start_time here)
                     match.time_finalized = True
-                    gs['time_finalized_at'] = datetime.now(timezone.utc).isoformat()
-                    gs['finalized_start_time'] = finalized_start.isoformat()
-                    match.gamestate = json.dumps(gs)
 
 
 def mark_dependent_matches_ready_to_start(completed_match: Match, tournament_url: str) -> None:
@@ -933,13 +909,10 @@ def mark_dependent_matches_ready_to_start(completed_match: Match, tournament_url
         all_deps_finished = all(dep.status == 'COMPLETED' for dep in deps)
         
         if all_deps_finished:
-            # Update gamestate (no confirmed_start_time here)
-            try:
-                gs = json.loads(match.gamestate) if match.gamestate else {}
-            except Exception:
-                gs = {}
-            gs['ready_to_start'] = True
-            gs['ready_to_start_at'] = datetime.now(timezone.utc).isoformat()
+            # Update ready_to_start (no confirmed_start_time here)
+            match.ready_to_start = True
+            if not match.ready_to_start_at:
+                match.ready_to_start_at = datetime.now(timezone.utc)
             
             # If not already time_finalized, compute and set now (fallback)
             if not match.time_finalized:
@@ -964,10 +937,6 @@ def mark_dependent_matches_ready_to_start(completed_match: Match, tournament_url
                             dep_length_minutes = (last_dep.nominal_length or 60)
                         finalized_start = last_dep_start + timedelta(minutes=dep_length_minutes)
                         match.time_finalized = True
-                        gs['time_finalized_at'] = datetime.now(timezone.utc).isoformat()
-                        gs['finalized_start_time'] = finalized_start.isoformat()
-            
-            match.gamestate = json.dumps(gs)
 
 
 def auto_complete_break_match(completed_match: Match, tournament_url: str) -> None:
@@ -997,13 +966,8 @@ def auto_complete_break_match(completed_match: Match, tournament_url: str) -> No
     
     def get_finalized_at(m: Match):
         if m.status == 'COMPLETED':
-            try:
-                gs = json.loads(m.gamestate) if m.gamestate else {}
-                finalized_str = gs.get('finalized_at')
-                if finalized_str:
-                    return parse_iso(finalized_str)
-            except Exception:
-                pass
+            if m.finalized_at:
+                return m.finalized_at
         return None
     
     completed_end = get_finalized_at(completed_match)
@@ -1035,15 +999,9 @@ def auto_complete_break_match(completed_match: Match, tournament_url: str) -> No
     else:
         next_match.completed_time = break_end
     
-    # Set gamestate
-    gamestate = {
-        'finalized_at': break_end.isoformat(),
-        'finalized_by': 'system',
-        'auto_completed': True,
-        'start_time': break_start.isoformat(),
-        'end_time': break_end.isoformat()
-    }
-    next_match.gamestate = json.dumps(gamestate)
+    # Set completion metadata
+    next_match.finalized_at = break_end
+    next_match.finalized_by = 'system'
     
     # Commit and recursively process any dependent matches
     db.session.commit()
@@ -1124,10 +1082,8 @@ def auto_complete_join_matches(tournament_url: str) -> None:
                     return d
                 if m.status == 'COMPLETED':
                     try:
-                        gs = json.loads(m.gamestate) if m.gamestate else {}
-                        finalized_str = gs.get('finalized_at')
-                        if finalized_str:
-                            return parse_iso(finalized_str)
+                        if m.finalized_at:
+                            return m.finalized_at
                     except Exception:
                         pass
                 return None
@@ -1170,15 +1126,9 @@ def auto_complete_join_matches(tournament_url: str) -> None:
                 # Record completion time (same as start for zero-length)
                 join_match.completed_time = join_start_naive
                 
-                # Set gamestate
-                gamestate = {
-                    'finalized_at': join_end.isoformat(),
-                    'finalized_by': 'system',
-                    'auto_completed': True,
-                    'start_time': join_start.isoformat(),
-                    'end_time': join_end.isoformat()
-                }
-                join_match.gamestate = json.dumps(gamestate)
+                # Set completion metadata
+                join_match.finalized_at = join_end
+                join_match.finalized_by = 'system'
             
             # Commit the JOIN completions
             db.session.commit()
@@ -1273,15 +1223,10 @@ def update_dynamic_schedule_after_completion(tournament_url: str, completed_matc
                 except Exception:
                     pass
                 return d
-            if m.status == 'COMPLETED':
-                try:
-                    gs = json.loads(m.gamestate) if m.gamestate else {}
-                    finalized_str = gs.get('finalized_at')
-                    if finalized_str:
-                        return parse_iso(finalized_str)
-                except Exception:
-                    pass
-            return None
+                if m.status == 'COMPLETED':
+                    if m.finalized_at:
+                        return m.finalized_at
+                return None
         
         end_ts = get_finalized_at(completed_match)
         if not end_ts:

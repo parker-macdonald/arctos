@@ -52,6 +52,7 @@ window.MathJax = {
                         <div class="d-flex align-items-center mb-2">
                             <strong class="me-2">Teams:</strong>
                             <div>
+                                {% set match_winner = match.match_winner %}
                                 {% if match.team1 %}
                                     {% set team1_registration = match.team1_registration %}
                                     {% if team1_registration %}
@@ -67,6 +68,9 @@ window.MathJax = {
                                     {% else %}
                                         {{ team1_display }}
                                     {% endif %}
+                                {% endif %}
+                                {% if match.status == 'COMPLETED' and match_winner == 'TEAM1' %}
+                                    <span class="badge bg-success ms-2">Winner</span>
                                 {% endif %}
                                 <span class="mx-2">vs</span>
                                 {% if match.team2 %}
@@ -84,6 +88,9 @@ window.MathJax = {
                                     {% else %}
                                         {{ team2_display }}
                                     {% endif %}
+                                {% endif %}
+                                {% if match.status == 'COMPLETED' and match_winner == 'TEAM2' %}
+                                    <span class="badge bg-success ms-2">Winner</span>
                                 {% endif %}
                             </div>
                         </div>
@@ -202,7 +209,7 @@ window.MathJax = {
                     <div class="col-12">
                         <div class="d-flex gap-2">
                             {% if match.status == 'NOT_STARTED' and match.team1 and match.team2 and (match.refs or match.refs_initial) %}
-                                {% if (not match.dynamic) or gamestate.get('ready_to_start') %}
+                                {% if (not match.dynamic) or match.ready_to_start %}
                                     <a href="/{{ tournament.url }}/start-match?id={{ match.uuid }}" class="btn btn-success">Start Match</a>
                                 {% else %}
                                     <span class="btn btn-secondary disabled" title="Waiting on dependencies">Cannot Start</span>
@@ -248,7 +255,7 @@ window.MathJax = {
                 <div class="row mb-3">
                     {% if match.type == 'STONES' %}
                     <div class="col-md-6">
-                        <p><strong>Stones Remaining:</strong> <span id="live-stones-remaining">{{ gamestate.stones_remaining if gamestate and (gamestate.stones_remaining is not none) else '??' }}</span></p>
+                        <p><strong>Stones Remaining:</strong> <span id="live-stones-remaining">{{ match.stones_remaining if match.stones_remaining is not none else '??' }}</span></p>
                     </div>
                     {% endif %}
                 </div>
@@ -424,16 +431,16 @@ window.MathJax = {
             <div class="card-body">
                 <div class="mb-3">
                     <h6 class="mb-1">Start Notes</h6>
-                    {% if gamestate and gamestate.notes %}
-                        <div class="small text-muted border-start border-3 ps-2">{{ gamestate.notes }}</div>
+                    {% if match.initial_notes %}
+                        <div class="small text-muted border-start border-3 ps-2">{{ match.initial_notes }}</div>
                     {% else %}
                         <div class="text-muted small">None</div>
                     {% endif %}
                 </div>
                 <div class="mb-3">
                     <h6 class="mb-1">Finalize Notes</h6>
-                    {% if gamestate and gamestate.final_notes %}
-                        <div class="small text-muted border-start border-3 ps-2">{{ gamestate.final_notes }}</div>
+                    {% if match.final_notes %}
+                        <div class="small text-muted border-start border-3 ps-2">{{ match.final_notes }}</div>
                     {% else %}
                         <div class="text-muted small">None</div>
                     {% endif %}

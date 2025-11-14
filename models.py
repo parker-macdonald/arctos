@@ -182,7 +182,22 @@ class Match(db.Model):
     nsets = db.Column(db.Integer)
     nstonesperset = db.Column(db.Integer)
     status = db.Column(db.String(20), default='NOT_STARTED')  # NOT_STARTED, IN_PROGRESS, COMPLETED
-    gamestate = db.Column(db.Text)
+    # Fields migrated from gamestate JSON:
+    initial_notes = db.Column(db.Text)  # notes (initial match notes, distinct from MatchNote objects)
+    team1_players = db.Column(db.Text)  # JSON array of player IDs
+    team2_players = db.Column(db.Text)  # JSON array of player IDs
+    started_by = db.Column(db.String(50))  # user ID who started the match
+    started_at = db.Column(db.DateTime)  # when match started
+    stones_per_set = db.Column(db.Integer)  # for STONES matches
+    stones_remaining = db.Column(db.Integer)  # for STONES matches
+    finalized_by = db.Column(db.String(50))  # user ID who finalized the match
+    final_notes = db.Column(db.Text)  # final notes
+    match_winner = db.Column(db.String(10))  # 'TEAM1' or 'TEAM2'
+    team1_signature = db.Column(db.Text)  # signature data
+    team2_signature = db.Column(db.Text)  # signature data
+    finalized_at = db.Column(db.DateTime)  # when match was finalized
+    ready_to_start = db.Column(db.Boolean, default=False)  # flag for dynamic scheduling
+    ready_to_start_at = db.Column(db.DateTime)  # when ready_to_start was set
     dynamic = db.Column(db.Boolean, default=True)  # True for dynamic, False for static scheduling
     time_finalized = db.Column(db.Boolean, default=False)  # True when start time is finalized (all dependencies started)
     previous_match = db.Column(db.String(36), db.ForeignKey('matches.uuid'), nullable=True)

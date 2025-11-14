@@ -71,15 +71,7 @@ def init_websocket_handlers(socketio_instance):
         if not match:
             return
         
-        gamestate = {}
-        if match.gamestate:
-            try:
-                gamestate = json.loads(match.gamestate)
-            except:
-                gamestate = {}
-        
-        gamestate['stones_remaining'] = stones_remaining
-        match.gamestate = json.dumps(gamestate)
+        match.stones_remaining = stones_remaining
         db.session.commit()
         
         emit('stones_updated', {

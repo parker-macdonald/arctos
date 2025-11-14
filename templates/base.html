@@ -46,6 +46,29 @@
         .admonition.tip { border-color: #198754; background-color: #e9f7ef; }
         .admonition.warning { border-color: #ffc107; background-color: #fff8e1; }
         .admonition.danger { border-color: #dc3545; background-color: #fdecea; }
+        /* Style markdown tables */
+        .card-body table,
+        .card-body table.table {
+            margin-bottom: 1rem;
+            color: #212529;
+            border-collapse: collapse;
+        }
+        .card-body table th,
+        .card-body table td {
+            padding: 0.5rem;
+            vertical-align: top;
+            border-top: 1px solid #dee2e6;
+        }
+        .card-body table thead th {
+            vertical-align: bottom;
+            border-bottom: 2px solid #dee2e6;
+        }
+        .card-body table tbody + tbody {
+            border-top: 2px solid #dee2e6;
+        }
+        .card-body table th {
+            font-weight: 600;
+        }
     </style>
 </head>
 <body>

@@ -37,13 +37,6 @@ def match_page(tournament_url):
     
     points = Point.query.filter_by(match=match.uuid).order_by(Point.stamp).all()
     
-    gamestate = {}
-    if match.gamestate:
-        try:
-            gamestate = json.loads(match.gamestate)
-        except:
-            gamestate = {}
-    
     is_head_ref_flag = can_head_ref_match(tournament_url, current_user.id, match=match) if current_user.is_authenticated and current_user.__class__.__name__ == 'Player' else False
     
     # Get match notes and point notes for head refs
@@ -151,7 +144,6 @@ def match_page(tournament_url):
                          tournament=tournament, 
                          match=match, 
                          points=points,
-                         gamestate=gamestate,
                          is_head_ref=is_head_ref_flag,
                          computed_end_time=computed_end_time,
                          actual_end_time=actual_end_time,
@@ -194,14 +186,8 @@ def start_match(tournament_url):
         except Exception:
             deps = []
         all_deps_finished = (len(deps) == 0) or all(d.status == 'COMPLETED' for d in deps)
-        # Also allow if gamestate says ready_to_start
-        is_ready_flag = False
-        if match.gamestate:
-            try:
-                gs = json.loads(match.gamestate)
-                is_ready_flag = bool(gs.get('ready_to_start'))
-            except Exception:
-                is_ready_flag = False
+        # Also allow if ready_to_start flag is set
+        is_ready_flag = match.ready_to_start or False
         if not (all_deps_finished or is_ready_flag):
             flash('This match cannot be started yet. Dependencies are not completed.', 'error')
             return redirect(f'/{tournament_url}/schedule')
@@ -417,13 +403,12 @@ def start_match_post(tournament_url):
     team1_players = dedup(team1_players)
     team2_players = dedup(team2_players)
 
-    gamestate = {
-        'notes': request.form.get('match_notes', ''),
-        'team1_players': team1_players,
-        'team2_players': team2_players,
-        'started_by': current_user.id,
-        'started_at': datetime.utcnow().isoformat()
-    }
+    import json
+    match.initial_notes = request.form.get('match_notes', '')
+    match.team1_players = json.dumps(team1_players)
+    match.team2_players = json.dumps(team2_players)
+    match.started_by = current_user.id
+    match.started_at = datetime.utcnow()
     
     if match.type == 'STONES':
         stones_per_set = request.form.get('stones_per_set')
@@ -436,9 +421,8 @@ def start_match_post(tournament_url):
         else:
             # Use match's nstonesperset value or default to 100
             stones_per_set = match.nstonesperset or 100
-        gamestate['stones_per_set'] = stones_per_set
-        gamestate['stones_remaining'] = stones_per_set
-    match.gamestate = json.dumps(gamestate)
+        match.stones_per_set = stones_per_set
+        match.stones_remaining = stones_per_set
     
     db.session.commit()
     
@@ -481,40 +465,39 @@ def run_match(tournament_url):
     tournament = Tournament.query.get(tournament_url)
     points = Point.query.filter_by(match=match.uuid).order_by(Point.stamp).all()
     
-    gamestate = {}
-    if match.gamestate:
-        try:
-            gamestate = json.loads(match.gamestate)
-        except:
-            gamestate = {}
-    
     team1_players = []
     team2_players = []
-    if gamestate.get('team1_players'):
-        player_ids = gamestate['team1_players']
-        for pid in player_ids:
-            pr = PlayerRegistration.query.filter_by(
-                event=tournament_url,
-                player=pid,
-                status='CONFIRMED'
-            ).first()
-            if pr:
-                player = Player.query.get(pid)
-                if player:
-                    team1_players.append((pr, player))
+    if match.team1_players:
+        try:
+            player_ids = json.loads(match.team1_players)
+            for pid in player_ids:
+                pr = PlayerRegistration.query.filter_by(
+                    event=tournament_url,
+                    player=pid,
+                    status='CONFIRMED'
+                ).first()
+                if pr:
+                    player = Player.query.get(pid)
+                    if player:
+                        team1_players.append((pr, player))
+        except (json.JSONDecodeError, TypeError):
+            pass
     
-    if gamestate.get('team2_players'):
-        player_ids = gamestate['team2_players']
-        for pid in player_ids:
-            pr = PlayerRegistration.query.filter_by(
-                event=tournament_url,
-                player=pid,
-                status='CONFIRMED'
-            ).first()
-            if pr:
-                player = Player.query.get(pid)
-                if player:
-                    team2_players.append((pr, player))
+    if match.team2_players:
+        try:
+            player_ids = json.loads(match.team2_players)
+            for pid in player_ids:
+                pr = PlayerRegistration.query.filter_by(
+                    event=tournament_url,
+                    player=pid,
+                    status='CONFIRMED'
+                ).first()
+                if pr:
+                    player = Player.query.get(pid)
+                    if player:
+                        team2_players.append((pr, player))
+        except (json.JSONDecodeError, TypeError):
+            pass
     
     # Build match_players for player autocomplete in notes modal
     match_players = []
@@ -532,7 +515,6 @@ def run_match(tournament_url):
                          tournament=tournament,
                          match=match,
                          points=points,
-                         gamestate=gamestate,
                          team1_players=team1_players,
                          team2_players=team2_players,
                          match_players=match_players)
@@ -623,13 +605,6 @@ def finalize_match(tournament_url):
                     'created_at': n.created_at.isoformat() if getattr(n, 'created_at', None) else None,
                 })
     
-    gamestate = {}
-    if match.gamestate:
-        try:
-            gamestate = json.loads(match.gamestate)
-        except:
-            gamestate = {}
-    
     team1_score = sum(1 for p in points if p.winner == 'TEAM1' and not p.rerolled)
     team2_score = sum(1 for p in points if p.winner == 'TEAM2' and not p.rerolled)
 
@@ -640,8 +615,7 @@ def finalize_match(tournament_url):
                          point_notes_map=point_notes_map,
                          stones_elapsed_map=stones_elapsed_map,
                          team1_score=team1_score,
-                         team2_score=team2_score,
-                         gamestate=gamestate)
+                         team2_score=team2_score)
 
 
 @bp.route('/<tournament_url>/finalize-match', methods=['POST'])
@@ -670,27 +644,20 @@ def finalize_match_post(tournament_url):
         flash('Please select a match winner', 'error')
         return redirect(f'/{tournament_url}/finalize-match?id={match_id}')
     
-    gamestate = {}
-    if match.gamestate:
-        try:
-            gamestate = json.loads(match.gamestate)
-        except:
-            gamestate = {}
     
     # Record completion time on the match using local server time (naive)
     match.completed_time = datetime.now()
-    gamestate['finalized_by'] = current_user.id
-    gamestate['final_notes'] = request.form.get('final_notes', '')
-    gamestate['match_winner'] = match_winner
+    match.finalized_by = current_user.id
+    match.final_notes = request.form.get('final_notes', '')
+    match.match_winner = match_winner
+    match.finalized_at = datetime.now()
     
     team1_signature = request.form.get('team1_signature')
     team2_signature = request.form.get('team2_signature')
     if team1_signature:
-        gamestate['team1_signature'] = team1_signature
+        match.team1_signature = team1_signature
     if team2_signature:
-        gamestate['team2_signature'] = team2_signature
-    
-    match.gamestate = json.dumps(gamestate)
+        match.team2_signature = team2_signature
     db.session.commit()
     
     from app import get_socketio
@@ -781,15 +748,7 @@ def match_state(tournament_url):
             'team2_score': sum(1 for p in set_points if p.winner == 'TEAM2' and not p.rerolled)
         }
     
-    # Get stones remaining from gamestate
-    gamestate = {}
-    if match.gamestate:
-        try:
-            gamestate = json.loads(match.gamestate)
-        except:
-            gamestate = {}
-    
-    stones_remaining = gamestate.get('stones_remaining', None)
+    stones_remaining = match.stones_remaining
     
     # Build points data
     points_data = []
@@ -823,10 +782,10 @@ def match_state(tournament_url):
             'end_stamp': end_stamp_iso,
         })
     
-    # Get finalized_at from gamestate if match is completed
+    # Get finalized_at if match is completed
     finalized_at = None
-    if match.status == 'COMPLETED' and 'finalized_at' in gamestate:
-        finalized_at = gamestate['finalized_at']
+    if match.status == 'COMPLETED' and match.finalized_at:
+        finalized_at = match.finalized_at.isoformat()
     
     return jsonify({
         'match_id': match.uuid,
@@ -981,15 +940,7 @@ def update_stones(tournament_url):
     if not can_head_ref_match(tournament_url, current_user.id, match=match):
         return jsonify({'success': False, 'error': 'Not authorized'}), 403
     
-    gamestate = {}
-    if match.gamestate:
-        try:
-            gamestate = json.loads(match.gamestate)
-        except:
-            gamestate = {}
-    
-    gamestate['stones_remaining'] = stones_remaining
-    match.gamestate = json.dumps(gamestate)
+    match.stones_remaining = stones_remaining
     db.session.commit()
     
     return jsonify({'success': True, 'stones_remaining': stones_remaining})

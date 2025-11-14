@@ -9,12 +9,7 @@ def apply_match_dependencies(tournament_url: str, completed_match: Match) -> Non
     """Replace placeholders like 'MatchName winner/loser' in other matches' initial fields
     with explicit team ids in non-initial fields (team1/team2/refs)."""
     # Determine winner/loser team ids
-    winner_key = None
-    try:
-        gs = json.loads(completed_match.gamestate) if completed_match.gamestate else {}
-        winner_key = gs.get('match_winner')  # 'TEAM1' or 'TEAM2'
-    except Exception:
-        winner_key = None
+    winner_key = completed_match.match_winner  # 'TEAM1' or 'TEAM2'
 
     if winner_key not in ('TEAM1', 'TEAM2'):
         return

@@ -20,30 +20,28 @@
         {% if matches %}
             {% set team_stats = {} %}
             {% for match in matches %}
-                {% if match.status == 'COMPLETED' %}
-                    {% set winner = None %}
-                    {% if match.gamestate and 'TEAM1' in match.gamestate or 'TEAM2' in match.gamestate %}
-                        {% if 'match_winner":"TEAM1' in match.gamestate or '"match_winner"\u003a "TEAM1"' in match.gamestate %}
-                            {% set winner = 'TEAM1' %}
-                        {% elif 'match_winner":"TEAM2' in match.gamestate or '"match_winner"\u003a "TEAM2"' in match.gamestate %}
-                            {% set winner = 'TEAM2' %}
+                {% if match.status == 'COMPLETED' and match.type not in ('BREAK', 'JOIN') %}
+                    {% set winner = match.match_winner %}
+
+                    {% set t1 = match.team1_registration.pseudonym if match.team1_registration else (match.team1 or match.team1_initial) %}
+                    {% set t2 = match.team2_registration.pseudonym if match.team2_registration else (match.team2 or match.team2_initial) %}
+
+                    {# Only process teams that are not None/Null #}
+                    {% if t1 and t1 != 'TBA' %}
+                        {% if t1 not in team_stats %}
+                            {% set _ = team_stats.update({t1: {'matches_won':0,'matches_lost':0,'points_won':0,'points_lost':0}}) %}
+                        {% endif %}
+                    {% endif %}
+                    {% if t2 and t2 != 'TBA' %}
+                        {% if t2 not in team_stats %}
+                            {% set _ = team_stats.update({t2: {'matches_won':0,'matches_lost':0,'points_won':0,'points_lost':0}}) %}
                         {% endif %}
                     {% endif %}
 
-                    {% set t1 = match.team1_registration.pseudonym if match.team1_registration else (match.team1 or match.team1_initial or 'TBA') %}
-                    {% set t2 = match.team2_registration.pseudonym if match.team2_registration else (match.team2 or match.team2_initial or 'TBA') %}
-
-                    {% if t1 not in team_stats %}
-                        {% set _ = team_stats.update({t1: {'matches_won':0,'matches_lost':0,'points_won':0,'points_lost':0}}) %}
-                    {% endif %}
-                    {% if t2 not in team_stats %}
-                        {% set _ = team_stats.update({t2: {'matches_won':0,'matches_lost':0,'points_won':0,'points_lost':0}}) %}
-                    {% endif %}
-
-                    {% if winner == 'TEAM1' %}
+                    {% if winner == 'TEAM1' and t1 and t1 != 'TBA' and t2 and t2 != 'TBA' %}
                         {% set _ = team_stats[t1].update({'matches_won': team_stats[t1]['matches_won'] + 1}) %}
                         {% set _ = team_stats[t2].update({'matches_lost': team_stats[t2]['matches_lost'] + 1}) %}
-                    {% elif winner == 'TEAM2' %}
+                    {% elif winner == 'TEAM2' and t1 and t1 != 'TBA' and t2 and t2 != 'TBA' %}
                         {% set _ = team_stats[t2].update({'matches_won': team_stats[t2]['matches_won'] + 1}) %}
                         {% set _ = team_stats[t1].update({'matches_lost': team_stats[t1]['matches_lost'] + 1}) %}
                     {% endif %}
@@ -53,8 +51,12 @@
                     {% if points and points|length > 0 %}
                         {% set t1p = points | selectattr('winner','equalto','TEAM1') | rejectattr('rerolled','equalto',True) | list | length %}
                         {% set t2p = points | selectattr('winner','equalto','TEAM2') | rejectattr('rerolled','equalto',True) | list | length %}
-                        {% set _ = team_stats[t1].update({'points_won': team_stats[t1]['points_won'] + t1p, 'points_lost': team_stats[t1]['points_lost'] + t2p}) %}
-                        {% set _ = team_stats[t2].update({'points_won': team_stats[t2]['points_won'] + t2p, 'points_lost': team_stats[t2]['points_lost'] + t1p}) %}
+                        {% if t1 and t1 != 'TBA' %}
+                            {% set _ = team_stats[t1].update({'points_won': team_stats[t1]['points_won'] + t1p, 'points_lost': team_stats[t1]['points_lost'] + t2p}) %}
+                        {% endif %}
+                        {% if t2 and t2 != 'TBA' %}
+                            {% set _ = team_stats[t2].update({'points_won': team_stats[t2]['points_won'] + t2p, 'points_lost': team_stats[t2]['points_lost'] + t1p}) %}
+                        {% endif %}
                     {% endif %}
                 {% endif %}
             {% endfor %}
@@ -72,6 +74,7 @@
                     </thead>
                     <tbody>
                         {% for team, stats in team_stats.items()|sort %}
+                        {% if team and team != 'TBA' %}
                         {% set total_matches = stats.matches_won + stats.matches_lost %}
                         {% set win_pct = (stats.matches_won / total_matches * 100) if total_matches > 0 else 0 %}
                         {% set total_points = stats.points_won + stats.points_lost %}
@@ -83,6 +86,7 @@
                             <td>{{ stats.points_won }} - {{ stats.points_lost }}</td>
                             <td>{{ '%.1f' % point_pct }}%</td>
                         </tr>
+                        {% endif %}
                         {% endfor %}
                     </tbody>
                 </table>
