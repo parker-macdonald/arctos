@@ -10,7 +10,7 @@ from models import (
     Team, TO, db
 )
 from app.utils.helpers import check_tournament_access, resolve_team_name_to_id, validate_permission_key
-from app.utils.scheduling import compute_dynamic_match_nominal_start_time, validate_match_input, update_match_sequence, recompute_all_match_times, detect_match_conflicts
+from app.utils.scheduling import compute_dynamic_match_nominal_start_time, validate_match_input, recompute_all_match_times, detect_match_conflicts
 from app.filters import is_head_ref
 
 bp = Blueprint('tournaments', __name__)

@@ -144,213 +144,6 @@ def compute_dynamic_match_nominal_start_time(match: Match, tournament_url: str) 
     
     return latest_end_time
 
-
-def update_match_sequence(match: Match, tournament_url: str) -> None:
-    """Update previous_match and next_match relationships for matches on the same field.
-    
-    For static matches: orders by nominal_start_time
-    For dynamic matches: uses previous_match relationship set by user
-    
-    WARNING: This function MODIFIES previous_match and next_match pointers.
-    It should ONLY be called when adding or updating matches in tournaments.py,
-    NEVER during scheduling operations (recompute_all_match_times, mark_dependent_matches_*, etc.).
-    Scheduling operations should only READ these pointers, never modify them.
-    """
-    if not match.field:
-        return
-    
-    # Get all matches on the same field (excluding the current match if it's being updated)
-    field_matches = Match.query.filter_by(event=tournament_url, field=match.field).all()
-    
-    # Separate static and dynamic matches
-    static_matches = [m for m in field_matches if m.schedule_type == 'STATIC' and m.nominal_start_time]
-    dynamic_matches = [m for m in field_matches if m.schedule_type != 'STATIC']
-    
-    # Sort static matches by nominal_start_time
-    static_matches.sort(key=lambda m: m.nominal_start_time)
-    
-    # Ensure static matches have no previous match
-    for i, m in enumerate(static_matches):
-        m.previous_match = None
-        # Leave next_match unchanged here (do not auto-link static chain)
-    
-    # For dynamic matches, build chain based on previous_match relationships
-    # Update next_match for each dynamic match
-    for m in dynamic_matches:
-        # Find the match that has this match as its previous_match
-        next_m = next((dm for dm in dynamic_matches if dm.previous_match == m.uuid), None)
-        m.next_match = next_m.uuid if next_m else None
-    
-    # Connect static chain to dynamic chain if they exist
-    if static_matches and dynamic_matches:
-        last_static = static_matches[-1]
-        # Find first dynamic match (no previous_match or previous_match is last static)
-        first_dynamic = next((dm for dm in dynamic_matches if not dm.previous_match or dm.previous_match == last_static.uuid), None)
-        if first_dynamic and not first_dynamic.previous_match:
-            # Connect: last static -> first dynamic
-            last_static.next_match = first_dynamic.uuid
-            first_dynamic.previous_match = last_static.uuid
-        elif first_dynamic and first_dynamic.previous_match == last_static.uuid:
-            last_static.next_match = first_dynamic.uuid
-
-
-def _traverse_break_join_chain(match: Match, tournament_url: str, visited: set = None) -> list[Match]:
-    """
-    Traverse through a chain of BREAK/JOIN matches to find the actual dependencies.
-    Returns a list of non-BREAK/JOIN matches that are the real dependencies.
-    Handles cycles by tracking visited matches.
-    """
-    if visited is None:
-        visited = set()
-    
-    if match.uuid in visited:
-        return []  # Cycle detected
-    visited.add(match.uuid)
-    
-    # If this is not a BREAK/JOIN, it's a real dependency
-    if match.schedule_type not in ('BREAK', 'JOIN'):
-        return [match]
-    
-    # For BREAK/JOIN, traverse to previous match
-    deps = []
-    if match.previous_match:
-        prev_match = Match.query.filter_by(uuid=match.previous_match, event=tournament_url).first()
-        if prev_match:
-            deps.extend(_traverse_break_join_chain(prev_match, tournament_url, visited))
-    
-    # For JOIN matches, also check all joins with the same name
-    if match.schedule_type == 'JOIN':
-        join_group = Match.query.filter_by(event=tournament_url, schedule_type='JOIN', name=match.name).all()
-        for jm in join_group:
-            if jm.uuid != match.uuid and jm.previous_match:
-                prev_match = Match.query.filter_by(uuid=jm.previous_match, event=tournament_url).first()
-                if prev_match and prev_match.uuid not in visited:
-                    deps.extend(_traverse_break_join_chain(prev_match, tournament_url, visited))
-    
-    return deps
-
-
-def _get_dependencies_internal(match: Match, tournament_url: str, skip_time_finalized_check: bool = False) -> list[Match]:
-    """
-    Internal function to get dependencies for a match.
-    skip_time_finalized_check: If True, don't return empty list when time_finalized is True.
-    """
-    if not skip_time_finalized_check and match.time_finalized:
-        return []
-    
-    # STATIC matches have no dependencies
-    if match.schedule_type == 'STATIC':
-        return []
-    
-    deps = []
-    
-    # For JOIN matches: get dependencies for all joins with same name
-    if match.schedule_type == 'JOIN':
-        # Get all joins with the same name
-        join_group = Match.query.filter_by(event=tournament_url, schedule_type='JOIN', name=match.name).all()
-        for jm in join_group:
-            # Check previous_match for each join
-            if jm.previous_match:
-                prev_match = Match.query.filter_by(uuid=jm.previous_match, event=tournament_url).first()
-                if prev_match:
-                    # If previous_match is a BREAK/JOIN, include it directly (so its length is accounted for)
-                    # and also traverse to find the actual dependencies
-                    if prev_match.schedule_type in ('BREAK', 'JOIN'):
-                        # Include the BREAK/JOIN itself so its length is accounted for
-                        if prev_match not in deps:
-                            deps.append(prev_match)
-                        # Also traverse to find the actual dependencies
-                        chain_deps = _traverse_break_join_chain(prev_match, tournament_url)
-                        for dep in chain_deps:
-                            if dep not in deps:
-                                deps.append(dep)
-                    else:
-                        # Not a BREAK/JOIN, just traverse through any BREAK/JOIN chain
-                        chain_deps = _traverse_break_join_chain(prev_match, tournament_url)
-                        for dep in chain_deps:
-                            if dep not in deps:
-                                deps.append(dep)
-            
-            # Also check team & ref dependencies for each join (e.g., "Match X winner")
-            ref_match_ids = referenced_match_ids(jm, tournament_url)
-            if ref_match_ids:
-                ref_matches = Match.query.filter(
-                    Match.uuid.in_(ref_match_ids),
-                    Match.event == tournament_url
-                ).all()
-                for ref_match in ref_matches:
-                    if ref_match not in deps:
-                        deps.append(ref_match)
-    # For BREAK matches: traverse through BREAK/JOIN chain
-    elif match.schedule_type == 'BREAK':
-        if match.previous_match:
-            prev_match = Match.query.filter_by(uuid=match.previous_match, event=tournament_url).first()
-            if prev_match:
-                # If previous_match is a BREAK/JOIN, include it directly (so its length is accounted for)
-                # and also traverse to find the actual dependencies
-                if prev_match.schedule_type in ('BREAK', 'JOIN'):
-                    # Include the BREAK/JOIN itself so its length is accounted for
-                    deps.append(prev_match)
-                    # Also traverse to find the actual dependencies
-                    chain_deps = _traverse_break_join_chain(prev_match, tournament_url)
-                    deps.extend(chain_deps)
-                else:
-                    # Not a BREAK/JOIN, just traverse through any BREAK/JOIN chain
-                    chain_deps = _traverse_break_join_chain(prev_match, tournament_url)
-                    deps.extend(chain_deps)
-    # For DYNAMIC matches (not BREAK/JOIN): team & ref dependencies + previous match (traversing chains)
-    else:  # DYNAMIC (SETS or STONES)
-        # Add previous match, traversing through BREAK/JOIN chain
-        if match.previous_match:
-            prev_match = Match.query.filter_by(uuid=match.previous_match, event=tournament_url).first()
-            if prev_match:
-                # If previous_match is a BREAK/JOIN, include it directly (so its length is accounted for)
-                # and also traverse to find the actual dependencies
-                if prev_match.schedule_type in ('BREAK', 'JOIN'):
-                    # Include the BREAK/JOIN itself so its length is accounted for
-                    deps.append(prev_match)
-                    # Also traverse to find the actual dependencies
-                    chain_deps = _traverse_break_join_chain(prev_match, tournament_url)
-                    deps.extend(chain_deps)
-                else:
-                    # Not a BREAK/JOIN, just traverse through any BREAK/JOIN chain
-                    chain_deps = _traverse_break_join_chain(prev_match, tournament_url)
-                    deps.extend(chain_deps)
-        
-        # Add team & ref dependencies
-        ref_match_ids = referenced_match_ids(match, tournament_url)
-        if ref_match_ids:
-            ref_matches = Match.query.filter(
-                Match.uuid.in_(ref_match_ids),
-                Match.event == tournament_url
-            ).all()
-            for ref_match in ref_matches:
-                if ref_match not in deps:
-                    deps.append(ref_match)
-    
-    return deps
-
-
-def get_dependencies(match: Match, tournament_url: str) -> list[Match]:
-    """
-    Get dependencies for a match based on the new rules:
-    - If time_finalized: return none
-    - STATIC (not dynamic): return none
-    - DYNAMIC (dynamic and not BREAK/JOIN): team & ref dependencies + previous match (traversing BREAK/JOIN chains)
-    - BREAK: traverse through BREAK/JOIN chain to find actual dependencies
-    - JOIN: traverse through BREAK/JOIN chain for all joins with same name
-    """
-    return _get_dependencies_internal(match, tournament_url, skip_time_finalized_check=False)
-
-
-def get_dependencies_for_readiness(match: Match, tournament_url: str) -> list[Match]:
-    """
-    Get dependencies for a match, even if time_finalized is True.
-    This is used to check if dependencies are completed to determine ready_to_start.
-    """
-    return _get_dependencies_internal(match, tournament_url, skip_time_finalized_check=True)
-
-
 def get_end_time(match: Match) -> datetime | None:
     """
     Get end time for a match:
@@ -415,7 +208,7 @@ def topological_sort(matches: list[Match], get_deps_func) -> list[Match]:
     result.extend(remaining)
     
     return result
-def get_deps_old(match: Match, tournament_url: str, include_time_finalized: bool = False) -> list[Match]:
+def get_deps(match: Match, tournament_url: str, include_time_finalized: bool = False) -> list[Match]:
     """
     Get dependencies for a match based on the new rules:
     - If time_finalized: return none
@@ -480,11 +273,11 @@ def recompute_all_match_times(tournament_url: str) -> None:
     all_matches = Match.query.filter_by(event=tournament_url).all()
         
     # Perform topological sort
-    sorted_matches = topological_sort(all_matches, lambda x: get_deps_old(x, tournament_url))
+    sorted_matches = topological_sort(all_matches, lambda x: get_deps(x, tournament_url))
     
     for match in sorted_matches:
         db.session.flush()
-        deps = get_deps_old(match, tournament_url, include_time_finalized=True)
+        deps = get_deps(match, tournament_url, include_time_finalized=True)
         print(match.name, [m.name for m in deps] if deps else None)
         # If match has dependencies, set start time to max of dependency end times
         
@@ -492,9 +285,6 @@ def recompute_all_match_times(tournament_url: str) -> None:
         if last_dep: match.nominal_start_time = get_end_time(last_dep).replace(tzinfo=None)
 
         if match.schedule_type != 'STATIC':
-            # DYNAMIC (SETS or STONES)
-            # Set time_finalized if all dependencies have started (IN_PROGRESS, COMPLETED, or confirmed_start_time)
-            # But don't overwrite if already finalized
             if not match.time_finalized:
                 if last_dep and last_dep.started():
                     match.finalize()
@@ -502,7 +292,7 @@ def recompute_all_match_times(tournament_url: str) -> None:
         # Update ready_to_start based on dependency completion state
         # We need to get dependencies even if time_finalized is True, because we still need to check
         # if they're completed to determine ready_to_start
-        deps_for_readiness = get_deps_old(match, tournament_url, True)
+        deps_for_readiness = get_deps(match, tournament_url, True)
         
         if deps_for_readiness and all(dep.status == 'COMPLETED' for dep in deps_for_readiness):
             # Mark as ready to start and set timestamp if not already present
@@ -812,25 +602,6 @@ def get_match_dependencies(match: Match, tournament_url: str) -> list[Match]:
     return deps
 
 
-def get_last_dependency_start_time(match: Match, tournament_url: str) -> datetime | None:
-    """Get the start time of the last dependency that needs to start before this match can be finalized.
-    Returns None if no dependencies or none have started."""
-    deps = get_dependencies(match, tournament_url)
-    if not deps:
-        return None
-    
-    start_times = []
-    for dep in deps:
-        # Check confirmed_start_time first (actual start), then nominal_start_time
-        start_time = dep.confirmed_start_time or dep.nominal_start_time
-        if start_time:
-            if start_time.tzinfo is None:
-                start_time = start_time.replace(tzinfo=timezone.utc)
-            start_times.append(start_time)
-    
-    return max(start_times) if start_times else None
-
-
 def _compute_chain_end_time(start_match: Match, tournament_url: str, visited: set = None) -> tuple[datetime | None, bool]:
     """
     Compute the end time of a chain of BREAK/JOIN matches starting from start_match.
@@ -887,267 +658,6 @@ def _compute_chain_end_time(start_match: Match, tournament_url: str, visited: se
     return current_end, start_match.time_finalized
 
 
-def mark_dependent_matches_time_finalized(started_match: Match, tournament_url: str) -> None:
-    """When a match starts, mark all dependent matches as having their time finalized.
-    The time is finalized when the last dependency starts, at which point the start time
-    can be computed based on the duration of the dependent match.
-    
-    This function propagates through chains of BREAK/JOIN matches, finalizing matches
-    at the end of chains when all dependencies are known.
-    """
-    # Find all matches that depend on this match (directly or through BREAK/JOIN chains)
-    all_matches = Match.query.filter_by(event=tournament_url).all()
-    
-    # Track which matches we've processed to avoid infinite loops
-    processed = set()
-    
-    def process_match(match: Match, trigger_match: Match = None):
-        """Process a match and propagate through BREAK/JOIN chains.
-        trigger_match: The match that triggered this processing (defaults to started_match).
-                      Used to track which match caused this match to be processed.
-        """
-        if match.uuid in processed:
-            return
-        processed.add(match.uuid)
-        
-        if match.status in ('IN_PROGRESS', 'COMPLETED'):
-            return  # Already started or completed
-        
-        # Use get_dependencies_for_readiness to check dependencies even if time_finalized
-        # This ensures we can find matches that depend on the trigger through chains
-        deps = get_dependencies_for_readiness(match, tournament_url)
-        if not deps:
-            return
-
-        # Check if trigger_match (or started_match) is in the dependency chain
-        # If trigger_match is None, use started_match
-        check_match = trigger_match if trigger_match else started_match
-        if check_match.uuid not in [d.uuid for d in deps]:
-            return
-        
-        # Also get regular dependencies for the all_deps_started check
-        deps_for_check = get_dependencies(match, tournament_url)
-        
-        # Check if all dependencies have now started
-        # Use deps_for_check if available, otherwise use deps
-        deps_to_check = deps_for_check if deps_for_check else deps
-        all_deps_started = all(
-            dep.status == 'IN_PROGRESS' or dep.status == 'COMPLETED' or dep.confirmed_start_time or
-            (dep.schedule_type in ('BREAK', 'JOIN') and dep.time_finalized)
-            for dep in deps_to_check
-        )
-        
-        if not all_deps_started:
-            return
-        
-        # Special handling for JOIN: finalize as a group across same-name joins
-        if match.schedule_type == 'JOIN':
-            join_group = Match.query.filter_by(event=tournament_url, schedule_type='JOIN', name=match.name).all()
-            # Check that all joins in the group have all dependencies started
-            group_ready = True
-            group_finalized_candidates = []
-            for jm in join_group:
-                jm_deps = get_dependencies_for_readiness(jm, tournament_url)
-                if not jm_deps:
-                    group_ready = False
-                    break
-                jm_all_started = all(
-                    d.status in ('IN_PROGRESS', 'COMPLETED') or d.confirmed_start_time
-                    for d in jm_deps
-                )
-                if not jm_all_started:
-                    group_ready = False
-                    break
-                # Compute this join's finalized start candidate
-                jm_last_start = get_last_dependency_start_time(jm, tournament_url)
-                if jm_last_start is None:
-                    group_ready = False
-                    break
-                # Find dependency with that last start to get its duration
-                jm_last_dep = None
-                for d in jm_deps:
-                    ds = d.confirmed_start_time or d.nominal_start_time
-                    if ds:
-                        if ds.tzinfo is None:
-                            ds = ds.replace(tzinfo=timezone.utc)
-                        if ds == jm_last_start:
-                            jm_last_dep = d
-                            break
-                if jm_last_dep is None:
-                    group_ready = False
-                    break
-                # Compute chain end time through BREAK/JOIN chain
-                chain_end, chain_finalized = _compute_chain_end_time(jm_last_dep, tournament_url)
-                if chain_end:
-                    jm_finalized = chain_end
-                else:
-                    # Fallback: just use the dependency's end time
-                    if jm_last_dep.schedule_type == 'JOIN':
-                        dep_length_minutes = 0
-                    else:
-                        dep_length_minutes = (jm_last_dep.nominal_length or 60)
-                    jm_finalized = jm_last_start + timedelta(minutes=dep_length_minutes)
-                group_finalized_candidates.append(jm_finalized)
-            if group_ready and group_finalized_candidates:
-                group_finalized_start = max(group_finalized_candidates)
-                # Convert to naive datetime for storage
-                if group_finalized_start.tzinfo is not None:
-                    group_finalized_start_naive = group_finalized_start.replace(tzinfo=None)
-                else:
-                    group_finalized_start_naive = group_finalized_start
-                
-                for jm in join_group:
-                    jm.time_finalized = True
-                    # Set the nominal_start_time to the computed finalized start time
-                    jm.nominal_start_time = group_finalized_start_naive
-                    # JOIN matches have zero length, so mark as completed immediately when finalized
-                    if jm.status == 'NOT_STARTED':
-                        jm.status = 'COMPLETED'
-                        jm.confirmed_start_time = group_finalized_start_naive
-                        jm.completed_time = group_finalized_start_naive  # Same as start for zero-length
-                        jm.finalized_at = group_finalized_start_naive
-                        jm.finalized_by = 'system'
-                    
-                    # Follow the chain of BREAK/JOIN matches until we reach the next actual match
-                    current = jm
-                    while current and current.next_match:
-                        next_m = Match.query.filter_by(uuid=current.next_match, event=tournament_url).first()
-                        if not next_m:
-                            break
-                        # If next match is BREAK/JOIN, process it to finalize it
-                        if next_m.schedule_type in ('BREAK', 'JOIN'):
-                            process_match(next_m, trigger_match=jm)
-                            current = next_m
-                        else:
-                            # Reached a non-BREAK/JOIN match, process it
-                            process_match(next_m, trigger_match=jm)
-                            break
-                
-                # Also find and process ALL matches that depend on any of these JOINs
-                # (not just those directly linked via next_match)
-                # This includes matches on other fields that reference the JOIN
-                for jm in join_group:
-                    # Find all matches that have this JOIN in their dependency chain
-                    for candidate_match in all_matches:
-                        if candidate_match.uuid in processed:
-                            continue
-                        if candidate_match.status in ('IN_PROGRESS', 'COMPLETED'):
-                            continue
-                        # Check if this JOIN is in the candidate's dependencies
-                        candidate_deps = get_dependencies_for_readiness(candidate_match, tournament_url)
-                        if jm.uuid in [d.uuid for d in candidate_deps]:
-                            # This match depends on the JOIN, so process it with the JOIN as the trigger
-                            process_match(candidate_match, trigger_match=jm)
-            return
-
-        # For BREAK matches: compute end time and propagate to next match
-        if match.schedule_type == 'BREAK':
-            last_dep_start = get_last_dependency_start_time(match, tournament_url)
-            if last_dep_start:
-                # Find the dependency that started last
-                last_dep = None
-                for dep in deps_to_check:
-                    dep_start = dep.confirmed_start_time or dep.nominal_start_time
-                    if dep_start:
-                        if dep_start.tzinfo is None:
-                            dep_start = dep_start.replace(tzinfo=timezone.utc)
-                        if dep_start == last_dep_start:
-                            last_dep = dep
-                            break
-                
-                if last_dep:
-                    # Compute finalized start time: traverse through BREAK/JOIN chain
-                    chain_end, chain_finalized = _compute_chain_end_time(last_dep, tournament_url)
-                    if chain_end:
-                        # The break starts when the chain ends
-                        break_start = chain_end
-                        if break_start.tzinfo is None:
-                            break_start = break_start.replace(tzinfo=timezone.utc)
-                        match.time_finalized = True
-                        # Set the nominal_start_time to the computed finalized start time
-                        if break_start.tzinfo is not None:
-                            break_start_naive = break_start.replace(tzinfo=None)
-                        else:
-                            break_start_naive = break_start
-                        match.nominal_start_time = break_start_naive
-                        
-                        # BREAK matches should be marked as completed when finalized
-                        if match.status == 'NOT_STARTED':
-                            match.status = 'COMPLETED'
-                            match.confirmed_start_time = break_start_naive
-                            # Break ends at start + length
-                            break_length_minutes = match.nominal_length or 60
-                            break_end = break_start_naive + timedelta(minutes=break_length_minutes)
-                            match.completed_time = break_end
-                            match.finalized_at = break_end
-                            match.finalized_by = 'system'
-                        
-                        # Follow the chain of BREAK/JOIN matches until we reach the next actual match
-                        current = match
-                        while current and current.next_match:
-                            next_m = Match.query.filter_by(uuid=current.next_match, event=tournament_url).first()
-                            if not next_m:
-                                break
-                            # If next match is BREAK/JOIN, process it to finalize it
-                            if next_m.schedule_type in ('BREAK', 'JOIN'):
-                                process_match(next_m, trigger_match=match)
-                                current = next_m
-                            else:
-                                # Reached a non-BREAK/JOIN match, process it
-                                process_match(next_m, trigger_match=match)
-                                break
-            return
-
-        # For DYNAMIC matches: compute finalized start time
-        last_dep_start = get_last_dependency_start_time(match, tournament_url)
-        if last_dep_start:
-            # Find the dependency that started last
-            last_dep = None
-            for dep in deps_to_check:
-                dep_start = dep.confirmed_start_time or dep.nominal_start_time
-                if dep_start:
-                    if dep_start.tzinfo is None:
-                        dep_start = dep_start.replace(tzinfo=timezone.utc)
-                    if dep_start == last_dep_start:
-                        last_dep = dep
-                        break
-            
-            if last_dep:
-                # Compute finalized start time: traverse through BREAK/JOIN chain if needed
-                chain_end, chain_finalized = _compute_chain_end_time(last_dep, tournament_url)
-                if chain_end:
-                    finalized_start = chain_end
-                    match.time_finalized = True
-                    # Set the nominal_start_time to the computed finalized start time
-                    if finalized_start.tzinfo is not None:
-                        finalized_start_naive = finalized_start.replace(tzinfo=None)
-                    else:
-                        finalized_start_naive = finalized_start
-                    match.nominal_start_time = finalized_start_naive
-                    
-                    # Follow the chain of BREAK/JOIN matches until we reach the next actual match
-                    current = match
-                    while current and current.next_match:
-                        next_m = Match.query.filter_by(uuid=current.next_match, event=tournament_url).first()
-                        if not next_m:
-                            break
-                        # If next match is BREAK/JOIN, process it to finalize it
-                        if next_m.schedule_type in ('BREAK', 'JOIN'):
-                            process_match(next_m, trigger_match=match)
-                            current = next_m
-                        else:
-                            # Reached a non-BREAK/JOIN match, process it
-                            process_match(next_m, trigger_match=match)
-                            break
-    
-    # Process all matches
-    for match in all_matches:
-        process_match(match)
-    
-    # Commit changes
-    db.session.commit()
-
-
 def mark_dependent_matches_ready_to_start(completed_match: Match, tournament_url: str) -> None:
     """When a match finishes, mark all dependent matches as ready to start.
     A match is ready to start when the last dependency finishes.
@@ -1158,292 +668,24 @@ def mark_dependent_matches_ready_to_start(completed_match: Match, tournament_url
     # Find all matches that depend on this match (directly or through BREAK/JOIN chains)
     all_matches = Match.query.filter_by(event=tournament_url).all()
     
-    # Track which matches we've processed to avoid infinite loops
-    processed = set()
-    
-    def process_match(match: Match):
-        """Process a match and propagate through BREAK/JOIN chains."""
-        if match.uuid in processed:
-            return
-        processed.add(match.uuid)
+    for match in all_matches:
+        if match.ready_to_start or match.started(): continue
         
-        if match.status in ('IN_PROGRESS', 'COMPLETED'):
-            return  # Already started or completed
+        deps = get_deps(match, tournament_url, True)
+        if not deps: continue
         
-        # Use get_dependencies_for_readiness to get dependencies even if time_finalized is True
-        # because we need to check if they're completed to determine ready_to_start
-        deps = get_dependencies_for_readiness(match, tournament_url)
-        if not deps:
-            return
-        
-        # Check if completed_match is in the dependency chain
         if completed_match.uuid not in [d.uuid for d in deps]:
-            return
+            continue
         
-        # Check if all dependencies have now finished
-        all_deps_finished = all(dep.status == 'COMPLETED' for dep in deps)
-        
-        if all_deps_finished:
-            # Update ready_to_start
+        if all(dep.status == 'COMPLETED' for dep in deps):
             match.ready_to_start = True
             if not match.ready_to_start_at:
-                match.ready_to_start_at = datetime.now(timezone.utc)
-            
-            # If not already time_finalized, compute and set now (fallback)
-            if not match.time_finalized:
-                last_dep_start = get_last_dependency_start_time(match, tournament_url)
-                if last_dep_start:
-                    # Identify the last-starting dependency to get its duration
-                    deps2 = get_dependencies(match, tournament_url)
-                    last_dep = None
-                    for dep in deps2:
-                        dep_start = dep.confirmed_start_time or dep.nominal_start_time
-                        if dep_start:
-                            if dep_start.tzinfo is None:
-                                dep_start = dep_start.replace(tzinfo=timezone.utc)
-                            if dep_start == last_dep_start:
-                                last_dep = dep
-                                break
-                    if last_dep:
-                        # Compute chain end time through BREAK/JOIN chain
-                        chain_end, chain_finalized = _compute_chain_end_time(last_dep, tournament_url)
-                        if chain_end:
-                            # The match starts when the chain ends
-                            match.time_finalized = True
-                        else:
-                            # Fallback: just use the dependency's end time
-                            if last_dep.schedule_type == 'JOIN':
-                                dep_length_minutes = 0
-                            else:
-                                dep_length_minutes = (last_dep.nominal_length or 60)
-                            finalized_start = last_dep_start + timedelta(minutes=dep_length_minutes)
-                            match.time_finalized = True
-            
-            # Propagate to next match in chain if it's a BREAK/JOIN
-            if match.next_match:
-                next_m = Match.query.filter_by(uuid=match.next_match, event=tournament_url).first()
-                if next_m and next_m.schedule_type in ('BREAK', 'JOIN'):
-                    process_match(next_m)
-    
-    # Process all matches
-    for match in all_matches:
-        process_match(match)
+                match.ready_to_start_at = datetime.now(tz=timezone.utc)
     
     # Commit changes
     db.session.commit()
 
 
-def auto_complete_break_match(completed_match: Match, tournament_url: str) -> None:
-    """If a finalized match's successor is a BREAK match, automatically mark it complete.
-    The break's end time is computed as start time + length."""
-    if not completed_match.next_match:
-        return
-    
-    next_match = Match.query.filter_by(uuid=completed_match.next_match, event=tournament_url).first()
-    if not next_match or next_match.schedule_type != 'BREAK':
-        return
-    
-    if next_match.status != 'NOT_STARTED':
-        return  # Already started or completed
-    
-    # Compute break start time (end of completed match)
-    def parse_iso(dt_str: str):
-        if not dt_str:
-            return None
-        try:
-            d = datetime.fromisoformat(dt_str.replace('Z', '+00:00'))
-            if d.tzinfo is None:
-                d = d.replace(tzinfo=timezone.utc)
-            return d
-        except Exception:
-            return None
-    
-    def get_finalized_at(m: Match):
-        if m.status == 'COMPLETED':
-            if m.finalized_at:
-                return m.finalized_at
-        return None
-    
-    completed_end = get_finalized_at(completed_match)
-    if not completed_end:
-        # Fallback: use current time
-        completed_end = datetime.now(timezone.utc)
-    
-    # Break starts when previous match ends
-    break_start = completed_end
-    if break_start.tzinfo is None:
-        break_start = break_start.replace(tzinfo=timezone.utc)
-    
-    # Break ends at start + length
-    # JOIN matches have zero length
-    if next_match.schedule_type == 'JOIN':
-        break_length_minutes = 0
-    else:
-        break_length_minutes = next_match.nominal_length or 60
-    break_end = break_start + timedelta(minutes=break_length_minutes)
-    
-    # Mark break as completed
-    next_match.status = 'COMPLETED'
-    if break_start.tzinfo is not None:
-        break_start = break_start.replace(tzinfo=None)
-    next_match.confirmed_start_time = break_start
-    # Record completion time
-    if break_end.tzinfo is not None:
-        next_match.completed_time = break_end.replace(tzinfo=None)
-    else:
-        next_match.completed_time = break_end
-    
-    # Set completion metadata
-    next_match.finalized_at = break_end
-    next_match.finalized_by = 'system'
-    
-    # Commit and recursively process any dependent matches
-    db.session.commit()
-    
-    # The break's start is now known; finalize dependent starts and mark readiness
-    try:
-        mark_dependent_matches_time_finalized(next_match, tournament_url)
-        mark_dependent_matches_ready_to_start(next_match, tournament_url)
-    except Exception as e:
-        print(f"Error propagating from break {next_match.name}: {e}")
-    
-    # Recursively handle any matches that depend on this break
-    try:
-        auto_complete_break_match(next_match, tournament_url)
-        auto_complete_join_matches(tournament_url)
-    except Exception as e:
-        print(f"Error in recursive break completion: {e}")
-
-
-def auto_complete_join_matches(tournament_url: str) -> None:
-    """For all JOIN matches, if the last dependency for all joins of the same name is completed,
-    mark all of the joins completed and trigger their finalization steps."""
-    # Group JOIN matches by name
-    all_matches = Match.query.filter_by(event=tournament_url, schedule_type='JOIN').all()
-    join_groups: dict[str, list[Match]] = {}
-    
-    for match in all_matches:
-        if match.status != 'NOT_STARTED':
-            continue  # Already started or completed
-        if match.name not in join_groups:
-            join_groups[match.name] = []
-        join_groups[match.name].append(match)
-    
-    # For each group, check if all dependencies are complete
-    for join_name, join_matches in join_groups.items():
-        if not join_matches:
-            continue
-        
-        # Collect all dependencies from all joins with this name
-        all_deps: set[str] = set()
-        for join_match in join_matches:
-            deps = get_match_dependencies(join_match, tournament_url)
-            all_deps.update(dep.uuid for dep in deps)
-        
-        if not all_deps:
-            continue  # No dependencies
-        
-        # Check if all dependencies are completed
-        all_deps_completed = True
-        latest_end_time = None
-        
-        for dep_uuid in all_deps:
-            dep_match = Match.query.filter_by(uuid=dep_uuid, event=tournament_url).first()
-            if not dep_match or dep_match.status != 'COMPLETED':
-                all_deps_completed = False
-                break
-            
-            # Get end time
-            def parse_iso(dt_str: str):
-                if not dt_str:
-                    return None
-                try:
-                    d = datetime.fromisoformat(dt_str.replace('Z', '+00:00'))
-                    if d.tzinfo is None:
-                        d = d.replace(tzinfo=timezone.utc)
-                    return d
-                except Exception:
-                    return None
-            
-            def get_finalized_at(m: Match):
-                if getattr(m, 'completed_time', None):
-                    d = m.completed_time
-                    try:
-                        if d and d.tzinfo is None:
-                            d = d.replace(tzinfo=timezone.utc)
-                    except Exception:
-                        pass
-                    return d
-                if m.status == 'COMPLETED':
-                    try:
-                        if m.finalized_at:
-                            return m.finalized_at
-                    except Exception:
-                        pass
-                return None
-            
-            dep_end = get_finalized_at(dep_match)
-            if not dep_end:
-                # Fallback: compute from start + length
-                start_time = dep_match.confirmed_start_time or dep_match.nominal_start_time
-                if start_time:
-                    if start_time.tzinfo is None:
-                        start_time = start_time.replace(tzinfo=timezone.utc)
-                    # JOIN matches have zero length
-                    if dep_match.schedule_type == 'JOIN':
-                        dep_length_minutes = 0
-                    else:
-                        dep_length_minutes = (dep_match.nominal_length or 60)
-                    dep_end = start_time + timedelta(minutes=dep_length_minutes)
-            
-            if dep_end:
-                if latest_end_time is None or dep_end > latest_end_time:
-                    latest_end_time = dep_end
-        
-        if all_deps_completed and latest_end_time:
-            # All joins with this name start at the same time (latest dependency end)
-            join_start = latest_end_time
-            if join_start.tzinfo is None:
-                join_start = join_start.replace(tzinfo=timezone.utc)
-            
-            # JOIN matches have zero length, so end = start
-            join_end = join_start
-            
-            # Mark all joins as completed
-            for join_match in join_matches:
-                join_match.status = 'COMPLETED'
-                if join_start.tzinfo is not None:
-                    join_start_naive = join_start.replace(tzinfo=None)
-                else:
-                    join_start_naive = join_start
-                join_match.confirmed_start_time = join_start_naive
-                # Record completion time (same as start for zero-length)
-                join_match.completed_time = join_start_naive
-                
-                # Set completion metadata
-                join_match.finalized_at = join_end
-                join_match.finalized_by = 'system'
-            
-            # Commit the JOIN completions
-            db.session.commit()
-            
-            # The joins' starts are now known; finalize dependent starts and mark readiness
-            for join_match in join_matches:
-                try:
-                    mark_dependent_matches_time_finalized(join_match, tournament_url)
-                    mark_dependent_matches_ready_to_start(join_match, tournament_url)
-                except Exception as e:
-                    print(f"Error propagating from join {join_match.name}: {e}")
-        
-        
-        # Recursively check for any matches that depend on these joins
-        for join_match in join_matches:
-            if join_match.status == 'COMPLETED':
-                try:
-                    auto_complete_break_match(join_match, tournament_url)
-                    auto_complete_join_matches(tournament_url)
-                except Exception as e:
-                    print(f"Error in recursive join completion: {e}")
 
 
 def update_dynamic_schedule_after_completion(tournament_url: str, completed_match: Match) -> None:
@@ -1455,14 +697,8 @@ def update_dynamic_schedule_after_completion(tournament_url: str, completed_matc
     - Pull forward subsequent dynamic matches on the same field
     """
     try:
-        # First, mark dependent matches as ready to start
+        # # First, mark dependent matches as ready to start
         mark_dependent_matches_ready_to_start(completed_match, tournament_url)
-        
-        # Auto-complete BREAK matches
-        auto_complete_break_match(completed_match, tournament_url)
-        
-        # Auto-complete JOIN matches
-        auto_complete_join_matches(tournament_url)
         
         # Then handle field-based scheduling updates
         if not completed_match.field:
@@ -1496,18 +732,6 @@ def update_dynamic_schedule_after_completion(tournament_url: str, completed_matc
             db.session.commit()
             return
 
-        # Use the finalization time as end-of-current-match
-        def parse_iso(dt_str: str):
-            if not dt_str:
-                return None
-            try:
-                d = datetime.fromisoformat(dt_str.replace('Z', '+00:00'))
-                if d.tzinfo is None:
-                    d = d.replace(tzinfo=timezone.utc)
-                return d
-            except Exception:
-                return None
-
         def get_finalized_at(m: Match):
             if getattr(m, 'completed_time', None):
                 d = m.completed_time
@@ -1517,10 +741,6 @@ def update_dynamic_schedule_after_completion(tournament_url: str, completed_matc
                 except Exception:
                     pass
                 return d
-                if m.status == 'COMPLETED':
-                    if m.finalized_at:
-                        return m.finalized_at
-                return None
         
         end_ts = get_finalized_at(completed_match)
         if not end_ts:

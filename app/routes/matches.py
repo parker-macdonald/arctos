@@ -11,7 +11,8 @@ from models import (
 from app.filters import is_head_ref
 from app.utils.helpers import check_tournament_access, can_head_ref_match
 from app.utils.dependencies import apply_match_dependencies
-from app.utils.scheduling import update_dynamic_schedule_after_completion, mark_dependent_matches_time_finalized
+from app.utils.scheduling import recompute_all_match_times
+
 
 bp = Blueprint('matches', __name__)
 
@@ -441,10 +442,8 @@ def start_match_post(tournament_url):
     # Update predicted times first, then mark dependent matches as time finalized
     try:
         # First recompute all match times to update nominal_start_time for all matches
-        from app.utils.scheduling import recompute_all_match_times
         recompute_all_match_times(tournament_url)
         # Then mark dependent matches as time finalized (this will update JOIN/BREAK times and propagate)
-        # mark_dependent_matches_time_finalized(match, tournament_url)
         db.session.commit()
     except Exception as e:
         print(f"Error updating schedule and marking dependent matches time finalized: {e}")
@@ -706,10 +705,10 @@ def finalize_match_post(tournament_url):
         print(f"Dependency update error for match {match.name}: {e}")
     
     # Update dynamic schedule after completion (marks dependent matches as ready to start)
-    try:
-        update_dynamic_schedule_after_completion(tournament_url, match)
-    except Exception as e:
-        print(f"Dynamic scheduling update error for match {match.name}: {e}")
+    # try:
+    #     update_dynamic_schedule_after_completion(tournament_url, match)
+    # except Exception as e:
+    #     print(f"Dynamic scheduling update error for match {match.name}: {e}")
     
     # Recompute all match times with the new algorithm
     try:
