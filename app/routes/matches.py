@@ -134,15 +134,86 @@ def match_page(tournament_url):
     except Exception:
         computed_end_time = None
 
-    # Get field camera URL if field is set (use first camera for backward compatibility)
+    # Get all camera URLs and filter to only those active during the match
     camera_url = None
+    available_cameras = []  # List of dicts: {index, url, stream_start_time}
+    
     if match.field:
         field_obj = Field.query.filter_by(event=tournament_url, name=match.field).first()
         if field_obj and field_obj.camera:
             from app.utils.camera_helpers import parse_camera_urls
+            from datetime import datetime, timezone
+            import json
+            
             camera_urls = parse_camera_urls(field_obj.camera)
+            
+            # Always include all cameras if field has cameras configured
+            # We'll filter later if needed for completed matches
             if camera_urls:
-                camera_url = camera_urls[0]  # Use first camera for display
+                # Get stream start times from match (stored when match started)
+                stream_starts = {}
+                if match.camera_stream_starts:
+                    try:
+                        stream_starts = json.loads(match.camera_stream_starts)
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                
+                # Determine match time range
+                match_start = match.confirmed_start_time or match.nominal_start_time
+                match_end = match.completed_time or computed_end_time
+                
+                # Include all cameras from the field
+                # For completed matches, we'll filter by stream start time if available
+                # For matches that haven't started or are in progress, show all cameras
+                for idx, url in enumerate(camera_urls):
+                    stream_start_str = stream_starts.get(str(idx))  # JSON keys are strings
+                    
+                    # Always include all cameras - we'll filter by activity only if we have timing info
+                    # For completed matches with stream start times, prefer cameras that were active
+                    # But always include all cameras as fallback
+                    should_include = True
+                    preferred_stream_start = stream_start_str
+                    
+                    # For completed matches with stream start time, check if stream was active
+                    if match.status == 'COMPLETED' and stream_start_str and match_end:
+                        try:
+                            # Parse stream start time
+                            stream_start_str_clean = stream_start_str.replace('Z', '+00:00') if 'Z' in stream_start_str else stream_start_str
+                            stream_start = datetime.fromisoformat(stream_start_str_clean)
+                            if stream_start.tzinfo is None:
+                                stream_start = stream_start.replace(tzinfo=timezone.utc)
+                            
+                            # Check if stream was active during match
+                            if match_end.tzinfo is None:
+                                match_end_tz = match_end.replace(tzinfo=timezone.utc)
+                            else:
+                                match_end_tz = match_end
+                            
+                            # Stream must have started before or at match end to be considered "active"
+                            # But we still include it even if not active (might be useful for reference)
+                            if stream_start > match_end_tz:
+                                # Stream started after match ended - still include but note it
+                                pass
+                        except (ValueError, TypeError) as e:
+                            print(f"Error parsing stream start time for camera {idx}: {e}")
+                            # If parsing fails, still include the camera (without stream start time)
+                            preferred_stream_start = None
+                    
+                    # Always include the camera
+                    if should_include:
+                        available_cameras.append({
+                            'index': idx,
+                            'url': url,
+                            'stream_start_time': preferred_stream_start if preferred_stream_start else None
+                        })
+            
+            # Use first available camera for backward compatibility
+            if available_cameras:
+                camera_url = available_cameras[0]['url']
+            
+            # Debug: log camera availability
+            if not available_cameras and field_obj.camera:
+                print(f"Warning: No cameras available for match {match.uuid} on field {match.field}. Field has {len(camera_urls)} camera(s). Match status: {match.status}")
 
     return render_template('match_page_websocket.html', 
                          tournament=tournament, 
@@ -153,7 +224,8 @@ def match_page(tournament_url):
                          actual_end_time=actual_end_time,
                          match_notes=match_notes,
                          point_notes_map=point_notes_map,
-                         camera_url=camera_url)
+                         camera_url=camera_url,
+                         available_cameras=available_cameras)
 
 
 @bp.route('/<tournament_url>/start-match')
@@ -864,8 +936,9 @@ def add_point(tournament_url):
                 camera_urls = parse_camera_urls(field_obj.camera)
                 
                 # Use primary camera (index 0) if available
-                if 0 in stream_starts and len(camera_urls) > 0:
-                    stream_timestamp = calculate_stream_timestamp(new_point.stamp, stream_starts[0])
+                # Note: JSON keys are strings, so use '0' not 0
+                if '0' in stream_starts and len(camera_urls) > 0:
+                    stream_timestamp = calculate_stream_timestamp(new_point.stamp, stream_starts['0'])
                     if stream_timestamp is not None:
                         new_point.camera_index = 0
                         new_point.stream_timestamp = stream_timestamp

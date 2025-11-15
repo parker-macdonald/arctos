@@ -49,10 +49,24 @@ def get_stream_start_time(video_id):
         actual_start_time = live_details.get('actualStartTime')
         
         if actual_start_time:
+            # YouTube API returns actualStartTime in RFC3339 format (ISO 8601 with timezone)
+            # It's always in UTC, typically ending with 'Z' or '+00:00'
             # Parse and ensure timezone-aware UTC
-            start_dt = datetime.fromisoformat(actual_start_time.replace('Z', '+00:00'))
+            # Handle both 'Z' and '+00:00' formats
+            if actual_start_time.endswith('Z'):
+                start_dt = datetime.fromisoformat(actual_start_time.replace('Z', '+00:00'))
+            else:
+                start_dt = datetime.fromisoformat(actual_start_time)
+            
+            # Ensure it's timezone-aware UTC
             if start_dt.tzinfo is None:
+                # If no timezone info, assume UTC (YouTube API should always provide it, but be safe)
                 start_dt = start_dt.replace(tzinfo=timezone.utc)
+            else:
+                # Convert to UTC if it's not already
+                start_dt = start_dt.astimezone(timezone.utc)
+            
+            # Return in ISO format with 'Z' suffix for UTC
             return start_dt.isoformat().replace('+00:00', 'Z')
         
         return None
@@ -83,7 +97,8 @@ def parse_camera_urls(camera_field_value):
 
 def get_all_camera_stream_starts(field):
     """Get stream start times for all cameras on a field.
-    Returns dict mapping camera_index to stream start time (ISO format).
+    Returns dict mapping camera_index (as string) to stream start time (ISO format with 'Z' suffix for UTC).
+    Uses string keys to ensure consistency with JSON storage format.
     """
     if not field or not field.camera:
         return {}
@@ -96,7 +111,8 @@ def get_all_camera_stream_starts(field):
         if video_id:
             start_time = get_stream_start_time(video_id)
             if start_time:
-                stream_starts[idx] = start_time
+                # Use string key to match JSON storage format
+                stream_starts[str(idx)] = start_time
     
     return stream_starts
 
@@ -130,12 +146,27 @@ def calculate_stream_timestamp(point_stamp, stream_start_time):
                 point_dt = point_dt.replace(tzinfo=timezone.utc)
         
         # Parse stream start time
+        # Stream start time should be in ISO format, ideally with 'Z' suffix for UTC
         stream_str = str(stream_start_time)
-        if not re.search(r'[zZ]|[\+\-]\d{2}:?\d{2}$', stream_str):
+        
+        # Normalize to ISO format with timezone
+        if stream_str.endswith('Z'):
+            # Already has 'Z' suffix, convert to +00:00 for fromisoformat
+            stream_dt = datetime.fromisoformat(stream_str.replace('Z', '+00:00'))
+        elif re.search(r'[\+\-]\d{2}:?\d{2}$', stream_str):
+            # Has timezone offset, parse directly
+            stream_dt = datetime.fromisoformat(stream_str)
+        else:
+            # No timezone info, assume UTC and add 'Z'
             stream_str = re.sub(r'\.\d+$', '', stream_str) + 'Z'
-        stream_dt = datetime.fromisoformat(stream_str.replace('Z', '+00:00'))
+            stream_dt = datetime.fromisoformat(stream_str.replace('Z', '+00:00'))
+        
+        # Ensure it's timezone-aware UTC
         if stream_dt.tzinfo is None:
             stream_dt = stream_dt.replace(tzinfo=timezone.utc)
+        else:
+            # Convert to UTC if it's not already
+            stream_dt = stream_dt.astimezone(timezone.utc)
         
         # Calculate difference in seconds
         diff = (point_dt - stream_dt).total_seconds()

@@ -68,77 +68,10 @@ window.MathJax = {
     </div>
 </div>
 
-<script>
+<!-- Shared Kalman Filter implementation -->
+<script src="{{ url_for('static', filename='js/kalman_filter.js') }}"></script>
 
-class KalmanFilter {
-    constructor() {
-        this.x = 0;  // prior state
-        this.P = 1e10;  // prior cov
-        this.Q = 0.00000001; // dynamics are xdot=f(x)=0 lmao. clock drift is very very small.
-        this.R = 0.0015; 
-        this.outlierThreshold = 2.0;  // unit is stdevs
-        this.minConfidenceForRejection = 1.0;  // reject outliers if P < this (outlier measurement is better than nothing)
-        this.rejectedCount = 0;
-    }
-    
-    update(measurement) {
-        // Predict
-        this.P = this.P + this.Q;
-        // Outlier rejection: only reject if we have some confidence in our estimate
-        // Skip rejection during initial convergence (when P is very large)
-        if (this.P < this.minConfidenceForRejection) {
-            const innovation = measurement - this.x;
-            const innovationCovariance = this.P + this.R;  // Total uncertainty
-            const stdDev = Math.sqrt(innovationCovariance);
-            const zScore = Math.abs(innovation) / stdDev;
-            
-            if (zScore > this.outlierThreshold) {
-                // Reject outlier - don't update the filter
-                this.rejectedCount++;
-                console.log(`Rejected outlier measurement: ${measurement.toFixed(6)}s, z-score: ${zScore.toFixed(2)}, current estimate: ${this.x.toFixed(6)}s`);
-                // Still return current state
-                return this.x;
-            }
-        }
-        
-        // Update
-        const K = this.P / (this.P + this.R);  // Kalman gain
-        this.x = this.x + K * (measurement - this.x);
-        this.P = (1 - K) * this.P;
-        
-        return this.x;
-    }
-    
-    getState() {
-        return this.x;
-    }
-    
-    getCovariance() {
-        return this.P;
-    }
-    
-    reset() {
-        this.x = 0;
-        this.P = 1e10;
-        this.rejectedCount = 0;
-    }
-    
-    // Save state to object for persistence
-    toJSON() {
-        return {
-            x: this.x,
-            P: this.P
-        };
-    }
-    
-    // Load state from object
-    fromJSON(data) {
-        if (data && typeof data.x === 'number' && typeof data.P === 'number') {
-            this.x = data.x;
-            this.P = data.P;
-        }
-    }
-}
+<script>
 
 // Global variables
 let kalmanFilter = new KalmanFilter();
@@ -156,7 +89,7 @@ let mediaStreamDestination = null;  // MediaStreamDestination for background pla
 let syncInterval = null;
 let wakeLock = null;  // Screen wake lock to prevent device sleep
 let audioContextStartTime = null;  // Wall clock time when audio context was created
-const STORAGE_KEY = 'stones_player_kf_state';
+const STORAGE_KEY = 'kalman_filter_shared_state';  // Shared across all pages
 const AUDIO_SELECT_KEY = 'stones_player_audio_select';
 
 // Get audio file path based on selection (returns null for custom files)
@@ -321,10 +254,10 @@ async function initAudio() {
             console.log('Using cached custom audio file');
         } else {
             // Standard file - fetch and decode
-            const response = await fetch(audioFile);
-            const arrayBuffer = await response.arrayBuffer();
-            audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-            console.log('Audio file loaded successfully:', audioFile);
+        const response = await fetch(audioFile);
+        const arrayBuffer = await response.arrayBuffer();
+        audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+        console.log('Audio file loaded successfully:', audioFile);
         }
     } catch (error) {
         console.error('Error initializing audio:', error);
@@ -436,7 +369,7 @@ function clearScheduledBeats() {
             } else {
                 // Source may have already started or is about to start - try to stop it immediately
                 try {
-                    source.stop();
+            source.stop();
                 } catch (e) {
                     // Source may have already ended - that's okay
                 }
@@ -444,8 +377,8 @@ function clearScheduledBeats() {
             
             // Then disconnect to ensure no audio flows
             try {
-                source.disconnect();
-            } catch (e) {
+            source.disconnect();
+        } catch (e) {
                 // Already disconnected, ignore
             }
         } catch (e) {
@@ -829,8 +762,8 @@ document.addEventListener('DOMContentLoaded', async function() {
         } else {
             // Switching to standard file - cache current buffer if it was custom, then load standard
             // (Note: we don't need to cache standard buffers since they're loaded from URLs)
-            audioBuffer = null;
-            await initAudio();
+        audioBuffer = null;
+        await initAudio();
         }
         
         // If playing, reschedule with new audio
@@ -873,7 +806,7 @@ document.addEventListener('DOMContentLoaded', async function() {
     async function handleCustomFileUpload(file) {
         if (!file) {
             return;
-        }
+    }
         
         // Check file type
         if (!file.type.startsWith('audio/') && !file.name.toLowerCase().endsWith('.mp3')) {

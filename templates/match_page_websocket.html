@@ -393,11 +393,27 @@ window.MathJax = {
             </div>
         </div>
         
-        {% if camera_url %}
+        {% if camera_url or (available_cameras and available_cameras|length > 0) %}
         <!-- Match Footage -->
         <div class="card mt-3">
-            <div class="card-header">
+            <div class="card-header d-flex justify-content-between align-items-center">
                 <h5 class="mb-0">Match Footage</h5>
+                {% if available_cameras|length > 1 %}
+                <div class="dropdown">
+                    <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" id="camera-selector-dropdown" data-bs-toggle="dropdown" aria-expanded="false">
+                        <i class="fas fa-video"></i> Camera {% if available_cameras %}{{ available_cameras[0].index + 1 }}{% endif %}
+                    </button>
+                    <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="camera-selector-dropdown">
+                        {% for camera in available_cameras %}
+                        <li>
+                            <a class="dropdown-item camera-option{% if loop.first %} active{% endif %}" href="#" data-camera-index="{{ camera.index }}" data-camera-url="{{ camera.url }}" data-stream-start="{{ camera.stream_start_time }}">
+                                Camera {{ camera.index + 1 }}
+                            </a>
+                        </li>
+                        {% endfor %}
+                    </ul>
+                </div>
+                {% endif %}
             </div>
             <div class="card-body">
                 <div id="youtube-stream-container">
@@ -411,9 +427,9 @@ window.MathJax = {
                             <select id="points-dropdown" class="form-select form-select-sm" style="width: auto;">
                                 <option value="">Select point...</option>
                             </select>
-                            <button id="seek-go-btn" class="btn btn-sm btn-primary">Go</button>
-                            <button id="seek-prev-btn" class="btn btn-sm btn-secondary">Previous Point</button>
-                            <button id="seek-next-btn" class="btn btn-sm btn-secondary">Next Point</button>
+                            <button id="seek-go-btn" class="btn btn-sm btn-primary">Go (g)</button>
+                            <button id="seek-prev-btn" class="btn btn-sm btn-secondary">Previous Point (k)</button>
+                            <button id="seek-next-btn" class="btn btn-sm btn-secondary">Next Point (j)</button>
                         </div>
                     </div>
                 </div>
@@ -496,76 +512,9 @@ window.MathJax = {
     </div>
 </div>
 
+<script src="{{ url_for('static', filename='js/kalman_filter.js') }}"></script>
+
 <script>
-// Kalman Filter for time offset estimation
-class KalmanFilter {
-    constructor() {
-        this.x = 0;  // State estimate (time offset)
-        this.P = 1.0;  // Initial estimation error covariance (1 second squared)
-        this.Q = 0.00001;  // Process noise covariance (clock drift)
-        this.R = 0.05;   // Measurement noise covariance (~50ms std dev, accounts for network jitter)
-        this.outlierThreshold = 3.0;  // Number of standard deviations for outlier rejection
-        this.minConfidenceForRejection = 1.0;  // Only reject outliers if P < this (have some confidence)
-        this.rejectedCount = 0;  // Track rejected measurements for debugging
-    }
-    
-    update(measurement) {
-        // Predict
-        this.P = this.P + this.Q;
-        
-        // Outlier rejection: only reject if we have some confidence in our estimate
-        // Skip rejection during initial convergence (when P is very large)
-        if (this.P < this.minConfidenceForRejection) {
-            const innovation = measurement - this.x;
-            const innovationCovariance = this.P + this.R;  // Total uncertainty
-            const stdDev = Math.sqrt(innovationCovariance);
-            const zScore = Math.abs(innovation) / stdDev;
-            
-            if (zScore > this.outlierThreshold) {
-                // Reject outlier - don't update the filter
-                this.rejectedCount++;
-                console.log(`Rejected outlier measurement: ${measurement.toFixed(6)}s, z-score: ${zScore.toFixed(2)}, current estimate: ${this.x.toFixed(6)}s`);
-                // Still return current state
-                return this.x;
-            }
-        }
-        
-        // Update
-        const K = this.P / (this.P + this.R);  // Kalman gain
-        this.x = this.x + K * (measurement - this.x);
-        this.P = (1 - K) * this.P;
-        
-        return this.x;
-    }
-    
-    getState() {
-        return this.x;
-    }
-    
-    getCovariance() {
-        return this.P;
-    }
-    
-    reset() {
-        this.x = 0;
-        this.P = 1.0;
-        this.rejectedCount = 0;  // Reset rejected count
-    }
-    
-    toJSON() {
-        return {
-            x: this.x,
-            P: this.P
-        };
-    }
-    
-    fromJSON(data) {
-        if (data && typeof data.x === 'number' && typeof data.P === 'number') {
-            this.x = data.x;
-            this.P = data.P;
-        }
-    }
-}
 
 // Polling-based match updates
 const matchId = '{{ match.uuid }}';
@@ -574,31 +523,8 @@ let lastPollTimestamp = null;
 let pollingInterval = null;
 let kalmanFilter = new KalmanFilter();
 let timeSyncInterval = null;
-const KF_STORAGE_KEY = 'match_page_kf_state';
+const KF_STORAGE_KEY = 'kalman_filter_shared_state';  // Shared across all pages
 
-// Load Kalman filter state from localStorage
-function loadKFState() {
-    try {
-        const saved = localStorage.getItem(KF_STORAGE_KEY);
-        if (saved) {
-            const state = JSON.parse(saved);
-            kalmanFilter.fromJSON(state);
-            console.log('Loaded KF state from localStorage:', state);
-        }
-    } catch (error) {
-        console.error('Error loading KF state:', error);
-    }
-}
-
-// Save Kalman filter state to localStorage
-function saveKFState() {
-    try {
-        const state = kalmanFilter.toJSON();
-        localStorage.setItem(KF_STORAGE_KEY, JSON.stringify(state));
-    } catch (error) {
-        console.error('Error saving KF state:', error);
-    }
-}
 
 // Get server time and measure latency
 async function syncWithServerTime() {
@@ -810,7 +736,7 @@ function updatePointsTable(points) {
     
     // Update YouTube points dropdown if it exists and stream is ready
     // Only update if points actually changed (not on every poll)
-    {% if camera_url %}
+    {% if camera_url or available_cameras %}
     const dropdown = document.getElementById('points-dropdown');
     if (dropdown && typeof initializePointsControls === 'function' && typeof streamStartTime !== 'undefined' && streamStartTime !== null) {
         // Check if points have actually changed by comparing count
@@ -939,9 +865,20 @@ function formatDuration(totalSeconds) {
 }
 
 // YouTube Live Stream Integration
-{% if camera_url %}
+{% if camera_url or available_cameras %}
 let youtubePlayer = null;
 let streamStartTime = null;
+let availableCameras = [
+    {% for camera in available_cameras %}
+    {
+        index: {{ camera.index }},
+        url: '{{ camera.url }}',
+        streamStartTime: {% if camera.stream_start_time %}'{{ camera.stream_start_time }}'{% else %}null{% endif %}
+    }{% if not loop.last %},{% endif %}
+    {% endfor %}
+];
+let currentCameraIndex = {% if available_cameras and available_cameras|length > 0 %}{{ available_cameras[0].index }}{% else %}0{% endif %};
+let currentCameraUrl = {% if available_cameras and available_cameras|length > 0 %}'{{ available_cameras[0].url }}'{% elif camera_url %}'{{ camera_url }}'{% else %}null{% endif %};
 let pointsData = [];
 let currentPointIndex = -1;
 
@@ -984,8 +921,8 @@ async function getStreamStartTime(videoId) {
     }
 }
 
-// Initialize YouTube player
-function initializeYouTubePlayer() {
+// Initialize YouTube player with a specific camera URL
+function initializeYouTubePlayer(cameraUrl = null) {
     // Only initialize if the player container exists and is visible
     const playerContainer = document.getElementById('youtube-player');
     const playerContainerDiv = document.getElementById('youtube-player-container');
@@ -994,22 +931,51 @@ function initializeYouTubePlayer() {
         return; // Stream section doesn't exist, skip initialization
     }
     
-    // Don't initialize if player already exists
-    if (youtubePlayer) {
+    // Use provided URL or current camera URL
+    const urlToUse = cameraUrl || currentCameraUrl;
+    if (!urlToUse) {
+        console.error('No camera URL provided');
+        console.log('Debug: currentCameraUrl =', currentCameraUrl, 'availableCameras =', availableCameras);
+        // Try to get URL from availableCameras if currentCameraUrl is null
+        if (availableCameras && availableCameras.length > 0) {
+            const firstCamera = availableCameras[0];
+            if (firstCamera && firstCamera.url) {
+                console.log('Using first available camera:', firstCamera.url);
+                currentCameraUrl = firstCamera.url;
+                return checkStreamStatus(firstCamera.url);
+            }
+        }
         return;
     }
     
-    const videoId = extractVideoId('{{ camera_url }}');
+    const videoId = extractVideoId(urlToUse);
     if (!videoId) {
-        console.error('Could not extract YouTube video ID from camera URL');
+        console.error('Could not extract YouTube video ID from camera URL:', urlToUse);
         return;
+    }
+
+    // If player exists, load new video
+    if (youtubePlayer) {
+        try {
+            youtubePlayer.loadVideoById(videoId);
+            return;
+        } catch (error) {
+            console.error('Error loading new video:', error);
+            // If loading fails, destroy and recreate
+            try {
+                youtubePlayer.destroy();
+            } catch (e) {
+                // Ignore destroy errors
+            }
+            youtubePlayer = null;
+        }
     }
 
     try {
         youtubePlayer = new YT.Player('youtube-player', {
             videoId: videoId,
             playerVars: {
-                'autoplay': 0,
+                'autoplay': {% if match.status == 'IN_PROGRESS' %}1{% else %}0{% endif %},  // Auto-play for live matches
                 'controls': 1,
                 'rel': 0,
                 'modestbranding': 1,
@@ -1040,21 +1006,51 @@ function onYouTubeIframeAPIReady() {
     // Wait a bit to ensure DOM is ready
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', function() {
-            {% if camera_url %}
-            initializeYouTubePlayer();
+            {% if camera_url or (available_cameras and available_cameras|length > 0) %}
+            // Use stream start time from first available camera if available
+            if (availableCameras.length > 0 && availableCameras[0].streamStartTime) {
+                let streamStartStr = availableCameras[0].streamStartTime;
+                if (!streamStartStr.match(/[zZ]|[\+\-]\d{2}:?\d{2}$/)) {
+                    streamStartStr = streamStartStr.replace(/\.\d+$/, '') + 'Z';
+                }
+                streamStartTime = new Date(streamStartStr);
+                window.streamStartTimeRaw = streamStartStr;
+                checkStreamStatus(currentCameraUrl);
+            } else if (availableCameras.length > 0 || currentCameraUrl) {
+                // Have cameras but no stored stream start time - check status which will fetch it
+                checkStreamStatus(currentCameraUrl);
+            } else {
+                initializeYouTubePlayer();
+            }
             {% endif %}
         });
     } else {
-        {% if camera_url %}
+        {% if camera_url or (available_cameras and available_cameras|length > 0) %}
         // Small delay to ensure elements are rendered
-        setTimeout(initializeYouTubePlayer, 100);
+        setTimeout(function() {
+            // Use stream start time from first available camera if available
+            if (availableCameras.length > 0 && availableCameras[0].streamStartTime) {
+                let streamStartStr = availableCameras[0].streamStartTime;
+                if (!streamStartStr.match(/[zZ]|[\+\-]\d{2}:?\d{2}$/)) {
+                    streamStartStr = streamStartStr.replace(/\.\d+$/, '') + 'Z';
+                }
+                streamStartTime = new Date(streamStartStr);
+                window.streamStartTimeRaw = streamStartStr;
+                checkStreamStatus(currentCameraUrl);
+            } else if (availableCameras.length > 0 || currentCameraUrl) {
+                // Have cameras but no stored stream start time - check status which will fetch it
+                checkStreamStatus(currentCameraUrl);
+            } else {
+                initializeYouTubePlayer();
+            }
+        }, 100);
         {% endif %}
     }
 }
 
 // Check if YouTube API is ready, or wait for it
-// Only if camera_url exists
-{% if camera_url %}
+// Only if camera_url or available_cameras exists
+{% if camera_url or available_cameras %}
 if (typeof YT !== 'undefined' && YT.Player) {
     onYouTubeIframeAPIReady();
 } else {
@@ -1078,6 +1074,13 @@ function onPlayerReady(event) {
             // Check if DVR is enabled (seeking is possible)
             const currentTime = event.target.getCurrentTime();
             console.log('Current time:', currentTime);
+            
+            // If match is in progress, auto-play at live time
+            {% if match.status == 'IN_PROGRESS' %}
+            console.log('Match is in progress - starting live playback');
+            // For live streams, just play (will start at current live time)
+            event.target.playVideo();
+            {% endif %}
         }
     } catch (error) {
         console.error('Error checking player info:', error);
@@ -1088,7 +1091,7 @@ function onPlayerStateChange(event) {
     // Handle player state changes if needed
 }
 
-async function checkStreamStatus() {
+async function checkStreamStatus(cameraUrl = null) {
     // Check if stream section exists
     const notStartedMsg = document.getElementById('youtube-stream-not-started');
     const playerContainer = document.getElementById('youtube-player-container');
@@ -1097,14 +1100,74 @@ async function checkStreamStatus() {
         return; // Stream section doesn't exist, skip
     }
     
-    const videoId = extractVideoId('{{ camera_url }}');
+    // Use provided URL or current camera URL
+    const urlToUse = cameraUrl || currentCameraUrl;
+    if (!urlToUse) {
+        console.error('No camera URL available');
+        return;
+    }
+    
+    const videoId = extractVideoId(urlToUse);
     if (!videoId) {
-        console.error('Could not extract video ID from camera URL: {{ camera_url }}');
+        console.error('Could not extract video ID from camera URL:', urlToUse);
         return;
     }
     
     console.log('Checking stream status for video:', videoId);
     
+    // Check if we already have stream start time from camera data
+    const currentCamera = availableCameras.find(c => c.url === urlToUse);
+    if (currentCamera && currentCamera.streamStartTime) {
+        // Use stored stream start time
+        let streamStartStr = currentCamera.streamStartTime;
+        if (!streamStartStr.match(/[zZ]|[\+\-]\d{2}:?\d{2}$/)) {
+            streamStartStr = streamStartStr.replace(/\.\d+$/, '') + 'Z';
+        }
+        streamStartTime = new Date(streamStartStr);
+        window.streamStartTimeRaw = streamStartStr;
+        console.log('Using stored stream start time:', streamStartTime.toISOString());
+        
+        // Show player and controls
+        playerContainer.style.display = 'block';
+        notStartedMsg.style.display = 'none';
+        
+        // Initialize YouTube player if not already initialized
+        if (!youtubePlayer) {
+            console.log('Initializing YouTube player');
+            initializeYouTubePlayer(urlToUse);
+        } else {
+            // Update existing player with new video
+            initializeYouTubePlayer(urlToUse);
+        }
+        
+        // Initialize points data and dropdown
+        initializePointsControls();
+        return;
+    } else if (currentCamera && !currentCamera.streamStartTime) {
+        // No stored stream start time, but camera is available
+        // For matches in progress, show player for live stream
+        {% if match.status == 'IN_PROGRESS' %}
+        console.log('No stored stream start time, but match is in progress - showing player for live stream');
+        // Show player and try to play live
+        playerContainer.style.display = 'block';
+        notStartedMsg.style.display = 'none';
+        
+        // Initialize YouTube player if not already initialized
+        if (!youtubePlayer) {
+            console.log('Initializing YouTube player for live stream');
+            initializeYouTubePlayer(urlToUse);
+        } else {
+            // Update existing player with new video
+            initializeYouTubePlayer(urlToUse);
+        }
+        
+        // Initialize points data and dropdown
+        initializePointsControls();
+        return;
+        {% endif %}
+    }
+    
+    // If no stored stream start time, fetch from server
     try {
         // Get stream start time from server
         const response = await fetch(`/youtube-stream-start?video_id=${encodeURIComponent(videoId)}`);
@@ -1116,11 +1179,33 @@ async function checkStreamStatus() {
         console.log('Stream status response:', data);
         
         if (!data.start_time) {
-            // Stream hasn't started
+            // Stream hasn't started or we couldn't get start time
+            // For matches in progress, still try to show player (might be live)
+            {% if match.status == 'IN_PROGRESS' %}
+            console.log('No stream start time, but match is in progress - showing player for live stream');
+            // Show player and try to play live
+            playerContainer.style.display = 'block';
+            notStartedMsg.style.display = 'none';
+            
+            // Initialize YouTube player if not already initialized
+            if (!youtubePlayer) {
+                console.log('Initializing YouTube player for live stream');
+                initializeYouTubePlayer(urlToUse);
+            } else {
+                // Update existing player with new video
+                initializeYouTubePlayer(urlToUse);
+            }
+            
+            // Initialize points data and dropdown
+            initializePointsControls();
+            return;
+            {% else %}
+            // For non-live matches, show not started message
             console.log('Stream has not started yet');
             notStartedMsg.style.display = 'block';
             playerContainer.style.display = 'none';
             return;
+            {% endif %}
         }
         
         // Store stream start time - ensure it's properly formatted
@@ -1150,7 +1235,10 @@ async function checkStreamStatus() {
         // Initialize YouTube player if not already initialized
         if (!youtubePlayer) {
             console.log('Initializing YouTube player');
-            initializeYouTubePlayer();
+            initializeYouTubePlayer(urlToUse);
+        } else {
+            // Update existing player with new video
+            initializeYouTubePlayer(urlToUse);
         }
         
         // Initialize points data and dropdown
@@ -1161,6 +1249,75 @@ async function checkStreamStatus() {
         playerContainer.style.display = 'none';
     }
 }
+
+// Handle camera selection
+function switchCamera(cameraIndex) {
+    const camera = availableCameras.find(c => c.index === cameraIndex);
+    if (!camera) {
+        console.error('Camera not found:', cameraIndex);
+        return;
+    }
+    
+    currentCameraIndex = cameraIndex;
+    currentCameraUrl = camera.url;
+    
+    // Update stream start time from camera data
+    if (camera.streamStartTime) {
+        let streamStartStr = camera.streamStartTime;
+        if (!streamStartStr.match(/[zZ]|[\+\-]\d{2}:?\d{2}$/)) {
+            streamStartStr = streamStartStr.replace(/\.\d+$/, '') + 'Z';
+        }
+        streamStartTime = new Date(streamStartStr);
+        window.streamStartTimeRaw = streamStartStr;
+    }
+    
+    // Update dropdown button text
+    const dropdownButton = document.getElementById('camera-selector-dropdown');
+    if (dropdownButton) {
+        const buttonText = dropdownButton.querySelector('span') || dropdownButton;
+        if (buttonText.tagName === 'SPAN') {
+            buttonText.textContent = `Camera ${cameraIndex + 1}`;
+        } else {
+            dropdownButton.innerHTML = `<i class="fas fa-video"></i> Camera ${cameraIndex + 1}`;
+        }
+    }
+    
+    // Update active state in dropdown
+    document.querySelectorAll('.camera-option').forEach(opt => {
+        opt.classList.remove('active');
+        if (parseInt(opt.getAttribute('data-camera-index')) === cameraIndex) {
+            opt.classList.add('active');
+        }
+    });
+    
+    // Reinitialize player and check stream status
+    checkStreamStatus(camera.url);
+    
+    // Reinitialize points controls with new stream start time
+    if (typeof initializePointsControls === 'function') {
+        initializePointsControls();
+    }
+}
+
+// Set up camera selection event handlers
+document.addEventListener('DOMContentLoaded', function() {
+    const cameraOptions = document.querySelectorAll('.camera-option');
+    cameraOptions.forEach(option => {
+        option.addEventListener('click', function(e) {
+            e.preventDefault();
+            const cameraIndex = parseInt(this.getAttribute('data-camera-index'));
+            switchCamera(cameraIndex);
+        });
+    });
+    
+    // Mark current camera as active in dropdown
+    if (availableCameras.length > 0 && currentCameraIndex !== undefined) {
+        const currentOption = document.querySelector(`.camera-option[data-camera-index="${currentCameraIndex}"]`);
+        if (currentOption) {
+            currentOption.classList.add('active');
+        }
+    }
+});
 
 let pointsObserver = null;
 let lastPointsCount = 0; // Track number of points to avoid unnecessary updates
@@ -1226,20 +1383,12 @@ function initializePointsControls() {
     if (wasUserSelected && preservedIndex !== null && preservedIndex < pointsData.length) {
         dropdown.value = preservedIndex.toString();
         currentPointIndex = preservedIndex;
-    } else if (pointsData.length > 0 && wasEmpty) {
-        // Only auto-select first point if nothing was selected before
-        // Don't auto-select if user had a selection that's now invalid
-        if (currentPointIndex < 0) {
-            currentPointIndex = 0;
-        }
-    } else if (pointsData.length > 0 && currentPointIndex < 0) {
-        // Initialize if not set
+    } else if (pointsData.length > 0) {
+        // Default to first point if no valid selection
         currentPointIndex = 0;
-    }
-    
-    // If user had a selection but it's now invalid (point was deleted), keep dropdown empty
-    if (wasUserSelected && preservedIndex !== null && preservedIndex >= pointsData.length) {
-        dropdown.value = '';
+        dropdown.value = '0';
+    } else {
+        // No points available
         currentPointIndex = -1;
     }
     
@@ -1428,7 +1577,7 @@ function seekToPoint(pointIndex) {
 
 // Event handlers for controls
 document.addEventListener('DOMContentLoaded', function() {
-    {% if camera_url %}
+    {% if camera_url or available_cameras %}
     const goBtn = document.getElementById('seek-go-btn');
     const prevBtn = document.getElementById('seek-prev-btn');
     const nextBtn = document.getElementById('seek-next-btn');
@@ -1491,6 +1640,67 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
     
+    // Keyboard shortcuts (vim-inspired)
+    // Only activate when not typing in input fields
+    document.addEventListener('keydown', function(e) {
+        // Don't trigger shortcuts if user is typing in an input, textarea, or select
+        const activeElement = document.activeElement;
+        const isTyping = activeElement && (
+            activeElement.tagName === 'INPUT' ||
+            activeElement.tagName === 'TEXTAREA' ||
+            activeElement.tagName === 'SELECT' ||
+            activeElement.isContentEditable
+        );
+        
+        // Don't trigger if modifier keys are pressed (Ctrl, Alt, Meta)
+        if (e.ctrlKey || e.altKey || e.metaKey) {
+            return;
+        }
+        
+        // Only handle if not typing and YouTube player controls are visible
+        const playerContainer = document.getElementById('youtube-player-container');
+        if (!isTyping && playerContainer && playerContainer.style.display !== 'none') {
+            const key = e.key.toLowerCase();
+            
+            // Handle Enter key separately (before toLowerCase)
+            if (e.key === 'Enter') {
+                if (activeElement && activeElement.id === 'points-dropdown') {
+                    // If dropdown is focused, let Enter work normally
+                    return;
+                }
+                e.preventDefault();
+                if (goBtn) {
+                    goBtn.click();
+                }
+                return;
+            }
+            
+            switch(key) {
+                case 'j':
+                    // Next point (vim: j = down)
+                    e.preventDefault();
+                    if (nextBtn) {
+                        nextBtn.click();
+                    }
+                    break;
+                case 'k':
+                    // Previous point (vim: k = up)
+                    e.preventDefault();
+                    if (prevBtn) {
+                        prevBtn.click();
+                    }
+                    break;
+                case 'g':
+                    // Go to selected point (vim: g = go to)
+                    e.preventDefault();
+                    if (goBtn) {
+                        goBtn.click();
+                    }
+                    break;
+            }
+        }
+    });
+    
     // Debug: log initial state
     console.log('YouTube controls initialized:', {
         goBtn: !!goBtn,
@@ -1513,7 +1723,7 @@ document.addEventListener('DOMContentLoaded', async function() {
     // Removed time elapsed UI
     
     // Check YouTube stream status on page load (for all matches)
-    {% if camera_url %}
+    {% if camera_url or available_cameras %}
     if (typeof checkStreamStatus === 'function') {
         checkStreamStatus();
     }
