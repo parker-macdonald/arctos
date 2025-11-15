@@ -133,12 +133,15 @@ def match_page(tournament_url):
     except Exception:
         computed_end_time = None
 
-    # Get field camera URL if field is set
+    # Get field camera URL if field is set (use first camera for backward compatibility)
     camera_url = None
     if match.field:
         field_obj = Field.query.filter_by(event=tournament_url, name=match.field).first()
         if field_obj and field_obj.camera:
-            camera_url = field_obj.camera
+            from app.utils.camera_helpers import parse_camera_urls
+            camera_urls = parse_camera_urls(field_obj.camera)
+            if camera_urls:
+                camera_url = camera_urls[0]  # Use first camera for display
 
     return render_template('match_page_websocket.html', 
                          tournament=tournament, 
@@ -179,7 +182,7 @@ def start_match(tournament_url):
         return redirect(f'/{tournament_url}/schedule')
     
     # For dynamic matches, require dependencies to be completed (or marked ready)
-    if match.dynamic:
+    if match.schedule_type != 'STATIC':
         try:
             from app.utils.scheduling import get_match_dependencies
             deps = get_match_dependencies(match, tournament_url)
@@ -410,7 +413,7 @@ def start_match_post(tournament_url):
     match.started_by = current_user.id
     match.started_at = datetime.utcnow()
     
-    if match.type == 'STONES':
+    if match.set_type == 'STONES':
         stones_per_set = request.form.get('stones_per_set')
         if stones_per_set:
             try:
@@ -424,17 +427,27 @@ def start_match_post(tournament_url):
         match.stones_per_set = stones_per_set
         match.stones_remaining = stones_per_set
     
+    # Get camera stream start times for all cameras on this field
+    if match.field:
+        field_obj = Field.query.filter_by(event=tournament_url, name=match.field).first()
+        if field_obj and field_obj.camera:
+            from app.utils.camera_helpers import get_all_camera_stream_starts
+            stream_starts = get_all_camera_stream_starts(field_obj)
+            if stream_starts:
+                match.camera_stream_starts = json.dumps(stream_starts)
+    
     db.session.commit()
     
-    # Mark dependent matches as time finalized when this match starts
+    # Update predicted times first, then mark dependent matches as time finalized
     try:
-        mark_dependent_matches_time_finalized(match, tournament_url)
-        # Also update predicted times immediately based on this start
+        # First recompute all match times to update nominal_start_time for all matches
         from app.utils.scheduling import recompute_all_match_times
         recompute_all_match_times(tournament_url)
+        # Then mark dependent matches as time finalized (this will update JOIN/BREAK times and propagate)
+        # mark_dependent_matches_time_finalized(match, tournament_url)
         db.session.commit()
     except Exception as e:
-        print(f"Error marking dependent matches time finalized: {e}")
+        print(f"Error updating schedule and marking dependent matches time finalized: {e}")
     
     flash('Match started successfully!', 'success')
     return redirect(f'/{tournament_url}/run-match?id={match.uuid}')
@@ -652,6 +665,24 @@ def finalize_match_post(tournament_url):
     match.match_winner = match_winner
     match.finalized_at = datetime.now()
     
+    # Refresh camera stream start times when match ends (in case streams started late)
+    if match.field:
+        field_obj = Field.query.filter_by(event=tournament_url, name=match.field).first()
+        if field_obj and field_obj.camera:
+            from app.utils.camera_helpers import get_all_camera_stream_starts
+            stream_starts = get_all_camera_stream_starts(field_obj)
+            if stream_starts:
+                # Merge with existing stream starts (don't overwrite if already set)
+                existing_starts = {}
+                if match.camera_stream_starts:
+                    try:
+                        existing_starts = json.loads(match.camera_stream_starts)
+                    except json.JSONDecodeError:
+                        pass
+                # Update with any new stream starts
+                existing_starts.update(stream_starts)
+                match.camera_stream_starts = json.dumps(existing_starts)
+    
     team1_signature = request.form.get('team1_signature')
     team2_signature = request.form.get('team2_signature')
     if team1_signature:
@@ -674,10 +705,11 @@ def finalize_match_post(tournament_url):
     except Exception as e:
         print(f"Dependency update error for match {match.name}: {e}")
     
-    # try:
-    #     update_dynamic_schedule_after_completion(tournament_url, match)
-    # except Exception as e:
-    #     print(f"Dynamic scheduling update error for match {match.name}: {e}")
+    # Update dynamic schedule after completion (marks dependent matches as ready to start)
+    try:
+        update_dynamic_schedule_after_completion(tournament_url, match)
+    except Exception as e:
+        print(f"Dynamic scheduling update error for match {match.name}: {e}")
     
     # Recompute all match times with the new algorithm
     try:
@@ -822,6 +854,25 @@ def add_point(tournament_url):
         set_number=set_number,
         stamp=datetime.now(timezone.utc)
     )
+    
+    # Calculate and store camera stream timestamp if cameras are configured
+    if match.field:
+        field_obj = Field.query.filter_by(event=tournament_url, name=match.field).first()
+        if field_obj and field_obj.camera and match.camera_stream_starts:
+            from app.utils.camera_helpers import parse_camera_urls, calculate_stream_timestamp
+            try:
+                stream_starts = json.loads(match.camera_stream_starts)
+                camera_urls = parse_camera_urls(field_obj.camera)
+                
+                # Use primary camera (index 0) if available
+                if 0 in stream_starts and len(camera_urls) > 0:
+                    stream_timestamp = calculate_stream_timestamp(new_point.stamp, stream_starts[0])
+                    if stream_timestamp is not None:
+                        new_point.camera_index = 0
+                        new_point.stream_timestamp = stream_timestamp
+            except (json.JSONDecodeError, KeyError, ValueError) as e:
+                print(f"Error calculating camera stream timestamp: {e}")
+    
     db.session.add(new_point)
     db.session.commit()
     

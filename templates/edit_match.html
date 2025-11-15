@@ -51,13 +51,13 @@
                             <div class="mb-3">
                                 <label for="dynamic" class="form-label">Match Type</label>
                                 <select class="form-select" id="dynamic" name="dynamic">
-                                    <option value="false" {% if not match.dynamic and match.type not in ('BREAK', 'JOIN') %}selected{% endif %}>Static (starts at scheduled time)</option>
-                                    <option value="true" {% if match.dynamic and match.type not in ('BREAK', 'JOIN') %}selected{% endif %}>Dynamic (computed from dependencies)</option>
-                                    <option value="BREAK" {% if match.type == 'BREAK' %}selected{% endif %}>Break</option>
-                                    <option value="JOIN" {% if match.type == 'JOIN' %}selected{% endif %}>Join</option>
+                                    <option value="false" {% if match.schedule_type == 'STATIC' %}selected{% endif %}>Static (starts at scheduled time)</option>
+                                    <option value="true" {% if match.schedule_type == 'DYNAMIC' %}selected{% endif %}>Dynamic (computed from dependencies)</option>
+                                    <option value="BREAK" {% if match.schedule_type == 'BREAK' %}selected{% endif %}>Break</option>
+                                    <option value="JOIN" {% if match.schedule_type == 'JOIN' %}selected{% endif %}>Join</option>
                                 </select>
                                 <div class="form-text" id="dynamic-help">
-                                    {% if match.dynamic %}
+                                    {% if match.schedule_type != 'STATIC' %}
                                     Dynamic matches compute start time from referenced matches (e.g., "Match Name winner"). 
                                     Matches without dependencies must be static.
                                     {% else %}
@@ -76,13 +76,13 @@
                     
                     <div class="row">
                         <div class="col-md-6">
-                            <div class="mb-3" id="start_time_container" {% if match.dynamic %}style="display: none;"{% endif %}>
+                            <div class="mb-3" id="start_time_container" {% if match.schedule_type != 'STATIC' %}style="display: none;"{% endif %}>
                                 <label for="start_time" class="form-label">Start Time</label>
                                 <input type="datetime-local" class="form-control" id="start_time" name="start_time"
-                                       value="{{ match.nominal_start_time.strftime('%Y-%m-%dT%H:%M') if match.nominal_start_time and not match.dynamic else '' }}">
+                                       value="{{ match.nominal_start_time.strftime('%Y-%m-%dT%H:%M') if match.nominal_start_time and match.schedule_type == 'STATIC' else '' }}">
                                 <div class="form-text">Only applies to static matches</div>
                             </div>
-                            <div class="mb-3" id="previous_match_container" {% if not match.dynamic and match.type not in ('BREAK', 'JOIN') %}style="display: none;"{% endif %}>
+                            <div class="mb-3" id="previous_match_container" {% if match.schedule_type == 'STATIC' %}style="display: none;"{% endif %}>
                                 <label for="previous_match" class="form-label">Previous Match</label>
                                 <select class="form-select" id="previous_match" name="previous_match">
                                     <option value="">None (first match on field)</option>
@@ -131,8 +131,8 @@
                             <div class="mb-3">
                                 <label for="match_type" class="form-label">Match Format</label>
                                 <select class="form-select" id="match_type" name="match_type">
-                                    <option value="SETS" {% if match.type == 'SETS' %}selected{% endif %}>Sets</option>
-                                    <option value="STONES" {% if match.type == 'STONES' %}selected{% endif %}>Stones</option>
+                                    <option value="SETS" {% if match.set_type == 'SETS' %}selected{% endif %}>Sets</option>
+                                    <option value="STONES" {% if match.set_type == 'STONES' %}selected{% endif %}>Stones</option>
                                 </select>
                             </div>
                         </div>
@@ -150,6 +150,19 @@
                                 <label for="nstonesperset" class="form-label">Stones per Set</label>
                                 <input type="number" class="form-control" id="nstonesperset" name="nstonesperset" value="{{ match.nstonesperset or 100 }}" min="1" max="1000">
                                 <div class="form-text">Number of stones available for each set</div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="row">
+                        <div class="col-md-12">
+                            <div class="mb-3">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="ribbon" name="ribbon" {% if match.ribbon %}checked{% endif %}>
+                                    <label class="form-check-label" for="ribbon">
+                                        Ribbon Game (not counted in tournament results)
+                                    </label>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -526,7 +539,7 @@ document.addEventListener('DOMContentLoaded', function() {
             previousMatchSelect.value = ''; // Clear previous match selection
             dynamicHelp.textContent = 'Static matches require a manual start time and are automatically sequenced by time.';
             // Restore original value if it exists and match was static
-            {% if match.nominal_start_time and not match.dynamic and match.type not in ('BREAK', 'JOIN') %}
+            {% if match.nominal_start_time and match.schedule_type == 'STATIC' %}
             startTimeInput.value = '{{ match.nominal_start_time.strftime('%Y-%m-%dT%H:%M') }}';
             {% endif %}
         }

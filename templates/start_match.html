@@ -96,7 +96,7 @@
             <div class="card-body">
                 <p><strong>Match:</strong> {{ match.name }}</p>
                 <p><strong>Field:</strong> {{ match.field or 'TBA' }}</p>
-                <p><strong>Type:</strong> {{ match.type or 'Standard' }}</p>
+                <p><strong>Set Type:</strong> {{ match.set_type or 'Standard' }}</p>
                 <p><strong>Refs:</strong> {{ match.refs or 'TBA' }}</p>
                 {% if match.nominal_length %}
                 <p><strong>Length:</strong> {{ match.nominal_length }} minutes</p>
@@ -388,11 +388,22 @@ document.addEventListener('DOMContentLoaded', function() {
 
 // Handle form submission
 document.querySelector('form').addEventListener('submit', function(e) {
-    // Ensure we have at least 1 player per team
+    // Check if either team has zero players and prompt for confirmation
     if (team1Players.length === 0 || team2Players.length === 0) {
-        e.preventDefault();
-        alert('Each team must have at least 1 player');
-        return false;
+        let message = 'One or both teams have zero players selected. ';
+        if (team1Players.length === 0 && team2Players.length === 0) {
+            message += 'Both teams have zero players. ';
+        } else if (team1Players.length === 0) {
+            message += 'Team 1 has zero players. ';
+        } else {
+            message += 'Team 2 has zero players. ';
+        }
+        message += 'This typically only happens if a team doesn\'t show up. Are you sure you want to start the match?';
+        
+        if (!confirm(message)) {
+            e.preventDefault();
+            return false;
+        }
     }
 });
 </script>

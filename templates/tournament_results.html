@@ -20,7 +20,7 @@
         {% if matches %}
             {% set team_stats = {} %}
             {% for match in matches %}
-                {% if match.status == 'COMPLETED' and match.type not in ('BREAK', 'JOIN') %}
+                {% if match.status == 'COMPLETED' and match.schedule_type not in ('BREAK', 'JOIN') and not match.ribbon %}
                     {% set winner = match.match_winner %}
 
                     {% set t1 = match.team1_registration.pseudonym if match.team1_registration else (match.team1 or match.team1_initial) %}
@@ -33,8 +33,8 @@
                         {% endif %}
                     {% endif %}
                     {% if t2 and t2 != 'TBA' %}
-                        {% if t2 not in team_stats %}
-                            {% set _ = team_stats.update({t2: {'matches_won':0,'matches_lost':0,'points_won':0,'points_lost':0}}) %}
+                    {% if t2 not in team_stats %}
+                        {% set _ = team_stats.update({t2: {'matches_won':0,'matches_lost':0,'points_won':0,'points_lost':0}}) %}
                         {% endif %}
                     {% endif %}
 
@@ -52,10 +52,10 @@
                         {% set t1p = points | selectattr('winner','equalto','TEAM1') | rejectattr('rerolled','equalto',True) | list | length %}
                         {% set t2p = points | selectattr('winner','equalto','TEAM2') | rejectattr('rerolled','equalto',True) | list | length %}
                         {% if t1 and t1 != 'TBA' %}
-                            {% set _ = team_stats[t1].update({'points_won': team_stats[t1]['points_won'] + t1p, 'points_lost': team_stats[t1]['points_lost'] + t2p}) %}
+                        {% set _ = team_stats[t1].update({'points_won': team_stats[t1]['points_won'] + t1p, 'points_lost': team_stats[t1]['points_lost'] + t2p}) %}
                         {% endif %}
                         {% if t2 and t2 != 'TBA' %}
-                            {% set _ = team_stats[t2].update({'points_won': team_stats[t2]['points_won'] + t2p, 'points_lost': team_stats[t2]['points_lost'] + t1p}) %}
+                        {% set _ = team_stats[t2].update({'points_won': team_stats[t2]['points_won'] + t2p, 'points_lost': team_stats[t2]['points_lost'] + t1p}) %}
                         {% endif %}
                     {% endif %}
                 {% endif %}

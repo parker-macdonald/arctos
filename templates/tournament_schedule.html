@@ -74,7 +74,7 @@
     {# Group joins by name #}
     {% set join_groups = {} %}
     {% for match in matches %}
-        {% if match.type == 'JOIN' %}
+        {% if match.schedule_type == 'JOIN' %}
             {% if match.name not in join_groups %}
                 {% set _ = join_groups.update({match.name: []}) %}
             {% endif %}
@@ -206,7 +206,7 @@
                                                 {% set duration_percent = 5 %}
                                             {% endif %}
                                             
-                                            {% if match.type == 'JOIN' %}
+                                            {% if match.schedule_type == 'JOIN' %}
                                                 {# Joins will be handled separately #}
                                             {% else %}
                                                 {# Compute team pseudonyms for highlighting #}
@@ -232,7 +232,7 @@
                                                 
                                                 {% set ns = namespace(hl=False, matches_ref=False) %}
                                                 <div class="schedule-match-block 
-                                                    {% if match.type == 'BREAK' %}schedule-break{% endif %}
+                                                    {% if match.schedule_type == 'BREAK' %}schedule-break{% endif %}
                                                     schedule-status-{{ match.status|lower|replace('_', '-') }}
                                                     {% set t1_name = team1_pseudonym_for_hl %}
                                                     {% set t2_name = team2_pseudonym_for_hl %}
@@ -277,11 +277,11 @@
                                                     data-match-uuid="{{ match.uuid }}"
                                                     data-start-time="{{ match_start_utc|utc_iso }}"
                                                     data-end-time="{{ match_end_utc|utc_iso if match_end_utc else '' }}">
-                                                    {% if match.type != 'BREAK' %}
+                                                    {% if match.schedule_type != 'BREAK' %}
                                                         <a href="/{{ tournament.url }}/match?id={{ match.uuid }}" class="stretched-link" aria-label="Open match {{ match.name }}"></a>
                                                     {% endif %}
                                                     <div class="schedule-match-content">
-                                                        {% if match.type != 'BREAK' %}
+                                                        {% if match.schedule_type != 'BREAK' %}
                                                             {% set team1_pseudonym = 'TBA' %}
                                                             {% if match.team1 %}
                                                                 {% set team1_reg = match.team1_registration %}
@@ -344,8 +344,8 @@
                                                                 </div>
                                                             {% endif %}
                                                             
-                                                            {% set is_special = match.type in ['BREAK','JOIN'] %}
-                                                            {% set can_start = (match.team1 and match.team2 and (match.refs or match.refs_initial)) and ((not match.dynamic) or match.ready_to_start) %}
+                                                            {% set is_special = match.schedule_type in ['BREAK','JOIN'] %}
+                                                            {% set can_start = (match.team1 and match.team2 and (match.refs or match.refs_initial)) and ((match.schedule_type == 'STATIC') or match.ready_to_start) %}
                                                             
                                                             <div class="schedule-match-status">
                                                                 {% if match.status == 'NOT_STARTED' and can_start and (not is_special) %}
@@ -359,7 +359,7 @@
                                                                         {{ match.status.replace('_', ' ').title() }}
                                                                     </span>
                                                                 {% endif %}
-                                                                {% if match.status != 'COMPLETED' and ((not match.dynamic) or match.time_finalized) %}
+                                                                {% if match.status != 'COMPLETED' and ((match.schedule_type == 'STATIC') or match.time_finalized) %}
                                                                     <span class="badge bg-primary ms-1" title="Time finalized">Time Finalized</span>
                                                                 {% endif %}
                                                             </div>
@@ -390,7 +390,7 @@
                                                         {% endif %}
                                                     </div>
                                                 </div>
-                                            {% endif %} {# Close if match.type == 'JOIN' from line 206 #}
+                                            {% endif %} {# Close if match.schedule_type == 'JOIN' from line 206 #}
                                             {% endif %} {# Close if/else from lines 172/174 #}
                                         {% endif %} {# Close if match_start from line 169 #}
                                     {% endif %} {# Close if match.field from line 167 #}

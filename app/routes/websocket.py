@@ -145,6 +145,28 @@ def init_websocket_handlers(socketio_instance):
             set_number=data.get('set_number', 1),
             stamp=datetime.utcnow()
         )
+        
+        # Calculate and store camera stream timestamp if cameras are configured
+        match = Match.query.get(match_id)
+        if match and match.field:
+            from models import Field
+            from app.utils.camera_helpers import parse_camera_urls, calculate_stream_timestamp
+            import json
+            field_obj = Field.query.filter_by(event=match.event, name=match.field).first()
+            if field_obj and field_obj.camera and match.camera_stream_starts:
+                try:
+                    stream_starts = json.loads(match.camera_stream_starts)
+                    camera_urls = parse_camera_urls(field_obj.camera)
+                    
+                    # Use primary camera (index 0) if available
+                    if 0 in stream_starts and len(camera_urls) > 0:
+                        stream_timestamp = calculate_stream_timestamp(new_point.stamp, stream_starts[0])
+                        if stream_timestamp is not None:
+                            new_point.camera_index = 0
+                            new_point.stream_timestamp = stream_timestamp
+                except (json.JSONDecodeError, KeyError, ValueError) as e:
+                    print(f"Error calculating camera stream timestamp: {e}")
+        
         db.session.add(new_point)
         db.session.commit()
         

@@ -189,11 +189,11 @@ window.MathJax = {
                     </div>
                 </div>
                 
-                {% if match.type %}
+                {% if match.set_type %}
                 <div class="row mt-3">
                     <div class="col-md-6">
                         <h6>Type</h6>
-                        <p>{{ match.type }}</p>
+                        <p>{{ match.set_type }}</p>
                     </div>
                     {% if match.nominal_length %}
                     <div class="col-md-6">
@@ -209,7 +209,7 @@ window.MathJax = {
                     <div class="col-12">
                         <div class="d-flex gap-2">
                             {% if match.status == 'NOT_STARTED' and match.team1 and match.team2 and (match.refs or match.refs_initial) %}
-                                {% if (not match.dynamic) or match.ready_to_start %}
+                                {% if match.schedule_type == 'STATIC' or match.ready_to_start %}
                                     <a href="/{{ tournament.url }}/start-match?id={{ match.uuid }}" class="btn btn-success">Start Match</a>
                                 {% else %}
                                     <span class="btn btn-secondary disabled" title="Waiting on dependencies">Cannot Start</span>
@@ -253,7 +253,7 @@ window.MathJax = {
             <div class="card-body">
                 <!-- Stones (removed time elapsed from main view) -->
                 <div class="row mb-3">
-                    {% if match.type == 'STONES' %}
+                    {% if match.set_type == 'STONES' %}
                     <div class="col-md-6">
                         <p><strong>Stones Remaining:</strong> <span id="live-stones-remaining">{{ match.stones_remaining if match.stones_remaining is not none else '??' }}</span></p>
                     </div>

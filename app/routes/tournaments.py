@@ -4,6 +4,7 @@ Tournament management routes.
 from flask import Blueprint, render_template, request, redirect, flash, jsonify
 from flask_login import login_required, current_user
 from datetime import datetime, timedelta
+import json
 from models import (
     Tournament, Match, Field, Tag, TeamRegistration, PlayerRegistration,
     Team, TO, db
@@ -13,6 +14,76 @@ from app.utils.scheduling import compute_dynamic_match_nominal_start_time, valid
 from app.filters import is_head_ref
 
 bp = Blueprint('tournaments', __name__)
+
+def update_match_previous_link(match: Match, prev_match_id: str, tournament_url: str, is_new: bool = False) -> None:
+    """
+    Update the previous_match link for a match, maintaining a doubly linked list structure.
+    
+    When inserting a match after prev_match, if prev_match already has a next_match:
+    1. Store the old next_match of prev_match
+    2. Set the current match's previous_match to prev_match
+    3. Set prev_match's next_match to the current match
+    4. Set the current match's next_match to the old next_match (if it existed)
+    5. Set the old next_match's previous_match to the current match (if it existed)
+    6. If updating (not new), handle cleanup of old previous_match's next_match
+    
+    This properly inserts the match into the chain: ... -> prev_match -> match -> old_next_match -> ...
+    
+    Args:
+        match: The match to update
+        prev_match_id: UUID of the match to set as previous_match
+        tournament_url: Tournament URL for validation
+        is_new: True if this is a new match, False if updating existing match
+    """
+    prev_match = Match.query.filter_by(uuid=prev_match_id, event=tournament_url).first()
+    if not prev_match:
+        return
+    
+    # Store old previous_match and next_match for cleanup (only for updates)
+    old_prev_id = match.previous_match if not is_new else None
+    old_next_id = match.next_match if not is_new else None
+    
+    # Store the old next_match of prev_match (before we change it)
+    prev_match_old_next_id = prev_match.next_match
+    
+    # Set the current match's previous_match to prev_match
+    match.previous_match = prev_match_id
+    
+    # Set prev_match's next_match to this match
+    prev_match.next_match = match.uuid
+    
+    # If prev_match had a next_match that isn't this match, link it to this match
+    if prev_match_old_next_id and prev_match_old_next_id != match.uuid:
+        prev_match_old_next = Match.query.filter_by(uuid=prev_match_old_next_id, event=tournament_url).first()
+        if prev_match_old_next:
+            # Set the current match's next_match to the old next_match
+            match.next_match = prev_match_old_next_id
+            # Set the old next_match's previous_match to this match
+            prev_match_old_next.previous_match = match.uuid
+    else:
+        # No old next_match from prev_match, so clear this match's next_match
+        match.next_match = None
+    
+    # If updating and had an old previous_match, handle cleanup
+    if old_prev_id and old_prev_id != prev_match_id:
+        old_prev_match = Match.query.filter_by(uuid=old_prev_id, event=tournament_url).first()
+        if old_prev_match:
+            # If old_prev_match's next_match pointed to this match, we need to update it
+            if old_prev_match.next_match == match.uuid:
+                # The old previous match's next should now point to this match's old next (if any)
+                old_prev_match.next_match = old_next_id if old_next_id != old_prev_id else None
+                # If we set old_prev_match.next_match to something, update that match's previous_match
+                if old_prev_match.next_match:
+                    old_next_of_old_prev = Match.query.filter_by(uuid=old_prev_match.next_match, event=tournament_url).first()
+                    if old_next_of_old_prev:
+                        old_next_of_old_prev.previous_match = old_prev_id
+    
+    # If updating and had an old next_match that we didn't preserve, handle cleanup
+    if old_next_id and old_next_id != match.next_match:
+        old_next_match = Match.query.filter_by(uuid=old_next_id, event=tournament_url).first()
+        if old_next_match and old_next_match.previous_match == match.uuid:
+            # This match's old next_match no longer has this match as its previous
+            old_next_match.previous_match = None
 
 def is_not_TO(tournament_url, message='You are not a TO, fuck off!!1!!1'):
     if not TO.query.filter_by(user_id=current_user.id,
@@ -391,20 +462,20 @@ def add_match(tournament_url):
     match_type_value = request.form.get('dynamic', '')
     
     if match_type_value == 'BREAK':
-        match_type = 'BREAK'
-        is_dynamic = True  # BREAK is always dynamic
+        schedule_type = 'BREAK'
+        set_type = 'SETS'  # Not used for BREAK, but set a default
         nominal_length = int(request.form.get('length', 60))
     elif match_type_value == 'JOIN':
-        match_type = 'JOIN'
-        is_dynamic = True  # JOIN is always dynamic
+        schedule_type = 'JOIN'
+        set_type = 'SETS'  # Not used for JOIN, but set a default
         nominal_length = 0
     else:
-        match_type = request.form.get('match_type', 'SETS')
-        is_dynamic = match_type_value == 'true'
+        schedule_type = 'DYNAMIC' if match_type_value == 'true' else 'STATIC'
+        set_type = request.form.get('match_type', 'SETS')
         nominal_length = int(request.form.get('length', 60))
     
     # BREAK and JOIN matches don't have teams/refs
-    if match_type in ('BREAK', 'JOIN'):
+    if schedule_type in ('BREAK', 'JOIN'):
         team1_id = None
         team1_name = ''
         team2_id = None
@@ -417,6 +488,8 @@ def add_match(tournament_url):
         team2_id = resolve_team_name_to_id(team2_name, tournament_url)
         refs_initial = request.form.get('refs', '')
     
+    ribbon = request.form.get('ribbon', '') == 'on'  # Checkbox value
+    
     match = Match(
         name=request.form['match_name'],
         event=tournament_url,
@@ -425,34 +498,38 @@ def add_match(tournament_url):
         team1_initial=team1_name,
         team2=team2_id,
         team2_initial=team2_name,
-        type=match_type,
-        nsets=int(request.form.get('nsets', 3)) if match_type not in ('BREAK', 'JOIN') else None,
+        schedule_type=schedule_type,
+        set_type=set_type,
+        ribbon=ribbon,
+        nsets=int(request.form.get('nsets', 3)) if schedule_type not in ('BREAK', 'JOIN') else None,
         nominal_length=nominal_length,
-        dynamic=is_dynamic,
         refs_initial=refs_initial
     )
     
-    # For dynamic matches, set previous_match from form and compute start time from it
-    # For static matches, use the provided start_time
-    if is_dynamic:
-        # Get previous_match from form
-        prev_match_id = request.form.get('previous_match', '')
-        if prev_match_id:
-            match.previous_match = prev_match_id
-        match.nominal_start_time = compute_dynamic_match_nominal_start_time(match, tournament_url)
-    else:
-        # Static matches can have manual start time
-        if request.form.get('start_time'):
-            match.nominal_start_time = datetime.strptime(request.form['start_time'], '%Y-%m-%dT%H:%M')
-    
-    # Validate inputs and constraints
+    # Validate inputs and constraints (before adding to session)
     ok, err = validate_match_input(match, tournament_url)
     if not ok:
         flash(err, 'error')
         return redirect(f'/{tournament_url}/setup')
     
     db.session.add(match)
-    db.session.flush()  # Flush to get UUID before updating sequence
+    db.session.flush()  # Flush to get UUID before updating links
+    
+    # For dynamic matches, set previous_match from form and compute start time from it
+    # For static matches, use the provided start_time
+    if schedule_type != 'STATIC':
+        # Get previous_match from form
+        prev_match_id = request.form.get('previous_match', '')
+        if prev_match_id:
+            # Update doubly linked list: insert this match after prev_match
+            update_match_previous_link(match, prev_match_id, tournament_url, is_new=True)
+        else:
+            match.previous_match = None
+        match.nominal_start_time = compute_dynamic_match_nominal_start_time(match, tournament_url)
+    else:
+        # Static matches can have manual start time
+        if request.form.get('start_time'):
+            match.nominal_start_time = datetime.strptime(request.form['start_time'], '%Y-%m-%dT%H:%M')
     
     # Recompute all match times (for all dynamic matches that depend on this one)
     recompute_all_match_times(tournament_url)
@@ -472,10 +549,18 @@ def add_field(tournament_url):
     
     tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
     
+    # Get camera URLs from form (camera[] array)
+    camera_urls = request.form.getlist('camera[]')
+    # Filter out empty values
+    camera_urls = [url.strip() for url in camera_urls if url.strip()]
+    
+    # Store as JSON array
+    camera_value = json.dumps(camera_urls) if camera_urls else ''
+    
     field = Field(
         event=tournament_url,
         name=request.form['field_name'],
-        camera=request.form.get('camera', '')
+        camera=camera_value
     )
     
     db.session.add(field)
@@ -519,11 +604,40 @@ def update_field(tournament_url):
         return redirect(f'/{tournament_url}/setup')
     
     field = Field.query.get_or_404(field_id)
-    field.name = request.form['field_name']
-    field.camera = request.form.get('camera', '')
+    old_field_name = field.name
+    new_field_name = request.form['field_name']
+    
+    # Update field name
+    field.name = new_field_name
+    
+    # Get camera URLs from form (camera[] array)
+    camera_urls = request.form.getlist('camera[]')
+    # Filter out empty values
+    camera_urls = [url.strip() for url in camera_urls if url.strip()]
+    
+    # Store as JSON array
+    field.camera = json.dumps(camera_urls) if camera_urls else ''
+    
+    # Propagate field name change to all matches that reference this field
+    if old_field_name != new_field_name:
+        matches_to_update = Match.query.filter_by(
+            event=tournament_url,
+            field=old_field_name
+        ).all()
+        
+        updated_count = 0
+        for match in matches_to_update:
+            match.field = new_field_name
+            updated_count += 1
+        
+        if updated_count > 0:
+            flash(f'Field updated successfully! Updated {updated_count} match(es) to use the new field name.', 'success')
+        else:
+            flash('Field updated successfully!', 'success')
+    else:
+        flash('Field updated successfully!', 'success')
     
     db.session.commit()
-    flash('Field updated successfully!', 'success')
     return redirect(f'/{tournament_url}/setup')
 
 
@@ -659,17 +773,17 @@ def update_match(tournament_url):
     match_type_value = request.form.get('dynamic', '')
     
     if match_type_value == 'BREAK':
-        match_type = 'BREAK'
-        is_dynamic = True  # BREAK is always dynamic
+        schedule_type = 'BREAK'
+        set_type = match.set_type  # Keep existing set_type
     elif match_type_value == 'JOIN':
-        match_type = 'JOIN'
-        is_dynamic = True  # JOIN is always dynamic
+        schedule_type = 'JOIN'
+        set_type = match.set_type  # Keep existing set_type
     else:
-        match_type = request.form.get('match_type', match.type)
-        is_dynamic = match_type_value == 'true'
+        schedule_type = 'DYNAMIC' if match_type_value == 'true' else 'STATIC'
+        set_type = request.form.get('match_type', match.set_type)
     
     # BREAK and JOIN matches don't have teams/refs
-    if match_type in ('BREAK', 'JOIN'):
+    if schedule_type in ('BREAK', 'JOIN'):
         team1_id = None
         team1_name = ''
         team2_id = None
@@ -688,47 +802,42 @@ def update_match(tournament_url):
     match.team1_initial = team1_name
     match.team2 = team2_id
     match.team2_initial = team2_name
-    match.type = match_type
+    match.schedule_type = schedule_type
+    match.set_type = set_type
+    match.ribbon = request.form.get('ribbon', '') == 'on'  # Checkbox value
     
     # BREAK and JOIN don't have nsets
-    if match_type not in ('BREAK', 'JOIN'):
+    if schedule_type not in ('BREAK', 'JOIN'):
         match.nsets = int(request.form.get('nsets', 3))
     else:
         match.nsets = None
     
     # JOIN has zero length, BREAK can have length
-    if match_type == 'JOIN':
+    if schedule_type == 'JOIN':
         match.nominal_length = 0
-    elif match_type == 'BREAK':
+    elif schedule_type == 'BREAK':
         match.nominal_length = int(request.form.get('length', match.nominal_length or 60))
     else:
         match.nominal_length = int(request.form.get('length', match.nominal_length or 60))
     
-    match.dynamic = is_dynamic
     match.refs_initial = refs_initial
     
     # For dynamic matches, set previous_match from form and compute start time from it
     # For static matches, ensure previous_match is cleared and use provided start_time
-    if is_dynamic:
+    if schedule_type != 'STATIC':
         # Get previous_match from form
         prev_match_id = request.form.get('previous_match', '')
-        old_prev = match.previous_match
         if prev_match_id:
-            match.previous_match = prev_match_id
-            # Try to set the other match's next_match to this one if no conflict
-            try:
-                prev_m = Match.query.filter_by(uuid=prev_match_id, event=tournament_url).first()
-                if prev_m and (not prev_m.next_match or prev_m.next_match == match.uuid):
-                    prev_m.next_match = match.uuid
-                # If previous changed, clear old previous's next pointer if it pointed to this match
-                if old_prev and old_prev != prev_match_id:
-                    old_prev_m = Match.query.filter_by(uuid=old_prev, event=tournament_url).first()
-                    if old_prev_m and old_prev_m.next_match == match.uuid:
-                        old_prev_m.next_match = None
-            except Exception:
-                pass
+            # Update doubly linked list: insert this match after prev_match
+            update_match_previous_link(match, prev_match_id, tournament_url, is_new=False)
         else:
+            # Clear previous_match and update old previous's next_match if needed
+            old_prev = match.previous_match
             match.previous_match = None
+            if old_prev:
+                old_prev_m = Match.query.filter_by(uuid=old_prev, event=tournament_url).first()
+                if old_prev_m and old_prev_m.next_match == match.uuid:
+                    old_prev_m.next_match = None
         match.nominal_start_time = compute_dynamic_match_nominal_start_time(match, tournament_url)
     else:
         # Static matches can have manual start time
@@ -891,6 +1000,48 @@ def update_all_references(tournament_url):
         flash(f'Updated references for {updated_count} completed matches', 'success')
     else:
         flash('No references were updated', 'info')
+    
+    return redirect(f'/{tournament_url}/setup')
+
+
+@bp.route('/<tournament_url>/push-back-matches', methods=['POST'])
+@login_required
+def push_back_matches(tournament_url):
+    """Push all non-started matches backwards by a specified amount of time (in minutes)."""
+    if is_not_TO(tournament_url):
+        return redirect(f'/{tournament_url}')
+    
+    try:
+        minutes = int(request.form.get('minutes', 0))
+        if minutes <= 0:
+            flash('Please specify a positive number of minutes', 'error')
+            return redirect(f'/{tournament_url}/setup')
+    except (ValueError, TypeError):
+        flash('Invalid number of minutes', 'error')
+        return redirect(f'/{tournament_url}/setup')
+    
+    # Get all non-started matches (status != 'IN_PROGRESS' and status != 'COMPLETED')
+    non_started_matches = Match.query.filter_by(event=tournament_url).filter(
+        ~Match.status.in_(['IN_PROGRESS', 'COMPLETED'])
+    ).all()
+    
+    updated_count = 0
+    for match in non_started_matches:
+        # Push back nominal_start_time if it exists
+        if match.nominal_start_time:
+            match.nominal_start_time = match.nominal_start_time + timedelta(minutes=minutes)
+            updated_count += 1
+        
+        # Also push back confirmed_start_time if it exists (even for time_finalized matches)
+        if match.confirmed_start_time:
+            match.confirmed_start_time = match.confirmed_start_time + timedelta(minutes=minutes)
+    
+    db.session.commit()
+    
+    if updated_count > 0:
+        flash(f'Pushed back {updated_count} non-started match(es) by {minutes} minute(s)', 'success')
+    else:
+        flash('No matches were updated. All matches have already started or been completed.', 'info')
     
     return redirect(f'/{tournament_url}/setup')
 

@@ -33,10 +33,40 @@
                     </div>
                     
                     <div class="mb-3">
-                        <label for="camera" class="form-label">Camera/Stream Link</label>
-                        <input type="url" class="form-control" id="camera" name="camera" 
-                               value="{{ field.camera or '' }}" placeholder="https://example.com/stream">
-                        <div class="form-text">(optional) Link to field's youtube livestream. Go to share → Embed and get the link inside <code>src="..."</code>.</div>
+                        <label class="form-label">Camera/Stream URLs</label>
+                        <div id="camera-inputs-container">
+                            {% if field.camera %}
+                                {% set camera_data = field.camera|from_json %}
+                                {% if camera_data is iterable and camera_data is not string %}
+                                    {% for url in camera_data %}
+                                    <div class="input-group mb-2 camera-input-group">
+                                        <input type="text" class="form-control camera-input" name="camera[]" value="{{ url }}" placeholder="(Optional) YouTube stream URL">
+                                        <button type="button" class="btn btn-outline-danger remove-camera-btn">
+                                            <i class="fas fa-times"></i>
+                                        </button>
+                                    </div>
+                                    {% endfor %}
+                                {% else %}
+                                    <div class="input-group mb-2 camera-input-group">
+                                        <input type="text" class="form-control camera-input" name="camera[]" value="{{ field.camera }}" placeholder="(Optional) YouTube stream URL">
+                                        <button type="button" class="btn btn-outline-danger remove-camera-btn" style="display: none;">
+                                            <i class="fas fa-times"></i>
+                                        </button>
+                                    </div>
+                                {% endif %}
+                            {% else %}
+                                <div class="input-group mb-2 camera-input-group">
+                                    <input type="text" class="form-control camera-input" name="camera[]" placeholder="(Optional) YouTube stream URL">
+                                    <button type="button" class="btn btn-outline-danger remove-camera-btn" style="display: none;">
+                                        <i class="fas fa-times"></i>
+                                    </button>
+                                </div>
+                            {% endif %}
+                        </div>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" id="add-camera-btn">
+                            <i class="fas fa-plus"></i> Add Another Camera
+                        </button>
+                        <div class="form-text mt-2">Go to share → Embed and get the link inside <code>src="..."</code>.</div>
                     </div>
                     
                     <div class="d-grid gap-2">
@@ -48,5 +78,55 @@
         </div>
     </div>
 </div>
+
+<script>
+    // Camera input management
+    const addCameraBtn = document.getElementById('add-camera-btn');
+    const cameraInputsContainer = document.getElementById('camera-inputs-container');
+    
+    if (addCameraBtn && cameraInputsContainer) {
+        function updateRemoveButtons() {
+            const groups = cameraInputsContainer.querySelectorAll('.camera-input-group');
+            groups.forEach((group, index) => {
+                const removeBtn = group.querySelector('.remove-camera-btn');
+                if (removeBtn) {
+                    removeBtn.style.display = groups.length > 1 ? 'block' : 'none';
+                }
+            });
+        }
+        
+        addCameraBtn.addEventListener('click', function() {
+            const newGroup = document.createElement('div');
+            newGroup.className = 'input-group mb-2 camera-input-group';
+            newGroup.innerHTML = `
+                <input type="text" class="form-control camera-input" name="camera[]" placeholder="(Optional) YouTube stream URL">
+                <button type="button" class="btn btn-outline-danger remove-camera-btn">
+                    <i class="fas fa-times"></i>
+                </button>
+            `;
+            cameraInputsContainer.appendChild(newGroup);
+            updateRemoveButtons();
+            
+            // Add remove button handler
+            const removeBtn = newGroup.querySelector('.remove-camera-btn');
+            if (removeBtn) {
+                removeBtn.addEventListener('click', function() {
+                    newGroup.remove();
+                    updateRemoveButtons();
+                });
+            }
+        });
+        
+        // Add remove button handlers to existing inputs
+        cameraInputsContainer.querySelectorAll('.remove-camera-btn').forEach(btn => {
+            btn.addEventListener('click', function() {
+                this.closest('.camera-input-group').remove();
+                updateRemoveButtons();
+            });
+        });
+        
+        updateRemoveButtons();
+    }
+</script>
 {% endblock %}
 

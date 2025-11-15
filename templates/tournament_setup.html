@@ -93,7 +93,7 @@
                                         {% endif %}
                                     </td>
                                     <td>
-                                        {% if match.type in ('BREAK', 'JOIN') %}
+                                        {% if match.schedule_type in ('BREAK', 'JOIN') %}
                                             -
                                         {% elif match.team1 %}
                                             {{ match.team1 }}
@@ -102,7 +102,7 @@
                                         {% endif %}
                                     </td>
                                     <td>
-                                        {% if match.type in ('BREAK', 'JOIN') %}
+                                        {% if match.schedule_type in ('BREAK', 'JOIN') %}
                                             -
                                         {% elif match.team2 %}
                                             {{ match.team2 }}
@@ -111,7 +111,7 @@
                                         {% endif %}
                                     </td>
                                     <td>
-                                        {% if match.type in ('BREAK', 'JOIN') %}
+                                        {% if match.schedule_type in ('BREAK', 'JOIN') %}
                                             -
                                         {% elif match.refs %}
                                             {{ match.refs }}
@@ -122,11 +122,11 @@
                                         {% endif %}
                                     </td>
                                     <td>
-                                        {% if match.type == 'BREAK' %}
+                                        {% if match.schedule_type == 'BREAK' %}
                                             <span class="badge bg-warning">Break</span>
-                                        {% elif match.type == 'JOIN' %}
+                                        {% elif match.schedule_type == 'JOIN' %}
                                             <span class="badge bg-primary">Join</span>
-                                        {% elif match.dynamic %}
+                                        {% elif match.schedule_type == 'DYNAMIC' %}
                                             <span class="badge bg-info">Dynamic</span>
                                         {% else %}
                                             <span class="badge bg-secondary">Static</span>
@@ -144,7 +144,7 @@
                                             <span class="badge bg-primary ms-1" title="Time finalized - match start time is locked">Time Finalized</span>
                                         {% endif %}
                                         {% if match.ready_to_start %}
-                                            <span class="badge bg-success ms-1" title="Ready to start - all dependencies completed">Ready to Start</span>
+                                                <span class="badge bg-success ms-1" title="Ready to start - all dependencies completed">Ready to Start</span>
                                         {% endif %}
                                     </td>
                                     <td>
@@ -194,7 +194,10 @@
                     <div class="row">
                         <div class="col-md-6">
                             <div class="mb-3">
-                                <label for="dynamic" class="form-label">Match Type</label>
+                                <label for="dynamic" class="form-label d-inline">Match Type</label>
+                                <a href="#" class="text-muted text-decoration-none ms-2" data-bs-toggle="modal" data-bs-target="#matchTypeHelpModal" style="font-size: 0.85em;">
+                                    <small>(what's this?)</small>
+                                </a>
                                 <select class="form-select" id="dynamic" name="dynamic">
                                     <option value="false">Static (starts at scheduled time)</option>
                                     <option value="true">Dynamic (computed from dependencies)</option>
@@ -271,8 +274,8 @@
                             <div class="mb-3">
                                 <label for="match_type" class="form-label">Match Format</label>
                                 <select class="form-select" id="match_type" name="match_type">
-                                    <option value="SETS" {% if not matches or matches[-1].type == 'SETS' %}selected{% endif %}>Sets</option>
-                                    <option value="STONES" {% if matches and matches[-1].type == 'STONES' %}selected{% endif %}>Stones</option>
+                                    <option value="SETS" {% if not matches or matches[-1].set_type == 'SETS' %}selected{% endif %}>Sets</option>
+                                    <option value="STONES" {% if matches and matches[-1].set_type == 'STONES' %}selected{% endif %}>Stones</option>
                                 </select>
                             </div>
                         </div>
@@ -280,6 +283,19 @@
                             <div class="mb-3" id="nsets_container">
                                 <label for="nsets" class="form-label">Number of Sets</label>
                                 <input type="number" class="form-control" id="nsets" name="nsets" value="{{ matches[-1].nsets if matches else 3 }}" min="1">
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="row">
+                        <div class="col-md-12">
+                            <div class="mb-3">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="ribbon" name="ribbon">
+                                    <label class="form-check-label" for="ribbon">
+                                        Ribbon Game (not counted in tournament results)
+                                    </label>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -374,8 +390,91 @@
                 </div>
             </div>
         </div>
-        
-        <!-- Troubleshooting Section -->
+
+<!-- Match Type Help Modal -->
+<div class="modal fade" id="matchTypeHelpModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Match Types and Scheduling</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p>
+                    All matches have (among other things) the following information:
+                    <ul>
+                        <li>nominal start time</li>
+                        <li>nominal length</li>
+                        <li>previous match (if one exists)</li>
+                        <li>next match (if one exists)</li>
+                    </ul>
+                </p>
+                <p>
+                    In the <i>static scheduling</i> paradigm (implemented by the <code>static</code> match type), 
+                    all match start times must be set concretely before the event starts. This means that teams 
+                    can be penalized for tardiness because the schedule is very clear about what time they need
+                    show up (ie, it's not just 'show up promptly after the previous match ends'). 
+                    If head refs then cut off matches after the nominal length, the tournament can guarantee the
+                    safety of the schedule. 
+                </p>
+                <p>
+                    Unless you are willing to cut a large portion of matches short, however, this requires a large 
+                    nominal length, which leads to lots of idle time before every match starts (see: Fog of War 2025).
+                    To fix this, we introduce the <i>dynamic scheduling</i>, implemented by the <code>dynamic</code>
+                    match type.
+                </p>
+                
+                <h6>Dynamic Matches</h6>
+                <p>
+                    Dynamic matches do not have a nominal start time (that you, the TO, can set, at least). Instead,
+                    their nominal start time is computed based on the nominal length of their dependencies. Match 
+                    dependencies are:
+                    <ul>
+                        <li>the preceeding match: this match has to wait until the previous match is over.</li>
+                        <li>dependent teams: if "match1 winner" is one of the teams playing or reffing in this match, this match is dependent on match 1</li>
+                    </ul>
+                    The system sets this match's start time to the latest possible end time across all dependencies.
+                </p>
+                <p>
+                    The magic happens when matches begin to be completed. Every time a match is completed, it we update 
+                    all other matches. If a match ends early, its end time will be earlier than its nominal length would predict, 
+                    and so subsequent matches will be shifted forward! This seems great, but it creates a problem: it breaks our
+                    ability to tell teams when they need to be at their matches. If we shift their matches forward, we can't possibly
+                    penalize them for being late.
+                </p>
+                <p>
+                    To solve this, we lock the start time of dynamic matches when the last of their dependent matches starts. 
+                </p>
+                <p>
+                    Dynamic matches are perfect for bracket-style tournaments where later matches depend on earlier results. 
+                    The system will automatically update start times as matches complete, ensuring smooth tournament flow.
+                </p>
+                <p>
+                    <strong>Note:</strong> Matches without dependencies (that don't reference other matches) must be static.
+                </p>
+                
+                <h6>Breaks</h6>
+                <p>
+                    Break matches represent scheduled breaks in the tournament. They don't have teams or scores, but they 
+                    reserve time on a field. This is useful for lunch breaks, setup time, or any other scheduled pause 
+                    in play. Break matches can be used in dynamic scheduling chains to ensure proper timing.
+                </p>
+                
+                <h6>Join</h6>
+                <p>
+                    Join matches are special dynamic matches that combine multiple previous matches. They're useful for 
+                    scenarios where you need to wait for multiple matches to complete before starting the next one. 
+                    Join matches have zero length and are primarily used for scheduling logic.
+                </p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Troubleshooting Section -->
         <div class="card mt-3">
             <div class="card-header bg-opacity-10">
                 <h5 class="mb-0">Utilities</h5>
@@ -384,7 +483,7 @@
                 <p class="text-muted small mb-3">
                     These tools may be useful while building your schedule, but you shouldn't need to use them while running a tournament.
                 </p>
-                <div class="d-flex gap-2">
+                <div class="d-flex gap-2 flex-wrap">
                     <form method="POST" action="/{{ tournament.url }}/recompute-schedule" class="d-inline">
                         <button type="submit" class="btn btn-outline-warning btn-sm" onclick="return confirm('Are you sure you want to recompute the schedule? This will update match times based on dependencies (does not update matches that are completed or have had their start times finalized).')">
                             Recompute Schedule
@@ -394,6 +493,14 @@
                         <button type="submit" class="btn btn-outline-warning btn-sm" onclick="return confirm('Are you sure you want to update all references? This will resolve all winner/loser placeholders in completed matches.')">
                             Update All References
                         </button>
+                    </form>
+                    <form method="POST" action="/{{ tournament.url }}/push-back-matches" class="d-inline">
+                        <div class="input-group input-group-sm" style="width: auto;">
+                            <input type="number" name="minutes" class="form-control" placeholder="Minutes" min="1" required style="width: 100px;">
+                            <button type="submit" class="btn btn-outline-warning btn-sm" onclick="return confirm('Are you sure you want to push back all non-started matches? This will affect even matches with finalized start times.')">
+                                Push Back All Non-Started Matches
+                            </button>
+                        </div>
                     </form>
                 </div>
             </div>
@@ -416,9 +523,19 @@
                         <input type="text" class="form-control" id="field_name" name="field_name" required>
                     </div>
                     <div class="mb-3">
-                        <label for="camera" class="form-label">Camera/Stream Info</label>
-                        <input type="text" class="form-control" id="camera" name="camera" placeholder="(Optional) YouTube stream URL or camera info">
-                        <div class="form-text">Go to share → Embed and get the link inside <code>src="..."</code>.</div>
+                        <label class="form-label">Camera/Stream URLs</label>
+                        <div id="camera-inputs-container">
+                            <div class="input-group mb-2 camera-input-group">
+                                <input type="text" class="form-control camera-input" name="camera[]" placeholder="(Optional) YouTube stream URL">
+                                <button type="button" class="btn btn-outline-danger remove-camera-btn" style="display: none;">
+                                    <i class="fas fa-times"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" id="add-camera-btn">
+                            <i class="fas fa-plus"></i> Add Another Camera
+                        </button>
+                        <div class="form-text mt-2">Go to share → Embed and get the link inside <code>src="..."</code>.</div>
                     </div>
                 </div>
                 <div class="modal-footer">
@@ -991,6 +1108,54 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Update on change
     dynamicSelect.addEventListener('change', updateMatchTypeVisibility);
+    
+    // Camera input management for add field modal
+    const addCameraBtn = document.getElementById('add-camera-btn');
+    const cameraInputsContainer = document.getElementById('camera-inputs-container');
+    
+    if (addCameraBtn && cameraInputsContainer) {
+        function updateRemoveButtons() {
+            const groups = cameraInputsContainer.querySelectorAll('.camera-input-group');
+            groups.forEach((group, index) => {
+                const removeBtn = group.querySelector('.remove-camera-btn');
+                if (removeBtn) {
+                    removeBtn.style.display = groups.length > 1 ? 'block' : 'none';
+                }
+            });
+        }
+        
+        addCameraBtn.addEventListener('click', function() {
+            const newGroup = document.createElement('div');
+            newGroup.className = 'input-group mb-2 camera-input-group';
+            newGroup.innerHTML = `
+                <input type="text" class="form-control camera-input" name="camera[]" placeholder="(Optional) YouTube stream URL">
+                <button type="button" class="btn btn-outline-danger remove-camera-btn">
+                    <i class="fas fa-times"></i>
+                </button>
+            `;
+            cameraInputsContainer.appendChild(newGroup);
+            updateRemoveButtons();
+            
+            // Add remove button handler
+            const removeBtn = newGroup.querySelector('.remove-camera-btn');
+            if (removeBtn) {
+                removeBtn.addEventListener('click', function() {
+                    newGroup.remove();
+                    updateRemoveButtons();
+                });
+            }
+        });
+        
+        // Add remove button handlers to existing inputs
+        cameraInputsContainer.querySelectorAll('.remove-camera-btn').forEach(btn => {
+            btn.addEventListener('click', function() {
+                this.closest('.camera-input-group').remove();
+                updateRemoveButtons();
+            });
+        });
+        
+        updateRemoveButtons();
+    }
     
     // Initialize Bootstrap tooltips for conflict indicators
     const tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));

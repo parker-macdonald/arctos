@@ -1,7 +1,7 @@
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import UserMixin
 from werkzeug.security import generate_password_hash, check_password_hash
-from datetime import datetime
+from datetime import datetime, timedelta
 import uuid
 from sqlalchemy.orm import foreign
 
@@ -152,7 +152,7 @@ class Field(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     event = db.Column(db.String(100), db.ForeignKey('tournaments.url'), nullable=False)
     name = db.Column(db.String(100), nullable=False)
-    camera = db.Column(db.String(200))
+    camera = db.Column(db.Text)  # JSON array of camera URLs (for backward compatibility, single URL is also supported)
 
 class Tag(db.Model):
     __tablename__ = 'tags'
@@ -178,11 +178,12 @@ class Match(db.Model):
     confirmed_start_time = db.Column(db.DateTime)
     completed_time = db.Column(db.DateTime)
     nominal_length = db.Column(db.Integer)  # minutes
-    type = db.Column(db.String(20), default='SETS')  # SETS, STONES
+    schedule_type = db.Column(db.String(20), default='STATIC')  # STATIC, DYNAMIC, BREAK, JOIN
+    set_type = db.Column(db.String(20), default='SETS')  # SETS, STONES (only for non-BREAK/JOIN matches)
+    ribbon = db.Column(db.Boolean, default=False)  # True if this is a ribbon game (not counted in results)
     nsets = db.Column(db.Integer)
     nstonesperset = db.Column(db.Integer)
     status = db.Column(db.String(20), default='NOT_STARTED')  # NOT_STARTED, IN_PROGRESS, COMPLETED
-    # Fields migrated from gamestate JSON:
     initial_notes = db.Column(db.Text)  # notes (initial match notes, distinct from MatchNote objects)
     team1_players = db.Column(db.Text)  # JSON array of player IDs
     team2_players = db.Column(db.Text)  # JSON array of player IDs
@@ -198,7 +199,7 @@ class Match(db.Model):
     finalized_at = db.Column(db.DateTime)  # when match was finalized
     ready_to_start = db.Column(db.Boolean, default=False)  # flag for dynamic scheduling
     ready_to_start_at = db.Column(db.DateTime)  # when ready_to_start was set
-    dynamic = db.Column(db.Boolean, default=True)  # True for dynamic, False for static scheduling
+    camera_stream_starts = db.Column(db.Text)  # JSON object mapping camera_index to stream start time (ISO format)
     time_finalized = db.Column(db.Boolean, default=False)  # True when start time is finalized (all dependencies started)
     previous_match = db.Column(db.String(36), db.ForeignKey('matches.uuid'), nullable=True)
     next_match = db.Column(db.String(36), db.ForeignKey('matches.uuid'), nullable=True)
@@ -213,6 +214,16 @@ class Match(db.Model):
                                        primaryjoin='and_(Match.team2 == foreign(TeamRegistration.team), Match.event == TeamRegistration.event)',
                                        uselist=False)
 
+    def started(self) -> bool:
+        return self.status in ('IN_PROGRESS', 'COMPLETED')
+    def finalize(self) -> None:
+        self.time_finalized = True
+        self.finalized_at = datetime.now()
+        if self.schedule_type in ('JOIN', 'BREAK'):
+            self.confirmed_start_time = self.nominal_start_time
+            self.status = 'COMPLETED'
+            self.completed_time = self.nominal_start_time if self.schedule_type=='JOIN' else self.nominal_start_time + timedelta(minutes=self.nominal_length)
+
 class Point(db.Model):
     __tablename__ = 'points'
     
@@ -223,6 +234,8 @@ class Point(db.Model):
     stamp = db.Column(db.DateTime, default=datetime.utcnow)
     end_stamp = db.Column(db.DateTime)
     footage = db.Column(db.String(500))
+    camera_index = db.Column(db.Integer)  # Index of camera in field's camera array (0-based)
+    stream_timestamp = db.Column(db.Float)  # Timestamp in seconds from stream start
     length = db.Column(db.Interval)
     nstones = db.Column(db.Integer)
     rerollreason = db.Column(db.Text)
