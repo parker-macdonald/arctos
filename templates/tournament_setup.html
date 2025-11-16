@@ -443,28 +443,30 @@
                     penalize them for being late.
                 </p>
                 <p>
-                    To solve this, we lock the start time of dynamic matches when the last of their dependent matches starts. 
+                    To solve this, we lock the start time of dynamic matches when the last of their dependency matches starts.
+                    When this happens, matches are marked as "time finalized" on the schedule. This means that teams always know 
+                    their matches' start times at least nominal_length ahead of time, so it's reasonable to expect them to be on time.
                 </p>
                 <p>
-                    Dynamic matches are perfect for bracket-style tournaments where later matches depend on earlier results. 
-                    The system will automatically update start times as matches complete, ensuring smooth tournament flow.
-                </p>
-                <p>
-                    <strong>Note:</strong> Matches without dependencies (that don't reference other matches) must be static.
+                    <strong>Note:</strong> Matches without dependencies (like the first match of the day) must be static.
                 </p>
                 
                 <h6>Breaks</h6>
                 <p>
-                    Break matches represent scheduled breaks in the tournament. They don't have teams or scores, but they 
-                    reserve time on a field. This is useful for lunch breaks, setup time, or any other scheduled pause 
-                    in play. Break matches can be used in dynamic scheduling chains to ensure proper timing.
+                    Break matches represent dynamically scheduled breaks in the tournament. They just reserve time (ie, for a lunch 
+                    break) on a field in a way that can be pulled forward if matches finish early.
+                </p>
+                <p>
+                    If you want a non-dynamic break, just static matches before and after the break, and leave the break empty.
                 </p>
                 
                 <h6>Join</h6>
                 <p>
-                    Join matches are special dynamic matches that combine multiple previous matches. They're useful for 
-                    scenarios where you need to wait for multiple matches to complete before starting the next one. 
-                    Join matches have zero length and are primarily used for scheduling logic.
+                    Join matches are like thread joins in multithreading: they are dynamically-scheduled zero-length entries in the schedule
+                    that follow the rule that all joins with the same name must occur at the same time. More practically, for example, you 
+                    could put a join match on each field (all sharing the same name) after all morning matches on that field, and then a
+                    lunch break on each field, then afternoon matches afterwards. This would ensure that all teams have at least the length 
+                    of the break overlapping in their lunches (unless they choose to start afternoon games early).
                 </p>
             </div>
             <div class="modal-footer">
@@ -481,7 +483,7 @@
             </div>
             <div class="card-body">
                 <p class="text-muted small mb-3">
-                    These tools may be useful while building your schedule, but you shouldn't need to use them while running a tournament.
+                    These tools may be useful while building your schedule, but you shouldn't need to use them while running a tournament (schedule and reference updates will happen automatically).
                 </p>
                 <div class="d-flex gap-2 flex-wrap">
                     <form method="POST" action="/{{ tournament.url }}/recompute-schedule" class="d-inline">
