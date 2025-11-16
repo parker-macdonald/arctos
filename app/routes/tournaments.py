@@ -506,12 +506,6 @@ def add_match(tournament_url):
         refs_initial=refs_initial
     )
     
-    # Validate inputs and constraints (before adding to session)
-    ok, err = validate_match_input(match, tournament_url)
-    if not ok:
-        flash(err, 'error')
-        return redirect(f'/{tournament_url}/setup')
-    
     db.session.add(match)
     db.session.flush()  # Flush to get UUID before updating links
     
@@ -531,8 +525,12 @@ def add_match(tournament_url):
         if request.form.get('start_time'):
             match.nominal_start_time = datetime.strptime(request.form['start_time'], '%Y-%m-%dT%H:%M')
     
-    # Recompute all match times (for all dynamic matches that depend on this one)
-    recompute_all_match_times(tournament_url)
+    # Validate inputs and constraints (after start time is computed)
+    ok, err = validate_match_input(match, tournament_url)
+    if not ok:
+        db.session.rollback()
+        flash(err, 'error')
+        return redirect(f'/{tournament_url}/setup')
     
     db.session.commit()
     
@@ -954,6 +952,7 @@ def update_match(tournament_url):
             match.nominal_start_time = datetime.strptime(request.form['start_time'], '%Y-%m-%dT%H:%M')
         else:
             match.nominal_start_time = None
+
     
     # Validate inputs and constraints
     ok, err = validate_match_input(match, tournament_url)

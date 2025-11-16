@@ -154,7 +154,7 @@
                         </div>
                     </div>
                     
-                    <div class="row">
+                    <div class="row" id="ribbon_container">
                         <div class="col-md-12">
                             <div class="mb-3">
                                 <div class="form-check">
@@ -415,10 +415,17 @@
 // Handle match type change to show/hide stones field
 document.getElementById('match_type').addEventListener('change', function() {
     const stonesField = document.getElementById('stones-per-set-field');
-    if (this.value === 'STONES') {
-        stonesField.style.display = 'block';
-    } else {
-        stonesField.style.display = 'none';
+    const dynamicSelect = document.getElementById('dynamic');
+    const matchTypeValue = dynamicSelect ? dynamicSelect.value : '';
+    const isBreakOrJoin = matchTypeValue === 'BREAK' || matchTypeValue === 'JOIN';
+    
+    if (stonesField) {
+        // Hide for BREAK/JOIN, show only if STONES is selected
+        if (isBreakOrJoin || this.value !== 'STONES') {
+            stonesField.style.display = 'none';
+        } else {
+            stonesField.style.display = 'block';
+        }
     }
 });
 
@@ -426,7 +433,11 @@ document.getElementById('match_type').addEventListener('change', function() {
 document.addEventListener('DOMContentLoaded', function() {
     const matchType = document.getElementById('match_type');
     const stonesField = document.getElementById('stones-per-set-field');
-    if (matchType.value === 'STONES') {
+    const dynamicSelect = document.getElementById('dynamic');
+    const matchTypeValue = dynamicSelect ? dynamicSelect.value : '';
+    const isBreakOrJoin = matchTypeValue === 'BREAK' || matchTypeValue === 'JOIN';
+    
+    if (stonesField && !isBreakOrJoin && matchType && matchType.value === 'STONES') {
         stonesField.style.display = 'block';
     }
     
@@ -567,12 +578,16 @@ document.addEventListener('DOMContentLoaded', function() {
     function updateMatchTypeVisibility() {
         const matchTypeValue = dynamicSelect.value;
         const isBreakOrJoin = matchTypeValue === 'BREAK' || matchTypeValue === 'JOIN';
+        const ribbonContainer = document.getElementById('ribbon_container');
+        const stonesField = document.getElementById('stones-per-set-field');
         
-        // Hide match format (SETS/STONES), teams, refs, and nsets for BREAK and JOIN
+        // Hide match format (SETS/STONES), teams, refs, nsets, ribbon, and stones for BREAK and JOIN
         if (matchTypeRow) matchTypeRow.style.display = isBreakOrJoin ? 'none' : 'flex';
         if (teamsContainer) teamsContainer.style.display = isBreakOrJoin ? 'none' : 'flex';
         if (refsContainer) refsContainer.style.display = isBreakOrJoin ? 'none' : 'block';
         if (nsetsContainer) nsetsContainer.style.display = isBreakOrJoin ? 'none' : 'block';
+        if (ribbonContainer) ribbonContainer.style.display = isBreakOrJoin ? 'none' : 'block';
+        if (stonesField) stonesField.style.display = isBreakOrJoin ? 'none' : 'none'; // Hide for BREAK/JOIN, will be shown below if STONES
         
         // JOIN has zero length, disable length input
         if (matchTypeValue === 'JOIN') {
@@ -586,6 +601,11 @@ document.addEventListener('DOMContentLoaded', function() {
         
         // Update start time visibility based on match type selection
         updateStartTimeVisibility();
+        
+        // Show stones field only if not BREAK/JOIN and match type is STONES
+        if (stonesField && !isBreakOrJoin && matchTypeSelect && matchTypeSelect.value === 'STONES') {
+            stonesField.style.display = 'block';
+        }
     }
     
     // Set initial state

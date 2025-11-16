@@ -288,6 +288,16 @@
                     </div>
                     
                     <div class="row">
+                        <div class="col-md-6" id="stones-per-set-field" style="display: none;">
+                            <div class="mb-3">
+                                <label for="nstonesperset" class="form-label">Stones per Set</label>
+                                <input type="number" class="form-control" id="nstonesperset" name="nstonesperset" value="{{ matches[-1].nstonesperset if matches and matches[-1].nstonesperset else 100 }}" min="1" max="1000">
+                                <div class="form-text">Number of stones available for each set</div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="row" id="ribbon_container">
                         <div class="col-md-12">
                             <div class="mb-3">
                                 <div class="form-check">
@@ -1084,12 +1094,16 @@ document.addEventListener('DOMContentLoaded', function() {
     function updateMatchTypeVisibility() {
         const matchTypeValue = dynamicSelect.value;
         const isBreakOrJoin = matchTypeValue === 'BREAK' || matchTypeValue === 'JOIN';
+        const ribbonContainer = document.getElementById('ribbon_container');
+        const stonesField = document.getElementById('stones-per-set-field');
         
-        // Hide match format (SETS/STONES), teams, refs, and nsets for BREAK and JOIN
+        // Hide match format (SETS/STONES), teams, refs, nsets, ribbon, and stones for BREAK and JOIN
         if (matchTypeRow) matchTypeRow.style.display = isBreakOrJoin ? 'none' : 'flex';
         if (teamsContainer) teamsContainer.style.display = isBreakOrJoin ? 'none' : 'flex';
         if (refsContainer) refsContainer.style.display = isBreakOrJoin ? 'none' : 'block';
         if (nsetsContainer) nsetsContainer.style.display = isBreakOrJoin ? 'none' : 'block';
+        if (ribbonContainer) ribbonContainer.style.display = isBreakOrJoin ? 'none' : 'block';
+        if (stonesField) stonesField.style.display = isBreakOrJoin ? 'none' : 'none'; // Hide for BREAK/JOIN, will be shown below if STONES
         
         // JOIN has zero length, disable length input
         if (matchTypeValue === 'JOIN') {
@@ -1103,6 +1117,37 @@ document.addEventListener('DOMContentLoaded', function() {
         
         // Update start time visibility based on match type selection
         updateStartTimeVisibility();
+        
+        // Show stones field only if not BREAK/JOIN and match type is STONES
+        if (stonesField && !isBreakOrJoin && matchTypeSelect && matchTypeSelect.value === 'STONES') {
+            stonesField.style.display = 'block';
+        }
+    }
+    
+    // Handle match type change to show/hide stones field
+    if (matchTypeSelect) {
+        matchTypeSelect.addEventListener('change', function() {
+            const stonesField = document.getElementById('stones-per-set-field');
+            const matchTypeValue = dynamicSelect.value;
+            const isBreakOrJoin = matchTypeValue === 'BREAK' || matchTypeValue === 'JOIN';
+            
+            if (stonesField) {
+                // Hide for BREAK/JOIN, show only if STONES is selected
+                if (isBreakOrJoin || this.value !== 'STONES') {
+                    stonesField.style.display = 'none';
+                } else {
+                    stonesField.style.display = 'block';
+                }
+            }
+        });
+        
+        // Initialize stones field visibility on page load
+        const stonesField = document.getElementById('stones-per-set-field');
+        const matchTypeValue = dynamicSelect.value;
+        const isBreakOrJoin = matchTypeValue === 'BREAK' || matchTypeValue === 'JOIN';
+        if (stonesField && !isBreakOrJoin && matchTypeSelect.value === 'STONES') {
+            stonesField.style.display = 'block';
+        }
     }
     
     // Set initial state

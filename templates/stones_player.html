@@ -17,9 +17,10 @@ window.MathJax = {
 <div class="container mt-4">
     <div class="row">
         <div class="col-12">
-            <h1>Stones Player [BETA]</h1>
+            <h1>Stones Player</h1>
             <p>This is a stones player that plays globally synchronized stones: all devices on this page will (eventually) play stones at the same time. <br>Important Notes:
                 <ul>
+                    <li>The speed of sound is about 343m/s, which is fast, but not infinitely fast (~110ms to cross the 40m field). If the stones sound out of sync, try standing equidistant from all speakers (or bringing the speakers together) to evaluate whether it's actually out of sync or if it's the speed of sound delay.</li>
                     <li>If things are not syncing properly or something strange is happening, try clicking the "reset kalman filter" button. This needs to happen when I reboot the server, which happens often during development.</li>
                     <li>(If you're using custom audio files) if you want the stones to sync well with the ref page, make sure your audio files don't have much dead space at the start. They should start the stone immediately.</li>
                 </ul>
