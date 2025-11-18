@@ -66,9 +66,9 @@ def match_page(tournament_url):
                         player_display = player.name
             # Determine team_id if target is TEAM1 or TEAM2
             team_id = None
-            if note.target in ['TEAM1', 'team1']:
+            if note.target=='team1':
                 team_id = match.team1
-            elif note.target in ['TEAM2', 'team2']:
+            elif note.target=='team2':
                 team_id = match.team2
             
             match_notes.append({
@@ -107,9 +107,9 @@ def match_page(tournament_url):
                                 player_display = pl.name
                     # Determine team_id if target is TEAM1 or TEAM2
                     team_id = None
-                    if n.target in ['TEAM1', 'team1']:
+                    if n.target=='team1':
                         team_id = match.team1
-                    elif n.target in ['TEAM2', 'team2']:
+                    elif n.target=='team2':
                         team_id = match.team2
                     
                     point_notes_map.setdefault(n.point_id, []).append({
@@ -359,14 +359,14 @@ def get_selection_notes(tournament_url):
     team_target_notes = MatchNote.query.filter(
         MatchNote.match.in_(list(team1_match_ids | team2_match_ids))
     ).filter(
-        MatchNote.target.in_(['TEAM1', 'team1', 'TEAM2', 'team2'])
+        MatchNote.target.in_(['team1', 'team2'])
     ).all()
 
     filtered_team_notes = []
     for n in team_target_notes:
-        if n.match in team1_match_ids and (n.target == 'TEAM1' or n.target == 'team1'):
+        if n.match in team1_match_ids and (n.target == 'team1'):
             filtered_team_notes.append(n)
-        elif n.match in team2_match_ids and (n.target == 'TEAM2' or n.target == 'team2'):
+        elif n.match in team2_match_ids and (n.target == 'team2'):
             filtered_team_notes.append(n)
 
     all_notes = {}
@@ -395,9 +395,9 @@ def get_selection_notes(tournament_url):
         match_obj = Match.query.get(n.match) if n.match else None
         team_id = None
         if match_obj:
-            if n.target in ['TEAM1', 'team1']:
+            if n.target=='team1':
                 team_id = match_obj.team1
-            elif n.target in ['TEAM2', 'team2']:
+            elif n.target=='team2':
                 team_id = match_obj.team2
         
         notes_data.append({
@@ -674,9 +674,9 @@ def finalize_match(tournament_url):
 
                 # Determine team_id if target is TEAM1 or TEAM2
                 team_id = None
-                if n.target in ['TEAM1', 'team1']:
+                if n.target=='team1':
                     team_id = match.team1
-                elif n.target in ['TEAM2', 'team2']:
+                elif n.target=='team2':
                     team_id = match.team2
                 
                 point_notes_map.setdefault(n.point_id, []).append({

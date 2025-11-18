@@ -44,15 +44,15 @@ def team_profile(team_id):
     is_head_ref_flag = is_head_ref_any(team_id)
     team_notes = []
     # Only show notes to the team themselves, not to head refs
-    if current_user.is_authenticated and current_user.id == team_id:
+    if current_user.is_authenticated and (current_user.id == team_id or is_head_ref_flag):
         try:
-            candidate_notes = MatchNote.query.filter(or_(MatchNote.target=='TEAM1', MatchNote.target=='TEAM2')).order_by(MatchNote.created_at.desc()).all()
+            candidate_notes = MatchNote.query.filter(or_(MatchNote.target=='team1', MatchNote.target=='team2')).order_by(MatchNote.created_at.desc()).all()
             match_to_points = {}
             for n in candidate_notes:
                 m = Match.query.get(n.match)
                 if not m:
                     continue
-                if not ((m.team1 == team_id) or (m.team2 == team_id)):
+                if not ((n.target=='team1' and m.team1 == team_id) or (n.target=='team2' and m.team2 == team_id)):
                     continue
                 idx = '-'
                 if n.point_id:

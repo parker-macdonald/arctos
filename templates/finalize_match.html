@@ -64,7 +64,7 @@
                                         {% for n in pnotes %}
                                             {% set targetDisplay = n.target %}
                                             {% set linkUrl = '' %}
-                                            {% if n.target in ['TEAM1','team1'] %}
+                                            {% if n.target == 'team1' %}
                                                 {% set targetDisplay = match.team1_registration.pseudonym if match.team1_registration else match.team1 %}
                                                 {% if n.team_id %}
                                                     {% set linkUrl = url_for('teams.team_profile', team_id=n.team_id) %}

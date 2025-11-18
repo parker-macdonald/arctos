@@ -799,17 +799,17 @@ function loadExistingNotes() {
                     // Convert target to readable display
                     let targetDisplay = note.target;
                     let linkUrl = '';
-                    if (note.target === 'team1' || note.target === 'TEAM1') {
+                    if (note.target === 'team1') {
                         targetDisplay = '{{ match.team1_registration.pseudonym if match.team1_registration else match.team1 }}';
                         if (note.team_id) {
                             linkUrl = `/teams/${note.team_id}`;
                         }
-                    } else if (note.target === 'team2' || note.target === 'TEAM2') {
+                    } else if (note.target === 'team2') {
                         targetDisplay = '{{ match.team2_registration.pseudonym if match.team2_registration else match.team2 }}';
                         if (note.team_id) {
                             linkUrl = `/teams/${note.team_id}`;
                         }
-                    } else if (note.target === 'MATCH' || note.target === 'match') {
+                    } else if (note.target === 'match') {
                         targetDisplay = '';
                     } else if (note.player_display) {
                         targetDisplay = note.player_display;
@@ -1062,17 +1062,17 @@ function loadPointNotes(pointId) {
                     // Convert target to readable display
                     let targetDisplay = note.target;
                     let linkUrl = '';
-                    if (note.target === 'TEAM1' || note.target === 'team1') {
+                    if (note.target === 'team1') {
                         targetDisplay = '{{ match.team1_registration.pseudonym if match.team1_registration else match.team1 }}';
                         if (note.team_id) {
                             linkUrl = `/teams/${note.team_id}`;
                         }
-                    } else if (note.target === 'TEAM2' || note.target === 'team2') {
+                    } else if (note.target === 'team2') {
                         targetDisplay = '{{ match.team2_registration.pseudonym if match.team2_registration else match.team2 }}';
                         if (note.team_id) {
                             linkUrl = `/teams/${note.team_id}`;
                         }
-                    } else if (note.target === 'MATCH') {
+                    } else if (note.target === 'match') {
                         targetDisplay = 'Match';
                     } else if (note.player_display) {
                         targetDisplay = note.player_display;
@@ -1086,7 +1086,7 @@ function loadPointNotes(pointId) {
                         }
                     }
                     
-                    const prefix = (note.target && note.target !== 'MATCH' && note.target !== 'match') ? (linkUrl ? `<strong><a href="${linkUrl}" class="text-decoration-none">${targetDisplay}</a>:</strong> ` : `<strong>${targetDisplay}:</strong> `) : '';
+                    const prefix = (note.target && note.target !== 'match') ? (linkUrl ? `<strong><a href="${linkUrl}" class="text-decoration-none">${targetDisplay}</a>:</strong> ` : `<strong>${targetDisplay}:</strong> `) : '';
                     return `
                     <div class="border-bottom pb-2 mb-2">
                         <div class="d-flex justify-content-between align-items-start">
@@ -1255,17 +1255,17 @@ function updatePointNotesInTableForPoint(pointId) {
                     // Convert target to readable display
                     let targetDisplay = note.target;
                     let linkUrl = '';
-                    if (note.target === 'TEAM1' || note.target === 'team1') {
+                    if (note.target === 'team1') {
                         targetDisplay = '{{ match.team1_registration.pseudonym if match.team1_registration else match.team1 }}';
                         if (note.team_id) {
                             linkUrl = `/teams/${note.team_id}`;
                         }
-                    } else if (note.target === 'TEAM2' || note.target === 'team2') {
+                    } else if (note.target === 'team2') {
                         targetDisplay = '{{ match.team2_registration.pseudonym if match.team2_registration else match.team2 }}';
                         if (note.team_id) {
                             linkUrl = `/teams/${note.team_id}`;
                         }
-                    } else if (note.target === 'MATCH') {
+                    } else if (note.target === 'match') {
                         targetDisplay = 'Match';
                     } else if (note.player_display) {
                         targetDisplay = note.player_display;
@@ -1279,7 +1279,7 @@ function updatePointNotesInTableForPoint(pointId) {
                         }
                     }
                     
-                    const prefix = (note.target && note.target !== 'MATCH' && note.target !== 'match') ? (linkUrl ? `<strong><a href="${linkUrl}" class="text-decoration-none">${targetDisplay}</a>:</strong> ` : `<strong>${targetDisplay}:</strong> `) : '';
+                    const prefix = (note.target && note.target !== 'match') ? (linkUrl ? `<strong><a href="${linkUrl}" class="text-decoration-none">${targetDisplay}</a>:</strong> ` : `<strong>${targetDisplay}:</strong> `) : '';
                     return `
                     <div class="small text-muted border-start border-3 ps-2 mb-1">
                         ${prefix}${note.text}

@@ -61,9 +61,9 @@ def get_notes(tournament_url):
             created_ts = created_ts.replace(microsecond=0)
         # Determine team_id if target is TEAM1 or TEAM2
         team_id = None
-        if note.target in ['TEAM1', 'team1']:
+        if note.target=='team1':
             team_id = match.team1
-        elif note.target in ['TEAM2', 'team2']:
+        elif note.target=='team2':
             team_id = match.team2
         
         notes_data.append({
@@ -229,9 +229,9 @@ def get_point_notes(tournament_url):
         
         # Determine team_id if target is TEAM1 or TEAM2
         team_id = None
-        if note.target in ['TEAM1', 'team1']:
+        if note.target=='team1':
             team_id = match.team1
-        elif note.target in ['TEAM2', 'team2']:
+        elif note.target=='team2':
             team_id = match.team2
         
         notes_data.append({

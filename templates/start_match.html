@@ -330,9 +330,9 @@ function openNotesModal(team) {
         } else {
             body.innerHTML = data.notes.map(n => {
                 let target = n.target;
-                if (target === 'TEAM1' || target === 'team1') {
+                if (target === 'team1') {
                     target = `{{ match.team1_registration.pseudonym if match.team1_registration else match.team1 }}`;
-                } else if (target === 'TEAM2' || target === 'team2') {
+                } else if (target === 'team2') {
                     target = `{{ match.team2_registration.pseudonym if match.team2_registration else match.team2 }}`;
                 } else if (n.player_display) {
                     target = n.player_display;

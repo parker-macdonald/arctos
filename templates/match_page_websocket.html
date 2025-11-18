@@ -348,12 +348,12 @@ window.MathJax = {
                                         {% for n in pnotes %}
                                             {% set targetDisplay = n.target %}
                                             {% set linkUrl = '' %}
-                                            {% if n.target in ['TEAM1','team1'] %}
+                                            {% if n.target=='team1' %}
                                                 {% set targetDisplay = match.team1_registration.pseudonym if match.team1_registration else match.team1 %}
                                                 {% if n.team_id %}
                                                     {% set linkUrl = url_for('teams.team_profile', team_id=n.team_id) %}
                                                 {% endif %}
-                                            {% elif n.target in ['TEAM2','team2'] %}
+                                            {% elif n.target=='team2' %}
                                                 {% set targetDisplay = match.team2_registration.pseudonym if match.team2_registration else match.team2 %}
                                                 {% if n.team_id %}
                                                     {% set linkUrl = url_for('teams.team_profile', team_id=n.team_id) %}
@@ -468,17 +468,17 @@ window.MathJax = {
                         {% for note in match_notes %}
                             {% set targetDisplay = note.target %}
                             {% set linkUrl = '' %}
-                            {% if note.target in ['TEAM1','team1'] %}
+                            {% if note.target=='team1' %}
                                 {% set targetDisplay = match.team1_registration.pseudonym if match.team1_registration else match.team1 %}
                                 {% if note.team_id %}
                                     {% set linkUrl = url_for('teams.team_profile', team_id=note.team_id) %}
                                 {% endif %}
-                            {% elif note.target in ['TEAM2','team2'] %}
+                            {% elif note.target=='team2' %}
                                 {% set targetDisplay = match.team2_registration.pseudonym if match.team2_registration else match.team2 %}
                                 {% if note.team_id %}
                                     {% set linkUrl = url_for('teams.team_profile', team_id=note.team_id) %}
                                 {% endif %}
-                            {% elif note.target == 'MATCH' or note.target == 'match' %}
+                            {% elif note.target == 'match' %}
                                 {% set targetDisplay = '' %}
                             {% elif note.player_display %}
                                 {% set targetDisplay = note.player_display %}
@@ -491,7 +491,7 @@ window.MathJax = {
                                     {% set linkUrl = url_for('players.player_profile', player_id=note.player_id) %}
                                 {% endif %}
                             {% endif %}
-                            {% set prefix = '' if (note.target == 'MATCH' or note.target == 'match') else (targetDisplay ~ ': ') %}
+                            {% set prefix = '' if (note.target == 'match') else (targetDisplay ~ ': ') %}
                             <div class="small text-muted border-start border-3 ps-2 mb-2">
                                 {% if linkUrl and prefix %}
                                     <a href="{{ linkUrl }}" class="text-decoration-none">{{ targetDisplay }}</a>: {{ note.text }}

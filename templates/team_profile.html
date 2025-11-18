@@ -113,7 +113,7 @@
             </div>
         </div>
         
-        {% if current_user.is_authenticated and current_user.id == team.id %}
+        {% if current_user.is_authenticated and (current_user.id == team.id or is_head_ref) %}
         <div class="card mt-3">
             <div class="card-header">
                 <h5 class="mb-0">Notes Received</h5>
