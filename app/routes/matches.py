@@ -17,6 +17,262 @@ from app.utils.scheduling import recompute_all_match_times
 bp = Blueprint('matches', __name__)
 
 
+@bp.route('/api/scoreboard')
+def scoreboard():
+    """Scoreboard page for OBS overlay. Public endpoint."""
+    tournament_url = request.args.get('tournament')
+    field_name = request.args.get('field')
+    
+    if not tournament_url or not field_name:
+        return render_template('scoreboard.html', error='Tournament and field parameters required'), 400
+    
+    # Find the active match on this field (only IN_PROGRESS)
+    match = Match.query.filter_by(event=tournament_url, field=field_name, status='IN_PROGRESS').first()
+    
+    # Get team information helper
+    from models import Team, TeamRegistration
+    def get_team_info(m):
+        if not m:
+            return None, None, None, None
+        team1_obj = Team.query.get(m.team1) if m.team1 else None
+        team2_obj = Team.query.get(m.team2) if m.team2 else None
+        
+        # Get team names - prefer initial (for dynamic teams), then registration pseudonym, then team name
+        # Handle empty strings as well as None
+        team1_name = TeamRegistration.query.filter_by(event=tournament_url, team=m.team1).first().pseudonym if m.team1 else m.team1_initial
+        team2_name = TeamRegistration.query.filter_by(event=tournament_url, team=m.team2).first().pseudonym if m.team2 else m.team2_initial
+        
+        # Only include photos if there's an actual team object with a photo (not dynamic teams)
+        team1_photo = team1_obj.profile_photo if (team1_obj and team1_obj.profile_photo and m.team1) else None
+        team2_photo = team2_obj.profile_photo if (team2_obj and team2_obj.profile_photo and m.team2) else None
+        return team1_name, team2_name, team1_photo, team2_photo
+    
+    # If there's an active match, show it
+    if match:
+        team1_name, team2_name, team1_photo, team2_photo = get_team_info(match)
+        
+        # Get points and calculate scores by set
+        points = Point.query.filter_by(match=match.uuid).order_by(Point.stamp).all()
+        
+        # Calculate scores by set
+        sets = sorted(set(p.set_number for p in points if p.set_number))
+        scores_by_set = {}
+        for set_num in sets:
+            set_points = [p for p in points if p.set_number == set_num and not p.rerolled]
+            scores_by_set[set_num] = {
+                'team1_score': sum(1 for p in set_points if p.winner == 'TEAM1'),
+                'team2_score': sum(1 for p in set_points if p.winner == 'TEAM2')
+            }
+        
+        # For STONES matches, get stones info
+        stones_info = None
+        if match.set_type == 'STONES':
+            stones_info = {
+                'stones_per_set': match.stones_per_set or match.nstonesperset or 100,
+                'stones_remaining': match.stones_remaining
+            }
+        
+        return render_template(
+            'scoreboard.html',
+            match=match,
+            team1_name=team1_name,
+            team2_name=team2_name,
+            team1_photo=team1_photo,
+            team2_photo=team2_photo,
+            scores_by_set=scores_by_set,
+            sets=sets,
+            stones_info=stones_info,
+            tournament_url=tournament_url,
+            field_name=field_name,
+            show_between_matches=False
+        )
+    
+    # No active match - find previous and next matches
+    # Get all matches on this field, ordered by time
+    all_field_matches = Match.query.filter_by(event=tournament_url, field=field_name)\
+        .order_by(Match.nominal_start_time.asc(), Match.completed_time.asc()).all()
+    
+    # Find most recent completed match (previous) - skip BREAK/JOIN matches
+    prev_match = None
+    for m in reversed(all_field_matches):
+        if m.status == 'COMPLETED' and m.completed_time and m.schedule_type not in ('BREAK', 'JOIN'):
+            prev_match = m
+            break
+    
+    # Find next match (not started or ready to start) - skip BREAK/JOIN matches
+    next_match = None
+    for m in all_field_matches:
+        if m.schedule_type not in ('BREAK', 'JOIN') and (m.status in ('NOT_STARTED', 'IN_PROGRESS') or (m.status == 'COMPLETED' and not m.completed_time)):
+            next_match = m
+            break
+    
+    # If no matches found at all
+    if not prev_match and not next_match:
+        return render_template('scoreboard.html', error='No match found on this field', tournament_url=tournament_url, field_name=field_name), 404
+    
+    # Get team info for previous and next matches
+    if prev_match:
+        prev_team1_name, prev_team2_name, prev_team1_photo, prev_team2_photo = get_team_info(prev_match)
+        # Ensure we always have names (fallback if somehow None)
+        prev_team1_name = prev_team1_name or 'Team 1'
+        prev_team2_name = prev_team2_name or 'Team 2'
+    else:
+        prev_team1_name, prev_team2_name, prev_team1_photo, prev_team2_photo = None, None, None, None
+    
+    if next_match:
+        next_team1_name, next_team2_name, next_team1_photo, next_team2_photo = get_team_info(next_match)
+        # Ensure we always have names (fallback if somehow None)
+        next_team1_name = next_team1_name or 'Team 1'
+        next_team2_name = next_team2_name or 'Team 2'
+    else:
+        next_team1_name, next_team2_name, next_team1_photo, next_team2_photo = None, None, None, None
+    
+    # Determine winner for previous match
+    prev_winner = None
+    if prev_match and prev_match.match_winner:
+        prev_winner = prev_match.match_winner
+    
+    return render_template(
+        'scoreboard.html',
+        match=None,
+        show_between_matches=True,
+        prev_match=prev_match,
+        prev_team1_name=prev_team1_name,
+        prev_team2_name=prev_team2_name,
+        prev_team1_photo=prev_team1_photo,
+        prev_team2_photo=prev_team2_photo,
+        prev_winner=prev_winner,
+        next_match=next_match,
+        next_team1_name=next_team1_name,
+        next_team2_name=next_team2_name,
+        next_team1_photo=next_team1_photo,
+        next_team2_photo=next_team2_photo,
+        tournament_url=tournament_url,
+        field_name=field_name
+    )
+
+
+@bp.route('/api/scoreboard-state')
+def scoreboard_state():
+    """Get scoreboard state as JSON for polling. Public endpoint."""
+    tournament_url = request.args.get('tournament')
+    field_name = request.args.get('field')
+    
+    if not tournament_url or not field_name:
+        return jsonify({'error': 'Tournament and field parameters required'}), 400
+    
+    # Find the active match on this field (only IN_PROGRESS)
+    match = Match.query.filter_by(event=tournament_url, field=field_name, status='IN_PROGRESS').first()
+    
+    # Get team information helper
+    from models import Team, TeamRegistration
+    def get_team_info(m):
+        if not m:
+            return None, None, None, None
+        team1_obj = Team.query.get(m.team1) if m.team1 else None
+        team2_obj = Team.query.get(m.team2) if m.team2 else None
+        
+        # Get team names - prefer initial (for dynamic teams), then registration pseudonym, then team name
+        # Handle empty strings as well as None
+        team1_name = TeamRegistration.query.filter_by(event=tournament_url, team=m.team1).first().pseudonym if m.team1 else m.team1_initial
+        team2_name = TeamRegistration.query.filter_by(event=tournament_url, team=m.team2).first().pseudonym if m.team2 else m.team2_initial
+        
+        # Only include photos if there's an actual team object with a photo (not dynamic teams)
+        team1_photo = team1_obj.profile_photo if (team1_obj and team1_obj.profile_photo and m.team1) else None
+        team2_photo = team2_obj.profile_photo if (team2_obj and team2_obj.profile_photo and m.team2) else None
+        return team1_name, team2_name, team1_photo, team2_photo
+    
+    # If there's an active match, return match state
+    if match:
+        team1_name, team2_name, team1_photo, team2_photo = get_team_info(match)
+        
+        # Get points and calculate scores by set
+        points = Point.query.filter_by(match=match.uuid).order_by(Point.stamp).all()
+        
+        # Calculate scores by set
+        sets = sorted(set(p.set_number for p in points if p.set_number))
+        scores_by_set = {}
+        for set_num in sets:
+            set_points = [p for p in points if p.set_number == set_num and not p.rerolled]
+            scores_by_set[set_num] = {
+                'team1_score': sum(1 for p in set_points if p.winner == 'TEAM1'),
+                'team2_score': sum(1 for p in set_points if p.winner == 'TEAM2')
+            }
+        
+        # For STONES matches, get stones info
+        stones_info = None
+        if match.set_type == 'STONES':
+            stones_info = {
+                'stones_per_set': match.stones_per_set or match.nstonesperset or 100,
+                'stones_remaining': match.stones_remaining
+            }
+        
+        return jsonify({
+            'has_active_match': True,
+            'match_id': match.uuid,
+            'team1_name': team1_name,
+            'team2_name': team2_name,
+            'team1_photo': team1_photo,
+            'team2_photo': team2_photo,
+            'scores_by_set': scores_by_set,
+            'sets': sets,
+            'stones_info': stones_info,
+            'timestamp': datetime.now(timezone.utc).isoformat()
+        })
+    
+    # No active match - find previous and next matches
+    # Get all matches on this field, ordered by time
+    all_field_matches = Match.query.filter_by(event=tournament_url, field=field_name)\
+        .order_by(Match.nominal_start_time.asc(), Match.completed_time.asc()).all()
+    
+    # Find most recent completed match (previous) - skip BREAK/JOIN matches
+    prev_match = None
+    for m in reversed(all_field_matches):
+        if m.status == 'COMPLETED' and m.completed_time and m.schedule_type not in ('BREAK', 'JOIN'):
+            prev_match = m
+            break
+    
+    # Find next match (not started or ready to start) - skip BREAK/JOIN matches
+    next_match = None
+    for m in all_field_matches:
+        if m.schedule_type not in ('BREAK', 'JOIN') and (m.status in ('NOT_STARTED', 'IN_PROGRESS') or (m.status == 'COMPLETED' and not m.completed_time)):
+            next_match = m
+            break
+    
+    # Get team info for previous and next matches
+    prev_data = None
+    if prev_match:
+        prev_team1_name, prev_team2_name, prev_team1_photo, prev_team2_photo = get_team_info(prev_match)
+        prev_team1_name = prev_team1_name or 'Team 1'
+        prev_team2_name = prev_team2_name or 'Team 2'
+        prev_data = {
+            'team1_name': prev_team1_name,
+            'team2_name': prev_team2_name,
+            'team1_photo': prev_team1_photo,
+            'team2_photo': prev_team2_photo,
+            'winner': prev_match.match_winner
+        }
+    
+    next_data = None
+    if next_match:
+        next_team1_name, next_team2_name, next_team1_photo, next_team2_photo = get_team_info(next_match)
+        next_team1_name = next_team1_name or 'Team 1'
+        next_team2_name = next_team2_name or 'Team 2'
+        next_data = {
+            'team1_name': next_team1_name,
+            'team2_name': next_team2_name,
+            'team1_photo': next_team1_photo,
+            'team2_photo': next_team2_photo
+        }
+    
+    return jsonify({
+        'has_active_match': False,
+        'prev_match': prev_data,
+        'next_match': next_data,
+        'timestamp': datetime.now(timezone.utc).isoformat()
+    })
+
+
 @bp.route('/<tournament_url>/match')
 def match_page(tournament_url):
     """Match viewing page."""

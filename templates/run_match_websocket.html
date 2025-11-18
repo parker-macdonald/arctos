@@ -16,6 +16,173 @@
         -webkit-transform: scale(1.6);
         transform: scale(1.6);
     }
+    
+    /* Narrow screen optimizations */
+    @media (max-width: 768px) {
+        .container {
+            transform: scale(0.85);
+            transform-origin: top left;
+            width: 117.65%; /* Compensate for scale */
+        }
+        
+        .table {
+            font-size: 0.9rem;
+        }
+        
+        .table th,
+        .table td {
+            padding: 0.4rem 0.3rem;
+        }
+        
+        .form-control-sm,
+        .form-select-sm {
+            font-size: 0.85rem;
+            padding: 0.2rem 0.3rem;
+        }
+        
+        .btn-sm {
+            padding: 0.2rem 0.4rem;
+            font-size: 0.8rem;
+        }
+        
+        /* Set number controls */
+        .set-number-controls {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 2px;
+            width: 35px;
+        }
+        
+        .set-number-controls .set-number-display {
+            font-size: 0.9rem;
+            font-weight: 600;
+            text-align: center;
+            min-width: 25px;
+            padding: 3px 0;
+        }
+        
+        .set-number-controls button {
+            width: 24px;
+            height: 20px;
+            padding: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            font-size: 12px;
+        }
+        
+        /* Delete button as small red X */
+        .delete-point-btn {
+            background: #dc3545;
+            color: white;
+            border: none;
+            width: 24px;
+            height: 24px;
+            padding: 0;
+            border-radius: 3px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            line-height: 1;
+            cursor: pointer;
+        }
+        
+        .delete-point-btn:hover {
+            background: #c82333;
+        }
+        
+        /* Move buttons outside container transform context */
+        .mobile-button-wrapper {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            z-index: 1000;
+            background: white;
+            padding: 0;
+            margin: 0;
+            box-shadow: 0 -2px 10px rgba(0,0,0,0.1);
+            display: flex;
+            flex-direction: row;
+        }
+        
+        .mobile-button-wrapper .btn {
+            border-radius: 0;
+            margin: 0;
+            flex: 1;
+        }
+        
+        .mobile-button-wrapper .btn.hidden {
+            display: none;
+        }
+        
+        .mobile-button-wrapper .btn.full-width {
+            flex: 1 1 100%;
+        }
+        
+        /* Hide the original buttons in the container on mobile */
+        .container .mobile-sticky-button,
+        .container #finalize-match-btn {
+            display: none;
+        }
+        
+        /* Add padding to bottom of page to prevent content from being hidden */
+        body {
+            padding-bottom: 60px; /* Space for button row */
+        }
+    }
+    
+    /* Set number controls for all screen sizes */
+    .set-number-controls {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 2px;
+        width: 40px;
+    }
+    
+    .set-number-controls .set-number-display {
+        font-size: 1rem;
+        font-weight: 600;
+        text-align: center;
+        min-width: 30px;
+        padding: 4px 0;
+    }
+    
+    .set-number-controls button {
+        width: 28px;
+        height: 24px;
+        padding: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        font-size: 14px;
+    }
+    
+    /* Delete button as small red X for all screens */
+    .delete-point-btn {
+        background: #dc3545;
+        color: white;
+        border: none;
+        width: 28px;
+        height: 28px;
+        padding: 0;
+        border-radius: 3px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 16px;
+        line-height: 1;
+        cursor: pointer;
+    }
+    
+    .delete-point-btn:hover {
+        background: #c82333;
+    }
     </style>
     <div class="row">
         <div class="col-md-12">
@@ -101,7 +268,7 @@
                             </div>
                             <div class="row mt-3">
                                 <div class="col-12">
-                                    <button id="point-button" class="btn btn-success btn-lg w-100" onclick="startEndPoint()">
+                                    <button id="point-button" class="btn btn-success btn-lg w-100 mobile-sticky-button" onclick="startEndPoint()">
                                         Start Point
                                     </button>
                                 </div>
@@ -126,24 +293,23 @@
                         <table class="table table-sm">
                             <thead>
                                 <tr>
-                                    <th>#</th>
                                     <th>Set</th>
-                                    <th>Stones Elapsed</th>
+                                    <th>🪨</th>
                                     <th>Winner</th>
                                     <th>Rerun</th>
                                     <th>Notes</th>
-                                    <th>Actions</th>
+                                    <th></th>
                                 </tr>
                             </thead>
                             <tbody id="points-table-body">
                                 {% for point in points %}
                                 <tr id="point-row-{{ point.uuid }}">
-                                    <td>{{ loop.index }}</td>
                                     <td>
-                                        <input type="number" class="form-control form-control-sm" 
-                                               value="{{ point.set_number or 1 }}" 
-                                               onchange="updatePointSetNumber('{{ point.uuid }}', this.value)"
-                                               style="width: 60px;">
+                                        <div class="set-number-controls">
+                                            <button class="btn btn-sm btn-outline-secondary" onclick="changeSetNumber('{{ point.uuid }}', 1)" type="button">+</button>
+                                            <span class="set-number-display" id="set-display-{{ point.uuid }}">{{ point.set_number or 1 }}</span>
+                                            <button class="btn btn-sm btn-outline-secondary" onclick="changeSetNumber('{{ point.uuid }}', -1)" type="button">−</button>
+                                        </div>
                                     </td>
                                     <td id="stones-{{ point.uuid }}" data-stamp="{{ point.stamp.isoformat() if point.stamp }}" data-end="{{ point.end_stamp.isoformat() if point.end_stamp }}">0</td>
                                     <td>
@@ -169,7 +335,7 @@
                                         </div>
                                     </td>
                                     <td>
-                                        <button class="btn btn-sm btn-danger" onclick="deletePoint('{{ point.uuid }}')">Delete</button>
+                                        <button class="delete-point-btn" onclick="deletePoint('{{ point.uuid }}')" title="Delete">×</button>
                                     </td>
                                 </tr>
                                 {% endfor %}
@@ -187,6 +353,12 @@
             <button id="finalize-match-btn" class="btn btn-warning btn-lg w-100" onclick="endMatch()">Finalize Match</button>
         </div>
     </div>
+</div>
+
+<!-- Mobile sticky buttons wrapper (outside container to avoid transform issues) -->
+<div class="mobile-button-wrapper d-md-none">
+    <button id="finalize-match-btn-mobile" class="btn btn-warning btn-lg" onclick="endMatch()">Finalize Match</button>
+    <button id="point-button-mobile" class="btn btn-success btn-lg mobile-sticky-button" onclick="startEndPoint()">Start Point</button>
 </div>
 
 <!-- Removed Add Note Modal -->
@@ -280,9 +452,10 @@ function checkForUnfinishedPoint() {
                 };
                 
                 // Update button to "End Point"
-                const button = document.getElementById('point-button');
-                button.textContent = 'End Point';
-                button.className = 'btn btn-danger btn-lg w-100';
+                updatePointButtons('End Point');
+                getPointButtons().forEach(btn => {
+                    btn.className = 'btn btn-danger btn-lg mobile-sticky-button';
+                });
                 console.log('Button updated to End Point');
                 
                 // Check if the point is already in the table, if not add it
@@ -419,20 +592,55 @@ function updatePointsTableFromPoll(points) {
     }
 }
 
+// Helper to get all point buttons (desktop and mobile)
+function getPointButtons() {
+    const buttons = [];
+    const desktopBtn = document.getElementById('point-button');
+    const mobileBtn = document.getElementById('point-button-mobile');
+    if (desktopBtn) buttons.push(desktopBtn);
+    if (mobileBtn) buttons.push(mobileBtn);
+    return buttons;
+}
+
+// Helper to update all point buttons
+function updatePointButtons(text) {
+    getPointButtons().forEach(btn => {
+        btn.textContent = text;
+    });
+    
+    // Hide/show finalize button based on point state
+    const finalizeBtn = document.getElementById('finalize-match-btn-mobile');
+    if (finalizeBtn) {
+        if (text === 'End Point') {
+            finalizeBtn.classList.add('hidden');
+            getPointButtons().forEach(btn => {
+                btn.classList.add('full-width');
+            });
+        } else {
+            finalizeBtn.classList.remove('hidden');
+            getPointButtons().forEach(btn => {
+                btn.classList.remove('full-width');
+            });
+        }
+    }
+}
+
 // Start/End Point Button Function
 async function startEndPoint() {
-    const button = document.getElementById('point-button');
+    const buttons = getPointButtons();
+    if (buttons.length === 0) return;
+    const button = buttons[0]; // Use first button to check state
     
     if (button.textContent.trim() === 'Start Point') {
         // Start a new point - get set number from last point
         let defaultSetNumber = 1;
         const tbody = document.getElementById('points-table-body');
         if (tbody && tbody.children.length > 0) {
-            // Get the last row's set number input
+            // Get the last row's set number display
             const lastRow = tbody.children[tbody.children.length - 1];
-            const lastSetInput = lastRow.querySelector('input[type="number"]');
-            if (lastSetInput) {
-                defaultSetNumber = parseInt(lastSetInput.value) || 1;
+            const lastSetDisplay = lastRow.querySelector('.set-number-display');
+            if (lastSetDisplay) {
+                defaultSetNumber = parseInt(lastSetDisplay.textContent) || 1;
             }
         }
         
@@ -467,9 +675,10 @@ function handlePointAdded(data) {
         end_stamp: data.end_stamp
     };
     
-    const button = document.getElementById('point-button');
-    button.textContent = 'End Point';
-    button.className = 'btn btn-danger btn-lg w-100';
+    updatePointButtons('End Point');
+    getPointButtons().forEach(btn => {
+        btn.className = 'btn btn-danger btn-lg w-100 mobile-sticky-button';
+    });
     
     addPointToTable(data);
     startStonesTicker(data.stamp);
@@ -481,9 +690,10 @@ function handlePointUpdated(data) {
             currentPoint.end_stamp = data.end_stamp;
             // Stop the stones ticker when point ends - allows manual editing
             stopStonesTicker();
-            const button = document.getElementById('point-button');
-            button.textContent = 'Start Point';
-            button.className = 'btn btn-success btn-lg w-100';
+            updatePointButtons('Start Point');
+            getPointButtons().forEach(btn => {
+                btn.className = 'btn btn-success btn-lg mobile-sticky-button';
+            });
             currentPoint = null;
         }
     }
@@ -517,21 +727,21 @@ function addPointToTable(data) {
         let defaultSetNumber = data.set_number || 1;
         if (tbody.children.length > 0) {
             const lastRow = tbody.children[tbody.children.length - 1];
-            const lastSetInput = lastRow.querySelector('input[type="number"]');
-            if (lastSetInput) {
-                defaultSetNumber = parseInt(lastSetInput.value) || 1;
+            const lastSetDisplay = lastRow.querySelector('.set-number-display');
+            if (lastSetDisplay) {
+                defaultSetNumber = parseInt(lastSetDisplay.textContent) || 1;
             }
         }
         
         const newRow = document.createElement('tr');
         newRow.id = `point-row-${data.point_id}`;
         newRow.innerHTML = `
-            <td>${rowCount + 1}</td>
             <td>
-                <input type="number" class="form-control form-control-sm" 
-                       value="${defaultSetNumber}" 
-                       onchange="updatePointSetNumber('${data.point_id}', this.value)"
-                       style="width: 60px;">
+                <div class="set-number-controls">
+                    <button class="btn btn-sm btn-outline-secondary" onclick="changeSetNumber('${data.point_id}', 1)" type="button">+</button>
+                    <span class="set-number-display" id="set-display-${data.point_id}">${defaultSetNumber}</span>
+                    <button class="btn btn-sm btn-outline-secondary" onclick="changeSetNumber('${data.point_id}', -1)" type="button">−</button>
+                </div>
             </td>
             <td id="stones-${data.point_id}" data-stamp="${data.stamp || ''}" data-end="${data.end_stamp || ''}">0</td>
             <td>
@@ -555,7 +765,7 @@ function addPointToTable(data) {
                 </div>
             </td>
             <td>
-                <button class="btn btn-sm btn-danger" onclick="deletePoint('${data.point_id}')">Delete</button>
+                <button class="delete-point-btn" onclick="deletePoint('${data.point_id}')" title="Delete">×</button>
             </td>
         `;
         
@@ -571,6 +781,14 @@ function addPointToTable(data) {
 
 function updatePointInTable(data) {
     const pointId = data.point_id;
+    
+    // Update set number display
+    if (data.set_number !== undefined) {
+        const setDisplay = document.getElementById(`set-display-${pointId}`);
+        if (setDisplay) {
+            setDisplay.textContent = data.set_number;
+        }
+    }
     
     // Update winner selection
     const winnerSelect = document.querySelector(`select[onchange*="updatePointWinner('${pointId}'"]`);
@@ -620,6 +838,16 @@ async function toggleRerun(pointId, rerolled) {
         updatePointInTable(data);
         // Update score by set table (rerolled points don't count)
         updateScoreBySetTable();
+    }
+}
+
+function changeSetNumber(pointId, delta) {
+    const display = document.getElementById(`set-display-${pointId}`);
+    if (display) {
+        const currentValue = parseInt(display.textContent) || 1;
+        const newValue = Math.max(1, currentValue + delta);
+        display.textContent = newValue;
+        updatePointSetNumber(pointId, newValue);
     }
 }
 
@@ -1319,12 +1547,12 @@ function updateScoreBySetTable() {
     
     rows.forEach(row => {
         const pointId = row.id.replace('point-row-', '');
-        const setInput = row.querySelector('input[type="number"]');
+        const setDisplay = row.querySelector('.set-number-display');
         const winnerSelect = row.querySelector('select[onchange*="updatePointWinner"]');
         const rerollCheckbox = row.querySelector('input[onchange*="toggleRerun"]');
         
-        if (setInput && winnerSelect) {
-            const setNumber = parseInt(setInput.value) || 1;
+        if (setDisplay && winnerSelect) {
+            const setNumber = parseInt(setDisplay.textContent) || 1;
             const winner = winnerSelect.value;
             const rerolled = rerollCheckbox ? rerollCheckbox.checked : false;
             

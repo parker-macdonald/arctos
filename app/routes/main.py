@@ -91,3 +91,9 @@ def players():
         players = Player.query.all()
     return render_template('players.html', players=players)
 
+
+@bp.route('/about')
+def about():
+    """About page explaining Arctos."""
+    return render_template('about.html')
+
