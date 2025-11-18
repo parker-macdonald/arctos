@@ -23,8 +23,10 @@
                 {% if match.status == 'COMPLETED' and match.schedule_type not in ('BREAK', 'JOIN') and not match.ribbon %}
                     {% set winner = match.match_winner %}
 
-                    {% set t1 = match.team1_registration.pseudonym if match.team1_registration else (match.team1 or match.team1_initial) %}
-                    {% set t2 = match.team2_registration.pseudonym if match.team2_registration else (match.team2 or match.team2_initial) %}
+                    {% set t1_raw = match.team1_registration.pseudonym if match.team1_registration else (match.team1 or match.team1_initial) %}
+                    {% set t1 = t1_raw.replace('::', ' ') if t1_raw else '' %}
+                    {% set t2_raw = match.team2_registration.pseudonym if match.team2_registration else (match.team2 or match.team2_initial) %}
+                    {% set t2 = t2_raw.replace('::', ' ') if t2_raw else '' %}
 
                     {# Only process teams that are not None/Null #}
                     {% if t1 and t1 != 'TBA' %}

@@ -85,11 +85,29 @@ def players():
     from flask import request
     from models import Player
     search = request.args.get('search', '')
+    page = request.args.get('page', 1, type=int)
+    per_page = 50
+    
+    # Build base query
     if search:
-        players = Player.query.filter(Player.name.contains(search) | Player.id.contains(search)).all()
+        query = Player.query.filter(Player.name.contains(search) | Player.id.contains(search))
     else:
-        players = Player.query.all()
-    return render_template('players.html', players=players)
+        query = Player.query
+    
+    # Get total count for pagination
+    total = query.count()
+    total_pages = (total + per_page - 1) // per_page  # Ceiling division
+    
+    # Apply pagination
+    offset = (page - 1) * per_page
+    players = query.order_by(Player.name.asc()).offset(offset).limit(per_page).all()
+    
+    return render_template('players.html', 
+                         players=players, 
+                         page=page, 
+                         total_pages=total_pages, 
+                         total=total,
+                         search=search)
 
 
 @bp.route('/about')

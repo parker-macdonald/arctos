@@ -224,6 +224,13 @@
         container.className = 'autocomplete-container';
         input.parentNode.insertBefore(container, input);
         container.appendChild(input);
+        
+        // Move the suggestions div into the container
+        const suggestionsId = input.id + '-suggestions';
+        const suggestionsDiv = document.getElementById(suggestionsId);
+        if (suggestionsDiv) {
+            container.appendChild(suggestionsDiv);
+        }
     });
     
     // Add event listeners to all autocomplete inputs
@@ -442,7 +449,6 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     
     // Handle dynamic/static scheduling toggle
-    const dynamicSelect = document.getElementById('dynamic');
     const startTimeContainer = document.getElementById('start_time_container');
     const previousMatchContainer = document.getElementById('previous_match_container');
     const startTimeInput = document.getElementById('start_time');

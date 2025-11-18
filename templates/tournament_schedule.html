@@ -245,7 +245,7 @@
                                                             {% for ref_item in refs_list %}
                                                                 {% if not ns.matches_ref %}
                                                                     {% set ref_trimmed = ref_item.strip() %}
-                                                                    {% if ref_trimmed and ref_trimmed != 'TBA' and not (ref_trimmed.endswith(' winner') or ref_trimmed.endswith(' loser')) %}
+                                                                    {% if ref_trimmed and ref_trimmed != 'TBA' and not (ref_trimmed.endswith('::winner') or ref_trimmed.endswith('::loser') or ref_trimmed.endswith(' winner') or ref_trimmed.endswith(' loser')) %}
                                                                         {# Check if ref ID matches directly #}
                                                                         {% if ref_trimmed|lower == query %}
                                                                             {% set ns.matches_ref = True %}
@@ -305,12 +305,12 @@
                                                             {% set match_winner = match.match_winner %}
                                                             <div class="schedule-match-title">
                                                                 <strong>{{ match.name }}:</strong> 
-                                                                {{ team1_pseudonym }}
+                                                                {{ team1_pseudonym.replace('::', ' ') }}
                                                                 {% if match.status == 'COMPLETED' and match_winner == 'TEAM1' %}
                                                                     <span class="badge bg-success ms-1" style="font-size: 0.7em;">Winner</span>
                                                                 {% endif %}
                                                                 vs 
-                                                                {{ team2_pseudonym }}
+                                                                {{ team2_pseudonym.replace('::', ' ') }}
                                                                 {% if match.status == 'COMPLETED' and match_winner == 'TEAM2' %}
                                                                     <span class="badge bg-success ms-1" style="font-size: 0.7em;">Winner</span>
                                                                 {% endif %}
@@ -324,8 +324,8 @@
                                                                     {% for ref in refs_list %}
                                                                         {% set ref_trimmed = ref.strip() %}
                                                                         {% if ref_trimmed and ref_trimmed != 'TBA' %}
-                                                                            {% if ref_trimmed.endswith(' winner') or ref_trimmed.endswith(' loser') %}
-                                                                                {{ ref_trimmed }}{% if not loop.last %}, {% endif %}
+                                                                            {% if ref_trimmed.endswith('::winner') or ref_trimmed.endswith('::loser') or ref_trimmed.endswith(' winner') or ref_trimmed.endswith(' loser') %}
+                                                                                {{ ref_trimmed.replace('::', ' ') }}{% if not loop.last %}, {% endif %}
                                                                             {% else %}
                                                                                 {% set ref_registration = ref_trimmed|team_registration_for_tournament(tournament.url) %}
                                                                                 {% if ref_registration %}

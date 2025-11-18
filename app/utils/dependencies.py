@@ -26,16 +26,23 @@ def apply_match_dependencies(tournament_url: str, completed_match: Match) -> Non
         return ' '.join((s or '').strip().lower().split())
 
     base_name = completed_match.name
-    winner_placeholder = f"{base_name} winner"
-    loser_placeholder = f"{base_name} loser"
+    # New format: match_name::winner and match_name::loser
+    winner_placeholder = f"{base_name}::winner"
+    loser_placeholder = f"{base_name}::loser"
     winner_alternates = set([
         normalize(winner_placeholder),
+        normalize(f"{base_name}::winner"),  # Exact match
+        # Legacy support: old format with space
+        normalize(f"{base_name} winner"),
         normalize(f"{base_name} - winner"),
         normalize(f"{base_name} (winner)"),
         normalize(f"{completed_match.uuid} winner"),
     ])
     loser_alternates = set([
         normalize(loser_placeholder),
+        normalize(f"{base_name}::loser"),  # Exact match
+        # Legacy support: old format with space
+        normalize(f"{base_name} loser"),
         normalize(f"{base_name} - loser"),
         normalize(f"{base_name} (loser)"),
         normalize(f"{completed_match.uuid} loser"),

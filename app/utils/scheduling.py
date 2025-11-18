@@ -16,9 +16,19 @@ def referenced_match_ids(match: Match, tournament_url: str) -> set:
         if not initial_val:
             return
         s = (initial_val or '').strip()
-        s_low = ' '.join(s.lower().split())
-        if s_low.endswith(' winner') or s_low.endswith(' loser'):
-            base = s.rsplit(' ', 1)[0]
+        base = None
+        # Check for new format: match_name::winner or match_name::loser
+        if '::winner' in s or s.endswith('::winner'):
+            base = s.split('::')[0].strip()
+        elif '::loser' in s or s.endswith('::loser'):
+            base = s.split('::')[0].strip()
+        # Legacy format: match_name winner or match_name loser
+        else:
+            s_low = ' '.join(s.lower().split())
+            if s_low.endswith(' winner') or s_low.endswith(' loser'):
+                base = s.rsplit(' ', 1)[0]
+        
+        if base:
             # Try by UUID first
             cand = Match.query.filter_by(event=tournament_url, uuid=base).first()
             if cand:
@@ -491,20 +501,29 @@ def _predicted_end_time(m: Match) -> datetime | None:
 
 
 def _extract_refs_from_text(text: str) -> list[tuple[str, str]]:
-    """Extract (base, kind) pairs from a free text that may contain '... winner' or '... loser'."""
+    """Extract (base, kind) pairs from a free text that may contain '...::winner' or '...::loser'."""
     refs: list[tuple[str, str]] = []
     if not text:
         return refs
     # Split by commas to catch multiple refs in refs_initial
     parts = [p.strip() for p in text.split(',') if p.strip()]
     for p in parts:
-        low = ' '.join(p.lower().split())
-        if low.endswith(' winner'):
-            base = p.rsplit(' ', 1)[0].strip()
+        # Check for new format: match_name::winner or match_name::loser
+        if '::winner' in p or p.endswith('::winner'):
+            base = p.split('::')[0].strip()
             refs.append((base, 'winner'))
-        elif low.endswith(' loser'):
-            base = p.rsplit(' ', 1)[0].strip()
+        elif '::loser' in p or p.endswith('::loser'):
+            base = p.split('::')[0].strip()
             refs.append((base, 'loser'))
+        # Legacy support: also check for old format "match_name winner" or "match_name loser"
+        else:
+            low = ' '.join(p.lower().split())
+            if low.endswith(' winner'):
+                base = p.rsplit(' ', 1)[0].strip()
+                refs.append((base, 'winner'))
+            elif low.endswith(' loser'):
+                base = p.rsplit(' ', 1)[0].strip()
+                refs.append((base, 'loser'))
     return refs
 
 def _initial_tokens(text: str) -> list[str]:

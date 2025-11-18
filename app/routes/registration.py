@@ -45,10 +45,16 @@ def register_team_for_tournament(tournament_url):
             flash(f'Maximum number of teams ({tournament.n_max_teams}) already registered', 'error')
             return redirect(f'/{tournament_url}/register')
     
+    # Validate pseudonym doesn't contain "::"
+    pseudonym = request.form['pseudonym']
+    if '::' in pseudonym:
+        flash('Team pseudonyms cannot contain "::"', 'error')
+        return redirect(f'/{tournament_url}/register')
+    
     team_registration = TeamRegistration(
         event=tournament_url,
         team=current_user.id,
-        pseudonym=request.form['pseudonym']
+        pseudonym=pseudonym
     )
     
     # Auto-mark as paid if registration fee is zero

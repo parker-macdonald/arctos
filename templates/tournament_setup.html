@@ -749,6 +749,13 @@
         container.className = 'autocomplete-container';
         input.parentNode.insertBefore(container, input);
         container.appendChild(input);
+        
+        // Move the suggestions div into the container
+        const suggestionsId = input.id + '-suggestions';
+        const suggestionsDiv = document.getElementById(suggestionsId);
+        if (suggestionsDiv) {
+            container.appendChild(suggestionsDiv);
+        }
     });
     
     // Add event listeners to all autocomplete inputs

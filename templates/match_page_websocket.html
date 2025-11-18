@@ -62,9 +62,15 @@ window.MathJax = {
                                     {% endif %}
                                 {% else %}
                                     {% set team1_display = match.team1_initial or 'TBA' %}
-                                    {% if team1_display.endswith(' winner') or team1_display.endswith(' loser') %}
-                                        {% set match_ref = team1_display.rsplit(' ', 1)[0] %}
-                                        <a href="/{{ tournament.url }}/match?name={{ match_ref }}" class="text-decoration-none">{{ team1_display }}</a>
+                                    {% if team1_display.endswith('::winner') or team1_display.endswith('::loser') or team1_display.endswith(' winner') or team1_display.endswith(' loser') %}
+                                        {% if '::' in team1_display %}
+                                            {% set match_ref = team1_display.split('::')[0] %}
+                                            {% set display_text = team1_display.replace('::', ' ') %}
+                                        {% else %}
+                                            {% set match_ref = team1_display.rsplit(' ', 1)[0] %}
+                                            {% set display_text = team1_display %}
+                                        {% endif %}
+                                        <a href="/{{ tournament.url }}/match?name={{ match_ref }}" class="text-decoration-none">{{ display_text }}</a>
                                     {% else %}
                                         {{ team1_display }}
                                     {% endif %}
@@ -82,9 +88,15 @@ window.MathJax = {
                                     {% endif %}
                                 {% else %}
                                     {% set team2_display = match.team2_initial or 'TBA' %}
-                                    {% if team2_display.endswith(' winner') or team2_display.endswith(' loser') %}
-                                        {% set match_ref = team2_display.rsplit(' ', 1)[0] %}
-                                        <a href="/{{ tournament.url }}/match?name={{ match_ref }}" class="text-decoration-none">{{ team2_display }}</a>
+                                    {% if team2_display.endswith('::winner') or team2_display.endswith('::loser') or team2_display.endswith(' winner') or team2_display.endswith(' loser') %}
+                                        {% if '::' in team2_display %}
+                                            {% set match_ref = team2_display.split('::')[0] %}
+                                            {% set display_text = team2_display.replace('::', ' ') %}
+                                        {% else %}
+                                            {% set match_ref = team2_display.rsplit(' ', 1)[0] %}
+                                            {% set display_text = team2_display %}
+                                        {% endif %}
+                                        <a href="/{{ tournament.url }}/match?name={{ match_ref }}" class="text-decoration-none">{{ display_text }}</a>
                                     {% else %}
                                         {{ team2_display }}
                                     {% endif %}
@@ -101,9 +113,15 @@ window.MathJax = {
                                     {% for ref_trimmed in match.refs.split(',') %}
                                         {% set ref_trimmed = ref_trimmed.strip() %}
                                         {% if ref_trimmed %}
-                                            {% if ref_trimmed.endswith(' winner') or ref_trimmed.endswith(' loser') %}
-                                                {% set match_ref = ref_trimmed.rsplit(' ', 1)[0] %}
-                                                <a href="/{{ tournament.url }}/match?name={{ match_ref }}" class="text-decoration-none">{{ ref_trimmed }}</a>{% if not loop.last %}, {% endif %}
+                                            {% if ref_trimmed.endswith('::winner') or ref_trimmed.endswith('::loser') or ref_trimmed.endswith(' winner') or ref_trimmed.endswith(' loser') %}
+                                                {% if '::' in ref_trimmed %}
+                                                    {% set match_ref = ref_trimmed.split('::')[0] %}
+                                                    {% set display_text = ref_trimmed.replace('::', ' ') %}
+                                                {% else %}
+                                                    {% set match_ref = ref_trimmed.rsplit(' ', 1)[0] %}
+                                                    {% set display_text = ref_trimmed %}
+                                                {% endif %}
+                                                <a href="/{{ tournament.url }}/match?name={{ match_ref }}" class="text-decoration-none">{{ display_text }}</a>{% if not loop.last %}, {% endif %}
                                             {% else %}
                                                 {% set team_registration = ref_trimmed | team_registration_for_tournament(tournament.url) %}
                                                 {% if team_registration %}
@@ -123,9 +141,15 @@ window.MathJax = {
                                     {% for ref_trimmed in match.refs_initial.split(',') %}
                                         {% set ref_trimmed = ref_trimmed.strip() %}
                                         {% if ref_trimmed %}
-                                            {% if ref_trimmed.endswith(' winner') or ref_trimmed.endswith(' loser') %}
-                                                {% set match_ref = ref_trimmed.rsplit(' ', 1)[0] %}
-                                                <a href="/{{ tournament.url }}/match?name={{ match_ref }}" class="text-decoration-none">{{ ref_trimmed }}</a>{% if not loop.last %}, {% endif %}
+                                            {% if ref_trimmed.endswith('::winner') or ref_trimmed.endswith('::loser') or ref_trimmed.endswith(' winner') or ref_trimmed.endswith(' loser') %}
+                                                {% if '::' in ref_trimmed %}
+                                                    {% set match_ref = ref_trimmed.split('::')[0] %}
+                                                    {% set display_text = ref_trimmed.replace('::', ' ') %}
+                                                {% else %}
+                                                    {% set match_ref = ref_trimmed.rsplit(' ', 1)[0] %}
+                                                    {% set display_text = ref_trimmed %}
+                                                {% endif %}
+                                                <a href="/{{ tournament.url }}/match?name={{ match_ref }}" class="text-decoration-none">{{ display_text }}</a>{% if not loop.last %}, {% endif %}
                                             {% else %}
                                                 {% set team_registration = ref_trimmed | team_registration_for_tournament(tournament.url) %}
                                                 {% if team_registration %}

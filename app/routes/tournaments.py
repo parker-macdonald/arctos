@@ -61,8 +61,12 @@ def update_match_previous_link(match: Match, prev_match_id: str, tournament_url:
             # Set the old next_match's previous_match to this match
             prev_match_old_next.previous_match = match.uuid
     else:
-        # No old next_match from prev_match, so clear this match's next_match
-        match.next_match = None
+        # No old next_match from prev_match
+        # If updating an existing match, preserve its existing next_match if it's still valid
+        # (only clear if this is a new match or if we're explicitly changing the chain)
+        if is_new:
+            match.next_match = None
+        # For updates, preserve the existing next_match - it will be handled by cleanup logic below if needed
     
     # If updating and had an old previous_match, handle cleanup
     if old_prev_id and old_prev_id != prev_match_id:
@@ -277,15 +281,18 @@ def tournament_schedule(tournament_url):
     # Also include any team IDs/pseudonyms from match initial values
     for match in matches:
         if match.team1_initial and match.team1_initial not in seen_teams:
-            # Check if it's a dependency reference (ends with "winner" or "loser")
-            if not (match.team1_initial.endswith(' winner') or match.team1_initial.endswith(' loser')):
+            # Check if it's a dependency reference (ends with "::winner", "::loser", or legacy " winner"/" loser")
+            if not (match.team1_initial.endswith('::winner') or match.team1_initial.endswith('::loser') or 
+                    match.team1_initial.endswith(' winner') or match.team1_initial.endswith(' loser')):
                 team_options.append({
                     'id': match.team1_initial,
                     'pseudonym': match.team1_initial
                 })
                 seen_teams.add(match.team1_initial)
         if match.team2_initial and match.team2_initial not in seen_teams:
-            if not (match.team2_initial.endswith(' winner') or match.team2_initial.endswith(' loser')):
+            # Check if it's a dependency reference (ends with "::winner", "::loser", or legacy " winner"/" loser")
+            if not (match.team2_initial.endswith('::winner') or match.team2_initial.endswith('::loser') or 
+                    match.team2_initial.endswith(' winner') or match.team2_initial.endswith(' loser')):
                 team_options.append({
                     'id': match.team2_initial,
                     'pseudonym': match.team2_initial
@@ -490,8 +497,14 @@ def add_match(tournament_url):
     
     ribbon = request.form.get('ribbon', '') == 'on'  # Checkbox value
     
+    # Validate match name doesn't contain "::"
+    match_name = request.form['match_name']
+    if '::' in match_name:
+        flash('Match names cannot contain "::"', 'error')
+        return redirect(f'/{tournament_url}/setup')
+    
     match = Match(
-        name=request.form['match_name'],
+        name=match_name,
         event=tournament_url,
         field=request.form.get('field', ''),
         team1=team1_id,
@@ -902,7 +915,12 @@ def update_match(tournament_url):
         team2_id = resolve_team_name_to_id(team2_name, tournament_url)
         refs_initial = request.form.get('refs', '')
     
-    match.name = request.form['match_name']
+    # Validate match name doesn't contain "::"
+    new_match_name = request.form.get('match_name', match.name)
+    if '::' in new_match_name:
+        flash('Match names cannot contain "::"', 'error')
+        return redirect(f'/{tournament_url}/setup')
+    match.name = new_match_name
     match.field = request.form.get('field', '')
     match.team1 = team1_id
     match.team1_initial = team1_name
@@ -1203,9 +1221,9 @@ def tournament_autocomplete(tournament_url):
                 'id': m.uuid
             })
     
-        # Also offer winner/loser variants to help dynamic references
-        winner_label = f"{name} winner"
-        loser_label = f"{name} loser"
+        # Also offer winner/loser variants to help dynamic references (new format)
+        winner_label = f"{name}::winner"
+        loser_label = f"{name}::loser"
         if not query or query in winner_label.lower():
             suggestions.append({
                 'type': 'result',
