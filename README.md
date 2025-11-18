@@ -1,5 +1,5 @@
-# to-site
+# Arctos
 
-i need to come up with a better name
+Centralized online results and event management for Jugger.  
 
-this is what the fog site always wanted to be
+Or, *what the fog site always wanted to be*
