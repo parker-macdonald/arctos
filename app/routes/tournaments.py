@@ -1367,6 +1367,54 @@ def update_tags(tournament_url):
         if changed:
             updated_count += 1
     
+    # Update brackets if tournament has bracket data
+    tournament = Tournament.query.filter_by(url=tournament_url).first()
+    bracket_updated = False
+    if tournament and tournament.bracket and tag_to_team:
+        try:
+            import tomli
+            bracket_data = tomli.loads(tournament.bracket)
+            brackets = bracket_data.get('brackets', [])
+            
+            for bracket in brackets:
+                teams = bracket.get('teams', [])
+                for team_entry in teams:
+                    team_ref = team_entry.get('team', '').strip()
+                    if team_ref in tag_to_team:
+                        # Replace tag name with team ID
+                        team_entry['team'] = tag_to_team[team_ref]
+                        bracket_updated = True
+            
+            if bracket_updated:
+                # Regenerate TOML
+                def escape_toml_string(s):
+                    """Escape special characters in TOML strings."""
+                    s = str(s)
+                    s = s.replace('\\', '\\\\')
+                    s = s.replace('"', '\\"')
+                    s = s.replace('\n', '\\n')
+                    s = s.replace('\t', '\\t')
+                    return s
+                
+                toml_lines = []
+                for bracket in brackets:
+                    toml_lines.append('[[brackets]]')
+                    toml_lines.append(f'name = "{escape_toml_string(bracket["name"])}"')
+                    toml_lines.append(f'image = "{escape_toml_string(bracket["image"])}"')
+                    toml_lines.append('')
+                    for team in bracket.get('teams', []):
+                        toml_lines.append('[[brackets.teams]]')
+                        toml_lines.append(f'team = "{escape_toml_string(team["team"])}"')
+                        toml_lines.append(f'x = {team["x"]}')
+                        toml_lines.append(f'y = {team["y"]}')
+                        toml_lines.append(f'halign = "{escape_toml_string(team["halign"])}"')
+                        toml_lines.append(f'valign = "{escape_toml_string(team["valign"])}"')
+                        toml_lines.append(f'size = {team["size"]}')
+                        toml_lines.append('')
+                tournament.bracket = '\n'.join(toml_lines)
+        except Exception as e:
+            print(f"Error updating brackets after tag update: {e}")
+    
     db.session.commit()
     
     # Recompute all match times after tag updates (may affect dependencies)
@@ -1377,10 +1425,17 @@ def update_tags(tournament_url):
         except Exception as e:
             print(f"Error recomputing match times after tag update: {e}")
     
+    # Build success message
+    messages = []
     if updated_count > 0:
-        flash(f'Successfully updated {updated_count} match(es) with tag conversions', 'success')
+        messages.append(f'Successfully updated {updated_count} match(es) with tag conversions')
+    if bracket_updated:
+        messages.append('Bracket(s) updated with tag conversions')
+    
+    if messages:
+        flash('; '.join(messages), 'success')
     else:
-        flash('No matches were updated. No matches contain the selected tags.', 'info')
+        flash('No matches or brackets were updated. No matches or brackets contain the selected tags.', 'info')
     
     return redirect(f'/{tournament_url}/setup')
 
