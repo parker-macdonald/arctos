@@ -94,25 +94,25 @@
                         <label class="btn btn-outline-primary" for="viewTable">Table View</label>
                     </div>
                 </div>
-                <div class="col-auto">
-                    <label for="fieldFilter" class="form-label mb-0">Field</label>
-                    <select id="fieldFilter" name="field" class="form-select form-select-sm">
-                        <option value="">All fields</option>
-                        {% for f in fields %}
-                            <option value="{{ f.name }}" {% if filter_field and filter_field == f.name %}selected{% endif %}>{{ f.name }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-                <div class="col-auto">
-                    <label for="teamFilter" class="form-label mb-0">Highlight team</label>
-                    <input id="teamFilter" name="team" class="form-control form-control-sm" placeholder="Team name" value="{{ highlight_team or '' }}" list="teamOptions" />
-                    <datalist id="teamOptions">
-                        {% for team in team_options %}
-                            <option value="{{ team.pseudonym }}">{{ team.pseudonym }}</option>
-                        {% endfor %}
-                    </datalist>
-                </div>
-            </div>
+                    <div class="col-auto">
+                        <label for="fieldFilter" class="form-label mb-0">Field</label>
+                        <select id="fieldFilter" name="field" class="form-select form-select-sm">
+                            <option value="">All fields</option>
+                            {% for f in fields %}
+                                <option value="{{ f.name }}" {% if filter_field and filter_field == f.name %}selected{% endif %}>{{ f.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-auto">
+                        <label for="teamFilter" class="form-label mb-0">Highlight team</label>
+                        <input id="teamFilter" name="team" class="form-control form-control-sm" placeholder="Team name" value="{{ highlight_team or '' }}" list="teamOptions" />
+                        <datalist id="teamOptions">
+                            {% for team in team_options %}
+                                <option value="{{ team.pseudonym }}">{{ team.pseudonym }}</option>
+                            {% endfor %}
+                        </datalist>
+                    </div>
+                    </div>
             
             <div class="schedule-timeline-container" id="schedule-timeline">
                 <div class="schedule-timeline-header">
@@ -242,8 +242,8 @@
                                                         {% set team1_actual_highlight = match.team1_registration.pseudonym %}
                                                     {% else %}
                                                         {% set team1_actual_highlight = match.team1 %}
-                                                    {% endif %}
-                                                {% endif %}
+                                                                        {% endif %}
+                                                                            {% endif %}
                                                 
                                                 {% set team2_actual_highlight = '' %}
                                                 {% if match.team2 %}
@@ -251,8 +251,8 @@
                                                         {% set team2_actual_highlight = match.team2_registration.pseudonym %}
                                                     {% else %}
                                                         {% set team2_actual_highlight = match.team2 %}
-                                                    {% endif %}
-                                                {% endif %}
+                                                                        {% endif %}
+                                                                            {% endif %}
                                                 
                                                 {% set refs_actual_highlight = '' %}
                                                 {% set refs_source = match.refs or '' %}
@@ -263,12 +263,12 @@
                                                         {% set ref_trimmed = ref_item.strip() %}
                                                         {% if ref_trimmed and ref_trimmed != 'TBA' and not (ref_trimmed.endswith('::winner') or ref_trimmed.endswith('::loser') or ref_trimmed.endswith(' winner') or ref_trimmed.endswith(' loser')) %}
                                                             {% set _ = refs_ns.values.append(ref_trimmed.replace('::', ' ')) %}
-                                                        {% endif %}
-                                                    {% endfor %}
+                                                                {% endif %}
+                                                            {% endfor %}
                                                     {% if refs_ns.values %}
                                                         {% set refs_actual_highlight = refs_ns.values|join(', ') %}
-                                                    {% endif %}
-                                                {% endif %}
+                                                        {% endif %}
+                                                        {% endif %}
                                                 
                                                 <div class="schedule-match-block 
                                                     {% if match.schedule_type == 'BREAK' %}schedule-break{% endif %}

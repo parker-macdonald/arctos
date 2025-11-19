@@ -1066,6 +1066,7 @@ def get_points(tournament_url):
         return jsonify({'success': False, 'error': 'Not authorized'})
     
     points = Point.query.filter_by(match=match_id).order_by(Point.stamp).all()
+    match = Match.query.get(match_id)
     points_data = []
     for p in points:
         points_data.append({
@@ -1075,6 +1076,7 @@ def get_points(tournament_url):
             'rerolled': p.rerolled,
             'stamp': p.stamp.isoformat() if p.stamp else None,
             'end_stamp': p.end_stamp.isoformat() if p.end_stamp else None,
+            'stones_at_start': p.stones_at_start if match and match.set_type == 'STONES' else None,
         })
     
     return jsonify({'success': True, 'points': points_data})
@@ -1139,6 +1141,7 @@ def match_state(tournament_url):
             'rerolled': p.rerolled,
             'stamp': stamp_iso,
             'end_stamp': end_stamp_iso,
+            'stones_at_start': p.stones_at_start if match.set_type == 'STONES' else None,
         })
     
     # Get finalized_at if match is completed
@@ -1181,6 +1184,10 @@ def add_point(tournament_url):
         set_number=set_number,
         stamp=datetime.now(timezone.utc)
     )
+    
+    # For STONES matches, record stones_remaining when point starts
+    if match.set_type == 'STONES':
+        new_point.stones_at_start = match.stones_remaining
     
     # Calculate and store camera stream timestamp if cameras are configured
     if match.field:
@@ -1272,7 +1279,8 @@ def update_point(tournament_url):
         'rerolled': point.rerolled,
         'notes': point.notes,
         'set_number': point.set_number,
-        'end_stamp': point.end_stamp.isoformat() if point.end_stamp else None
+        'end_stamp': point.end_stamp.isoformat() if point.end_stamp else None,
+        'nstones': point.nstones
     })
 
 

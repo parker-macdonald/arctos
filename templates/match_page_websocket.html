@@ -348,7 +348,7 @@ window.MathJax = {
                             <tr id="live-point-row-{{ point.uuid }}">
                                 <td>{{ loop.index }}</td>
                                 <td>{{ point.set_number or 1 }}</td>
-                                <td id="live-stones-{{ point.uuid }}" data-stamp="{{ point.stamp | utc_iso if point.stamp }}" data-end="{{ point.end_stamp | utc_iso if point.end_stamp }}">0</td>
+                                <td id="live-stones-{{ point.uuid }}" data-stamp="{{ point.stamp | utc_iso if point.stamp }}" data-end="{{ point.end_stamp | utc_iso if point.end_stamp }}" data-stones-at-start="{{ point.stones_at_start if point.stones_at_start is not none else '' }}">0</td>
                                 <td>
                                     {% if point.winner == 'TEAM1' %}
                                         {{ match.team1_registration.pseudonym if match.team1_registration else match.team1 }}
@@ -703,7 +703,7 @@ function updatePointsTable(points) {
             row.innerHTML = `
                 <td>${index + 1}</td>
                 <td>${point.set_number || 1}</td>
-                <td id="live-stones-${point.uuid}" data-stamp="${point.stamp || ''}" data-end="${point.end_stamp || ''}">${computeStonesElapsed(point.stamp, point.end_stamp)}</td>
+                <td id="live-stones-${point.uuid}" data-stamp="${point.stamp || ''}" data-end="${point.end_stamp || ''}" data-stones-at-start="${point.stones_at_start || ''}">${computeStonesElapsed(point.stamp, point.end_stamp, point.stones_at_start)}</td>
                 <td>-</td>
                 <td><span class="badge bg-success">Normal</span></td>
                 ${notesCell}
@@ -732,7 +732,7 @@ function updatePointsTable(points) {
             rerunCell.innerHTML = '<span class="badge bg-success">Normal</span>';
         }
         
-        // Update stones elapsed
+        // Update stones remaining
         const stonesCell = document.getElementById(`live-stones-${point.uuid}`);
         if (stonesCell) {
             // Ensure timestamps have timezone info (from API they should already have 'Z')
@@ -751,9 +751,15 @@ function updatePointsTable(points) {
                 }
                 stonesCell.setAttribute('data-end', endStampStr);
             }
+            if (point.stones_at_start !== null && point.stones_at_start !== undefined) {
+                stonesCell.setAttribute('data-stones-at-start', point.stones_at_start);
+            }
+            const stonesAtStart = stonesCell.getAttribute('data-stones-at-start');
+            const stonesAtStartNum = stonesAtStart ? parseInt(stonesAtStart) : null;
             stonesCell.textContent = computeStonesElapsed(
                 stonesCell.getAttribute('data-stamp'),
-                stonesCell.getAttribute('data-end')
+                stonesCell.getAttribute('data-end'),
+                stonesAtStartNum
             );
         }
     });
@@ -844,7 +850,7 @@ function toDateSafe(iso) {
     return isNaN(d.getTime()) ? null : d;
 }
 
-function computeStonesElapsed(startIso, endIso) {
+function computeStonesElapsed(startIso, endIso, stonesAtStart) {
     const start = toDateSafe(startIso);
     // Use server time for "now" if no end time provided
     const end = endIso ? toDateSafe(endIso) : getServerDate();
@@ -853,16 +859,26 @@ function computeStonesElapsed(startIso, endIso) {
     const endEpoch = end.getTime() / 1000;
     const startCount = Math.floor(startEpoch / 1.5);
     const endCount = Math.floor(endEpoch / 1.5);
-    return Math.max(0, endCount - startCount);
+    const elapsed = Math.max(0, endCount - startCount);
+    
+    // If stones_at_start is provided, calculate remaining stones instead of elapsed
+    if (stonesAtStart !== null && stonesAtStart !== undefined) {
+        return Math.max(0, stonesAtStart - elapsed);
+    }
+    
+    // Otherwise return elapsed (for backward compatibility)
+    return elapsed;
 }
 
-// On load, compute initial stones elapsed for all rows and set a timer to update ongoing last point
+// On load, compute initial stones remaining for all rows and set a timer to update ongoing last point
 document.addEventListener('DOMContentLoaded', function() {
     const rows = document.querySelectorAll('[id^="live-stones-"]');
     rows.forEach(cell => {
         const s = cell.getAttribute('data-stamp');
         const e = cell.getAttribute('data-end');
-        cell.textContent = computeStonesElapsed(s, e);
+        const stonesAtStart = cell.getAttribute('data-stones-at-start');
+        const stonesAtStartNum = stonesAtStart ? parseInt(stonesAtStart) : null;
+        cell.textContent = computeStonesElapsed(s, e, stonesAtStartNum);
     });
     // Periodically update the last row if it has no end time
     setInterval(() => {
@@ -872,7 +888,9 @@ document.addEventListener('DOMContentLoaded', function() {
             const end = cell.getAttribute('data-end');
             if (!end) {
                 const s = cell.getAttribute('data-stamp');
-                cell.textContent = computeStonesElapsed(s, null);
+                const stonesAtStart = cell.getAttribute('data-stones-at-start');
+                const stonesAtStartNum = stonesAtStart ? parseInt(stonesAtStart) : null;
+                cell.textContent = computeStonesElapsed(s, null, stonesAtStartNum);
             }
         }
     }, 500);

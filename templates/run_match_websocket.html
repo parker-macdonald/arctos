@@ -830,6 +830,14 @@ async function updatePointWinner(pointId, winner) {
 }
 
 async function toggleRerun(pointId, rerolled) {
+    // Get the previous rerolled state (before the change)
+    const checkbox = document.querySelector(`input[onchange*="toggleRerun('${pointId}'"]`);
+    const previousRerolled = checkbox ? !rerolled : false; // Previous state is opposite of new state
+    
+    // Get the point's stones count from the stones cell
+    const stonesCell = document.getElementById(`stones-${pointId}`);
+    const pointStones = stonesCell ? parseInt(stonesCell.textContent) || 0 : 0;
+    
     const data = await apiRequest('/match-actions/update-point', {
         point_id: pointId,
         rerolled: rerolled
@@ -838,6 +846,27 @@ async function toggleRerun(pointId, rerolled) {
         updatePointInTable(data);
         // Update score by set table (rerolled points don't count)
         updateScoreBySetTable();
+        
+        // For STONES matches, adjust stones_remaining based on rerun status
+        const stonesInput = document.getElementById('stones-remaining');
+        if (stonesInput && pointStones > 0) {
+            const currentStones = parseInt(stonesInput.value) || 0;
+            let newStones = currentStones;
+            
+            // If toggling from not-rerolled to rerolled, add stones back
+            if (rerolled && !previousRerolled) {
+                newStones = currentStones + pointStones;
+            }
+            // If toggling from rerolled to not-rerolled, subtract stones
+            else if (!rerolled && previousRerolled) {
+                newStones = Math.max(0, currentStones - pointStones);
+            }
+            
+            if (newStones !== currentStones) {
+                stonesInput.value = newStones;
+                updateStonesRemaining(newStones);
+            }
+        }
     }
 }
 
@@ -931,7 +960,7 @@ function startStonesTicker(pointStartIso) {
     stonesBaseline = input ? parseInt(input.value || '0') : 0;
     if (isNaN(stonesBaseline)) stonesBaseline = 0;
     if (stonesTicker) clearInterval(stonesTicker);
-    stonesTicker = setInterval(recomputeStonesFromEpoch, 100); // check 10x per beat
+    stonesTicker = setInterval(recomputeStonesFromEpoch, 50); // check 10x per beat
 }
 function stopStonesTicker() {
     if (stonesTicker) {

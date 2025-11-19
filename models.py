@@ -239,6 +239,7 @@ class Point(db.Model):
     stream_timestamp = db.Column(db.Float)  # Timestamp in seconds from stream start
     length = db.Column(db.Interval)
     nstones = db.Column(db.Integer)
+    stones_at_start = db.Column(db.Integer)  # Stones remaining when this point started (for STONES matches)
     rerollreason = db.Column(db.Text)
     set_number = db.Column(db.Integer, default=1)
     notes = db.Column(db.Text)
