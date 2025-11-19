@@ -2,6 +2,13 @@
 
 {% block title %}Teams{% endblock %}
 
+{% block og_meta %}
+<meta property="og:title" content="Teams">
+<meta property="og:description" content="Browse all registered teams.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="{{ request.url }}">
+{% endblock %}
+
 {% block content %}
 <div class="row">
     <div class="col-12">

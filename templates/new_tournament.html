@@ -2,6 +2,13 @@
 
 {% block title %}Create Tournament{% endblock %}
 
+{% block og_meta %}
+<meta property="og:title" content="Create Tournament">
+<meta property="og:description" content="Create a new tournament on Arctos. Set up schedules, manage registrations, and run matches. Make passive aggressive comments about honeypotting in the event description. idk have fun.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="{{ request.url }}">
+{% endblock %}
+
 {% block content %}
 <div class="row justify-content-center">
     <div class="col-md-8">

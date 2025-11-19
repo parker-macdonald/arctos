@@ -2,6 +2,13 @@
 
 {% block title %}Login{% endblock %}
 
+{% block og_meta %}
+<meta property="og:title" content="Login">
+<meta property="og:description" content="Login or sign up to your Arctos account.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="{{ request.url }}">
+{% endblock %}
+
 {% block content %}
 <div class="row justify-content-center">
     <div class="col-md-6">

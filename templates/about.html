@@ -2,6 +2,13 @@
 
 {% block title %}About{% endblock %}
 
+{% block og_meta %}
+<meta property="og:title" content="About Arctos">
+<meta property="og:description" content="Arctos is a Jugger TO and stats tracking system designed by TOs, for TOs.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="{{ request.url }}">
+{% endblock %}
+
 {% block content %}
 <div class="row">
     <div class="col-lg-8 mx-auto">

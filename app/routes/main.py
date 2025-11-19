@@ -1,9 +1,10 @@
 """
 Main routes (homepage, etc.)
 """
-from flask import Blueprint, render_template
+from flask import Blueprint, render_template, url_for, Response
 from flask_login import current_user
 from models import Tournament, TeamRegistration, PlayerRegistration, TO
+from datetime import datetime
 
 bp = Blueprint('main', __name__)
 
@@ -114,4 +115,52 @@ def players():
 def about():
     """About page explaining Arctos."""
     return render_template('about.html')
+
+
+@bp.route('/sitemap.xml')
+def sitemap():
+    """Generate XML sitemap for search engines."""
+    # Static pages to include - use _external=True to get full URLs
+    urls = [
+        {
+            'loc': url_for('main.index', _external=True),
+            'changefreq': 'daily',
+            'priority': '1.0'
+        },
+        {
+            'loc': url_for('auth.login', _external=True),
+            'changefreq': 'monthly',
+            'priority': '0.8'
+        },
+        {
+            'loc': url_for('main.teams', _external=True),
+            'changefreq': 'daily',
+            'priority': '0.9'
+        },
+        {
+            'loc': url_for('main.players', _external=True),
+            'changefreq': 'daily',
+            'priority': '0.9'
+        },
+        {
+            'loc': url_for('tournaments.new_tournament', _external=True),
+            'changefreq': 'monthly',
+            'priority': '0.7'
+        },
+    ]
+    
+    # Generate XML
+    xml = '<?xml version="1.0" encoding="UTF-8"?>\n'
+    xml += '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+    
+    for url_data in urls:
+        xml += '  <url>\n'
+        xml += f'    <loc>{url_data["loc"]}</loc>\n'
+        xml += f'    <changefreq>{url_data["changefreq"]}</changefreq>\n'
+        xml += f'    <priority>{url_data["priority"]}</priority>\n'
+        xml += '  </url>\n'
+    
+    xml += '</urlset>'
+    
+    return Response(xml, mimetype='application/xml')
 
