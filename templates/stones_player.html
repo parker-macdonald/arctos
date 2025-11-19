@@ -2,6 +2,13 @@
 
 {% block title %}Stones Player{% endblock %}
 
+{% block og_meta %}
+<meta property="og:title" content="Stones Player">
+<meta property="og:description" content="Globally synchronized Jugger stones! Use multiple speakers without worrying about cable routing or bluetooth range.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="{{ request.url }}">
+{% endblock %}
+
 {% block content %}
 <!-- MathJax for LaTeX rendering -->
 <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>

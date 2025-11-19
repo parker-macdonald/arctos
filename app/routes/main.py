@@ -148,6 +148,11 @@ def sitemap():
             'priority': '0.9'
         },
         {
+            'loc': base_url + url_for('matches.stones_player'),
+            'changefreq': 'monthly',
+            'priority': '0.9'
+        },
+        {
             'loc': base_url + url_for('tournaments.new_tournament'),
             'changefreq': 'monthly',
             'priority': '0.7'
