@@ -67,7 +67,7 @@ window.MathJax = {
                                             {% set match_ref = team1_display.split('::')[0] %}
                                             {% set display_text = team1_display.replace('::', ' ') %}
                                         {% else %}
-                                            {% set match_ref = team1_display.rsplit(' ', 1)[0] %}
+                                        {% set match_ref = team1_display.rsplit(' ', 1)[0] %}
                                             {% set display_text = team1_display %}
                                         {% endif %}
                                         <a href="/{{ tournament.url }}/match?name={{ match_ref }}" class="text-decoration-none">{{ display_text }}</a>
@@ -93,7 +93,7 @@ window.MathJax = {
                                             {% set match_ref = team2_display.split('::')[0] %}
                                             {% set display_text = team2_display.replace('::', ' ') %}
                                         {% else %}
-                                            {% set match_ref = team2_display.rsplit(' ', 1)[0] %}
+                                        {% set match_ref = team2_display.rsplit(' ', 1)[0] %}
                                             {% set display_text = team2_display %}
                                         {% endif %}
                                         <a href="/{{ tournament.url }}/match?name={{ match_ref }}" class="text-decoration-none">{{ display_text }}</a>
@@ -118,7 +118,7 @@ window.MathJax = {
                                                     {% set match_ref = ref_trimmed.split('::')[0] %}
                                                     {% set display_text = ref_trimmed.replace('::', ' ') %}
                                                 {% else %}
-                                                    {% set match_ref = ref_trimmed.rsplit(' ', 1)[0] %}
+                                                {% set match_ref = ref_trimmed.rsplit(' ', 1)[0] %}
                                                     {% set display_text = ref_trimmed %}
                                                 {% endif %}
                                                 <a href="/{{ tournament.url }}/match?name={{ match_ref }}" class="text-decoration-none">{{ display_text }}</a>{% if not loop.last %}, {% endif %}
@@ -146,7 +146,7 @@ window.MathJax = {
                                                     {% set match_ref = ref_trimmed.split('::')[0] %}
                                                     {% set display_text = ref_trimmed.replace('::', ' ') %}
                                                 {% else %}
-                                                    {% set match_ref = ref_trimmed.rsplit(' ', 1)[0] %}
+                                                {% set match_ref = ref_trimmed.rsplit(' ', 1)[0] %}
                                                     {% set display_text = ref_trimmed %}
                                                 {% endif %}
                                                 <a href="/{{ tournament.url }}/match?name={{ match_ref }}" class="text-decoration-none">{{ display_text }}</a>{% if not loop.last %}, {% endif %}
@@ -1044,7 +1044,7 @@ function onYouTubeIframeAPIReady() {
                 // Have cameras but no stored stream start time - check status which will fetch it
                 checkStreamStatus(currentCameraUrl);
             } else {
-                initializeYouTubePlayer();
+            initializeYouTubePlayer();
             }
             {% endif %}
         });
@@ -1409,7 +1409,7 @@ function initializePointsControls() {
         currentPointIndex = preservedIndex;
     } else if (pointsData.length > 0) {
         // Default to first point if no valid selection
-        currentPointIndex = 0;
+            currentPointIndex = 0;
         dropdown.value = '0';
     } else {
         // No points available

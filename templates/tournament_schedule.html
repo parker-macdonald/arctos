@@ -84,31 +84,37 @@
     
     <div class="row mb-3">
         <div class="col-12">
+            <div class="row g-2 align-items-end mb-3">
+                <div class="col-auto">
+                    <div class="btn-group" role="group" aria-label="View toggle">
+                        <input type="radio" class="btn-check" name="viewType" id="viewSchedule" value="schedule" checked>
+                        <label class="btn btn-outline-primary" for="viewSchedule">Schedule View</label>
+                        
+                        <input type="radio" class="btn-check" name="viewType" id="viewTable" value="table">
+                        <label class="btn btn-outline-primary" for="viewTable">Table View</label>
+                    </div>
+                </div>
+                <div class="col-auto">
+                    <label for="fieldFilter" class="form-label mb-0">Field</label>
+                    <select id="fieldFilter" name="field" class="form-select form-select-sm">
+                        <option value="">All fields</option>
+                        {% for f in fields %}
+                            <option value="{{ f.name }}" {% if filter_field and filter_field == f.name %}selected{% endif %}>{{ f.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-auto">
+                    <label for="teamFilter" class="form-label mb-0">Highlight team</label>
+                    <input id="teamFilter" name="team" class="form-control form-control-sm" placeholder="Team name" value="{{ highlight_team or '' }}" list="teamOptions" />
+                    <datalist id="teamOptions">
+                        {% for team in team_options %}
+                            <option value="{{ team.pseudonym }}">{{ team.pseudonym }}</option>
+                        {% endfor %}
+                    </datalist>
+                </div>
+            </div>
+            
             <div class="schedule-timeline-container" id="schedule-timeline">
-                <form class="row g-2 p-2 align-items-end" method="get" action="/{{ tournament.url }}/schedule">
-                    <div class="col-auto">
-                        <label for="fieldFilter" class="form-label mb-0">Field</label>
-                        <select id="fieldFilter" name="field" class="form-select form-select-sm">
-                            <option value="">All fields</option>
-                            {% for f in fields %}
-                                <option value="{{ f.name }}" {% if filter_field and filter_field == f.name %}selected{% endif %}>{{ f.name }}</option>
-                            {% endfor %}
-                        </select>
-                    </div>
-                    <div class="col-auto">
-                        <label for="teamFilter" class="form-label mb-0">Highlight team</label>
-                        <input id="teamFilter" name="team" class="form-control form-control-sm" placeholder="Team name" value="{{ highlight_team or '' }}" list="teamOptions" />
-                        <datalist id="teamOptions">
-                            {% for team in team_options %}
-                                <option value="{{ team.pseudonym }}">{{ team.pseudonym }}</option>
-                            {% endfor %}
-                        </datalist>
-                    </div>
-                    <div class="col-auto">
-                        <button type="submit" class="btn btn-sm btn-primary">Apply</button>
-                        <a href="/{{ tournament.url }}/schedule" class="btn btn-sm btn-outline-secondary">Reset</a>
-                    </div>
-                </form>
                 <div class="schedule-timeline-header">
                     <div class="schedule-time-column">
                         <div class="schedule-time-label">Time</div>
@@ -230,53 +236,53 @@
                                                     {% set team2_pseudonym_for_hl = match.team2_initial %}
                                                 {% endif %}
                                                 
-                                                {% set ns = namespace(hl=False, matches_ref=False) %}
+                                                {% set team1_actual_highlight = '' %}
+                                                {% if match.team1 %}
+                                                    {% if match.team1_registration %}
+                                                        {% set team1_actual_highlight = match.team1_registration.pseudonym %}
+                                                    {% else %}
+                                                        {% set team1_actual_highlight = match.team1 %}
+                                                    {% endif %}
+                                                {% endif %}
+                                                
+                                                {% set team2_actual_highlight = '' %}
+                                                {% if match.team2 %}
+                                                    {% if match.team2_registration %}
+                                                        {% set team2_actual_highlight = match.team2_registration.pseudonym %}
+                                                    {% else %}
+                                                        {% set team2_actual_highlight = match.team2 %}
+                                                    {% endif %}
+                                                {% endif %}
+                                                
+                                                {% set refs_actual_highlight = '' %}
+                                                {% set refs_source = match.refs or '' %}
+                                                {% if refs_source %}
+                                                    {% set refs_ns = namespace(values=[]) %}
+                                                    {% set refs_list = refs_source.split(',') %}
+                                                    {% for ref_item in refs_list %}
+                                                        {% set ref_trimmed = ref_item.strip() %}
+                                                        {% if ref_trimmed and ref_trimmed != 'TBA' and not (ref_trimmed.endswith('::winner') or ref_trimmed.endswith('::loser') or ref_trimmed.endswith(' winner') or ref_trimmed.endswith(' loser')) %}
+                                                            {% set _ = refs_ns.values.append(ref_trimmed.replace('::', ' ')) %}
+                                                        {% endif %}
+                                                    {% endfor %}
+                                                    {% if refs_ns.values %}
+                                                        {% set refs_actual_highlight = refs_ns.values|join(', ') %}
+                                                    {% endif %}
+                                                {% endif %}
+                                                
                                                 <div class="schedule-match-block 
                                                     {% if match.schedule_type == 'BREAK' %}schedule-break{% endif %}
-                                                    schedule-status-{{ match.status|lower|replace('_', '-') }}
-                                                    {% set t1_name = team1_pseudonym_for_hl %}
-                                                    {% set t2_name = team2_pseudonym_for_hl %}
-                                                    {% if highlight_team %}
-                                                        {% set query = highlight_team.lower() %}
-                                                        {% set matches_team = (match.team1 and match.team1|lower == query) or (match.team2 and match.team2|lower == query) or (t1_name and t1_name|lower == query) or (t2_name and t2_name|lower == query) %}
-                                                        {% set refs_display = match.refs or match.refs_initial or '' %}
-                                                        {% if refs_display and refs_display != 'TBA' %}
-                                                            {% set refs_list = refs_display.split(',') %}
-                                                            {% for ref_item in refs_list %}
-                                                                {% if not ns.matches_ref %}
-                                                                    {% set ref_trimmed = ref_item.strip() %}
-                                                                    {% if ref_trimmed and ref_trimmed != 'TBA' and not (ref_trimmed.endswith('::winner') or ref_trimmed.endswith('::loser') or ref_trimmed.endswith(' winner') or ref_trimmed.endswith(' loser')) %}
-                                                                        {# Check if ref ID matches directly #}
-                                                                        {% if ref_trimmed|lower == query %}
-                                                                            {% set ns.matches_ref = True %}
-                                                                        {% endif %}
-                                                                        {# Try as team ID if not already matched #}
-                                                                        {% if not ns.matches_ref %}
-                                                                            {% set ref_reg = ref_trimmed|team_registration_for_tournament(tournament.url) %}
-                                                                            {% if ref_reg and ref_reg.pseudonym|lower == query %}
-                                                                                {% set ns.matches_ref = True %}
-                                                                            {% endif %}
-                                                                        {% endif %}
-                                                                        {# Try as pseudonym lookup if not already matched #}
-                                                                        {% if not ns.matches_ref %}
-                                                                            {% set ref_by_pseudonym = ref_trimmed|team_by_pseudonym_for_tournament(tournament.url) %}
-                                                                            {% if ref_by_pseudonym and ref_by_pseudonym.pseudonym|lower == query %}
-                                                                                {% set ns.matches_ref = True %}
-                                                                            {% endif %}
-                                                                        {% endif %}
-                                                                    {% endif %}
-                                                                {% endif %}
-                                                            {% endfor %}
-                                                        {% endif %}
-                                                        {% if matches_team or ns.matches_ref %}
-                                                            {% set ns.hl = True %}
-                                                        {% endif %}
-                                                    {% endif %}
-                                                    {% if ns.hl %} schedule-highlight{% endif %}"
+                                                    schedule-status-{{ match.status|lower|replace('_', '-') }}"
                                                     style="top: {{ start_offset_percent }}%; height: {{ duration_percent }}%;"
                                                     data-match-uuid="{{ match.uuid }}"
                                                     data-start-time="{{ match_start_utc|utc_iso }}"
-                                                    data-end-time="{{ match_end_utc|utc_iso if match_end_utc else '' }}">
+                                                    data-end-time="{{ match_end_utc|utc_iso if match_end_utc else '' }}"
+                                                    data-team1="{{ team1_actual_highlight.replace('::', ' ') if team1_actual_highlight else '' }}"
+                                                    data-team2="{{ team2_actual_highlight.replace('::', ' ') if team2_actual_highlight else '' }}"
+                                                    data-team1-id="{{ match.team1 or '' }}"
+                                                    data-team2-id="{{ match.team2 or '' }}"
+                                                    data-refs="{{ refs_actual_highlight }}"
+                                                    data-schedule-type="{{ match.schedule_type }}">
                                                     {% if match.schedule_type != 'BREAK' %}
                                                         <a href="/{{ tournament.url }}/match?id={{ match.uuid }}" class="stretched-link" aria-label="Open match {{ match.name }}"></a>
                                                     {% endif %}
@@ -324,7 +330,7 @@
                                                                     {% for ref in refs_list %}
                                                                         {% set ref_trimmed = ref.strip() %}
                                                                         {% if ref_trimmed and ref_trimmed != 'TBA' %}
-                                                                            {% if ref_trimmed.endswith('::winner') or ref_trimmed.endswith('::loser') or ref_trimmed.endswith(' winner') or ref_trimmed.endswith(' loser') %}
+                                                                            {% if ref_trimmed.endswith('::winner') or ref_trimmed.endswith('::loser') %}
                                                                                 {{ ref_trimmed.replace('::', ' ') }}{% if not loop.last %}, {% endif %}
                                                                             {% else %}
                                                                                 {% set ref_registration = ref_trimmed|team_registration_for_tournament(tournament.url) %}
@@ -435,6 +441,210 @@
         </div>
     </div>
     
+    {# Table View #}
+    <div class="row mb-3" id="table-view" style="display: none;">
+        <div class="col-12">
+            <div class="table-responsive">
+                <table class="table table-striped table-hover">
+                    <thead>
+                        <tr>
+                            <th>Time</th>
+                            <th>Match</th>
+                            <th>Teams</th>
+                            <th>Refs</th>
+                            <th>Field</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for match in matches %}
+                            {% if match.schedule_type not in ('BREAK', 'JOIN') %}
+                                {% set match_time = match.confirmed_start_time or match.nominal_start_time %}
+                                {% set team1_pseudonym = 'TBA' %}
+                                {% if match.team1 %}
+                                    {% set team1_reg = match.team1_registration %}
+                                    {% if team1_reg %}
+                                        {% set team1_pseudonym = team1_reg.pseudonym %}
+                                    {% endif %}
+                                {% elif match.team1_initial %}
+                                    {% set team1_pseudonym = match.team1_initial %}
+                                {% endif %}
+                                
+                                {% set team2_pseudonym = 'TBA' %}
+                                {% if match.team2 %}
+                                    {% set team2_reg = match.team2_registration %}
+                                    {% if team2_reg %}
+                                        {% set team2_pseudonym = team2_reg.pseudonym %}
+                                    {% endif %}
+                                {% elif match.team2_initial %}
+                                    {% set team2_pseudonym = match.team2_initial %}
+                                {% endif %}
+                                
+                                {% set team1_actual_highlight = '' %}
+                                {% if match.team1 %}
+                                    {% if match.team1_registration %}
+                                        {% set team1_actual_highlight = match.team1_registration.pseudonym %}
+                                    {% else %}
+                                        {% set team1_actual_highlight = match.team1 %}
+                                    {% endif %}
+                                {% endif %}
+                                
+                                {% set team2_actual_highlight = '' %}
+                                {% if match.team2 %}
+                                    {% if match.team2_registration %}
+                                        {% set team2_actual_highlight = match.team2_registration.pseudonym %}
+                                    {% else %}
+                                        {% set team2_actual_highlight = match.team2 %}
+                                    {% endif %}
+                                {% endif %}
+                                
+                                {% set refs_actual_highlight = '' %}
+                                {% set refs_source = match.refs or '' %}
+                                {% if refs_source %}
+                                    {% set refs_ns = namespace(values=[]) %}
+                                    {% set refs_list = refs_source.split(',') %}
+                                    {% for ref_item in refs_list %}
+                                        {% set ref_trimmed = ref_item.strip() %}
+                                        {% if ref_trimmed and ref_trimmed != 'TBA' and not (ref_trimmed.endswith('::winner') or ref_trimmed.endswith('::loser') or ref_trimmed.endswith(' winner') or ref_trimmed.endswith(' loser')) %}
+                                            {% set _ = refs_ns.values.append(ref_trimmed.replace('::', ' ')) %}
+                                        {% endif %}
+                                    {% endfor %}
+                                    {% if refs_ns.values %}
+                                        {% set refs_actual_highlight = refs_ns.values|join(', ') %}
+                                    {% endif %}
+                                {% endif %}
+                                
+                                {% set match_winner = match.match_winner %}
+                                {% set is_special = match.schedule_type in ['BREAK','JOIN'] %}
+                                {% set can_start = (match.team1 and match.team2 and (match.refs or match.refs_initial)) and ((match.schedule_type == 'STATIC') or match.ready_to_start) %}
+                                <tr data-field="{{ match.field or '' }}" 
+                                    data-team1="{{ team1_actual_highlight.replace('::', ' ') if team1_actual_highlight else '' }}" 
+                                    data-team2="{{ team2_actual_highlight.replace('::', ' ') if team2_actual_highlight else '' }}"
+                                    data-team1-id="{{ match.team1 or '' }}"
+                                    data-team2-id="{{ match.team2 or '' }}"
+                                    data-refs="{{ refs_actual_highlight }}">
+                                    <td>
+                                        {% if match_time %}
+                                            {{ match_time.strftime('%Y-%m-%d %H:%M') }}
+                                        {% else %}
+                                            TBA
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        <a href="/{{ tournament.url }}/match?id={{ match.uuid }}" class="text-decoration-none">
+                                            {{ match.name }}
+                                        </a>
+                                    </td>
+                                    <td>
+                                        {# Team 1 #}
+                                        {% if match.team1 %}
+                                            <a href="/teams/{{ match.team1 }}" class="text-decoration-none {% if match.status == 'COMPLETED' and match_winner == 'TEAM1' %}fw-bold text-success{% endif %}">
+                                                {{ team1_pseudonym.replace('::', ' ') }}
+                                            </a>
+                                        {% elif team1_pseudonym and (team1_pseudonym.endswith('::winner') or team1_pseudonym.endswith('::loser') or team1_pseudonym.endswith(' winner') or team1_pseudonym.endswith(' loser')) %}
+                                            {% if '::' in team1_pseudonym %}
+                                                {% set match_ref_name = team1_pseudonym.split('::')[0] %}
+                                            {% else %}
+                                                {% set match_ref_name = team1_pseudonym.rsplit(' ', 1)[0] %}
+                                            {% endif %}
+                                            <a href="/{{ tournament.url }}/match?name={{ match_ref_name }}" class="text-decoration-none {% if match.status == 'COMPLETED' and match_winner == 'TEAM1' %}fw-bold text-success{% endif %}">
+                                                {{ team1_pseudonym.replace('::', ' ') }}
+                                            </a>
+                                        {% else %}
+                                            <span class="{% if match.status == 'COMPLETED' and match_winner == 'TEAM1' %}fw-bold text-success{% endif %}">
+                                                {{ team1_pseudonym.replace('::', ' ') }}
+                                            </span>
+                                        {% endif %}
+                                        {% if match.status == 'COMPLETED' and match_winner == 'TEAM1' %}
+                                            <span class="badge bg-success ms-1" style="font-size: 0.7em;">Winner</span>
+                                        {% endif %}
+                                        vs
+                                        {# Team 2 #}
+                                        {% if match.team2 %}
+                                            <a href="/teams/{{ match.team2 }}" class="text-decoration-none {% if match.status == 'COMPLETED' and match_winner == 'TEAM2' %}fw-bold text-success{% endif %}">
+                                                {{ team2_pseudonym.replace('::', ' ') }}
+                                            </a>
+                                        {% elif team2_pseudonym and (team2_pseudonym.endswith('::winner') or team2_pseudonym.endswith('::loser') or team2_pseudonym.endswith(' winner') or team2_pseudonym.endswith(' loser')) %}
+                                            {% if '::' in team2_pseudonym %}
+                                                {% set match_ref_name = team2_pseudonym.split('::')[0] %}
+                                            {% else %}
+                                                {% set match_ref_name = team2_pseudonym.rsplit(' ', 1)[0] %}
+                                            {% endif %}
+                                            <a href="/{{ tournament.url }}/match?name={{ match_ref_name }}" class="text-decoration-none {% if match.status == 'COMPLETED' and match_winner == 'TEAM2' %}fw-bold text-success{% endif %}">
+                                                {{ team2_pseudonym.replace('::', ' ') }}
+                                            </a>
+                                        {% else %}
+                                            <span class="{% if match.status == 'COMPLETED' and match_winner == 'TEAM2' %}fw-bold text-success{% endif %}">
+                                                {{ team2_pseudonym.replace('::', ' ') }}
+                                            </span>
+                                        {% endif %}
+                                        {% if match.status == 'COMPLETED' and match_winner == 'TEAM2' %}
+                                            <span class="badge bg-success ms-1" style="font-size: 0.7em;">Winner</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% set refs_display = match.refs or match.refs_initial or '' %}
+                                        {% if refs_display and refs_display != 'TBA' %}
+                                            {% set refs_list = refs_display.split(',') %}
+                                            {% for ref in refs_list %}
+                                                {% set ref_trimmed = ref.strip() %}
+                                                {% if ref_trimmed and ref_trimmed != 'TBA' %}
+                                                    {% if ref_trimmed.endswith('::winner') or ref_trimmed.endswith('::loser') or ref_trimmed.endswith(' winner') or ref_trimmed.endswith(' loser') %}
+                                                        {# Reference to match winner/loser #}
+                                                        {% if '::' in ref_trimmed %}
+                                                            {% set match_ref_name = ref_trimmed.split('::')[0] %}
+                                                        {% else %}
+                                                            {% set match_ref_name = ref_trimmed.rsplit(' ', 1)[0] %}
+                                                        {% endif %}
+                                                        <a href="/{{ tournament.url }}/match?name={{ match_ref_name }}" class="text-decoration-none">{{ ref_trimmed.replace('::', ' ') }}</a>{% if not loop.last %}, {% endif %}
+                                                    {% else %}
+                                                        {# Try to find team registration #}
+                                                        {% set ref_registration = ref_trimmed | team_registration_for_tournament(tournament.url) %}
+                                                        {% if ref_registration %}
+                                                            <a href="/teams/{{ ref_registration.team }}" class="text-decoration-none">{{ ref_registration.pseudonym }}</a>{% if not loop.last %}, {% endif %}
+                                                        {% else %}
+                                                            {% set ref_by_pseudonym = ref_trimmed | team_by_pseudonym_for_tournament(tournament.url) %}
+                                                            {% if ref_by_pseudonym %}
+                                                                <a href="/teams/{{ ref_by_pseudonym.team }}" class="text-decoration-none">{{ ref_by_pseudonym.pseudonym }}</a>{% if not loop.last %}, {% endif %}
+                                                            {% else %}
+                                                                {{ ref_trimmed }}{% if not loop.last %}, {% endif %}
+                                                            {% endif %}
+                                                        {% endif %}
+                                                    {% endif %}
+                                                {% endif %}
+                                            {% endfor %}
+                                        {% else %}
+                                            TBA
+                                        {% endif %}
+                                    </td>
+                                    <td>{{ match.field or 'TBA' }}</td>
+                                    <td>
+                                        {% if match.status == 'NOT_STARTED' and can_start and (not is_special) %}
+                                            <span class="badge bg-warning">Waiting for Teams</span>
+                                        {% else %}
+                                            {% if match.status == 'NOT_STARTED' %}
+                                                <span class="badge bg-secondary">Not Started</span>
+                                            {% elif match.status == 'IN_PROGRESS' %}
+                                                <span class="badge bg-primary">In Progress</span>
+                                            {% elif match.status == 'COMPLETED' %}
+                                                <span class="badge bg-success">Completed</span>
+                                            {% else %}
+                                                <span class="badge bg-secondary">{{ match.status }}</span>
+                                            {% endif %}
+                                        {% endif %}
+                                        {% if match.status != 'COMPLETED' and ((match.schedule_type == 'STATIC') or match.time_finalized) %}
+                                            <span class="badge bg-primary ms-1" title="Time finalized">Time Finalized</span>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                            {% endif %}
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    
     <style>
         .schedule-timeline-container {
             position: relative;
@@ -527,6 +737,9 @@
         }
         .schedule-highlight {
             box-shadow: 0 0 0 3px rgba(13,110,253,0.5) inset, 0 0 0 2px rgba(13,110,253,0.4);
+        }
+        .table-highlight {
+            background-color: rgba(13,110,253,0.1) !important;
         }
         
         .schedule-match-block:hover {
@@ -771,6 +984,148 @@
             updateJoinLines();
             window.addEventListener('resize', updateJoinLines);
         })();
+        
+        // View toggle and filter functionality
+        const viewSchedule = document.getElementById('viewSchedule');
+        const viewTable = document.getElementById('viewTable');
+        const scheduleView = document.getElementById('schedule-timeline');
+        const tableView = document.getElementById('table-view');
+        const fieldFilter = document.getElementById('fieldFilter');
+        const teamFilter = document.getElementById('teamFilter');
+        
+        if (viewSchedule && viewTable && scheduleView && tableView) {
+            const viewStorageKey = 'scheduleView:{{ tournament.url }}';
+            const getStoredView = () => {
+                try {
+                    return localStorage.getItem(viewStorageKey);
+                } catch (err) {
+                    return null;
+                }
+            };
+            const setStoredView = (value) => {
+                try {
+                    localStorage.setItem(viewStorageKey, value);
+                } catch (err) {
+                    // ignore storage errors
+                }
+            };
+            
+            const storedView = getStoredView();
+            if (storedView === 'table') {
+                viewTable.checked = true;
+                viewSchedule.checked = false;
+            } else if (storedView === 'schedule') {
+                viewSchedule.checked = true;
+                viewTable.checked = false;
+            }
+            
+            function updateView() {
+                if (viewSchedule.checked) {
+                    scheduleView.style.display = 'block';
+                    tableView.style.display = 'none';
+                } else {
+                    scheduleView.style.display = 'none';
+                    tableView.style.display = 'block';
+                }
+                setStoredView(viewSchedule.checked ? 'schedule' : 'table');
+                applyFilters();
+            }
+            
+            function applyFilters() {
+                const selectedField = fieldFilter ? fieldFilter.value : '';
+                const selectedTeam = teamFilter ? teamFilter.value.toLowerCase().trim() : '';
+                const hasTeamQuery = selectedTeam.length > 0;
+                
+                const matchesTeamData = (team1, team2, team1Id, team2Id, refs) => {
+                    if (!hasTeamQuery) return false;
+                    const norm = (value) => (value || '').toLowerCase().trim();
+                    return (
+                        (team1 && norm(team1).includes(selectedTeam)) ||
+                        (team2 && norm(team2).includes(selectedTeam)) ||
+                        (team1Id && norm(team1Id) === selectedTeam) ||
+                        (team2Id && norm(team2Id) === selectedTeam) ||
+                        (refs && norm(refs).includes(selectedTeam))
+                    );
+                };
+                
+                // Filter and highlight table view
+                if (tableView) {
+                    const tableRows = tableView.querySelectorAll('tbody tr');
+                    tableRows.forEach(row => {
+                        const rowField = row.getAttribute('data-field') || '';
+                        row.style.display = (!selectedField || rowField === selectedField) ? '' : 'none';
+                        
+                        const rowTeam1 = row.getAttribute('data-team1') || '';
+                        const rowTeam2 = row.getAttribute('data-team2') || '';
+                        const rowTeam1Id = row.getAttribute('data-team1-id') || '';
+                        const rowTeam2Id = row.getAttribute('data-team2-id') || '';
+                        const rowRefs = row.getAttribute('data-refs') || '';
+                        
+                        if (hasTeamQuery) {
+                            const matchesTeam = matchesTeamData(rowTeam1, rowTeam2, rowTeam1Id, rowTeam2Id, rowRefs);
+                            row.classList.toggle('table-highlight', matchesTeam);
+                        } else {
+                            row.classList.remove('table-highlight');
+                        }
+                    });
+                }
+                
+                // Filter columns and highlight schedule blocks
+                if (scheduleView) {
+                    const fieldColumns = scheduleView.querySelectorAll('.schedule-field-column');
+                    fieldColumns.forEach(col => {
+                        const fieldName = col.getAttribute('data-field');
+                        col.style.display = (selectedField && fieldName !== selectedField) ? 'none' : '';
+                    });
+                    
+                    const matchBlocks = scheduleView.querySelectorAll('.schedule-match-block');
+                    matchBlocks.forEach(block => {
+                        const blockField = block.closest('.schedule-field-column');
+                        if (blockField) {
+                            const fieldName = blockField.getAttribute('data-field');
+                            if (selectedField && fieldName !== selectedField) {
+                                block.style.display = 'none';
+                            } else {
+                                block.style.display = '';
+                            }
+                        }
+                        
+                        const scheduleType = (block.getAttribute('data-schedule-type') || '').toUpperCase();
+                        const isSpecial = scheduleType === 'BREAK' || scheduleType === 'JOIN';
+                        
+                        if (hasTeamQuery && !isSpecial) {
+                            const blockTeam1 = block.getAttribute('data-team1') || '';
+                            const blockTeam2 = block.getAttribute('data-team2') || '';
+                            const blockTeam1Id = block.getAttribute('data-team1-id') || '';
+                            const blockTeam2Id = block.getAttribute('data-team2-id') || '';
+                            const blockRefs = block.getAttribute('data-refs') || '';
+                            const matchesTeam = matchesTeamData(blockTeam1, blockTeam2, blockTeam1Id, blockTeam2Id, blockRefs);
+                            block.classList.toggle('schedule-highlight', matchesTeam);
+                        } else {
+                            block.classList.remove('schedule-highlight');
+                        }
+                    });
+                }
+            }
+            
+            viewSchedule.addEventListener('change', updateView);
+            viewTable.addEventListener('change', updateView);
+            
+            // Auto-apply filters when they change
+            if (fieldFilter) {
+                fieldFilter.addEventListener('change', applyFilters);
+            }
+            if (teamFilter) {
+                teamFilter.addEventListener('input', function() {
+                    // Debounce for input field
+                    clearTimeout(teamFilter.debounceTimer);
+                    teamFilter.debounceTimer = setTimeout(applyFilters, 300);
+                });
+            }
+            
+            // Initial view/filter application
+            updateView();
+        }
     </script>
 {% else %}
     <div class="row">
