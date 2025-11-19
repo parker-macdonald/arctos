@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+
+{% block title %}Edit Team Registration - {{ tournament.name }}{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <h1>Edit Team Registration</h1>
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item"><a href="/{{ tournament.url }}">{{ tournament.name }}</a></li>
+                <li class="breadcrumb-item active">Edit Registration</li>
+            </ol>
+        </nav>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Team Registration</h5>
+            </div>
+            <div class="card-body">
+                <form method="POST" action="/{{ tournament.url }}/edit-team-registration">
+                    <div class="mb-3">
+                        <label for="pseudonym" class="form-label">Team Name for This Tournament</label>
+                        <input type="text" class="form-control" id="pseudonym" name="pseudonym" 
+                               value="{{ registration.pseudonym }}" required>
+                        <div class="form-text">This is how your team will be referred to in this tournament</div>
+                    </div>
+
+                    <div class="d-grid gap-2 d-md-flex justify-content-md-end">
+                        <a href="/{{ tournament.url }}" class="btn btn-outline-secondary">Cancel</a>
+                        <button type="submit" class="btn btn-primary">Update Registration</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+

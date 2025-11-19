@@ -29,6 +29,7 @@
                 {% if current_user.__class__.__name__ == 'Team' %}
                     {% if is_current_team_registered %}
                         <a href="/{{ tournament.url }}/invitations" class="btn btn-outline-primary">Manage Roster</a>
+                        <a href="/{{ tournament.url }}/edit-team-registration" class="btn btn-outline-secondary">Edit Registration</a>
                         <form method="POST" action="/{{ tournament.url }}/deregister-team" class="d-inline">
                             <button type="submit" class="btn btn-outline-danger" onclick="return confirm('Are you sure you want to deregister your team? No refunds will be processed.')">Deregister Team</button>
                         </form>
@@ -37,6 +38,7 @@
                     {% endif %}
                 {% elif current_user.__class__.__name__ == 'Player' %}
                     {% if is_current_player_registered %}
+                        <a href="/{{ tournament.url }}/edit-player-registration" class="btn btn-outline-secondary">Edit Registration</a>
                         <form method="POST" action="/{{ tournament.url }}/deregister-player" class="d-inline">
                             <button type="submit" class="btn btn-outline-danger" onclick="return confirm('Are you sure you want to deregister from this tournament? No refunds will be processed.')">Deregister Player</button>
                         </form>

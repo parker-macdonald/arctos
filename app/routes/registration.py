@@ -450,6 +450,209 @@ def deregister_any_player(tournament_url):
     return redirect(f'/{tournament_url}/manage')
 
 
+@bp.route('/<tournament_url>/edit-team-registration')
+@login_required
+def edit_team_registration(tournament_url):
+    """Edit team registration page."""
+    if current_user.__class__.__name__ != 'Team':
+        flash('Only teams can edit their registration', 'error')
+        return redirect(f'/{tournament_url}')
+    
+    tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
+    
+    team_registration = TeamRegistration.query.filter_by(
+        event=tournament_url,
+        team=current_user.id,
+        status='CONFIRMED'
+    ).first()
+    
+    if not team_registration:
+        flash('You are not registered for this tournament', 'error')
+        return redirect(f'/{tournament_url}')
+    
+    return render_template('edit_team_registration.html', 
+                         tournament=tournament, 
+                         registration=team_registration)
+
+
+@bp.route('/<tournament_url>/edit-team-registration', methods=['POST'])
+@login_required
+def update_team_registration(tournament_url):
+    """Update team registration."""
+    if current_user.__class__.__name__ != 'Team':
+        flash('Only teams can edit their registration', 'error')
+        return redirect(f'/{tournament_url}')
+    
+    tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
+    
+    if not tournament.registration_open:
+        flash('Registration changes are locked', 'error')
+        return redirect(f'/{tournament_url}')
+    
+    team_registration = TeamRegistration.query.filter_by(
+        event=tournament_url,
+        team=current_user.id,
+        status='CONFIRMED'
+    ).first()
+    
+    if not team_registration:
+        flash('You are not registered for this tournament', 'error')
+        return redirect(f'/{tournament_url}')
+    
+    # Validate pseudonym doesn't contain "::"
+    pseudonym = request.form.get('pseudonym', '').strip()
+    if '::' in pseudonym:
+        flash('Team pseudonyms cannot contain "::"', 'error')
+        return redirect(f'/{tournament_url}/edit-team-registration')
+    
+    if not pseudonym:
+        flash('Team name is required', 'error')
+        return redirect(f'/{tournament_url}/edit-team-registration')
+    
+    team_registration.pseudonym = pseudonym
+    db.session.commit()
+    
+    flash('Team registration updated successfully!', 'success')
+    return redirect(f'/{tournament_url}')
+
+
+@bp.route('/<tournament_url>/edit-player-registration')
+@login_required
+def edit_player_registration(tournament_url):
+    """Edit player registration page."""
+    if current_user.__class__.__name__ != 'Player':
+        flash('Only players can edit their registration', 'error')
+        return redirect(f'/{tournament_url}')
+    
+    tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
+    
+    player_registration = PlayerRegistration.query.filter_by(
+        event=tournament_url,
+        player=current_user.id
+    ).filter(
+        PlayerRegistration.status.in_(['PENDING_TEAM_APPROVAL', 'CONFIRMED'])
+    ).first()
+    
+    if not player_registration:
+        flash('You are not registered for this tournament', 'error')
+        return redirect(f'/{tournament_url}')
+    
+    # Get all registered teams for the dropdown
+    registered_teams = TeamRegistration.query.filter_by(
+        event=tournament_url,
+        status='CONFIRMED'
+    ).all()
+    
+    team_data = []
+    for reg in registered_teams:
+        team = Team.query.get(reg.team)
+        if team:
+            team_data.append({
+                'team': team,
+                'pseudonym': reg.pseudonym,
+                'registration': reg
+            })
+    
+    # Get current team registration if player is on a team
+    current_team_reg = None
+    if player_registration.team:
+        current_team_reg = TeamRegistration.query.filter_by(
+            event=tournament_url,
+            team=player_registration.team,
+            status='CONFIRMED'
+        ).first()
+    
+    return render_template('edit_player_registration.html',
+                         tournament=tournament,
+                         registration=player_registration,
+                         registered_teams=team_data,
+                         current_team_reg=current_team_reg)
+
+
+@bp.route('/<tournament_url>/edit-player-registration', methods=['POST'])
+@login_required
+def update_player_registration(tournament_url):
+    """Update player registration."""
+    if current_user.__class__.__name__ != 'Player':
+        flash('Only players can edit their registration', 'error')
+        return redirect(f'/{tournament_url}')
+    
+    tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
+    
+    if not tournament.registration_open:
+        flash('Registration changes are locked', 'error')
+        return redirect(f'/{tournament_url}')
+    
+    player_registration = PlayerRegistration.query.filter_by(
+        event=tournament_url,
+        player=current_user.id
+    ).filter(
+        PlayerRegistration.status.in_(['PENDING_TEAM_APPROVAL', 'CONFIRMED'])
+    ).first()
+    
+    if not player_registration:
+        flash('You are not registered for this tournament', 'error')
+        return redirect(f'/{tournament_url}')
+    
+    old_team_id = player_registration.team
+    new_team_id = request.form.get('team', '') or None
+    
+    # Update jersey name and number
+    player_registration.jersey_name = request.form.get('jersey_name', '').strip()
+    player_registration.jersey_number = request.form.get('jersey_number', '').strip()
+    
+    # If team changed, require re-approval
+    if old_team_id != new_team_id:
+        # Decline old invitation if exists
+        if old_team_id:
+            old_invitation = TeamInvitation.query.filter_by(
+                event=tournament_url,
+                team=old_team_id,
+                player=current_user.id
+            ).first()
+            if old_invitation:
+                old_invitation.status = 'DECLINED'
+        
+        # Update team
+        player_registration.team = new_team_id
+        
+        # If joining a new team, create or reactivate invitation and set status to pending
+        if new_team_id:
+            # Check if invitation already exists (might be from a previous request)
+            existing_invitation = TeamInvitation.query.filter_by(
+                event=tournament_url,
+                team=new_team_id,
+                player=current_user.id
+            ).first()
+            
+            if existing_invitation:
+                # Reactivate the invitation if it was declined
+                if existing_invitation.status == 'DECLINED':
+                    existing_invitation.status = 'PENDING'
+            else:
+                # Create new invitation
+                invitation = TeamInvitation(
+                    event=tournament_url,
+                    team=new_team_id,
+                    player=current_user.id,
+                    status='PENDING'
+                )
+                db.session.add(invitation)
+            
+            player_registration.status = 'PENDING_TEAM_APPROVAL'
+            flash('Team changed. Your new team must approve your request.', 'warning')
+        else:
+            # No team selected - confirmed immediately
+            player_registration.status = 'CONFIRMED'
+            flash('Registration updated successfully!', 'success')
+    else:
+        # Team didn't change, just update other fields
+        flash('Registration updated successfully!', 'success')
+    
+    db.session.commit()
+    return redirect(f'/{tournament_url}')
+
+
 @bp.route('/<tournament_url>/invitations')
 @login_required
 def tournament_invitations(tournament_url):

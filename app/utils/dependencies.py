@@ -23,30 +23,11 @@ def apply_match_dependencies(tournament_url: str, completed_match: Match) -> Non
 
     # Build robust placeholder variants (case-insensitive, flexible separators)
     def normalize(s: str) -> str:
-        return ' '.join((s or '').strip().lower().split())
+        return ' '.join((s or '').strip().split())
 
     base_name = completed_match.name
-    # New format: match_name::winner and match_name::loser
     winner_placeholder = f"{base_name}::winner"
     loser_placeholder = f"{base_name}::loser"
-    winner_alternates = set([
-        normalize(winner_placeholder),
-        normalize(f"{base_name}::winner"),  # Exact match
-        # Legacy support: old format with space
-        normalize(f"{base_name} winner"),
-        normalize(f"{base_name} - winner"),
-        normalize(f"{base_name} (winner)"),
-        normalize(f"{completed_match.uuid} winner"),
-    ])
-    loser_alternates = set([
-        normalize(loser_placeholder),
-        normalize(f"{base_name}::loser"),  # Exact match
-        # Legacy support: old format with space
-        normalize(f"{base_name} loser"),
-        normalize(f"{base_name} - loser"),
-        normalize(f"{base_name} (loser)"),
-        normalize(f"{completed_match.uuid} loser"),
-    ])
 
     dependent_matches = Match.query.filter_by(event=tournament_url).all()
     updated_any = False
@@ -57,20 +38,20 @@ def apply_match_dependencies(tournament_url: str, completed_match: Match) -> Non
         # team1
         if not m.team1 and m.team1_initial:
             initial = m.team1_initial.strip()
-            if normalize(initial) in winner_alternates and winner_team_id:
+            if normalize(initial)==winner_placeholder and winner_team_id:
                 m.team1 = winner_team_id
                 updated_any = True
-            elif normalize(initial) in loser_alternates and loser_team_id:
+            elif normalize(initial)==loser_placeholder and loser_team_id:
                 m.team1 = loser_team_id
                 updated_any = True
 
         # team2
         if not m.team2 and m.team2_initial:
             initial = m.team2_initial.strip()
-            if normalize(initial) in winner_alternates and winner_team_id:
+            if normalize(initial)==winner_placeholder and winner_team_id:
                 m.team2 = winner_team_id
                 updated_any = True
-            elif normalize(initial) in loser_alternates and loser_team_id:
+            elif normalize(initial)==loser_placeholder and loser_team_id:
                 m.team2 = loser_team_id
                 updated_any = True
 
@@ -83,10 +64,10 @@ def apply_match_dependencies(tournament_url: str, completed_match: Match) -> Non
             resolved = []
             changed = False
             for r in refs_list:
-                if normalize(r) in winner_alternates and winner_team_id:
+                if normalize(r)==winner_placeholder and winner_team_id:
                     resolved.append(winner_team_id)
                     changed = True
-                elif normalize(r) in loser_alternates and loser_team_id:
+                elif normalize(r)==loser_placeholder and loser_team_id:
                     resolved.append(loser_team_id)
                     changed = True
                 else:
