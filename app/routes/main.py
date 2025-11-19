@@ -120,32 +120,42 @@ def about():
 @bp.route('/sitemap.xml')
 def sitemap():
     """Generate XML sitemap for search engines."""
-    # Static pages to include - use _external=True to get full URLs
+    from flask import request
+    
+    # Get base URL from request
+    base_url = request.url_root.rstrip('/')
+    
+    # Static pages to include
     urls = [
         {
-            'loc': url_for('main.index', _external=True),
+            'loc': base_url + url_for('main.index'),
             'changefreq': 'daily',
             'priority': '1.0'
         },
         {
-            'loc': url_for('auth.login', _external=True),
+            'loc': base_url + url_for('auth.login'),
             'changefreq': 'monthly',
             'priority': '0.8'
         },
         {
-            'loc': url_for('main.teams', _external=True),
+            'loc': base_url + url_for('main.teams'),
             'changefreq': 'daily',
             'priority': '0.9'
         },
         {
-            'loc': url_for('main.players', _external=True),
+            'loc': base_url + url_for('main.players'),
             'changefreq': 'daily',
             'priority': '0.9'
         },
         {
-            'loc': url_for('tournaments.new_tournament', _external=True),
+            'loc': base_url + url_for('tournaments.new_tournament'),
             'changefreq': 'monthly',
             'priority': '0.7'
+        },
+        {
+            'loc': base_url + url_for('main.about'),
+            'changefreq': 'monthly',
+            'priority': '0.6'
         },
     ]
     
@@ -163,4 +173,21 @@ def sitemap():
     xml += '</urlset>'
     
     return Response(xml, mimetype='application/xml')
+
+
+@bp.route('/robots.txt')
+def robots():
+    """Generate robots.txt file pointing to sitemap."""
+    from flask import request
+    
+    base_url = request.url_root.rstrip('/')
+    sitemap_url = base_url + url_for('main.sitemap')
+    
+    robots_txt = f"""User-agent: *
+Allow: /
+
+Sitemap: {sitemap_url}
+"""
+    
+    return Response(robots_txt, mimetype='text/plain')
 
