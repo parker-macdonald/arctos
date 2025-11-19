@@ -24,6 +24,16 @@
             <a href="/{{ tournament.url }}/schedule" class="btn btn-outline-secondary">Schedule (Not Published)</a>
         {% endif %}
         <a href="/{{ tournament.url }}/results" class="btn btn-outline-primary">Results</a>
+        {% set is_to_for_bracket = false %}
+        {% if current_user.is_authenticated and (current_user.__class__.__name__ == 'Player' or current_user.__class__.__name__ == 'Team') %}
+            {% set to_entry_check = to_entries|selectattr('user_id', 'equalto', current_user.id)|selectattr('user_type', 'equalto', current_user.__class__.__name__.lower())|selectattr('event', 'equalto', tournament.url)|first %}
+            {% if to_entry_check %}
+                {% set is_to_for_bracket = true %}
+            {% endif %}
+        {% endif %}
+        {% if tournament.bracket and (tournament.schedule_published or is_to_for_bracket) %}
+            <a href="/{{ tournament.url }}/bracket" class="btn btn-outline-primary">Bracket</a>
+        {% endif %}
         {% if tournament.registration_open %}
             {% if current_user.is_authenticated %}
                 {% if current_user.__class__.__name__ == 'Team' %}
@@ -146,6 +156,7 @@
                 <div class="d-grid gap-2">
                     <a href="/{{ tournament.url }}/settings" class="btn btn-outline-secondary">Settings</a>
                     <a href="/{{ tournament.url }}/setup" class="btn btn-outline-secondary">Setup Matches</a>
+                    <a href="/{{ tournament.url }}/bracket-setup" class="btn btn-outline-secondary">Bracket Setup</a>
                     <a href="/{{ tournament.url }}/manage" class="btn btn-outline-warning">Registration Management</a>
                     <button type="button" class="btn btn-outline-danger" data-bs-toggle="modal" data-bs-target="#deleteTournamentModal">Delete Tournament</button>
                 </div>

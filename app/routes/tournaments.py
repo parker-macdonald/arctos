@@ -329,6 +329,312 @@ def tournament_results(tournament_url):
     return render_template('tournament_results.html', tournament=tournament, matches=matches, points_by_match=points_by_match)
 
 
+@bp.route('/<tournament_url>/bracket')
+def tournament_bracket(tournament_url):
+    """Tournament bracket visualization page."""
+    has_access, tournament = check_tournament_access(tournament_url)
+    if not has_access or not tournament:
+        return redirect('/')
+    
+    # Check if user is a TO
+    is_to = False
+    if current_user.is_authenticated:
+        is_to = TO.query.filter_by(
+            user_id=current_user.id,
+            user_type=current_user.__class__.__name__.lower(),
+            event=tournament_url
+        ).first() is not None
+    
+    # Only show bracket if bracket data exists and (schedule is published or user is TO)
+    if not tournament.bracket:
+        flash('Bracket is not available', 'error')
+        return redirect(f'/{tournament_url}')
+    
+    if not tournament.schedule_published and not is_to:
+        flash('Bracket is not available', 'error')
+        return redirect(f'/{tournament_url}')
+    
+    try:
+        import tomli
+        bracket_data = tomli.loads(tournament.bracket)
+    except Exception as e:
+        flash(f'Error parsing bracket data: {str(e)}', 'error')
+        return redirect(f'/{tournament_url}')
+    
+    # Process brackets and resolve team references
+    processed_brackets = []
+    brackets = bracket_data.get('brackets', [])
+    
+    for bracket in brackets:
+        bracket_name = bracket.get('name', '')
+        bracket_image = bracket.get('image', '')
+        teams = bracket.get('teams', [])
+        
+        processed_teams = []
+        for team_entry in teams:
+            team_ref = team_entry.get('team', '')
+            x = team_entry.get('x', 0)
+            y = team_entry.get('y', 0)
+            halign = team_entry.get('halign', 'center')
+            valign = team_entry.get('valign', 'center')
+            size = team_entry.get('size', 20)
+            
+            # Resolve team reference
+            team_info = None
+            is_reference = False
+            is_tag = False
+            match_name = None
+            
+            # Check if it's a match reference (match_name::winner or match_name::loser)
+            if '::' in team_ref:
+                parts = team_ref.split('::', 1)
+                match_name = parts[0].strip()
+                ref_type = parts[1].strip() if len(parts) > 1 else ''
+                
+                # Find the match
+                match = Match.query.filter_by(event=tournament_url, name=match_name).first()
+                if match and match.status == 'COMPLETED' and match.match_winner:
+                    # Determine winner/loser team
+                    if ref_type == 'winner':
+                        team_id = match.team1 if match.match_winner == 'TEAM1' else match.team2
+                    elif ref_type == 'loser':
+                        team_id = match.team2 if match.match_winner == 'TEAM1' else match.team1
+                    else:
+                        team_id = None
+                    
+                    if team_id:
+                        team_reg = TeamRegistration.query.filter_by(
+                            event=tournament_url,
+                            team=team_id,
+                            status='CONFIRMED'
+                        ).first()
+                        if team_reg:
+                            team = Team.query.get(team_id)
+                            team_info = {
+                                'id': team_id,
+                                'pseudonym': team_reg.pseudonym,
+                                'profile_photo': team.profile_photo if team else None,
+                                'display_text': team_reg.pseudonym
+                            }
+                            is_reference = True
+                elif match:
+                    # Match exists but not completed - show reference text
+                    team_info = {
+                        'display_text': team_ref.replace('::', ' ')
+                    }
+                    is_reference = True
+                else:
+                    # Match doesn't exist - show reference text anyway
+                    team_info = {
+                        'display_text': team_ref.replace('::', ' ')
+                    }
+                    is_reference = True
+            # Check if it's a team ID
+            elif team_ref:
+                team_reg = TeamRegistration.query.filter_by(
+                    event=tournament_url,
+                    team=team_ref,
+                    status='CONFIRMED'
+                ).first()
+                if team_reg:
+                    team = Team.query.get(team_ref)
+                    team_info = {
+                        'id': team_ref,
+                        'pseudonym': team_reg.pseudonym,
+                        'profile_photo': team.profile_photo if team else None,
+                        'display_text': team_reg.pseudonym
+                    }
+                else:
+                    # Check if it's a tag
+                    tag = Tag.query.filter_by(event=tournament_url, name=team_ref).first()
+                    if tag:
+                        team_info = {
+                            'display_text': team_ref
+                        }
+                        is_tag = True
+            
+            processed_teams.append({
+                'team_info': team_info,
+                'x': x,
+                'y': y,
+                'halign': halign,
+                'valign': valign,
+                'size': size,
+                'is_reference': is_reference,
+                'is_tag': is_tag,
+                'match_name': match_name if is_reference else None
+            })
+        
+        processed_brackets.append({
+            'name': bracket_name,
+            'image': bracket_image,
+            'teams': processed_teams
+        })
+    
+    return render_template('tournament_bracket.html', tournament=tournament, brackets=processed_brackets)
+
+
+@bp.route('/<tournament_url>/bracket-setup')
+@login_required
+def bracket_setup(tournament_url):
+    """Bracket setup page for TOs."""
+    if is_not_TO(tournament_url):
+        return redirect(f'/{tournament_url}')
+    
+    tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
+    
+    # Parse existing bracket data if it exists
+    brackets_data = []
+    if tournament.bracket:
+        try:
+            import tomli
+            parsed = tomli.loads(tournament.bracket)
+            brackets_data = parsed.get('brackets', [])
+        except Exception:
+            pass
+    
+    # Get matches for reference dropdown
+    matches = Match.query.filter_by(event=tournament_url).order_by(Match.name).all()
+    
+    # Get teams for team selection
+    team_registrations = TeamRegistration.query.filter_by(
+        event=tournament_url,
+        status='CONFIRMED'
+    ).all()
+    
+    # Get tags
+    tags = Tag.query.filter_by(event=tournament_url).order_by(Tag.name).all()
+    
+    return render_template(
+        'bracket_setup.html',
+        tournament=tournament,
+        brackets_data=brackets_data,
+        matches=matches,
+        team_registrations=team_registrations,
+        tags=tags
+    )
+
+
+@bp.route('/<tournament_url>/bracket-setup', methods=['POST'])
+@login_required
+def update_bracket_setup(tournament_url):
+    """Update bracket configuration."""
+    if is_not_TO(tournament_url):
+        return redirect(f'/{tournament_url}')
+    
+    tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
+    
+    import tomli
+    import os
+    from flask import current_app
+    from datetime import datetime
+    
+    # Handle image uploads first
+    bracket_images = {}
+    if 'bracket_images' in request.files:
+        files = request.files.getlist('bracket_images')
+        bracket_indices = request.form.getlist('bracket_image_indices')
+        
+        for idx, file in enumerate(files):
+            if file and file.filename:
+                bracket_idx = bracket_indices[idx] if idx < len(bracket_indices) else None
+                if bracket_idx is not None:
+                    try:
+                        upload_dir = os.path.join(current_app.root_path, "../static", "uploads", "brackets")
+                        os.makedirs(upload_dir, exist_ok=True)
+                        filename = f"bracket_{tournament_url}_{bracket_idx}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.{file.filename.split('.')[-1]}"
+                        file_path = os.path.join(upload_dir, filename)
+                        file.save(file_path)
+                        bracket_images[bracket_idx] = f"uploads/brackets/{filename}"
+                    except Exception as e:
+                        flash(f'Error uploading image: {str(e)}', 'error')
+    
+    # Build TOML structure from form data
+    brackets = []
+    bracket_count = int(request.form.get('bracket_count', 0))
+    
+    for i in range(bracket_count):
+        bracket_name = request.form.get(f'bracket_{i}_name', '').strip()
+        if not bracket_name:
+            continue
+        
+        # Use uploaded image or existing image path
+        bracket_image = bracket_images.get(str(i))
+        if not bracket_image:
+            bracket_image = request.form.get(f'bracket_{i}_image_existing', '').strip()
+        
+        if not bracket_image:
+            continue
+        
+        teams = []
+        # Count teams by checking for team ref inputs
+        team_count = 0
+        while request.form.get(f'bracket_{i}_team_{team_count}_ref'):
+            team_count += 1
+        
+        for j in range(team_count):
+            team_ref = request.form.get(f'bracket_{i}_team_{j}_ref', '').strip()
+            if not team_ref:
+                continue
+            
+            try:
+                x = int(request.form.get(f'bracket_{i}_team_{j}_x', 0))
+                y = int(request.form.get(f'bracket_{i}_team_{j}_y', 0))
+                halign = request.form.get(f'bracket_{i}_team_{j}_halign', 'center')
+                valign = request.form.get(f'bracket_{i}_team_{j}_valign', 'center')
+                size = int(request.form.get(f'bracket_{i}_team_{j}_size', 20))
+            except (ValueError, TypeError):
+                continue
+            
+            teams.append({
+                'team': team_ref,
+                'x': x,
+                'y': y,
+                'halign': halign,
+                'valign': valign,
+                'size': size
+            })
+        
+        brackets.append({
+            'name': bracket_name,
+            'image': bracket_image,
+            'teams': teams
+        })
+    
+    # Generate TOML manually (simple structure)
+    def escape_toml_string(s):
+        """Escape special characters in TOML strings."""
+        s = str(s)
+        s = s.replace('\\', '\\\\')
+        s = s.replace('"', '\\"')
+        s = s.replace('\n', '\\n')
+        s = s.replace('\t', '\\t')
+        return s
+    
+    toml_lines = []
+    for bracket in brackets:
+        toml_lines.append('[[brackets]]')
+        toml_lines.append(f'name = "{escape_toml_string(bracket["name"])}"')
+        toml_lines.append(f'image = "{escape_toml_string(bracket["image"])}"')
+        toml_lines.append('')
+        for team in bracket.get('teams', []):
+            toml_lines.append('[[brackets.teams]]')
+            toml_lines.append(f'team = "{escape_toml_string(team["team"])}"')
+            toml_lines.append(f'x = {team["x"]}')
+            toml_lines.append(f'y = {team["y"]}')
+            toml_lines.append(f'halign = "{escape_toml_string(team["halign"])}"')
+            toml_lines.append(f'valign = "{escape_toml_string(team["valign"])}"')
+            toml_lines.append(f'size = {team["size"]}')
+            toml_lines.append('')
+    toml_str = '\n'.join(toml_lines)
+    
+    tournament.bracket = toml_str
+    db.session.commit()
+    
+    flash('Bracket configuration updated successfully!', 'success')
+    return redirect(f'/{tournament_url}/bracket-setup')
+
+
 @bp.route('/<tournament_url>/settings')
 @login_required
 def tournament_settings(tournament_url):
@@ -1188,8 +1494,8 @@ def tournament_autocomplete(tournament_url):
         if not query or query in pseudonym.lower():
             suggestions.append({
                 'type': 'team',
-                'value': pseudonym,
-                'label': pseudonym,
+                'value': reg.team,  # Use team ID instead of pseudonym
+                'label': pseudonym,  # Display pseudonym in label
                 'id': reg.team
             })
     
@@ -1210,16 +1516,12 @@ def tournament_autocomplete(tournament_url):
             })
 
     # Matches in this tournament (by name)
-    matches = Match.query.filter_by(event=tournament_url).all()
+    # Exclude BREAK and JOIN matches entirely
+    matches = Match.query.filter_by(event=tournament_url).filter(
+        Match.schedule_type.notin_(['BREAK', 'JOIN'])
+    ).all()
     for m in matches:
         name = (m.name or '').strip()
-        if not query or query in name.lower():
-            suggestions.append({
-                'type': 'match',
-                'value': name,
-                'label': name,
-                'id': m.uuid
-            })
     
         # Also offer winner/loser variants to help dynamic references (new format)
         winner_label = f"{name}::winner"

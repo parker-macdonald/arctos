@@ -1,7 +1,113 @@
 {% extends "base.html" %}
 
-{% block title %}Bracket - Removed{% endblock %}
+{% block title %}{{ tournament.name }} - Bracket{% endblock %}
 
 {% block content %}
-<div class="alert alert-info mt-3">Bracket view has been removed.</div>
+<div class="row">
+    <div class="col-12">
+        <h1>{{ tournament.name }} - Bracket</h1>
+        <a href="/{{ tournament.url }}" class="btn btn-outline-secondary mb-3">Back to Tournament</a>
+    </div>
+</div>
+
+{% for bracket in brackets %}
+<div class="row mb-5">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h3 class="mb-0">{{ bracket.name }}</h3>
+            </div>
+            <div class="card-body">
+                <div class="position-relative" style="display: inline-block;">
+                    <img src="{{ url_for('static', filename=bracket.image) }}" alt="{{ bracket.name }}" class="img-fluid" style="max-width: 100%; height: auto;">
+                    
+                    {% for team_entry in bracket.teams %}
+                        {% if team_entry.team_info %}
+                            {% set style_parts = ['position: absolute'] %}
+                            {% set transform_parts = [] %}
+                            
+                            {# Horizontal alignment #}
+                            {% if team_entry.halign == 'left' %}
+                                {# Left edge at x #}
+                                {% set _ = style_parts.append('left: ' ~ team_entry.x ~ 'px') %}
+                            {% elif team_entry.halign == 'right' %}
+                                {# Right edge at x - position left edge at x, then shift left by full width #}
+                                {% set _ = style_parts.append('left: ' ~ team_entry.x ~ 'px') %}
+                                {% set _ = transform_parts.append('translateX(-100%)') %}
+                            {% else %}
+                                {# center - center at x #}
+                                {% set _ = style_parts.append('left: ' ~ team_entry.x ~ 'px') %}
+                                {% set _ = transform_parts.append('translateX(-50%)') %}
+                            {% endif %}
+                            
+                            {# Vertical alignment #}
+                            {% if team_entry.valign == 'top' %}
+                                {# Top edge at y #}
+                                {% set _ = style_parts.append('top: ' ~ team_entry.y ~ 'px') %}
+                            {% elif team_entry.valign == 'bottom' %}
+                                {# Bottom edge at y - position top edge at y, then shift up by full height #}
+                                {% set _ = style_parts.append('top: ' ~ team_entry.y ~ 'px') %}
+                                {% set _ = transform_parts.append('translateY(-100%)') %}
+                            {% else %}
+                                {# center - center at y #}
+                                {% set _ = style_parts.append('top: ' ~ team_entry.y ~ 'px') %}
+                                {% set _ = transform_parts.append('translateY(-50%)') %}
+                            {% endif %}
+                            
+                            {# Combine transforms if any #}
+                            {% if transform_parts %}
+                                {% set _ = style_parts.append('transform: ' ~ transform_parts|join(' ')) %}
+                            {% endif %}
+                            
+                            {% set _ = style_parts.append('font-size: ' ~ team_entry.size ~ 'px') %}
+                            {% set _ = style_parts.append('line-height: 1.2') %}
+                            <div class="bracket-team-overlay" style="{{ style_parts|join('; ') }}">
+                                {% if team_entry.is_tag %}
+                                    {# Tag - plain text #}
+                                    <span>{{ team_entry.team_info.display_text }}</span>
+                                {% elif team_entry.team_info.id %}
+                                    {# Resolved team (either direct team ID or resolved reference) - link to team profile with photo if available #}
+                                    <a href="/teams/{{ team_entry.team_info.id }}" class="text-decoration-none text-dark d-inline-flex align-items-center">
+                                        {% if team_entry.team_info.profile_photo %}
+                                            <img src="{{ url_for('static', filename=team_entry.team_info.profile_photo) }}" 
+                                                 alt="{{ team_entry.team_info.pseudonym }}" 
+                                                 class="rounded-circle me-1" 
+                                                 style="width: {{ team_entry.size }}px; height: {{ team_entry.size }}px; object-fit: cover;">
+                                        {% endif %}
+                                        <span>{{ team_entry.team_info.pseudonym }}</span>
+                                    </a>
+                                {% elif team_entry.is_reference %}
+                                    {# Unresolved match reference - link to match #}
+                                    <a href="/{{ tournament.url }}/match?name={{ team_entry.match_name }}" class="text-decoration-none text-dark">
+                                        {{ team_entry.team_info.display_text.replace('::', ' ') }}
+                                    </a>
+                                {% else %}
+                                    {# Fallback - just show display text #}
+                                    <span>{{ team_entry.team_info.display_text }}</span>
+                                {% endif %}
+                            </div>
+                        {% endif %}
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endfor %}
+
+<style>
+.bracket-team-overlay {
+    white-space: nowrap;
+    z-index: 10;
+}
+
+.bracket-team-overlay a {
+    display: inline-flex;
+    align-items: center;
+}
+
+.bracket-team-overlay img {
+    flex-shrink: 0;
+}
+</style>
 {% endblock %}

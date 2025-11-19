@@ -852,6 +852,7 @@
                     // Use cached suggestions only if we actually have some
                     if (cachedSuggestions && cachedSuggestions.length > 0) {
                         const filteredSuggestions = cachedSuggestions.filter(suggestion => 
+                            suggestion.label.toLowerCase().includes(query.toLowerCase()) ||
                             suggestion.value.toLowerCase().includes(query.toLowerCase())
                         );
                         displaySuggestions(filteredSuggestions, suggestionsDiv, input);
@@ -901,8 +902,10 @@
                 <span>${suggestion.label}</span>
                 <span class="type">${suggestion.type}</span>
             `;
-            // Store the actual value in a data attribute
+            // Store the actual value and label in data attributes
             div.dataset.value = suggestion.value;
+            div.dataset.label = suggestion.label;
+            div.dataset.type = suggestion.type;
             div.addEventListener('click', () => selectSuggestion(div, input));
             suggestionsDiv.appendChild(div);
         });
@@ -913,6 +916,8 @@
     function selectSuggestion(suggestionElement, input) {
         // Get the actual value from the data attribute
         const value = suggestionElement.dataset.value;
+        const label = suggestionElement.dataset.label;
+        const type = suggestionElement.dataset.type;
         const isMultiple = input.dataset.multiple === 'true';
         
         if (isMultiple) {
@@ -921,17 +926,19 @@
             if (currentValue && currentValue.includes(',')) {
                 // Find the last comma and replace everything after it
                 const lastCommaIndex = currentValue.lastIndexOf(',');
-                input.value = currentValue.substring(0, lastCommaIndex + 1) + value;
+                // For teams, use ID; for others, use value
+                const displayValue = (type === 'team') ? value : value;
+                input.value = currentValue.substring(0, lastCommaIndex + 1) + ' ' + displayValue;
             } else if (currentValue) {
                 // No comma yet, so replace the entire value
-                input.value = value;
+                input.value = (type === 'team') ? value : value;
             } else {
                 // Empty field, just set the value
-                input.value = value;
+                input.value = (type === 'team') ? value : value;
             }
         } else {
-            // For team fields, replace the value
-            input.value = value;
+            // For single fields, use team ID for teams, value for others
+            input.value = (type === 'team') ? value : value;
         }
         
         // Hide suggestions

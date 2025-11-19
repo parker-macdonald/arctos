@@ -91,6 +91,7 @@ class Tournament(db.Model):
     head_refs_allowed_list = db.Column(db.Text)  # comma-separated list of allowed usernames
     head_refs_allow_reffing_teams = db.Column(db.Boolean, default=False)  # allow reffing teams and their members
     head_refs_allow_anyone = db.Column(db.Boolean, default=False)  # allow anyone registered
+    bracket = db.Column(db.Text)  # TOML string defining bracket visualizations
 
 class TO(db.Model):
     __tablename__ = 'tos'
