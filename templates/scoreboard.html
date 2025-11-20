@@ -256,6 +256,22 @@
         let lastPollTimestamp = null;
         let pollingInterval = null;
         
+        let stones_at_start = null;
+        let start_stamp = null;
+        let is_point_in_progress = false;
+
+        function updateStonesRemaining() {
+            if (is_point_in_progress) {
+                const stonesEl = document.getElementById('stones-remaining');
+                const progressEl = document.getElementById('stones-progress');
+                stonesEl.textContent = stones_at_start - (Math.floor(new Date().getTime()/1500) - Math.floor(start_stamp / 1500))
+                const percentage = (parseInt(stonesEl.textContent) / stonesPerSet) * 100;
+                progressEl.style.width = Math.max(0, Math.min(100, percentage)) + '%';
+            }
+        }
+
+        setInterval(updateStonesRemaining, 50);
+
         function pollMatchState() {
             fetch(`/${tournamentUrl}/match-state?id=${matchId}`)
                 .then(response => response.json())
@@ -334,15 +350,20 @@
                             });
                         }
                     }
-                    
-                    // Update stones remaining if STONES match
-                    if (isStones && data.stones_remaining !== null && data.stones_remaining !== undefined) {
-                        const stonesEl = document.getElementById('stones-remaining');
-                        const progressEl = document.getElementById('stones-progress');
-                        if (stonesEl) {
-                            stonesEl.textContent = data.stones_remaining;
+                    if(isStones) {
+                        if(data.points.length > 0) {
+                            is_point_in_progress = data.points[data.points.length - 1].end_stamp === null;
+                            if(is_point_in_progress) {
+                                start_stamp = new Date(data.points[data.points.length - 1].stamp).getTime();
+                                stones_at_start = data.points[data.points.length - 1].stones_at_start;
+                            }
+                        } else {
+                            is_point_in_progress = false;
                         }
-                        if (progressEl && stonesPerSet > 0) {
+                        if(!is_point_in_progress) {
+                            const stonesEl = document.getElementById('stones-remaining');
+                            const progressEl = document.getElementById('stones-progress');
+                            stonesEl.textContent = data.stones_remaining;
                             const percentage = (data.stones_remaining / stonesPerSet) * 100;
                             progressEl.style.width = Math.max(0, Math.min(100, percentage)) + '%';
                         }
