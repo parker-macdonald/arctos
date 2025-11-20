@@ -581,6 +581,26 @@ async function syncWithServerTime() {
 }
 
 
+// Stones remaining update (for STONES matches)
+{% if match.set_type == 'STONES' %}
+let stonesAtStart = null;
+let startStamp = null;
+let isPointInProgress = false;
+
+function updateStonesRemaining() {
+    if (isPointInProgress && stonesAtStart !== null && startStamp !== null) {
+        const stonesElement = document.getElementById('live-stones-remaining');
+        if (stonesElement) {
+            const remaining = stonesAtStart - (Math.floor(new Date().getTime()/1500) - Math.floor(startStamp / 1500));
+            stonesElement.textContent = Math.max(0, remaining);
+        }
+    }
+}
+
+// Update stones remaining every 50ms
+setInterval(updateStonesRemaining, 50);
+{% endif %}
+
 // Poll for match state updates
 function pollMatchState() {
     fetch(`/${tournamentUrl}/match-state?id=${matchId}`)
@@ -600,13 +620,31 @@ function pollMatchState() {
             // Update scores
             updateScores(data);
             
-            // Update stones remaining
-            if (data.stones_remaining !== null && data.stones_remaining !== undefined) {
+            // Update stones remaining (track point in progress like scoreboard)
+            {% if match.set_type == 'STONES' %}
+            if (data.points && data.points.length > 0) {
+                const lastPoint = data.points[data.points.length - 1];
+                isPointInProgress = lastPoint.end_stamp === null;
+                if (isPointInProgress && lastPoint.stones_at_start !== null && lastPoint.stones_at_start !== undefined && lastPoint.stamp) {
+                    // Point in progress - track it for real-time updates
+                    stonesAtStart = lastPoint.stones_at_start;
+                    startStamp = new Date(lastPoint.stamp).getTime();
+                } else {
+                    // No point in progress - use server value
+                    isPointInProgress = false;
+                    const stonesElement = document.getElementById('live-stones-remaining');
+                    if (stonesElement && data.stones_remaining !== null && data.stones_remaining !== undefined) {
+                        stonesElement.textContent = data.stones_remaining;
+                    }
+                }
+            } else {
+                isPointInProgress = false;
                 const stonesElement = document.getElementById('live-stones-remaining');
-                if (stonesElement) {
+                if (stonesElement && data.stones_remaining !== null && data.stones_remaining !== undefined) {
                     stonesElement.textContent = data.stones_remaining;
                 }
             }
+            {% endif %}
             
             // Update points table
             updatePointsTable(data.points);
@@ -703,7 +741,7 @@ function updatePointsTable(points) {
             row.innerHTML = `
                 <td>${index + 1}</td>
                 <td>${point.set_number || 1}</td>
-                <td id="live-stones-${point.uuid}" data-stamp="${point.stamp || ''}" data-end="${point.end_stamp || ''}" data-stones-at-start="${point.stones_at_start || ''}">${computeStonesElapsed(point.stamp, point.end_stamp, point.stones_at_start)}</td>
+                <td id="live-stones-${point.uuid}" data-stamp="${point.stamp || ''}" data-end="${point.end_stamp || ''}" data-stones-at-start="${point.stones_at_start || ''}">${computeStonesElapsed(point.stamp, point.end_stamp)}</td>
                 <td>-</td>
                 <td><span class="badge bg-success">Normal</span></td>
                 ${notesCell}
@@ -732,7 +770,7 @@ function updatePointsTable(points) {
             rerunCell.innerHTML = '<span class="badge bg-success">Normal</span>';
         }
         
-        // Update stones remaining
+        // Update stones elapsed
         const stonesCell = document.getElementById(`live-stones-${point.uuid}`);
         if (stonesCell) {
             // Ensure timestamps have timezone info (from API they should already have 'Z')
@@ -754,12 +792,9 @@ function updatePointsTable(points) {
             if (point.stones_at_start !== null && point.stones_at_start !== undefined) {
                 stonesCell.setAttribute('data-stones-at-start', point.stones_at_start);
             }
-            const stonesAtStart = stonesCell.getAttribute('data-stones-at-start');
-            const stonesAtStartNum = stonesAtStart ? parseInt(stonesAtStart) : null;
             stonesCell.textContent = computeStonesElapsed(
                 stonesCell.getAttribute('data-stamp'),
-                stonesCell.getAttribute('data-end'),
-                stonesAtStartNum
+                stonesCell.getAttribute('data-end')
             );
         }
     });
@@ -850,7 +885,7 @@ function toDateSafe(iso) {
     return isNaN(d.getTime()) ? null : d;
 }
 
-function computeStonesElapsed(startIso, endIso, stonesAtStart) {
+function computeStonesElapsed(startIso, endIso) {
     const start = toDateSafe(startIso);
     // Use server time for "now" if no end time provided
     const end = endIso ? toDateSafe(endIso) : getServerDate();
@@ -859,26 +894,16 @@ function computeStonesElapsed(startIso, endIso, stonesAtStart) {
     const endEpoch = end.getTime() / 1000;
     const startCount = Math.floor(startEpoch / 1.5);
     const endCount = Math.floor(endEpoch / 1.5);
-    const elapsed = Math.max(0, endCount - startCount);
-    
-    // If stones_at_start is provided, calculate remaining stones instead of elapsed
-    if (stonesAtStart !== null && stonesAtStart !== undefined) {
-        return Math.max(0, stonesAtStart - elapsed);
-    }
-    
-    // Otherwise return elapsed (for backward compatibility)
-    return elapsed;
+    return Math.max(0, endCount - startCount);
 }
 
-// On load, compute initial stones remaining for all rows and set a timer to update ongoing last point
+// On load, compute initial stones elapsed for all rows and set a timer to update ongoing last point
 document.addEventListener('DOMContentLoaded', function() {
     const rows = document.querySelectorAll('[id^="live-stones-"]');
     rows.forEach(cell => {
         const s = cell.getAttribute('data-stamp');
         const e = cell.getAttribute('data-end');
-        const stonesAtStart = cell.getAttribute('data-stones-at-start');
-        const stonesAtStartNum = stonesAtStart ? parseInt(stonesAtStart) : null;
-        cell.textContent = computeStonesElapsed(s, e, stonesAtStartNum);
+        cell.textContent = computeStonesElapsed(s, e);
     });
     // Periodically update the last row if it has no end time
     setInterval(() => {
@@ -888,12 +913,10 @@ document.addEventListener('DOMContentLoaded', function() {
             const end = cell.getAttribute('data-end');
             if (!end) {
                 const s = cell.getAttribute('data-stamp');
-                const stonesAtStart = cell.getAttribute('data-stones-at-start');
-                const stonesAtStartNum = stonesAtStart ? parseInt(stonesAtStart) : null;
-                cell.textContent = computeStonesElapsed(s, null, stonesAtStartNum);
+                cell.textContent = computeStonesElapsed(s, null);
             }
         }
-    }, 500);
+    }, 100);
 });
 
 function formatDuration(totalSeconds) {

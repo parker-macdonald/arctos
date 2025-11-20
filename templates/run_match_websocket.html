@@ -187,22 +187,34 @@
     <div class="row">
         <div class="col-md-12">
             <h2>Run Match: {{ match.name }}</h2>
-            <div class="row">
+            <!-- Desktop: Multi-column layout -->
+            <div class="row d-none d-md-flex">
                 <div class="col-md-4">
-                    <p><strong>Teams:</strong> {{ match.team1_registration.pseudonym if match.team1_registration else match.team1 }} vs {{ match.team2_registration.pseudonym if match.team2_registration else match.team2 }}</p>
+                    <p class="mb-0"><strong>Teams:</strong> {{ match.team1_registration.pseudonym if match.team1_registration else match.team1 }} vs {{ match.team2_registration.pseudonym if match.team2_registration else match.team2 }}</p>
                 </div>
                 <div class="col-md-4">
-                    <p><strong>Refs:</strong> {{ match.refs or match.refs_initial }}</p>
+                    <p class="mb-0"><strong>Refs:</strong> {{ match.refs or match.refs_initial }}</p>
                 </div>
                 <div class="col-md-2">
                     {% if match.nominal_length %}
-                    <p><strong>Length:</strong> {{ match.nominal_length }} min</p>
+                    <p class="mb-0"><strong>Length:</strong> {{ match.nominal_length }} min</p>
                     {% endif %}
                 </div>
                 <div class="col-md-2">
                     {% if match.field %}
-                    <p><strong>Field:</strong> {{ match.field }}</p>
+                    <p class="mb-0"><strong>Field:</strong> {{ match.field }}</p>
                     {% endif %}
+                </div>
+            </div>
+            <!-- Mobile: Single line display -->
+            <div class="row d-md-none">
+                <div class="col-12">
+                    <p class="small mb-0">
+                        {{ match.team1_registration.pseudonym if match.team1_registration else match.team1 }} vs {{ match.team2_registration.pseudonym if match.team2_registration else match.team2 }}
+                        {% if match.refs or match.refs_initial %} | Refs: {{ match.refs or match.refs_initial }}{% endif %}
+                        {% if match.nominal_length %} | {{ match.nominal_length }}m{% endif %}
+                        {% if match.field %} | Field: {{ match.field }}{% endif %}
+                    </p>
                 </div>
             </div>
         </div>
@@ -214,12 +226,16 @@
             <div class="card">
                 <div class="card-body">
                     <div class="row">
-                        <div class="col-md-6">
-                            <h4>Score by Set</h4>
+                        <div class="col-md-6 mb-4 mb-md-0">
                             <div id="score-by-set">
                                 {% set sets = points | map(attribute='set_number') | unique | sort %}
                                 {% if sets %}
-                                <!-- Team names header -->
+                                <!-- Score title and team names header -->
+                                <div class="row mb-1">
+                                    <div class="col-12 text-center mb-1">
+                                        <h4 class="mb-0">Score</h4>
+                                    </div>
+                                </div>
                                 <div class="row mb-1">
                                     <div class="col-5 text-center">
                                         <small class="text-muted">{{ match.team1_registration.pseudonym if match.team1_registration else match.team1 }}</small>
@@ -251,9 +267,9 @@
                         <div class="col-md-6">
                             <div class="row">
                                 {% if match.set_type == 'STONES' %}
-                                <div class="col-md-6">
-                                    <h4>Stones Remaining</h4>
-                                    <div class="text-center">
+                                <div class="col-6 text-center">
+                                    <h4 class="mb-1">Stone Count</h4>
+                                    <div class="d-flex justify-content-center align-items-center">
                                         <input type="number" class="form-control-plaintext text-center display-4 m-0 p-0" id="stones-remaining" 
                                                style="width: 6ch; line-height: 1;" 
                                                value="{{ match.stones_remaining if match.stones_remaining else match.nstonesperset or 100 }}" 
@@ -261,9 +277,9 @@
                                     </div>
                                 </div>
                                 {% endif %}
-                                <div class="col-md-6">
-                                    <h4>Time Elapsed</h4>
-                                    <h2 id="time-elapsed">00:00</h2>
+                                <div class="{% if match.set_type == 'STONES' %}col-6{% else %}col-12{% endif %} text-center">
+                                    <h4 class="mb-1">Time Elapsed</h4>
+                                    <h2 id="time-elapsed" class="mb-0">00:00</h2>
                                 </div>
                             </div>
                             <div class="row mt-3">
