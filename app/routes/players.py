@@ -18,7 +18,13 @@ def player_profile(player_id):
     """Display player profile."""
     player = Player.query.get_or_404(player_id)
     registrations = PlayerRegistration.query.filter_by(player=player_id).all()
-    injuries = Injury.query.filter_by(player=player_id).order_by(Injury.stamp.desc()).all()
+    
+    # Filter injuries: show all to the player themselves, only public ones to others
+    is_own_profile = current_user.is_authenticated and current_user.id == player_id
+    if is_own_profile:
+        injuries = Injury.query.filter_by(player=player_id).order_by(Injury.stamp.desc()).all()
+    else:
+        injuries = Injury.query.filter_by(player=player_id, show=True).order_by(Injury.stamp.desc()).all()
     
     is_head_ref_flag = is_head_ref_any(player_id)
     player_notes = []

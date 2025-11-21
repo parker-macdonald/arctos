@@ -212,7 +212,7 @@
             </div>
             <div class="card-body">
                 <p><strong>Tournaments:</strong> {{ registrations|length }}</p>
-                <p><strong>Active Injuries:</strong> {{ injuries|selectattr('show')|list|length }}</p>
+                <p><strong>Active Injuries:</strong> {{ injuries|selectattr('active')|list|length }}</p>
             </div>
         </div>
 
