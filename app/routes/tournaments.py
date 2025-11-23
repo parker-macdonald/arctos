@@ -725,6 +725,456 @@ def tournament_register(tournament_url):
     return render_template('tournament_register.html', tournament=tournament, registered_teams=registered_teams)
 
 
+@bp.route('/<tournament_url>/camera')
+def camera_page(tournament_url):
+    """Camera recording page for a field."""
+    tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
+    field_name = request.args.get('field', '').strip()
+    
+    if not field_name:
+        flash('Field name is required', 'error')
+        return redirect(f'/{tournament_url}')
+    
+    # Verify field exists
+    field = Field.query.filter_by(event=tournament_url, name=field_name).first()
+    if not field:
+        flash(f'Field "{field_name}" not found', 'error')
+        return redirect(f'/{tournament_url}')
+    
+    return render_template('camera.html', tournament=tournament, field_name=field_name)
+
+
+@bp.route('/api/camera/match-status')
+def camera_match_status():
+    """Check if a field has an active match. Public endpoint for polling."""
+    tournament_url = request.args.get('tournament')
+    field_name = request.args.get('field')
+    current_match_id = request.args.get('current_match_id')  # Optional: track specific match
+    
+    if not tournament_url or not field_name:
+        return jsonify({'error': 'Tournament and field parameters required'}), 400
+    
+    # If we're tracking a specific match, check its status
+    if current_match_id:
+        match = Match.query.filter_by(uuid=current_match_id, event=tournament_url).first()
+        if match:
+            # Continue recording if match is still IN_PROGRESS (not yet finalized)
+            if match.status == 'IN_PROGRESS':
+                return jsonify({
+                    'hasActiveMatch': True,
+                    'match_id': match.uuid,
+                    'match_name': match.name,
+                    'start_time': match.confirmed_start_time.isoformat() if match.confirmed_start_time else None,
+                    'status': match.status
+                })
+            else:
+                # Match is completed or in another state - stop recording
+                return jsonify({
+                    'hasActiveMatch': False,
+                    'match_id': match.uuid,
+                    'status': match.status,
+                    'reason': 'match_completed'
+                })
+        else:
+            # Match not found - might have been deleted, stop recording
+            return jsonify({
+                'hasActiveMatch': False,
+                'reason': 'match_not_found'
+            })
+    
+    # No specific match tracked - find any active match on this field
+    match = Match.query.filter_by(event=tournament_url, field=field_name, status='IN_PROGRESS').first()
+    
+    if match:
+        return jsonify({
+            'hasActiveMatch': True,
+            'match_id': match.uuid,
+            'match_name': match.name,
+            'start_time': match.confirmed_start_time.isoformat() if match.confirmed_start_time else None,
+            'status': match.status
+        })
+    else:
+        return jsonify({
+            'hasActiveMatch': False
+        })
+
+
+@bp.route('/api/camera/recording-started', methods=['POST'])
+def camera_recording_started():
+    """Notify server that a new recording session has started. Updates match's camera_stream_starts."""
+    data = request.json
+    tournament_url = data.get('tournament')
+    field_name = data.get('field')
+    match_id = data.get('match_id', '')
+    session_id = data.get('session_id')
+    camera_id = data.get('camera_id', 'camera')
+    start_timestamp = data.get('start_timestamp')
+    
+    if not tournament_url or not field_name or not session_id or not match_id:
+        return jsonify({'error': 'Missing required parameters'}), 400
+    
+    try:
+        # Find the match
+        match = Match.query.filter_by(uuid=match_id, event=tournament_url).first()
+        if not match:
+            return jsonify({'error': 'Match not found'}), 404
+        
+        # Get or create camera_stream_starts
+        stream_starts = {}
+        if match.camera_stream_starts:
+            try:
+                stream_starts = json.loads(match.camera_stream_starts)
+            except (json.JSONDecodeError, TypeError):
+                stream_starts = {}
+        
+        # Build video file path for reference
+        video_path = f"uploads/videos/{tournament_url}/{field_name}/{session_id}/final_video.webm"
+        
+        # Store recording info
+        # Use camera_id as key, or create a list if multiple recordings from same camera
+        recording_info = {
+            'session_id': session_id,
+            'start_timestamp': start_timestamp,
+            'camera_id': camera_id,
+            'field': field_name,
+            'video_path': video_path,
+            'start_time': datetime.utcnow().isoformat() + 'Z'
+        }
+        
+        # Store in stream_starts - use camera_id as key, or append to list if exists
+        if camera_id in stream_starts:
+            # If there's already a recording from this camera, make it a list
+            if not isinstance(stream_starts[camera_id], list):
+                stream_starts[camera_id] = [stream_starts[camera_id]]
+            stream_starts[camera_id].append(recording_info)
+        else:
+            stream_starts[camera_id] = recording_info
+        
+        # Save back to match
+        match.camera_stream_starts = json.dumps(stream_starts)
+        db.session.commit()
+        
+        return jsonify({
+            'success': True,
+            'message': 'Recording start recorded'
+        })
+    except Exception as e:
+        print(f"Error recording start: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@bp.route('/api/camera/upload-chunk', methods=['POST'])
+def camera_upload_chunk():
+    """Receive and store a video chunk. Public endpoint."""
+    import os
+    from flask import current_app
+    from datetime import datetime
+    
+    tournament_url = request.form.get('tournament')
+    field_name = request.form.get('field')
+    match_id = request.form.get('match_id', '')
+    session_id = request.form.get('session_id')
+    chunk_index = request.form.get('chunk_index')
+    start_timestamp = request.form.get('start_timestamp')
+    
+    if not tournament_url or not field_name or not session_id or chunk_index is None:
+        return jsonify({'error': 'Missing required parameters'}), 400
+    
+    if 'chunk' not in request.files:
+        return jsonify({'error': 'No chunk file provided'}), 400
+    
+    chunk_file = request.files['chunk']
+    if chunk_file.filename == '':
+        return jsonify({'error': 'Empty chunk file'}), 400
+    
+    try:
+        # Create directory structure: static/uploads/videos/{tournament}/{field}/{session_id}/
+        upload_dir = os.path.join(
+            current_app.root_path, 
+            '../static/uploads/videos',
+            tournament_url,
+            field_name,
+            session_id
+        )
+        os.makedirs(upload_dir, exist_ok=True)
+        
+        # Save chunk with index in filename
+        chunk_filename = f'chunk_{chunk_index}.webm'
+        chunk_path = os.path.join(upload_dir, chunk_filename)
+        chunk_file.save(chunk_path)
+        
+        # Save metadata file (first chunk only)
+        if chunk_index == '0' or chunk_index == 0:
+            metadata = {
+                'tournament': tournament_url,
+                'field': field_name,
+                'match_id': match_id,
+                'session_id': session_id,
+                'start_timestamp': start_timestamp,
+                'start_time': datetime.utcnow().isoformat() + 'Z'
+            }
+            metadata_path = os.path.join(upload_dir, 'metadata.json')
+            with open(metadata_path, 'w') as f:
+                json.dump(metadata, f, indent=2)
+        
+        return jsonify({
+            'success': True,
+            'chunk_index': chunk_index,
+            'session_id': session_id
+        })
+    except Exception as e:
+        print(f"Error saving chunk: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@bp.route('/api/camera/finalize', methods=['POST'])
+def camera_finalize():
+    """Finalize a recording session. Public endpoint."""
+    import os
+    from flask import current_app
+    from datetime import datetime
+    import subprocess
+    
+    data = request.json
+    tournament_url = data.get('tournament')
+    field_name = data.get('field')
+    match_id = data.get('match_id', '')
+    session_id = data.get('session_id')
+    start_timestamp = data.get('start_timestamp')
+    total_chunks = data.get('total_chunks', 0)
+    
+    if not tournament_url or not field_name or not session_id:
+        return jsonify({'error': 'Missing required parameters'}), 400
+    
+    try:
+        # Directory where chunks are stored
+        chunk_dir = os.path.join(
+            current_app.root_path,
+            '../static/uploads/videos',
+            tournament_url,
+            field_name,
+            session_id
+        )
+        
+        if not os.path.exists(chunk_dir):
+            return jsonify({'error': 'Session directory not found'}), 404
+        
+        # Read metadata
+        metadata_path = os.path.join(chunk_dir, 'metadata.json')
+        metadata = {}
+        if os.path.exists(metadata_path):
+            with open(metadata_path, 'r') as f:
+                metadata = json.load(f)
+        
+        # Update metadata with finalization info
+        metadata['match_id'] = match_id
+        metadata['finalized_at'] = datetime.utcnow().isoformat() + 'Z'
+        metadata['total_chunks'] = total_chunks
+        metadata['start_timestamp'] = start_timestamp
+        
+        # Save updated metadata
+        with open(metadata_path, 'w') as f:
+            json.dump(metadata, f, indent=2)
+        
+        # Try to concatenate chunks into single video file
+        # WebM chunks from MediaRecorder: first chunk has header, subsequent chunks are continuation segments
+        try:
+            output_path = os.path.join(chunk_dir, 'final_video.webm')
+            chunk_files = sorted([
+                os.path.join(chunk_dir, f)
+                for f in os.listdir(chunk_dir)
+                if f.startswith('chunk_') and f.endswith('.webm')
+            ], key=lambda x: int(os.path.basename(x).split('_')[1].split('.')[0]))
+            
+            if not chunk_files:
+                return jsonify({
+                    'success': True,
+                    'session_id': session_id,
+                    'message': 'Recording finalized successfully (no chunks to concatenate)'
+                })
+            
+            # Create file list for ffmpeg (needed for multiple methods)
+            file_list_path = os.path.join(chunk_dir, 'file_list.txt')
+            with open(file_list_path, 'w') as f:
+                for chunk_file in chunk_files:
+                    abs_path = os.path.abspath(chunk_file).replace("'", "'\\''")
+                    f.write(f"file '{abs_path}'\n")
+            
+            # Try ffmpeg first with stream copy (fast, preserves quality, fixes metadata)
+            # This is the best method as it properly handles WebM container structure
+            try:
+                # Use stream copy to avoid re-encoding (fast and preserves quality)
+                # This properly rebuilds the WebM container with correct metadata
+                result = subprocess.run([
+                    'ffmpeg', '-f', 'concat', '-safe', '0',
+                    '-i', file_list_path,
+                    '-c', 'copy',  # Copy streams without re-encoding
+                    '-fflags', '+genpts',  # Generate presentation timestamps
+                    output_path
+                ], check=True, timeout=600, capture_output=True, text=True)
+                
+                if os.path.exists(output_path) and os.path.getsize(output_path) > 1000:
+                    metadata['final_video'] = 'final_video.webm'
+                    metadata['concatenation_method'] = 'ffmpeg_copy'
+                    with open(metadata_path, 'w') as f:
+                        json.dump(metadata, f, indent=2)
+                    print(f"Successfully concatenated video using ffmpeg stream copy")
+                else:
+                    raise Exception("ffmpeg copy produced invalid file")
+            except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired, Exception) as e:
+                print(f"ffmpeg stream copy failed: {e}")
+                # Try mkvmerge as fallback (good for WebM segments)
+                try:
+                    # mkvmerge handles WebM segments properly and maintains metadata
+                    mkvmerge_cmd = ['mkvmerge', '-o', output_path, '--webm'] + chunk_files
+                    result = subprocess.run(
+                        mkvmerge_cmd,
+                        check=True,
+                        timeout=600,
+                        capture_output=True,
+                        text=True
+                    )
+                    print("MKVMERGE CMD:\n", mkvmerge_cmd)
+                    print("OUT:\n", result.stdout)
+                    print("ERR:\n", result.stderr)
+                    print("END MKVMERGE")
+                    
+                    if os.path.exists(output_path) and os.path.getsize(output_path) > 1000:
+                        metadata['final_video'] = 'final_video.webm'
+                        metadata['concatenation_method'] = 'mkvmerge'
+                        with open(metadata_path, 'w') as f:
+                            json.dump(metadata, f, indent=2)
+                        print(f"Successfully concatenated video using mkvmerge")
+                    else:
+                        raise Exception("mkvmerge produced invalid file")
+                except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired, Exception) as e:
+                    print(f"mkvmerge failed: {e}")
+                    # Last resort: ffmpeg with re-encoding (slower but most reliable)
+                    try:
+                        result = subprocess.run([
+                            'ffmpeg', '-f', 'concat', '-safe', '0',
+                            '-i', file_list_path,
+                            '-c:v', 'libvpx-vp9', '-c:a', 'libopus',
+                            '-b:v', '2M', '-b:a', '128k',
+                            '-fflags', '+genpts',  # Generate presentation timestamps
+                            output_path
+                        ], check=True, timeout=600, capture_output=True, text=True)
+                        
+                        if os.path.exists(output_path) and os.path.getsize(output_path) > 1000:
+                            metadata['final_video'] = 'final_video.webm'
+                            metadata['concatenation_method'] = 'ffmpeg_reencode'
+                            with open(metadata_path, 'w') as f:
+                                json.dump(metadata, f, indent=2)
+                            print(f"Successfully concatenated video using ffmpeg re-encode")
+                        else:
+                            raise Exception("ffmpeg re-encode produced invalid file")
+                    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired, Exception) as e:
+                        print(f"All concatenation methods failed: {e}")
+                        # All methods failed, but chunks are still saved
+        except Exception as e:
+            print(f"Error concatenating video (non-critical): {e}")
+        
+
+        times = chop_to_points(output_path, match_id, metadata['start_time'])
+
+        # Store point timestamps in metadata
+        if times:
+            metadata['point_timestamps'] = times
+            with open(metadata_path, 'w') as f:
+                json.dump(metadata, f, indent=2)
+
+        # subprocess.run('rm', '-rf', chunk_dir)
+        return jsonify({
+            'success': True,
+            'session_id': session_id,
+            'message': 'Recording finalized successfully'
+        })
+    except Exception as e:
+        print(f"Error finalizing recording: {e}")
+        return jsonify({'error': str(e)}), 500
+
+def chop_to_points(output_path, match_id, start_timestamp, buffer=3):
+    from models import Point
+    import subprocess
+    pts = Point.query.filter_by(match=match_id).order_by(Point.stamp.asc()).all()
+    start_time = datetime.fromisoformat(start_timestamp.replace('Z', '+00:00'))
+    times = [
+        (max(0, (pt.stamp-start_time).total_seconds()-buffer),
+         max(0, (pt.end_stamp-start_time).total_seconds()+buffer))
+    for pt in pts if pt.end_stamp]
+
+    make_concatenated_video(output_path, times, 'final_video_clipped.webm')
+    subprocess.run('mv', 'final_video_clipped.webm', output_path)
+    
+    new_times = [times[0][0]]
+    for i in range(1, len(times)):
+        new_times.append(new_times[-1]+times[i][0]-times[i-1][0])
+    return new_times
+
+
+def make_concatenated_video(
+    input_path: str,
+    clips: list[tuple[float, float]],
+    output_path: str,
+    video_codec="libvpx-vp9",
+    audio_codec="libvorbis"
+):
+    """
+    Concatenate multiple clips (start, end) from a single source video
+    into one video using FFmpeg filter_complex trim/atrim + concat.
+
+    :param input_path: path to the input .webm (or any video)
+    :param clips: list of (start, end) float seconds
+    :param output_path: final concatenated video file
+    """
+    import subprocess
+
+    filter_lines = []
+    v_labels = []
+    a_labels = []
+
+    for idx, (start, end) in enumerate(clips):
+        v_label = f"v{idx}"
+        a_label = f"a{idx}"
+
+        # Video trim
+        filter_lines.append(
+            f"[0:v]trim=start={start}:end={end},setpts=PTS-STARTPTS[{v_label}]"
+        )
+
+        # Audio trim
+        filter_lines.append(
+            f"[0:a]atrim=start={start}:end={end},asetpts=PTS-STARTPTS[{a_label}]"
+        )
+
+        v_labels.append(f"[{v_label}]")
+        a_labels.append(f"[{a_label}]")
+
+    # Build concat filter line
+    concat_line = (
+        "".join(v_labels + a_labels)
+        + f"concat=n={len(clips)}:v=1:a=1[outv][outa]"
+    )
+
+    filter_lines.append(concat_line)
+
+    filter_complex = "; ".join(filter_lines)
+
+    # Construct FFmpeg command
+    cmd = [
+        "ffmpeg",
+        "-i", input_path,
+        "-filter_complex", filter_complex,
+        "-map", "[outv]",
+        "-map", "[outa]",
+        "-c:v", video_codec,
+        "-c:a", audio_codec,
+        "-y",  # overwrite output silently
+        output_path,
+    ]
+
+    subprocess.run(cmd, check=True)
+
 @bp.route('/<tournament_url>/update-settings', methods=['POST'])
 @login_required
 def update_tournament_settings(tournament_url):

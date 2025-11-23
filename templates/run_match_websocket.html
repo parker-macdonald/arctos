@@ -284,7 +284,7 @@
                             </div>
                             <div class="row mt-3">
                                 <div class="col-12">
-                                    <button id="point-button" class="btn btn-success btn-lg w-100 mobile-sticky-button" onclick="startEndPoint()">
+                                    <button id="point-button" class="btn btn-success btn-lg w-100 mobile-sticky-button" onclick="startEndPoint()" disabled>
                                         Start Point
                                     </button>
                                 </div>
@@ -374,7 +374,7 @@
 <!-- Mobile sticky buttons wrapper (outside container to avoid transform issues) -->
 <div class="mobile-button-wrapper d-md-none">
     <button id="finalize-match-btn-mobile" class="btn btn-warning btn-lg" onclick="endMatch()">Finalize Match</button>
-    <button id="point-button-mobile" class="btn btn-success btn-lg mobile-sticky-button" onclick="startEndPoint()">Start Point</button>
+    <button id="point-button-mobile" class="btn btn-success btn-lg mobile-sticky-button" onclick="startEndPoint()" disabled>Start Point</button>
 </div>
 
 <!-- Removed Add Note Modal -->
@@ -467,10 +467,11 @@ function checkForUnfinishedPoint() {
                     end_stamp: latestPoint.end_stamp
                 };
                 
-                // Update button to "End Point"
+                // Update button to "End Point" and enable it
                 updatePointButtons('End Point');
                 getPointButtons().forEach(btn => {
                     btn.className = 'btn btn-danger btn-lg mobile-sticky-button';
+                    btn.disabled = false;
                 });
                 console.log('Button updated to End Point');
                 
@@ -488,14 +489,32 @@ function checkForUnfinishedPoint() {
                     console.log('Point already exists in table');
                 }
             } else {
-                console.log('Latest point is finished, no action needed');
+                console.log('Latest point is finished, enabling Start Point button');
+                // No in-progress point, enable the Start Point button
+                updatePointButtons('Start Point');
+                getPointButtons().forEach(btn => {
+                    btn.className = 'btn btn-success btn-lg mobile-sticky-button';
+                    btn.disabled = false;
+                });
             }
         } else {
-            console.log('No points found or error in response');
+            console.log('No points found or error in response, enabling Start Point button');
+            // No points at all, enable the Start Point button
+            updatePointButtons('Start Point');
+            getPointButtons().forEach(btn => {
+                btn.className = 'btn btn-success btn-lg mobile-sticky-button';
+                btn.disabled = false;
+            });
         }
     })
     .catch(error => {
         console.error('Error checking for unfinished points:', error);
+        // On error, enable the button anyway (better to allow than block)
+        updatePointButtons('Start Point');
+        getPointButtons().forEach(btn => {
+            btn.className = 'btn btn-success btn-lg mobile-sticky-button';
+            btn.disabled = false;
+        });
     });
 }
 
@@ -647,6 +666,12 @@ async function startEndPoint() {
     if (buttons.length === 0) return;
     const button = buttons[0]; // Use first button to check state
     
+    // Prevent action if button is disabled (waiting for point status check)
+    if (button.disabled) {
+        console.log('Button is disabled, waiting for point status check...');
+        return;
+    }
+    
     if (button.textContent.trim() === 'Start Point') {
         // Start a new point - get set number from last point
         let defaultSetNumber = 1;
@@ -694,6 +719,7 @@ function handlePointAdded(data) {
     updatePointButtons('End Point');
     getPointButtons().forEach(btn => {
         btn.className = 'btn btn-danger btn-lg w-100 mobile-sticky-button';
+        btn.disabled = false;
     });
     
     addPointToTable(data);
@@ -709,6 +735,7 @@ function handlePointUpdated(data) {
             updatePointButtons('Start Point');
             getPointButtons().forEach(btn => {
                 btn.className = 'btn btn-success btn-lg mobile-sticky-button';
+                btn.disabled = false;
             });
             currentPoint = null;
         }
@@ -1289,6 +1316,8 @@ function checkForInProgressPoint() {
             const stonesCell = row.querySelector('[id^="stones-"]');
             if (stonesCell) {
                 const endStamp = stonesCell.getAttribute('data-end');
+                console.log("HAS IN PROGRESS POINT:", stonesCell);
+                console.log("END STAMP:", endStamp);
                 if (!endStamp || endStamp === '') {
                     hasInProgressPoint = true;
                     break;
@@ -1717,19 +1746,59 @@ function computeStonesElapsed(startIso, endIso) {
 document.addEventListener('DOMContentLoaded', function() {
     console.log('DOM loaded, checking for unfinished points...');
     
-    // Verify table exists
+    // First, check server-rendered points for any in-progress points
     const tbody = document.getElementById('points-table-body');
+    let hasInProgressPoint = false;
+    
     if (tbody) {
         console.log('Points table body found on DOM load');
+        // Check if any server-rendered point is in progress (no end_stamp)
+        const rows = tbody.querySelectorAll('tr[id^="point-row-"]');
+        for (let row of rows) {
+            const stonesCell = row.querySelector('[id^="stones-"]');
+            if (stonesCell) {
+                const endStamp = stonesCell.getAttribute('data-end');
+                if (!endStamp || endStamp === '') {
+                    hasInProgressPoint = true;
+                    console.log('Found in-progress point in server-rendered data');
+                    // Set current point reference from the row
+                    const pointId = row.id.replace('point-row-', '');
+                    const setDisplay = row.querySelector('.set-number-display');
+                    const setNumber = setDisplay ? parseInt(setDisplay.textContent) || 1 : 1;
+                    const stamp = stonesCell.getAttribute('data-stamp');
+                    
+                    currentPoint = {
+                        uuid: pointId,
+                        set_number: setNumber,
+                        stamp: stamp,
+                        end_stamp: null
+                    };
+                    
+                    // Update button to "End Point" and enable it
+                    updatePointButtons('End Point');
+                    getPointButtons().forEach(btn => {
+                        btn.className = 'btn btn-danger btn-lg mobile-sticky-button';
+                        btn.disabled = false;
+                    });
+                    break;
+                }
+            }
+        }
     } else {
         console.error('Points table body NOT found on DOM load');
     }
     
-    // Check for unfinished points immediately (fallback in case WebSocket is slow)
-    setTimeout(() => {
-        console.log('Fallback check for unfinished points');
+    // If no in-progress point found in server data, check with server immediately
+    if (!hasInProgressPoint) {
+        console.log('No in-progress point in server-rendered data, checking server...');
         checkForUnfinishedPoint();
-    }, 1000);
+    } else {
+        // Still check server to ensure consistency, but button is already set
+        setTimeout(() => {
+            console.log('Verification check for unfinished points');
+            checkForUnfinishedPoint();
+        }, 1000);
+    }
     
     // Load initial notes
     fetch('/{{ tournament.url }}/get-notes?match_id={{ match.uuid }}')

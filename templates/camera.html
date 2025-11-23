@@ -1,0 +1,1238 @@
+{% extends "base.html" %}
+
+{% block title %}Camera - {{ field_name }}{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="row">
+        <div class="col-12">
+            <h1>Camera Recording - {{ field_name }}</h1>
+            <p class="lead">Tournament: {{ tournament.name }}</p>
+        </div>
+    </div>
+
+    <div class="row mt-4">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-body">
+                    <div class="mb-3">
+                        <label for="camera-id" class="form-label">Camera ID:</label>
+                        <input type="text" class="form-control" id="camera-id" placeholder="Enter camera identifier (e.g., camera-1)">
+                        <small class="form-text text-muted">This ID will be used to name recording sessions and is saved in your browser.</small>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="bitrate" class="form-label">Video Bitrate (Mbps):</label>
+                        <input type="number" class="form-control" id="bitrate" placeholder="2.5" min="0.1" max="50" step="0.1">
+                        <small class="form-text text-muted">Video recording bitrate in megabits per second. Default: 2.5 Mbps. Saved in your browser.</small>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="show-scoreboard-overlay">
+                            <label class="form-check-label" for="show-scoreboard-overlay">
+                                Show scoreboard overlay on video
+                            </label>
+                        </div>
+                        <small class="form-text text-muted">Overlay the live scoreboard on the recorded video. Saved in your browser.</small>
+                    </div>
+                    
+                    <div id="overlay-settings" style="display: none;">
+                        <div class="row mb-3">
+                            <div class="col-md-4">
+                                <label for="overlay-x" class="form-label">X Position (px):</label>
+                                <input type="number" class="form-control form-control-sm" id="overlay-x" value="10" min="0">
+                            </div>
+                            <div class="col-md-4">
+                                <label for="overlay-y" class="form-label">Y Position (px):</label>
+                                <input type="number" class="form-control form-control-sm" id="overlay-y" value="10" min="0">
+                            </div>
+                            <div class="col-md-4">
+                                <label for="overlay-width" class="form-label">Width (px):</label>
+                                <input type="number" class="form-control form-control-sm" id="overlay-width" value="2500" min="100">
+                            </div>
+                        </div>
+                        <div class="row mb-3">
+                            <div class="col-md-12">
+                                <label for="overlay-scale" class="form-label">Scale (%):</label>
+                                <input type="number" class="form-control form-control-sm" id="overlay-scale" value="100" min="10" max="500" step="1">
+                                <small class="form-text text-muted">Scale the overlay size as a percentage (100% = normal size).</small>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="mb-3" id="camera-select-container" style="display: none;">
+                        <label for="camera-select" class="form-label">Select Camera:</label>
+                        <select class="form-select" id="camera-select">
+                            <option value="">Loading cameras...</option>
+                        </select>
+                    </div>
+                    
+                    <div id="status" class="alert alert-info">
+                        <i class="fas fa-spinner fa-spin"></i> Checking for active match...
+                    </div>
+                    
+                    <div id="video-container" style="display: none;">
+                        <div class="mb-2" style="position: relative; display: inline-block;">
+                            <video id="preview" autoplay muted playsinline style="width: 100%; max-width: 640px; border: 2px solid #333; background: #000; position: relative;"></video>
+                            <iframe id="scoreboard-overlay" 
+                                    style="position: absolute; top: 10px; left: 10px; display: none; z-index: 1000; pointer-events: none; border: none; background: transparent; width: 2500px; height: auto; min-width: 600px; transform-origin: top left;"
+                                    src=""
+                                    scrolling="no">
+                            </iframe>
+                        </div>
+                        <div class="mt-2">
+                            <div id="recording-status" class="alert alert-danger" style="display: none;">
+                                <i class="fas fa-circle text-danger"></i> Recording...
+                                <span id="recording-time">00:00</span>
+                            </div>
+                            <div id="upload-status" class="alert alert-info" style="display: none;">
+                                <i class="fas fa-upload"></i> Uploading video chunks...
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div id="no-match" class="alert alert-secondary" style="display: none;">
+                        <i class="fas fa-info-circle"></i> No active match on this field. Waiting for match to start...
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+const tournamentUrl = '{{ tournament.url }}';
+const fieldName = '{{ field_name }}';
+
+let mediaRecorder = null;
+let recordedChunks = [];
+let recordingStartTime = null;
+let matchId = null;
+let recordingSessionId = null;
+let isRecording = false;
+let recordingTimer = null;
+let maxRecordingDuration = 20 * 60 * 1000; // 20 minutes in milliseconds
+let pollInterval = null;
+let reconnectTimeout = null;
+let chunkUploadInterval = null;
+let lastUploadedChunkIndex = -1;
+let currentStream = null; // Keep stream active
+let availableCameras = [];
+let selectedCameraId = null;
+let scoreboardOverlayInterval = null;
+let showScoreboardOverlay = false;
+let canvasStream = null; // Canvas stream for compositing video + overlay
+let canvasContext = null;
+let canvasElement = null;
+let animationFrameId = null;
+let currentScoreboardData = null; // Store current scoreboard data for canvas rendering
+let overlaySettings = {
+    x: 10,
+    y: 10,
+    width: 2500,
+    height: "auto",
+    scale: 100
+};
+let cachedOverlayCanvas = null; // Cached canvas of the iframe overlay
+let lastOverlayCaptureTime = 0;
+const OVERLAY_CAPTURE_INTERVAL = 200; // Capture iframe every 200ms
+
+// Get camera ID from localStorage or input
+function getCameraId() {
+    const input = document.getElementById('camera-id');
+    const cameraId = input.value.trim();
+    if (cameraId) {
+        localStorage.setItem(`camera_id_${tournamentUrl}_${fieldName}`, cameraId);
+        return cameraId;
+    }
+    // Try to load from localStorage
+    const saved = localStorage.getItem(`camera_id_${tournamentUrl}_${fieldName}`);
+    if (saved) {
+        input.value = saved;
+        return saved;
+    }
+    return 'camera';
+}
+
+// Get bitrate from localStorage or input (returns bits per second)
+function getBitrate() {
+    const input = document.getElementById('bitrate');
+    const bitrateMbps = parseFloat(input.value);
+    
+    if (!isNaN(bitrateMbps) && bitrateMbps > 0) {
+        const bitsPerSecond = bitrateMbps * 1000000; // Convert Mbps to bps
+        localStorage.setItem(`bitrate_${tournamentUrl}_${fieldName}`, bitrateMbps.toString());
+        return bitsPerSecond;
+    }
+    
+    // Try to load from localStorage
+    const saved = localStorage.getItem(`bitrate_${tournamentUrl}_${fieldName}`);
+    if (saved) {
+        const savedMbps = parseFloat(saved);
+        if (!isNaN(savedMbps) && savedMbps > 0) {
+            input.value = savedMbps;
+            return savedMbps * 1000000; // Convert Mbps to bps
+        }
+    }
+    
+    // Default: 2.5 Mbps
+    input.value = '2.5';
+    return 2500000;
+}
+
+// Generate unique session ID for this recording session
+function generateSessionId() {
+    const cameraId = getCameraId();
+    const timestamp = Date.now();
+    const random = Math.random().toString(36).substr(2, 9);
+    return `${cameraId}_${timestamp}_${random}`;
+}
+
+// Format time as MM:SS
+function formatTime(ms) {
+    const totalSeconds = Math.floor(ms / 1000);
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+}
+
+// Update recording time display
+function updateRecordingTime() {
+    if (!recordingStartTime) return;
+    const elapsed = Date.now() - recordingStartTime;
+    document.getElementById('recording-time').textContent = formatTime(elapsed);
+}
+
+// Check if field has active match
+async function checkMatchStatus() {
+    try {
+        // Include current match_id if we're recording to track that specific match
+        let url = `/api/camera/match-status?tournament=${tournamentUrl}&field=${encodeURIComponent(fieldName)}`;
+        if (matchId && isRecording) {
+            url += `&current_match_id=${matchId}`;
+        }
+        
+        const response = await fetch(url);
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        const data = await response.json();
+        return data;
+    } catch (error) {
+        console.error('Error checking match status:', error);
+        return { hasActiveMatch: false, error: error.message };
+    }
+}
+
+// Check if getUserMedia is available
+function checkMediaSupport() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        // Try legacy API
+        navigator.getUserMedia = navigator.getUserMedia || 
+                                  navigator.webkitGetUserMedia || 
+                                  navigator.mozGetUserMedia || 
+                                  navigator.msGetUserMedia;
+        
+        if (!navigator.getUserMedia) {
+            return { supported: false, error: 'getUserMedia is not supported in this browser' };
+        }
+        
+        // Wrap legacy API in Promise
+        navigator.mediaDevices = navigator.mediaDevices || {};
+        navigator.mediaDevices.getUserMedia = function(constraints) {
+            return new Promise((resolve, reject) => {
+                navigator.getUserMedia(constraints, resolve, reject);
+            });
+        };
+    }
+    
+    // Check if we're in a secure context
+    if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
+        return { supported: false, error: 'Camera access requires HTTPS (or localhost)' };
+    }
+    
+    return { supported: true };
+}
+
+// Get available cameras
+async function getAvailableCameras() {
+    try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        return devices.filter(device => device.kind === 'videoinput');
+    } catch (error) {
+        console.error('Error enumerating devices:', error);
+        return [];
+    }
+}
+
+// Populate camera select dropdown
+async function populateCameraSelect() {
+    const select = document.getElementById('camera-select');
+    const container = document.getElementById('camera-select-container');
+    
+    availableCameras = await getAvailableCameras();
+    
+    if (availableCameras.length === 0) {
+        container.style.display = 'none';
+        return;
+    }
+    
+    container.style.display = 'block';
+    select.innerHTML = '<option value="">Select a camera...</option>';
+    
+    availableCameras.forEach((device, index) => {
+        const option = document.createElement('option');
+        option.value = device.deviceId;
+        option.textContent = device.label || `Camera ${index + 1}`;
+        select.appendChild(option);
+    });
+    
+    // Load saved selection (or use current selectedCameraId if already set)
+    if (!selectedCameraId) {
+        const saved = localStorage.getItem(`selected_camera_${tournamentUrl}_${fieldName}`);
+        if (saved && availableCameras.some(cam => cam.deviceId === saved)) {
+            selectedCameraId = saved;
+        } else if (availableCameras.length > 0) {
+            // If no saved selection or saved is invalid, use first camera
+            selectedCameraId = availableCameras[0].deviceId;
+        }
+    }
+    
+    // Update dropdown to reflect current selection
+    if (selectedCameraId) {
+        select.value = selectedCameraId;
+    }
+    
+    // Save selection on change
+    select.addEventListener('change', (e) => {
+        selectedCameraId = e.target.value;
+        localStorage.setItem(`selected_camera_${tournamentUrl}_${fieldName}`, selectedCameraId);
+        // Restart stream with new camera
+        if (currentStream) {
+            currentStream.getTracks().forEach(track => track.stop());
+            currentStream = null;
+        }
+        initializeCamera();
+    });
+}
+
+// Initialize camera stream (request permission once)
+async function initializeCamera() {
+    if (currentStream) {
+        // Stop existing stream
+        currentStream.getTracks().forEach(track => track.stop());
+        currentStream = null;
+    }
+    
+    try {
+        // First, get available cameras and load saved selection if not already done
+        if (availableCameras.length === 0) {
+            availableCameras = await getAvailableCameras();
+            // Load saved selection before initializing
+            const saved = localStorage.getItem(`selected_camera_${tournamentUrl}_${fieldName}`);
+            if (saved && availableCameras.some(cam => cam.deviceId === saved)) {
+                selectedCameraId = saved;
+            } else if (availableCameras.length > 0) {
+                // If no saved selection or saved is invalid, use first camera
+                selectedCameraId = availableCameras[0].deviceId;
+            }
+        }
+        
+        const constraints = {
+            video: {
+                width: { ideal: 1280 },
+                height: { ideal: 720 },
+                deviceId: selectedCameraId ? { exact: selectedCameraId } : undefined
+            },
+            audio: true
+        };
+        
+        currentStream = await navigator.mediaDevices.getUserMedia(constraints);
+        
+        // Show preview immediately
+        const preview = document.getElementById('preview');
+        preview.srcObject = currentStream;
+        document.getElementById('video-container').style.display = 'block';
+        
+        // Populate camera list after permission granted (this will update the dropdown UI)
+        await populateCameraSelect();
+        
+        // Update status
+        const statusEl = document.getElementById('status');
+        statusEl.className = 'alert alert-success';
+        statusEl.innerHTML = '<i class="fas fa-check-circle"></i> Camera ready. Waiting for match to start...';
+        
+        return true;
+    } catch (error) {
+        console.error('Error initializing camera:', error);
+        let errorMessage = 'Failed to access camera: ';
+        
+        if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
+            errorMessage += 'Camera/microphone permission denied. Please allow access and refresh the page.';
+        } else if (error.name === 'NotFoundError' || error.name === 'DevicesNotFoundError') {
+            errorMessage += 'No camera/microphone found. Please connect a device.';
+        } else if (error.name === 'NotReadableError' || error.name === 'TrackStartError') {
+            errorMessage += 'Camera/microphone is already in use by another application.';
+        } else {
+            errorMessage += error.message || 'Unknown error occurred.';
+        }
+        
+        showError(errorMessage);
+        return false;
+    }
+}
+
+// Draw scoreboard overlay on canvas
+function drawScoreboardOnCanvas(ctx, x, y, width, height, data) {
+    // Always draw the overlay if enabled, even if there's no match
+    // The scoreboard page will show "between matches" state
+    
+    const padding = 12;
+    const rowHeight = 50;
+    const fontSize = 20;
+    const scoreFontSize = 28;
+    
+    // Draw background
+    ctx.save();
+    ctx.globalAlpha = 0.85;
+    ctx.fillStyle = '#000000';
+    ctx.fillRect(x, y, width, height);
+    ctx.restore();
+    
+    // If there's no match data, just draw a placeholder
+    if (!data || !data.has_active_match) {
+        ctx.fillStyle = '#ffffff';
+        ctx.font = `16px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`;
+        ctx.fillText('Waiting for match...', x + padding, y + padding + fontSize);
+        return;
+    }
+    
+    // Draw team 1 row
+    const team1Y = y + padding;
+    ctx.fillStyle = '#ffffff';
+    ctx.font = `600 ${fontSize}px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`;
+    ctx.fillText(data.team1_name || 'Team 1', x + padding, team1Y + fontSize);
+    
+    // Draw team 1 scores
+    if (data.scores_by_set && Object.keys(data.scores_by_set).length > 0) {
+        const sets = data.sets || Object.keys(data.scores_by_set).sort((a, b) => parseInt(a) - parseInt(b));
+        ctx.font = `bold ${scoreFontSize}px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`;
+        let scoreX = x + width - padding - (sets.length * 60);
+        sets.forEach((setNum, idx) => {
+            const setData = data.scores_by_set[setNum];
+            const score = setData.team1_score || 0;
+            if (idx > 0) {
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+                ctx.beginPath();
+                ctx.moveTo(scoreX - 5, team1Y);
+                ctx.lineTo(scoreX - 5, team1Y + rowHeight);
+                ctx.stroke();
+            }
+            ctx.fillText(score.toString(), scoreX, team1Y + scoreFontSize);
+            scoreX += 60;
+        });
+    } else {
+        ctx.font = `bold ${scoreFontSize}px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`;
+        ctx.fillText('-', x + width - padding - 30, team1Y + scoreFontSize);
+    }
+    
+    // Draw team 2 row
+    const team2Y = y + padding + rowHeight;
+    ctx.font = `600 ${fontSize}px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`;
+    ctx.fillText(data.team2_name || 'Team 2', x + padding, team2Y + fontSize);
+    
+    // Draw team 2 scores
+    if (data.scores_by_set && Object.keys(data.scores_by_set).length > 0) {
+        const sets = data.sets || Object.keys(data.scores_by_set).sort((a, b) => parseInt(a) - parseInt(b));
+        ctx.font = `bold ${scoreFontSize}px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`;
+        let scoreX = x + width - padding - (sets.length * 60);
+        sets.forEach((setNum, idx) => {
+            const setData = data.scores_by_set[setNum];
+            const score = setData.team2_score || 0;
+            if (idx > 0) {
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+                ctx.beginPath();
+                ctx.moveTo(scoreX - 5, team2Y);
+                ctx.lineTo(scoreX - 5, team2Y + rowHeight);
+                ctx.stroke();
+            }
+            ctx.fillText(score.toString(), scoreX, team2Y + scoreFontSize);
+            scoreX += 60;
+        });
+    } else {
+        ctx.font = `bold ${scoreFontSize}px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`;
+        ctx.fillText('-', x + width - padding - 30, team2Y + scoreFontSize);
+    }
+    
+    // Draw stones info if available
+    if (data.stones_info) {
+        const stonesY = team2Y + rowHeight + padding;
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+        ctx.beginPath();
+        ctx.moveTo(x + padding, stonesY);
+        ctx.lineTo(x + width - padding, stonesY);
+        ctx.stroke();
+        
+        ctx.font = `16px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`;
+        ctx.fillText('Stones Remaining:', x + padding, stonesY + 20);
+        
+        const stonesRemaining = data.stones_info.stones_remaining !== null && data.stones_info.stones_remaining !== undefined 
+            ? data.stones_info.stones_remaining 
+            : (data.stones_info.stones_per_set || '-');
+        ctx.font = `bold 20px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`;
+        ctx.fillText(stonesRemaining.toString(), x + width - padding - 30, stonesY + 20);
+    }
+}
+
+// Capture iframe overlay to canvas (async, updates cachedOverlayCanvas)
+async function captureOverlayIframe() {
+    if (!showScoreboardOverlay) {
+        cachedOverlayCanvas = null;
+        return;
+    }
+    
+    const overlay = document.getElementById('scoreboard-overlay');
+    if (!overlay || !overlay.contentWindow || !overlay.contentDocument) {
+        cachedOverlayCanvas = null;
+        return;
+    }
+    
+    try {
+        const iframeBody = overlay.contentDocument.body;
+        if (!iframeBody) {
+            cachedOverlayCanvas = null;
+            return;
+        }
+        
+        const settings = getOverlaySettings();
+        
+        // Calculate height - use "auto" as a reasonable default based on width
+        const height = (settings.height === 'auto' || settings.height === '') 
+            ? Math.round(settings.width * 0.2) // Approximate height for scoreboard
+            : settings.height;
+        
+        // Use html2canvas to capture the iframe content
+        if (typeof html2canvas !== 'undefined') {
+            const canvas = await html2canvas(iframeBody, {
+                width: settings.width,
+                height: height,
+                useCORS: true,
+                allowTaint: false,
+                scale: 1,
+                backgroundColor: null,
+                logging: false
+            });
+            cachedOverlayCanvas = canvas;
+            lastOverlayCaptureTime = Date.now();
+            console.log('Overlay captured successfully:', canvas.width, 'x', canvas.height);
+        } else {
+            console.warn('html2canvas not available');
+            cachedOverlayCanvas = null;
+        }
+    } catch (error) {
+        console.warn('Failed to capture iframe overlay:', error);
+        cachedOverlayCanvas = null;
+    }
+}
+
+// Setup canvas for compositing video + overlay
+function setupCanvasCompositing() {
+    if (!currentStream || !showScoreboardOverlay) {
+        return null;
+    }
+    
+    const video = document.getElementById('preview');
+    
+    if (!video) {
+        return null;
+    }
+    
+    // Create canvas
+    if (!canvasElement) {
+        canvasElement = document.createElement('canvas');
+        canvasContext = canvasElement.getContext('2d');
+    }
+    
+    // Function to update canvas size
+    function updateCanvasSize() {
+        if (video.videoWidth && video.videoHeight) {
+            canvasElement.width = video.videoWidth;
+            canvasElement.height = video.videoHeight;
+        } else {
+            canvasElement.width = 1280;
+            canvasElement.height = 720;
+        }
+    }
+    
+    // Initial size update
+    updateCanvasSize();
+    
+    // Update size when video metadata loads
+    video.addEventListener('loadedmetadata', updateCanvasSize);
+    
+    // Start capturing iframe overlay periodically
+    function captureOverlayLoop() {
+        const now = Date.now();
+        if (now - lastOverlayCaptureTime >= OVERLAY_CAPTURE_INTERVAL) {
+            captureOverlayIframe();
+        }
+        setTimeout(captureOverlayLoop, OVERLAY_CAPTURE_INTERVAL);
+    }
+    captureOverlayLoop(); // Start the capture loop
+    
+    // Function to draw frame
+    function drawFrame() {
+        if (!canvasContext || !video || video.readyState < 2) {
+            animationFrameId = requestAnimationFrame(drawFrame);
+            return;
+        }
+        
+        // Update canvas size if video size changed
+        if (canvasElement.width !== video.videoWidth || canvasElement.height !== video.videoHeight) {
+            updateCanvasSize();
+        }
+        
+        // Draw video frame
+        canvasContext.drawImage(video, 0, 0, canvasElement.width, canvasElement.height);
+        
+        // Draw scoreboard overlay if enabled (always show, even if no match)
+        if (showScoreboardOverlay) {
+            const settings = getOverlaySettings();
+            const scaleFactor = settings.scale / 100;
+            const videoClientWidth = video.clientWidth || canvasElement.width;
+            const videoClientHeight = video.clientHeight || canvasElement.height;
+            
+            // Calculate height - handle "auto" case
+            const actualHeight = (settings.height === 'auto' || settings.height === '') 
+                ? Math.round(settings.width * 0.2) // Approximate height for scoreboard
+                : settings.height;
+            
+            // Calculate the actual displayed size (after scale transform) in preview
+            const displayedWidth = settings.width * scaleFactor;
+            const displayedHeight = actualHeight * scaleFactor;
+            
+            // Scale positions and sizes from preview dimensions to canvas dimensions
+            const overlayX = settings.x * (canvasElement.width / videoClientWidth);
+            const overlayY = settings.y * (canvasElement.height / videoClientHeight);
+            const overlayWidth = displayedWidth * (canvasElement.width / videoClientWidth);
+            const overlayHeight = displayedHeight * (canvasElement.height / videoClientHeight);
+            
+            // Try to use cached iframe capture, otherwise fallback to manual drawing
+            if (cachedOverlayCanvas) {
+                try {
+                    canvasContext.drawImage(cachedOverlayCanvas, overlayX, overlayY, overlayWidth, overlayHeight);
+                } catch (e) {
+                    console.warn('Failed to draw cached overlay, using fallback:', e);
+                    drawScoreboardOnCanvas(canvasContext, overlayX, overlayY, overlayWidth, overlayHeight, currentScoreboardData || {});
+                }
+            } else {
+                // Fallback to manual drawing
+                if (Date.now() - lastOverlayCaptureTime > 1000) {
+                    // Only log if it's been more than a second since last attempt (to avoid spam)
+                    console.log('No cached overlay available, using manual drawing');
+                }
+                drawScoreboardOnCanvas(canvasContext, overlayX, overlayY, overlayWidth, overlayHeight, currentScoreboardData || {});
+            }
+        }
+        
+        animationFrameId = requestAnimationFrame(drawFrame);
+    }
+    
+    // Start drawing loop
+    drawFrame();
+    
+    // Get canvas stream
+    try {
+        canvasStream = canvasElement.captureStream(30); // 30 fps
+        // Add audio from original stream
+        const audioTracks = currentStream.getAudioTracks();
+        audioTracks.forEach(track => {
+            canvasStream.addTrack(track);
+        });
+        return canvasStream;
+    } catch (error) {
+        console.error('Error creating canvas stream:', error);
+        return null;
+    }
+}
+
+// Stop canvas compositing
+function stopCanvasCompositing() {
+    if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId);
+        animationFrameId = null;
+    }
+    if (canvasStream) {
+        canvasStream.getTracks().forEach(track => track.stop());
+        canvasStream = null;
+    }
+}
+
+// Start video recording
+async function startRecording() {
+    if (!currentStream) {
+        showError('Camera not initialized. Please refresh the page.');
+        return;
+    }
+    
+    try {
+        // Determine which stream to use
+        let recordingStream = currentStream;
+        if (showScoreboardOverlay) {
+            // Force immediate capture of overlay before starting recording
+            await captureOverlayIframe();
+            const compositeStream = setupCanvasCompositing();
+            if (compositeStream) {
+                recordingStream = compositeStream;
+            }
+        }
+        
+        // Create MediaRecorder with options for streaming
+        const bitrate = getBitrate(); // Get bitrate from input (in bits per second)
+        const options = {
+            mimeType: 'video/webm;codecs=vp8,opus',
+            videoBitsPerSecond: bitrate
+        };
+        
+        // Fallback if webm not supported
+        if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+            options.mimeType = 'video/webm';
+        }
+        
+        mediaRecorder = new MediaRecorder(recordingStream, options);
+        recordedChunks = [];
+        recordingStartTime = Date.now();
+        recordingSessionId = generateSessionId();
+        
+        // Handle data available events (chunks)
+        mediaRecorder.ondataavailable = (event) => {
+            if (event.data && event.data.size > 0) {
+                recordedChunks.push({
+                    data: event.data,
+                    timestamp: Date.now(),
+                    index: recordedChunks.length
+                });
+                
+                // Upload chunk immediately
+                uploadChunk(event.data, recordedChunks.length - 1);
+            }
+        };
+        
+        mediaRecorder.onstop = () => {
+            // Upload any remaining chunks
+            uploadRemainingChunks();
+            
+            // Finalize recording
+            finalizeRecording();
+        };
+        
+        mediaRecorder.onerror = (event) => {
+            console.error('MediaRecorder error:', event.error);
+            showError('Recording error: ' + event.error.message);
+        };
+        
+        // Start recording with timeslice (every 5 seconds)
+        mediaRecorder.start(5000);
+        isRecording = true;
+        
+        // Show recording status (video container should already be visible)
+        document.getElementById('recording-status').style.display = 'block';
+        document.getElementById('no-match').style.display = 'none';
+        
+        // Start scoreboard polling if overlay is enabled
+        if (showScoreboardOverlay) {
+            startScoreboardPolling();
+        }
+        
+        // Notify server that recording started
+        notifyRecordingStart();
+        
+        // Start timer
+        recordingTimer = setInterval(() => {
+            updateRecordingTime();
+            
+            // Check if max duration reached
+            const elapsed = Date.now() - recordingStartTime;
+            if (elapsed >= maxRecordingDuration) {
+                stopRecording();
+            }
+        }, 1000);
+        
+        console.log('Recording started');
+    } catch (error) {
+        console.error('Error starting recording:', error);
+        showError('Failed to start recording: ' + error.message);
+    }
+}
+
+// Notify server that a new recording session started
+async function notifyRecordingStart() {
+    try {
+        const response = await fetch('/api/camera/recording-started', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                tournament: tournamentUrl,
+                field: fieldName,
+                match_id: matchId,
+                session_id: recordingSessionId,
+                camera_id: getCameraId(),
+                start_timestamp: recordingStartTime
+            })
+        });
+        
+        if (!response.ok) {
+            console.error('Failed to notify server of recording start');
+        }
+    } catch (error) {
+        console.error('Error notifying server:', error);
+    }
+}
+
+// Stop video recording
+function stopRecording() {
+    if (mediaRecorder && isRecording) {
+        mediaRecorder.stop();
+        isRecording = false;
+        
+        // Stop timer
+        if (recordingTimer) {
+            clearInterval(recordingTimer);
+            recordingTimer = null;
+        }
+        
+        // Don't stop the stream - keep it active for next recording
+        // Only stop the MediaRecorder
+        
+        document.getElementById('recording-status').style.display = 'none';
+        
+        // Stop scoreboard polling
+        stopScoreboardPolling();
+        
+        // Stop canvas compositing
+        stopCanvasCompositing();
+        
+        console.log('Recording stopped');
+    }
+}
+
+// Upload a single chunk
+async function uploadChunk(chunkData, chunkIndex) {
+    try {
+        const formData = new FormData();
+        formData.append('chunk', chunkData, `chunk_${chunkIndex}.webm`);
+        formData.append('tournament', tournamentUrl);
+        formData.append('field', fieldName);
+        formData.append('match_id', matchId || '');
+        formData.append('session_id', recordingSessionId);
+        formData.append('chunk_index', chunkIndex);
+        formData.append('start_timestamp', recordingStartTime);
+        
+        const response = await fetch('/api/camera/upload-chunk', {
+            method: 'POST',
+            body: formData
+        });
+        
+        if (!response.ok) {
+            throw new Error(`Upload failed: ${response.status}`);
+        }
+        
+        const result = await response.json();
+        if (result.success) {
+            lastUploadedChunkIndex = Math.max(lastUploadedChunkIndex, chunkIndex);
+            console.log(`Chunk ${chunkIndex} uploaded successfully`);
+        }
+    } catch (error) {
+        console.error(`Error uploading chunk ${chunkIndex}:`, error);
+        // Don't throw - we'll retry in uploadRemainingChunks
+    }
+}
+
+// Upload remaining chunks (for retry on failure)
+async function uploadRemainingChunks() {
+    for (let i = lastUploadedChunkIndex + 1; i < recordedChunks.length; i++) {
+        await uploadChunk(recordedChunks[i].data, i);
+    }
+}
+
+// Finalize recording
+async function finalizeRecording() {
+    try {
+        const response = await fetch('/api/camera/finalize', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                tournament: tournamentUrl,
+                field: fieldName,
+                match_id: matchId,
+                session_id: recordingSessionId,
+                start_timestamp: recordingStartTime,
+                total_chunks: recordedChunks.length
+            })
+        });
+        
+        if (!response.ok) {
+            throw new Error(`Finalization failed: ${response.status}`);
+        }
+        
+        const result = await response.json();
+        console.log('Recording finalized:', result);
+    } catch (error) {
+        console.error('Error finalizing recording:', error);
+    }
+}
+
+// Get overlay settings from inputs
+function getOverlaySettings() {
+    const x = parseInt(document.getElementById('overlay-x').value) || 10;
+    const y = parseInt(document.getElementById('overlay-y').value) || 10;
+    const width = parseInt(document.getElementById('overlay-width').value) || 600;
+    const scale = parseFloat(document.getElementById('overlay-scale').value) || 30;
+    
+    return {
+        x: x,
+        y: y,
+        width: width,
+        height: width,
+        scale: scale
+    };
+}
+
+// Save overlay settings to localStorage
+function saveOverlaySettings() {
+    overlaySettings = getOverlaySettings();
+    localStorage.setItem(`overlay_settings_${tournamentUrl}_${fieldName}`, JSON.stringify(overlaySettings));
+}
+
+// Load overlay settings from localStorage
+function loadOverlaySettings() {
+    const saved = localStorage.getItem(`overlay_settings_${tournamentUrl}_${fieldName}`);
+    if (saved) {
+        try {
+            overlaySettings = JSON.parse(saved);
+            // Apply to inputs
+            document.getElementById('overlay-x').value = overlaySettings.x || 10;
+            document.getElementById('overlay-y').value = overlaySettings.y || 10;
+            document.getElementById('overlay-width').value = overlaySettings.width || 2500;
+            document.getElementById('overlay-scale').value = overlaySettings.scale || 30;
+        } catch (e) {
+            console.error('Error loading overlay settings:', e);
+        }
+    }
+}
+
+// Apply overlay settings to iframe
+function applyOverlaySettings() {
+    const overlay = document.getElementById('scoreboard-overlay');
+    if (!overlay) return;
+    
+    const settings = getOverlaySettings();
+    const scaleFactor = settings.scale / 100;
+    
+    // Use full width/height and scale with transform to match canvas behavior
+    overlay.style.left = settings.x + 'px';
+    overlay.style.top = settings.y + 'px';
+    overlay.style.width = settings.width + 'px';
+    overlay.style.minWidth = settings.width + 'px';
+    overlay.style.height = settings.height + 'px';
+    
+    // Apply transform for scaling (this matches how canvas scales)
+    overlay.style.transform = `scale(${scaleFactor})`;
+    overlay.style.transformOrigin = 'top left';
+}
+
+// Update scoreboard overlay visibility
+function updateScoreboardOverlayVisibility() {
+    const overlay = document.getElementById('scoreboard-overlay');
+    if (overlay) {
+        if (showScoreboardOverlay) {
+            // Set iframe src to load the actual scoreboard page
+            const scoreboardUrl = `/api/scoreboard?tournament=${encodeURIComponent(tournamentUrl)}&field=${encodeURIComponent(fieldName)}`;
+            overlay.src = scoreboardUrl;
+            overlay.style.display = 'block';
+            applyOverlaySettings();
+        } else {
+            overlay.style.display = 'none';
+            overlay.src = ''; // Clear src when hidden
+        }
+    }
+    
+    // Show/hide settings panel
+    const settingsPanel = document.getElementById('overlay-settings');
+    if (settingsPanel) {
+        settingsPanel.style.display = showScoreboardOverlay ? 'block' : 'none';
+    }
+}
+
+// Update scoreboard overlay with match data (for canvas rendering)
+function updateScoreboardOverlay(data) {
+    // Store data for canvas rendering
+    currentScoreboardData = data;
+    
+    // The iframe will automatically update via the scoreboard page's own polling
+    // We just need to ensure it's visible when enabled
+    if (showScoreboardOverlay) {
+        const overlay = document.getElementById('scoreboard-overlay');
+        if (overlay && overlay.style.display === 'none') {
+            updateScoreboardOverlayVisibility();
+        }
+    }
+}
+
+// Poll scoreboard state for overlay (for canvas rendering data)
+async function pollScoreboardState() {
+    if (!showScoreboardOverlay) {
+        // Hide overlay if disabled
+        const overlay = document.getElementById('scoreboard-overlay');
+        if (overlay) overlay.style.display = 'none';
+        return;
+    }
+    
+    try {
+        const response = await fetch(`/api/scoreboard-state?tournament=${tournamentUrl}&field=${encodeURIComponent(fieldName)}`);
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        const data = await response.json();
+        // Store data for canvas rendering (the iframe updates itself)
+        updateScoreboardOverlay(data);
+    } catch (error) {
+        console.error('Error polling scoreboard state:', error);
+        // Store empty data for canvas rendering
+        currentScoreboardData = { has_active_match: false };
+    }
+}
+
+// Start scoreboard polling
+function startScoreboardPolling() {
+    if (scoreboardOverlayInterval) {
+        clearInterval(scoreboardOverlayInterval);
+    }
+    // Poll immediately, then every 2 seconds
+    pollScoreboardState();
+    scoreboardOverlayInterval = setInterval(pollScoreboardState, 2000);
+}
+
+// Stop scoreboard polling
+function stopScoreboardPolling() {
+    if (scoreboardOverlayInterval) {
+        clearInterval(scoreboardOverlayInterval);
+        scoreboardOverlayInterval = null;
+    }
+    const overlay = document.getElementById('scoreboard-overlay');
+    if (overlay) {
+        overlay.style.display = 'none';
+    }
+}
+
+// Poll for match status
+async function pollMatchStatus() {
+    const data = await checkMatchStatus();
+    
+    if (data.error) {
+        // If endpoint is unreachable and we're recording, continue for max duration
+        if (isRecording) {
+            const elapsed = Date.now() - recordingStartTime;
+            if (elapsed >= maxRecordingDuration) {
+                stopRecording();
+                showError('Maximum recording duration reached (20 minutes). Recording stopped.');
+            } else {
+                // Show warning that endpoint is unreachable but continue recording
+                const statusEl = document.getElementById('status');
+                statusEl.className = 'alert alert-warning';
+                statusEl.innerHTML = `<i class="fas fa-exclamation-triangle"></i> Cannot reach server, but recording continues (max 20 min). Elapsed: ${formatTime(Date.now() - recordingStartTime)}`;
+            }
+        } else {
+            showError('Cannot reach server. Please check your connection.');
+        }
+        return;
+    }
+    
+    // Clear any error messages if we successfully connected
+    const statusEl = document.getElementById('status');
+    statusEl.className = 'alert alert-info';
+    statusEl.innerHTML = '<i class="fas fa-check-circle"></i> Connected';
+    
+    if (data.hasActiveMatch) {
+        // Match is active
+        if (!isRecording) {
+            // Start recording
+            matchId = data.match_id;
+            await startRecording();
+        } else if (matchId && matchId !== data.match_id) {
+            // Match changed (shouldn't happen, but handle it)
+            console.warn('Match ID changed during recording');
+            matchId = data.match_id;
+        }
+        // If already recording the same match, continue recording
+    } else {
+        // No active match or match completed
+        if (isRecording) {
+            // Only stop if we're tracking a specific match and it's completed
+            // or if there's no match at all and we weren't tracking one
+            if (data.reason === 'match_completed' || (matchId && data.status === 'COMPLETED')) {
+                // Match was finalized - stop recording
+                stopRecording();
+                matchId = null;
+                statusEl.className = 'alert alert-success';
+                statusEl.innerHTML = '<i class="fas fa-check-circle"></i> Match finalized. Recording stopped and saved.';
+            } else if (data.reason === 'match_not_found') {
+                // Match not found - stop recording
+                stopRecording();
+                matchId = null;
+                statusEl.className = 'alert alert-warning';
+                statusEl.innerHTML = '<i class="fas fa-exclamation-triangle"></i> Match not found. Recording stopped.';
+            }
+            // If reason is not match_completed, continue recording (might be temporary network issue)
+        } else {
+            // Show waiting message (but keep video preview visible)
+            document.getElementById('no-match').style.display = 'block';
+            statusEl.className = 'alert alert-info';
+            statusEl.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Waiting for match to start...';
+        }
+    }
+}
+
+// Handle reconnection
+function handleReconnection() {
+    if (isRecording) {
+        // Resume recording - upload any chunks that weren't uploaded
+        uploadRemainingChunks();
+        
+        // Continue polling
+        if (!pollInterval) {
+            pollInterval = setInterval(pollMatchStatus, 5000);
+        }
+    }
+}
+
+// Show error message
+function showError(message) {
+    const statusEl = document.getElementById('status');
+    statusEl.className = 'alert alert-danger';
+    statusEl.innerHTML = `<i class="fas fa-exclamation-triangle"></i> ${message}`;
+}
+
+// Initialize
+document.addEventListener('DOMContentLoaded', async () => {
+    // Load saved camera ID
+    const savedCameraId = localStorage.getItem(`camera_id_${tournamentUrl}_${fieldName}`);
+    if (savedCameraId) {
+        document.getElementById('camera-id').value = savedCameraId;
+    }
+    
+    // Save camera ID on input change
+    document.getElementById('camera-id').addEventListener('change', () => {
+        getCameraId(); // This saves it
+    });
+    
+    // Load saved bitrate
+    const savedBitrate = localStorage.getItem(`bitrate_${tournamentUrl}_${fieldName}`);
+    if (savedBitrate) {
+        document.getElementById('bitrate').value = savedBitrate;
+    } else {
+        // Set default
+        document.getElementById('bitrate').value = '2.5';
+    }
+    
+    // Save bitrate on input change
+    document.getElementById('bitrate').addEventListener('change', () => {
+        getBitrate(); // This saves it
+    });
+    
+    // Load saved scoreboard overlay preference
+    const savedOverlay = localStorage.getItem(`show_scoreboard_overlay_${tournamentUrl}_${fieldName}`);
+    if (savedOverlay === 'true') {
+        document.getElementById('show-scoreboard-overlay').checked = true;
+        showScoreboardOverlay = true;
+    }
+    
+    // Load overlay settings
+    loadOverlaySettings();
+    
+    // Save scoreboard overlay preference on change
+    document.getElementById('show-scoreboard-overlay').addEventListener('change', (e) => {
+        showScoreboardOverlay = e.target.checked;
+        localStorage.setItem(`show_scoreboard_overlay_${tournamentUrl}_${fieldName}`, showScoreboardOverlay.toString());
+        updateScoreboardOverlayVisibility();
+        if (showScoreboardOverlay) {
+            // Start polling immediately and show overlay
+            startScoreboardPolling();
+            // Also trigger an immediate poll to get current state
+            pollScoreboardState();
+        } else {
+            stopScoreboardPolling();
+        }
+    });
+    
+    // Save overlay settings on input change
+    ['overlay-x', 'overlay-y', 'overlay-width', 'overlay-scale'].forEach(id => {
+        const input = document.getElementById(id);
+        if (input) {
+            input.addEventListener('input', () => {
+                saveOverlaySettings();
+                applyOverlaySettings();
+            });
+            input.addEventListener('change', () => {
+                saveOverlaySettings();
+                applyOverlaySettings();
+            });
+        }
+    });
+    
+    // Check media support on page load
+    const support = checkMediaSupport();
+    if (!support.supported) {
+        showError('Camera access not available: ' + support.error + 
+                  '<br><br>Please ensure you are accessing this page over HTTPS (or localhost) and using a modern browser.');
+        return;
+    }
+    
+    // Initialize camera (request permission once)
+    const cameraInitialized = await initializeCamera();
+    if (!cameraInitialized) {
+        return;
+    }
+    
+    // Start polling
+    pollMatchStatus();
+    pollInterval = setInterval(pollMatchStatus, 5000);
+    
+    // Handle visibility change (reconnection)
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) {
+            handleReconnection();
+        }
+    });
+    
+    // Handle online/offline events
+    window.addEventListener('online', handleReconnection);
+    window.addEventListener('offline', () => {
+        console.log('Connection lost, will resume when reconnected');
+    });
+    
+    // Initialize scoreboard overlay if enabled
+    if (showScoreboardOverlay) {
+        updateScoreboardOverlayVisibility();
+        startScoreboardPolling();
+        // Trigger immediate poll to get current state
+        pollScoreboardState();
+    }
+    
+    // Cleanup on page unload
+    window.addEventListener('beforeunload', () => {
+        if (currentStream) {
+            currentStream.getTracks().forEach(track => track.stop());
+        }
+        stopScoreboardPolling();
+    });
+});
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+{% endblock %}
+

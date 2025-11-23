@@ -203,9 +203,6 @@
                     {% for set_num in sets %}
                     <td class="score-cell" id="team1-set-{{ set_num }}">{{ scores_by_set[set_num].team1_score }}</td>
                     {% endfor %}
-                    {% if not sets %}
-                    <td class="score-cell" style="color: rgba(255, 255, 255, 0.5);">-</td>
-                    {% endif %}
                 </tr>
                 <tr class="team-row">
                     <td class="team-cell">
@@ -219,9 +216,6 @@
                     {% for set_num in sets %}
                     <td class="score-cell" id="team2-set-{{ set_num }}">{{ scores_by_set[set_num].team2_score }}</td>
                     {% endfor %}
-                    {% if not sets %}
-                    <td class="score-cell" style="color: rgba(255, 255, 255, 0.5);">-</td>
-                    {% endif %}
                 </tr>
             </tbody>
         </table>

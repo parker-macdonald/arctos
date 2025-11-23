@@ -122,8 +122,6 @@ def create_app(config=None):
         return dict(url_for=url_for)
     
     # Initialize websocket handlers
-    from app.routes import websocket
-    websocket.init_websocket_handlers(socketio)
     
     # Error handlers
     @app.errorhandler(413)

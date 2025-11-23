@@ -392,84 +392,129 @@ def match_page(tournament_url):
 
     # Get all camera URLs and filter to only those active during the match
     camera_url = None
-    available_cameras = []  # List of dicts: {index, url, stream_start_time}
+    available_cameras = []  # List of dicts: {index, url, stream_start_time, type, video_path, camera_id, session_id}
     
+    from app.utils.camera_helpers import parse_camera_urls
+    from datetime import datetime, timezone
+    import json
+    import os
+    from flask import current_app
+    
+    # Get stream start times and recorded videos from match (check even if no field cameras)
+    stream_starts = {}
+    recorded_videos = []  # List of recorded video sessions
+    camera_urls = []
+    
+    if match.camera_stream_starts:
+        try:
+            stream_starts_data = json.loads(match.camera_stream_starts)
+            
+            # Parse the new format: camera_id -> recording info (single or list)
+            for camera_id, recording_data in stream_starts_data.items():
+                # Handle both single recording and list of recordings
+                recordings = recording_data if isinstance(recording_data, list) else [recording_data]
+                
+                for recording in recordings:
+                    # Check if this is a recorded video (has video_path)
+                    if isinstance(recording, dict) and 'video_path' in recording:
+                        video_path = recording.get('video_path', '')
+                        session_id = recording.get('session_id', '')
+                        start_timestamp = recording.get('start_timestamp')
+                        start_time = recording.get('start_time')
+                        
+                        # Check if video file exists
+                        if video_path:
+                            # Convert relative path to absolute
+                            video_full_path = os.path.join(
+                                current_app.root_path,
+                                '../static',
+                                video_path
+                            )
+                            
+                            if os.path.exists(video_full_path):
+                                # Load metadata.json to get point_timestamps
+                                point_timestamps = None
+                                video_dir = os.path.dirname(video_full_path)
+                                metadata_path = os.path.join(video_dir, 'metadata.json')
+                                if os.path.exists(metadata_path):
+                                    try:
+                                        with open(metadata_path, 'r') as f:
+                                            video_metadata = json.load(f)
+                                            point_timestamps = video_metadata.get('point_timestamps')
+                                    except (json.JSONDecodeError, IOError) as e:
+                                        print(f"Error reading metadata.json: {e}")
+                                
+                                recorded_videos.append({
+                                    'camera_id': camera_id,
+                                    'session_id': session_id,
+                                    'video_path': video_path,  # Keep relative path for URL
+                                    'start_timestamp': start_timestamp,
+                                    'start_time': start_time,
+                                    'point_timestamps': point_timestamps,
+                                    'type': 'recorded'
+                                })
+                    
+                    # Also handle old format (just stream start time string)
+                    elif isinstance(recording, str) or (isinstance(recording, dict) and 'start_time' in recording and 'video_path' not in recording):
+                        # This is the old format, skip for now (handled below)
+                        pass
+        except (json.JSONDecodeError, TypeError) as e:
+            print(f"Error parsing camera_stream_starts: {e}")
+            # Try old format
+            try:
+                # Old format: index -> stream_start_time string
+                stream_starts = stream_starts_data if isinstance(stream_starts_data, dict) else {}
+            except:
+                stream_starts = {}
+    
+    # Get YouTube cameras from field configuration (if field exists)
     if match.field:
         field_obj = Field.query.filter_by(event=tournament_url, name=match.field).first()
         if field_obj and field_obj.camera:
-            from app.utils.camera_helpers import parse_camera_urls
-            from datetime import datetime, timezone
-            import json
-            
             camera_urls = parse_camera_urls(field_obj.camera)
             
-            # Always include all cameras if field has cameras configured
-            # We'll filter later if needed for completed matches
+            # Include YouTube cameras from field configuration
             if camera_urls:
-                # Get stream start times from match (stored when match started)
-                stream_starts = {}
-                if match.camera_stream_starts:
-                    try:
-                        stream_starts = json.loads(match.camera_stream_starts)
-                    except (json.JSONDecodeError, TypeError):
-                        pass
-                
-                # Determine match time range
-                match_start = match.confirmed_start_time or match.nominal_start_time
-                match_end = match.completed_time or computed_end_time
-                
-                # Include all cameras from the field
-                # For completed matches, we'll filter by stream start time if available
-                # For matches that haven't started or are in progress, show all cameras
                 for idx, url in enumerate(camera_urls):
                     stream_start_str = stream_starts.get(str(idx))  # JSON keys are strings
                     
-                    # Always include all cameras - we'll filter by activity only if we have timing info
-                    # For completed matches with stream start times, prefer cameras that were active
-                    # But always include all cameras as fallback
-                    should_include = True
-                    preferred_stream_start = stream_start_str
+                    # For old format compatibility
+                    if not stream_start_str and isinstance(stream_starts, dict):
+                        stream_start_str = stream_starts.get(str(idx))
                     
-                    # For completed matches with stream start time, check if stream was active
-                    if match.status == 'COMPLETED' and stream_start_str and match_end:
-                        try:
-                            # Parse stream start time
-                            stream_start_str_clean = stream_start_str.replace('Z', '+00:00') if 'Z' in stream_start_str else stream_start_str
-                            stream_start = datetime.fromisoformat(stream_start_str_clean)
-                            if stream_start.tzinfo is None:
-                                stream_start = stream_start.replace(tzinfo=timezone.utc)
-                            
-                            # Check if stream was active during match
-                            if match_end.tzinfo is None:
-                                match_end_tz = match_end.replace(tzinfo=timezone.utc)
-                            else:
-                                match_end_tz = match_end
-                            
-                            # Stream must have started before or at match end to be considered "active"
-                            # But we still include it even if not active (might be useful for reference)
-                            if stream_start > match_end_tz:
-                                # Stream started after match ended - still include but note it
-                                pass
-                        except (ValueError, TypeError) as e:
-                            print(f"Error parsing stream start time for camera {idx}: {e}")
-                            # If parsing fails, still include the camera (without stream start time)
-                            preferred_stream_start = None
-                    
-                    # Always include the camera
-                    if should_include:
-                        available_cameras.append({
-                            'index': idx,
-                            'url': url,
-                            'stream_start_time': preferred_stream_start if preferred_stream_start else None
-                        })
+                    available_cameras.append({
+                        'index': idx,
+                        'url': url,
+                        'stream_start_time': stream_start_str if stream_start_str else None,
+                        'type': 'youtube'
+                    })
             
-            # Use first available camera for backward compatibility
-            if available_cameras:
-                camera_url = available_cameras[0]['url']
-            
-            # Debug: log camera availability
-            if not available_cameras and field_obj.camera:
-                print(f"Warning: No cameras available for match {match.uuid} on field {match.field}. Field has {len(camera_urls)} camera(s). Match status: {match.status}")
+    # Add recorded videos (only for completed matches)
+    if match.status == 'COMPLETED' and recorded_videos:
+        # Add recorded videos with unique indices (starting after YouTube cameras)
+        for idx, recording in enumerate(recorded_videos):
+            available_cameras.append({
+                'index': len(camera_urls) + idx,  # Continue indexing after YouTube cameras
+                'url': None,  # No YouTube URL for recorded videos
+                'stream_start_time': recording.get('start_time') or (datetime.fromtimestamp(int(recording.get('start_timestamp')) / 1000).isoformat() + 'Z' if recording.get('start_timestamp') else None),
+                'type': 'recorded',
+                'video_path': recording['video_path'],
+                'camera_id': recording.get('camera_id', 'unknown'),
+                'session_id': recording.get('session_id', ''),
+                'point_timestamps': recording.get('point_timestamps')
+            })
+    
+    # Use first available camera for backward compatibility
+    if available_cameras:
+        first_cam = available_cameras[0]
+        if first_cam.get('type') == 'youtube':
+            camera_url = first_cam['url']
+    
+    # Debug: log camera availability
+    if not available_cameras and match.field:
+        field_obj = Field.query.filter_by(event=tournament_url, name=match.field).first()
+        if field_obj and field_obj.camera:
+            print(f"Warning: No cameras available for match {match.uuid} on field {match.field}. Field has {len(camera_urls)} camera(s). Match status: {match.status}")
 
     return render_template('match_page_websocket.html', 
                          tournament=tournament, 

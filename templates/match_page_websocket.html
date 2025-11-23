@@ -430,8 +430,18 @@ window.MathJax = {
                     <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="camera-selector-dropdown">
                         {% for camera in available_cameras %}
                         <li>
-                            <a class="dropdown-item camera-option{% if loop.first %} active{% endif %}" href="#" data-camera-index="{{ camera.index }}" data-camera-url="{{ camera.url }}" data-stream-start="{{ camera.stream_start_time }}">
+                            <a class="dropdown-item camera-option{% if loop.first %} active{% endif %}" href="#" 
+                               data-camera-index="{{ camera.index }}" 
+                               data-camera-url="{{ camera.url if camera.url else '' }}" 
+                               data-stream-start="{{ camera.stream_start_time if camera.stream_start_time else '' }}"
+                               data-camera-type="{{ camera.type if camera.type else 'youtube' }}"
+                               data-video-path="{{ camera.video_path if camera.video_path else '' }}"
+                               data-camera-id="{{ camera.camera_id if camera.camera_id else '' }}">
+                                {% if camera.type == 'recorded' %}
+                                    Recorded: {{ camera.camera_id }} ({{ camera.session_id[:8] if camera.session_id else 'unknown' }})
+                                {% else %}
                                 Camera {{ camera.index + 1 }}
+                                {% endif %}
                             </a>
                         </li>
                         {% endfor %}
@@ -440,12 +450,18 @@ window.MathJax = {
                 {% endif %}
             </div>
             <div class="card-body">
-                <div id="youtube-stream-container">
+                <div id="video-stream-container">
                     <div id="youtube-stream-not-started" style="display: none;">
                         <p class="text-muted"><i class="fas fa-info-circle"></i> Stream not started</p>
                     </div>
                     <div id="youtube-player-container" style="display: none;">
                         <div id="youtube-player"></div>
+                    </div>
+                    <div id="local-video-container" style="display: none;">
+                        <video id="local-video-player" controls style="width: 100%; max-width: 100%;">
+                            Your browser does not support the video tag.
+                        </video>
+                    </div>
                         <div class="mt-3 d-flex align-items-center flex-wrap gap-2">
                             <span>Seek to point:</span>
                             <select id="points-dropdown" class="form-select form-select-sm" style="width: auto;">
@@ -454,7 +470,17 @@ window.MathJax = {
                             <button id="seek-go-btn" class="btn btn-sm btn-primary">Go (g)</button>
                             <button id="seek-prev-btn" class="btn btn-sm btn-secondary">Previous Point (k)</button>
                             <button id="seek-next-btn" class="btn btn-sm btn-secondary">Next Point (j)</button>
-                        </div>
+                        <span class="ms-2">Speed:</span>
+                        <select id="playback-speed" class="form-select form-select-sm" style="width: auto;">
+                            <option value="0.25">0.25x</option>
+                            <option value="0.5">0.5x</option>
+                            <option value="0.75">0.75x</option>
+                            <option value="1" selected>1x</option>
+                            <option value="1.25">1.25x</option>
+                            <option value="1.5">1.5x</option>
+                            <option value="1.75">1.75x</option>
+                            <option value="2">2x</option>
+                        </select>
                     </div>
                 </div>
             </div>
@@ -803,12 +829,13 @@ function updatePointsTable(points) {
     // Only update if points actually changed (not on every poll)
     {% if camera_url or available_cameras %}
     const dropdown = document.getElementById('points-dropdown');
-    if (dropdown && typeof initializePointsControls === 'function' && typeof streamStartTime !== 'undefined' && streamStartTime !== null) {
+    if (dropdown && typeof initializePointsControls === 'function') {
         // Check if points have actually changed by comparing count
         const newPointsCount = points.length;
         
         // Only update if the number of points changed AND user is not actively interacting with dropdown
         // Don't update if user is actively selecting from dropdown
+        // Note: streamStartTime is not required to populate the dropdown, only for seeking
         if ((typeof lastPointsCount === 'undefined' || lastPointsCount !== newPointsCount) && !isUserSelectingPoint) {
             try {
                 initializePointsControls();
@@ -937,13 +964,20 @@ let availableCameras = [
     {% for camera in available_cameras %}
     {
         index: {{ camera.index }},
-        url: '{{ camera.url }}',
-        streamStartTime: {% if camera.stream_start_time %}'{{ camera.stream_start_time }}'{% else %}null{% endif %}
+        url: {% if camera.url %}'{{ camera.url }}'{% else %}null{% endif %},
+        streamStartTime: {% if camera.stream_start_time %}'{{ camera.stream_start_time }}'{% else %}null{% endif %},
+        type: '{{ camera.type if camera.type else "youtube" }}',
+        videoPath: {% if camera.video_path %}'{{ camera.video_path }}'{% else %}null{% endif %},
+        cameraId: {% if camera.camera_id %}'{{ camera.camera_id }}'{% else %}null{% endif %},
+        sessionId: {% if camera.session_id %}'{{ camera.session_id }}'{% else %}null{% endif %},
+        pointTimestamps: {% if camera.point_timestamps %}{{ camera.point_timestamps|tojson }}{% else %}null{% endif %}
     }{% if not loop.last %},{% endif %}
     {% endfor %}
 ];
 let currentCameraIndex = {% if available_cameras and available_cameras|length > 0 %}{{ available_cameras[0].index }}{% else %}0{% endif %};
-let currentCameraUrl = {% if available_cameras and available_cameras|length > 0 %}'{{ available_cameras[0].url }}'{% elif camera_url %}'{{ camera_url }}'{% else %}null{% endif %};
+let currentCameraUrl = {% if available_cameras and available_cameras|length > 0 and available_cameras[0].url %}'{{ available_cameras[0].url }}'{% elif camera_url %}'{{ camera_url }}'{% else %}null{% endif %};
+let currentCameraType = {% if available_cameras and available_cameras|length > 0 %}'{{ available_cameras[0].type if available_cameras[0].type else "youtube" }}'{% else %}'youtube'{% endif %};
+let localVideoPlayer = null;
 let pointsData = [];
 let currentPointIndex = -1;
 
@@ -1066,48 +1100,65 @@ function initializeYouTubePlayer(cameraUrl = null) {
     }
 }
 
+// Initialize video player based on first available camera
+function initializeFirstCamera() {
+    if (availableCameras.length === 0) return;
+    
+    const firstCamera = availableCameras[0];
+    currentCameraType = firstCamera.type || 'youtube';
+    
+    if (firstCamera.type === 'recorded' && firstCamera.videoPath) {
+        // Initialize local video player
+        initializeLocalVideoPlayer(firstCamera.videoPath);
+        if (firstCamera.streamStartTime) {
+            streamStartTime = new Date(firstCamera.streamStartTime);
+            window.streamStartTimeRaw = firstCamera.streamStartTime;
+        }
+        // Initialize points controls for recorded video
+        if (typeof initializePointsControls === 'function') {
+            // Small delay to ensure DOM is ready
+            setTimeout(() => {
+                initializePointsControls();
+            }, 200);
+        }
+    } else if (firstCamera.url) {
+        // Initialize YouTube player
+        currentCameraUrl = firstCamera.url;
+        if (firstCamera.streamStartTime) {
+            let streamStartStr = firstCamera.streamStartTime;
+                if (!streamStartStr.match(/[zZ]|[\+\-]\d{2}:?\d{2}$/)) {
+                    streamStartStr = streamStartStr.replace(/\.\d+$/, '') + 'Z';
+                }
+                streamStartTime = new Date(streamStartStr);
+                window.streamStartTimeRaw = streamStartStr;
+                checkStreamStatus(currentCameraUrl);
+        } else {
+                checkStreamStatus(currentCameraUrl);
+        }
+            } else {
+        // No camera URL but cameras available - still initialize points controls
+        if (typeof initializePointsControls === 'function') {
+            setTimeout(() => {
+                initializePointsControls();
+            }, 200);
+        }
+    }
+}
+
 // YouTube API callback - only initialize if elements exist
 function onYouTubeIframeAPIReady() {
     // Wait a bit to ensure DOM is ready
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', function() {
             {% if camera_url or (available_cameras and available_cameras|length > 0) %}
-            // Use stream start time from first available camera if available
-            if (availableCameras.length > 0 && availableCameras[0].streamStartTime) {
-                let streamStartStr = availableCameras[0].streamStartTime;
-                if (!streamStartStr.match(/[zZ]|[\+\-]\d{2}:?\d{2}$/)) {
-                    streamStartStr = streamStartStr.replace(/\.\d+$/, '') + 'Z';
-                }
-                streamStartTime = new Date(streamStartStr);
-                window.streamStartTimeRaw = streamStartStr;
-                checkStreamStatus(currentCameraUrl);
-            } else if (availableCameras.length > 0 || currentCameraUrl) {
-                // Have cameras but no stored stream start time - check status which will fetch it
-                checkStreamStatus(currentCameraUrl);
-            } else {
-            initializeYouTubePlayer();
-            }
+            initializeFirstCamera();
             {% endif %}
         });
     } else {
         {% if camera_url or (available_cameras and available_cameras|length > 0) %}
         // Small delay to ensure elements are rendered
         setTimeout(function() {
-            // Use stream start time from first available camera if available
-            if (availableCameras.length > 0 && availableCameras[0].streamStartTime) {
-                let streamStartStr = availableCameras[0].streamStartTime;
-                if (!streamStartStr.match(/[zZ]|[\+\-]\d{2}:?\d{2}$/)) {
-                    streamStartStr = streamStartStr.replace(/\.\d+$/, '') + 'Z';
-                }
-                streamStartTime = new Date(streamStartStr);
-                window.streamStartTimeRaw = streamStartStr;
-                checkStreamStatus(currentCameraUrl);
-            } else if (availableCameras.length > 0 || currentCameraUrl) {
-                // Have cameras but no stored stream start time - check status which will fetch it
-                checkStreamStatus(currentCameraUrl);
-            } else {
-                initializeYouTubePlayer();
-            }
+            initializeFirstCamera();
         }, 100);
         {% endif %}
     }
@@ -1127,6 +1178,18 @@ function onPlayerReady(event) {
     // Player is ready, but we've already checked stream status on page load
     // This is just for confirmation
     console.log('YouTube player ready');
+    
+    // Restore playback speed preference
+    const playbackSpeedSelect = document.getElementById('playback-speed');
+    if (playbackSpeedSelect) {
+        const savedSpeed = localStorage.getItem('playback_speed') || '1';
+        playbackSpeedSelect.value = savedSpeed;
+        try {
+            event.target.setPlaybackRate(parseFloat(savedSpeed));
+        } catch (error) {
+            console.error('Error setting YouTube playback speed:', error);
+        }
+    }
     
     try {
         // Check if this is a live stream
@@ -1316,6 +1379,66 @@ async function checkStreamStatus(cameraUrl = null) {
 }
 
 // Handle camera selection
+// Initialize local video player
+function initializeLocalVideoPlayer(videoPath) {
+    const youtubeContainer = document.getElementById('youtube-player-container');
+    const localContainer = document.getElementById('local-video-container');
+    const notStartedDiv = document.getElementById('youtube-stream-not-started');
+    
+    // Hide YouTube player
+    if (youtubeContainer) youtubeContainer.style.display = 'none';
+    if (notStartedDiv) notStartedDiv.style.display = 'none';
+    
+    // Show local video container
+    if (localContainer) localContainer.style.display = 'block';
+    
+    // Get or create video element
+    let videoEl = document.getElementById('local-video-player');
+    if (!videoEl) {
+        videoEl = document.createElement('video');
+        videoEl.id = 'local-video-player';
+        videoEl.controls = true;
+        videoEl.style.width = '100%';
+        videoEl.style.maxWidth = '100%';
+        if (localContainer) localContainer.appendChild(videoEl);
+    }
+    
+    // Set video source (videoPath is already relative to static folder)
+    // Flask serves static files from /static/ URL prefix
+    videoEl.src = '/static/' + videoPath;
+    localVideoPlayer = videoEl;
+    
+    // Load video
+    videoEl.load();
+    
+    // Initialize points controls after video is loaded
+    if (typeof initializePointsControls === 'function') {
+        videoEl.addEventListener('loadedmetadata', function() {
+            initializePointsControls();
+            // Restore playback speed
+            const playbackSpeedSelect = document.getElementById('playback-speed');
+            if (playbackSpeedSelect) {
+                const savedSpeed = localStorage.getItem('playback_speed') || '1';
+                playbackSpeedSelect.value = savedSpeed;
+                videoEl.playbackRate = parseFloat(savedSpeed);
+            }
+        }, { once: true });
+        // Also try immediately in case video is already loaded
+        if (videoEl.readyState >= 1) {
+            setTimeout(() => {
+                initializePointsControls();
+                // Restore playback speed
+                const playbackSpeedSelect = document.getElementById('playback-speed');
+                if (playbackSpeedSelect) {
+                    const savedSpeed = localStorage.getItem('playback_speed') || '1';
+                    playbackSpeedSelect.value = savedSpeed;
+                    videoEl.playbackRate = parseFloat(savedSpeed);
+                }
+            }, 100);
+        }
+    }
+}
+
 function switchCamera(cameraIndex) {
     const camera = availableCameras.find(c => c.index === cameraIndex);
     if (!camera) {
@@ -1325,8 +1448,32 @@ function switchCamera(cameraIndex) {
     
     currentCameraIndex = cameraIndex;
     currentCameraUrl = camera.url;
+    currentCameraType = camera.type || 'youtube';
     
-    // Update stream start time from camera data
+    // Hide both players initially
+    const youtubeContainer = document.getElementById('youtube-player-container');
+    const localContainer = document.getElementById('local-video-container');
+    const notStartedDiv = document.getElementById('youtube-stream-not-started');
+    
+    if (youtubeContainer) youtubeContainer.style.display = 'none';
+    if (localContainer) localContainer.style.display = 'none';
+    if (notStartedDiv) notStartedDiv.style.display = 'none';
+    
+    if (camera.type === 'recorded' && camera.videoPath) {
+        // Switch to local video player
+        initializeLocalVideoPlayer(camera.videoPath);
+        streamStartTime = camera.streamStartTime ? new Date(camera.streamStartTime) : null;
+        if (camera.streamStartTime) {
+            window.streamStartTimeRaw = camera.streamStartTime;
+        }
+    } else {
+        // Switch to YouTube player
+        if (localContainer) localContainer.style.display = 'none';
+        localVideoPlayer = null;
+        
+        if (camera.url) {
+            currentCameraUrl = camera.url;
+            initializeYouTubePlayer(camera.url);
     if (camera.streamStartTime) {
         let streamStartStr = camera.streamStartTime;
         if (!streamStartStr.match(/[zZ]|[\+\-]\d{2}:?\d{2}$/)) {
@@ -1334,16 +1481,29 @@ function switchCamera(cameraIndex) {
         }
         streamStartTime = new Date(streamStartStr);
         window.streamStartTimeRaw = streamStartStr;
+            }
+            // Reinitialize player and check stream status
+            checkStreamStatus(camera.url);
+        } else {
+            // No URL, show not started message
+            if (notStartedDiv) notStartedDiv.style.display = 'block';
+        }
     }
     
     // Update dropdown button text
     const dropdownButton = document.getElementById('camera-selector-dropdown');
     if (dropdownButton) {
-        const buttonText = dropdownButton.querySelector('span') || dropdownButton;
-        if (buttonText.tagName === 'SPAN') {
-            buttonText.textContent = `Camera ${cameraIndex + 1}`;
+        let buttonText;
+        if (camera.type === 'recorded') {
+            buttonText = `Recorded: ${camera.cameraId || 'Camera'}`;
         } else {
-            dropdownButton.innerHTML = `<i class="fas fa-video"></i> Camera ${cameraIndex + 1}`;
+            buttonText = `Camera ${cameraIndex + 1}`;
+        }
+        const span = dropdownButton.querySelector('span');
+        if (span) {
+            span.textContent = buttonText;
+        } else {
+            dropdownButton.innerHTML = `<i class="fas fa-video"></i> ${buttonText}`;
         }
     }
     
@@ -1355,12 +1515,19 @@ function switchCamera(cameraIndex) {
         }
     });
     
-    // Reinitialize player and check stream status
-    checkStreamStatus(camera.url);
-    
     // Reinitialize points controls with new stream start time
     if (typeof initializePointsControls === 'function') {
         initializePointsControls();
+    }
+    
+    // Restore playback speed when switching cameras
+    const playbackSpeedSelect = document.getElementById('playback-speed');
+    if (playbackSpeedSelect) {
+        const savedSpeed = localStorage.getItem('playback_speed') || '1';
+        playbackSpeedSelect.value = savedSpeed;
+        setTimeout(() => {
+            setPlaybackSpeed(savedSpeed);
+        }, 300);
     }
 }
 
@@ -1389,13 +1556,21 @@ let lastPointsCount = 0; // Track number of points to avoid unnecessary updates
 let isUserSelectingPoint = false; // Track if user is actively selecting a point
 
 function initializePointsControls() {
-    // Only initialize if YouTube stream section exists
+    // Get the dropdown - it should exist if footage section is shown
     const dropdown = document.getElementById('points-dropdown');
-    if (!dropdown) return; // Exit early if dropdown doesn't exist
+    if (!dropdown) {
+        console.log('Points dropdown not found, skipping initialization');
+        return; // Exit early if dropdown doesn't exist
+    }
     
     // Get points from the page
     const pointsTable = document.getElementById('live-points-table');
-    if (!pointsTable) return;
+    if (!pointsTable) {
+        console.log('Points table not found, skipping initialization');
+        return;
+    }
+    
+    console.log('Initializing points controls, points table found');
     
     const rows = pointsTable.querySelectorAll('tr[id^="live-point-row-"]');
     pointsData = [];
@@ -1495,7 +1670,68 @@ function initializePointsControls() {
     }
 }
 
-function calculateSeekTime(pointStamp) {
+function calculateSeekTime(pointStamp, pointIndex) {
+    // For recorded videos with point_timestamps, use the stored timestamps directly
+    if (currentCameraType === 'recorded') {
+        const currentCamera = availableCameras.find(c => 
+            (c.videoPath && c.videoPath === (currentCameraUrl || '')) || 
+            (c.index === currentCameraIndex)
+        );
+        
+        if (currentCamera && currentCamera.pointTimestamps && Array.isArray(currentCamera.pointTimestamps)) {
+            // point_timestamps only includes completed points (with end_stamp)
+            // We need to find the index of this point among completed points only
+            // Count how many completed points come before this point
+            let completedPointIndex = 0;
+            for (let i = 0; i < pointIndex && i < pointsData.length; i++) {
+                const point = pointsData[i];
+                // Check if this point has an end_stamp (is completed)
+                // We can check this by looking at the table row
+                const row = document.getElementById(`live-point-row-${point.uuid}`);
+                if (row) {
+                    const stonesCell = row.querySelector('[id^="live-stones-"]');
+                    if (stonesCell) {
+                        const endStamp = stonesCell.getAttribute('data-end');
+                        if (endStamp && endStamp !== '') {
+                            completedPointIndex++;
+                        }
+                    }
+                }
+            }
+            
+            // Check if the current point is also completed
+            const currentRow = pointIndex < pointsData.length ? document.getElementById(`live-point-row-${pointsData[pointIndex].uuid}`) : null;
+            let isCurrentPointCompleted = false;
+            if (currentRow) {
+                const stonesCell = currentRow.querySelector('[id^="live-stones-"]');
+                if (stonesCell) {
+                    const endStamp = stonesCell.getAttribute('data-end');
+                    isCurrentPointCompleted = (endStamp && endStamp !== '');
+                }
+            }
+            
+            // Only use point_timestamps if the current point is completed
+            if (isCurrentPointCompleted && completedPointIndex < currentCamera.pointTimestamps.length) {
+                const seekTime = currentCamera.pointTimestamps[completedPointIndex];
+                console.log('Using stored point timestamp for recorded video:', {
+                    pointIndex: pointIndex,
+                    completedPointIndex: completedPointIndex,
+                    seekTime: seekTime,
+                    pointTimestamps: currentCamera.pointTimestamps
+                });
+                return Math.max(0, seekTime);
+            } else {
+                console.log('Point not completed or index out of range, falling back to calculation:', {
+                    pointIndex: pointIndex,
+                    completedPointIndex: completedPointIndex,
+                    isCurrentPointCompleted: isCurrentPointCompleted,
+                    timestampsLength: currentCamera.pointTimestamps.length
+                });
+            }
+        }
+    }
+    
+    // Fallback to original calculation for YouTube videos or if point_timestamps not available
     if (!streamStartTime || !pointStamp) {
         console.error('Missing data in calculateSeekTime:', { streamStartTime, pointStamp });
         return 0;
@@ -1586,11 +1822,6 @@ function calculateSeekTime(pointStamp) {
 function seekToPoint(pointIndex) {
     console.log('seekToPoint called with index:', pointIndex);
     
-    if (!youtubePlayer) {
-        console.error('YouTube player not initialized');
-        return;
-    }
-    
     if (pointIndex < 0 || pointIndex >= pointsData.length) {
         console.error('Invalid point index:', pointIndex, 'pointsData length:', pointsData.length);
         return;
@@ -1599,7 +1830,7 @@ function seekToPoint(pointIndex) {
     const point = pointsData[pointIndex];
     console.log('Seeking to point:', point);
     
-    const seekTime = calculateSeekTime(point.stamp);
+    const seekTime = calculateSeekTime(point.stamp, pointIndex);
     console.log('Calculated seek time (seconds):', seekTime);
     
     if (seekTime <= 0) {
@@ -1608,22 +1839,32 @@ function seekToPoint(pointIndex) {
     }
     
     try {
-        // Get current player state
+        if (currentCameraType === 'recorded' && localVideoPlayer) {
+            // Local video player
+            if (localVideoPlayer.readyState >= 2) { // HAVE_CURRENT_DATA or better
+                localVideoPlayer.currentTime = seekTime;
+                console.log('Seeked local video to:', seekTime, 'seconds');
+            } else {
+                // Wait for video to be ready
+                localVideoPlayer.addEventListener('loadedmetadata', function seekWhenReady() {
+                    localVideoPlayer.removeEventListener('loadedmetadata', seekWhenReady);
+                    localVideoPlayer.currentTime = seekTime;
+                    console.log('Seeked local video to:', seekTime, 'seconds');
+                }, { once: true });
+            }
+        } else if (youtubePlayer) {
+            // YouTube player
         const playerState = youtubePlayer.getPlayerState();
         console.log('Current player state:', playerState);
         
-        // Get current time in video
         const currentTime = youtubePlayer.getCurrentTime();
         console.log('Current time in video (seconds):', currentTime);
         
-        // Get video duration
         const duration = youtubePlayer.getDuration();
         console.log('Video duration (seconds):', duration);
         
-        // For live streams, check if seeking is possible
-        // YouTube live streams with DVR enabled allow seeking
         if (seekTime > 0) {
-            console.log('Attempting to seek to:', seekTime, 'seconds');
+                console.log('Attempting to seek YouTube to:', seekTime, 'seconds');
             youtubePlayer.seekTo(seekTime, true);
             
             // Verify seek happened
@@ -1634,9 +1875,35 @@ function seekToPoint(pointIndex) {
                     console.warn('Seek may have failed. Expected:', seekTime, 'Got:', newTime);
                 }
             }, 500);
+            }
+        } else {
+            console.error('No video player available');
         }
     } catch (error) {
         console.error('Error seeking to point:', error);
+    }
+}
+
+// Set playback speed for current player
+function setPlaybackSpeed(speed) {
+    const speedValue = parseFloat(speed);
+    
+    if (currentCameraType === 'recorded' && localVideoPlayer) {
+        // Local video player
+        try {
+            localVideoPlayer.playbackRate = speedValue;
+            console.log('Set local video playback speed to:', speedValue);
+        } catch (error) {
+            console.error('Error setting local video playback speed:', error);
+        }
+    } else if (youtubePlayer) {
+        // YouTube player
+        try {
+            youtubePlayer.setPlaybackRate(speedValue);
+            console.log('Set YouTube playback speed to:', speedValue);
+        } catch (error) {
+            console.error('Error setting YouTube playback speed:', error);
+        }
     }
 }
 
@@ -1647,6 +1914,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const prevBtn = document.getElementById('seek-prev-btn');
     const nextBtn = document.getElementById('seek-next-btn');
     const dropdown = document.getElementById('points-dropdown');
+    const playbackSpeedSelect = document.getElementById('playback-speed');
     
     // Track when user is interacting with dropdown
     if (dropdown) {
@@ -1705,6 +1973,26 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
     
+    // Playback speed control
+    if (playbackSpeedSelect) {
+        playbackSpeedSelect.addEventListener('change', function() {
+            const speed = this.value;
+            setPlaybackSpeed(speed);
+            // Save preference to localStorage
+            localStorage.setItem('playback_speed', speed);
+        });
+        
+        // Load saved playback speed preference
+        const savedSpeed = localStorage.getItem('playback_speed');
+        if (savedSpeed) {
+            playbackSpeedSelect.value = savedSpeed;
+            // Set speed after a short delay to ensure player is ready
+            setTimeout(() => {
+                setPlaybackSpeed(savedSpeed);
+            }, 500);
+        }
+    }
+    
     // Keyboard shortcuts (vim-inspired)
     // Only activate when not typing in input fields
     document.addEventListener('keydown', function(e) {
@@ -1722,9 +2010,17 @@ document.addEventListener('DOMContentLoaded', function() {
             return;
         }
         
-        // Only handle if not typing and YouTube player controls are visible
-        const playerContainer = document.getElementById('youtube-player-container');
-        if (!isTyping && playerContainer && playerContainer.style.display !== 'none') {
+        // Only handle if not typing and video player (YouTube or local) is visible
+        const youtubeContainer = document.getElementById('youtube-player-container');
+        const localContainer = document.getElementById('local-video-container');
+        const videoStreamContainer = document.getElementById('video-stream-container');
+        const isVideoVisible = (
+            (youtubeContainer && youtubeContainer.style.display !== 'none') ||
+            (localContainer && localContainer.style.display !== 'none') ||
+            (videoStreamContainer && videoStreamContainer.style.display !== 'none')
+        );
+        
+        if (!isTyping && isVideoVisible) {
             const key = e.key.toLowerCase();
             
             // Handle Enter key separately (before toLowerCase)
@@ -1778,6 +2074,15 @@ document.addEventListener('DOMContentLoaded', function() {
     // Set up observer to update points dropdown when table changes
     // This will be initialized after the stream is ready
     {% endif %}
+    
+    // Initialize points controls on page load (even if no cameras)
+    // This ensures the dropdown is populated for completed matches with recorded videos
+    if (typeof initializePointsControls === 'function') {
+        // Wait a bit for DOM to be fully ready
+        setTimeout(() => {
+            initializePointsControls();
+        }, 300);
+    }
 });
 {% endif %}
 
@@ -1786,6 +2091,14 @@ document.addEventListener('DOMContentLoaded', async function() {
     // Removed time elapsed UI
 
     // Removed time elapsed UI
+    
+    // Initialize points controls on page load (works for both YouTube and recorded videos)
+    // This ensures the dropdown is populated even if cameras aren't ready yet
+    if (typeof initializePointsControls === 'function') {
+        setTimeout(() => {
+            initializePointsControls();
+        }, 500);
+    }
     
     // Check YouTube stream status on page load (for all matches)
     {% if camera_url or available_cameras %}
