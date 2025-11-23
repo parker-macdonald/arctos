@@ -18,7 +18,7 @@ bp = Blueprint('teams', __name__)
 def team_profile(team_id):
     """Display team profile."""
     team = Team.query.get_or_404(team_id)
-    team_registrations = TeamRegistration.query.filter_by(team=team_id).all()
+    team_registrations = TeamRegistration.query.filter_by(team=team_id, status='CONFIRMED').all()
     player_registrations = PlayerRegistration.query.filter_by(team=team_id).all()
     tournaments = Tournament.query.all()
     
