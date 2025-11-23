@@ -28,7 +28,8 @@ def register_team_for_tournament(tournament_url):
     
     existing_reg = TeamRegistration.query.filter_by(
         event=tournament_url,
-        team=current_user.id
+        team=current_user.id,
+        status='CONFIRMED'
     ).first()
     
     if existing_reg:
