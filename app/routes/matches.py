@@ -1232,7 +1232,7 @@ def add_point(tournament_url):
     # For STONES matches, use client-computed stones_at_start value
     # This ensures accuracy even if the request takes time to send
     if match.set_type == 'STONES':
-        if stones_at_start is not None and isinstance(stones_at_start, int) and 0 <= stones_at_start <= 10000:
+        if stones_at_start is not None and isinstance(stones_at_start, int):
             new_point.stones_at_start = stones_at_start
         else:
             # Fallback to server-side value if client didn't send it or it's invalid

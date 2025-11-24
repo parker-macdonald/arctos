@@ -345,21 +345,16 @@
                         }
                     }
                     if(isStones) {
+                        const stonesEl = document.getElementById('stones-remaining');
+                        const progressEl = document.getElementById('stones-progress');
                         if(data.points.length > 0) {
+                            start_stamp = new Date(data.points[data.points.length - 1].stamp).getTime();
+                            stones_at_start = data.points[data.points.length - 1].stones_at_start;
                             is_point_in_progress = data.points[data.points.length - 1].end_stamp === null;
-                            if(is_point_in_progress) {
-                                start_stamp = new Date(data.points[data.points.length - 1].stamp).getTime();
-                                stones_at_start = data.points[data.points.length - 1].stones_at_start;
-                            }
-                        } else {
-                            is_point_in_progress = false;
-                        }
-                        if(!is_point_in_progress) {
-                            const stonesEl = document.getElementById('stones-remaining');
-                            const progressEl = document.getElementById('stones-progress');
-                            stonesEl.textContent = data.stones_remaining;
-                            const percentage = (data.stones_remaining / stonesPerSet) * 100;
-                            progressEl.style.width = Math.max(0, Math.min(100, percentage)) + '%';
+                            end_stamp = data.points[data.points.length - 1].end_stamp ? new Date(data.points[data.points.length - 1].end_stamp).getTime() : Date.now().getTime();
+                            stonesEl.textContent = stones_at_start - (Math.floor(end_stamp/1500) - Math.floor(start_stamp/1500));
+                            const percentage = ((stones_at_start - (Math.floor(end_stamp/1500) - Math.floor(start_stamp/1500))) / stonesPerSet) * 100;
+                            progressEl.style.width = Math.max(0, percentage)%100 + '%';
                         }
                     }
                 })

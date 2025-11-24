@@ -106,18 +106,16 @@ const tournamentUrl = '{{ tournament.url }}';
 const fieldName = '{{ field_name }}';
 
 let mediaRecorder = null;
-let recordedChunks = [];
-let recordingStartTime = null;
+let currentRecordingSession = null; // Active recording session
 let matchId = null;
-let recordingSessionId = null;
 let isRecording = false;
 let recordingTimer = null;
 let maxRecordingDuration = 20 * 60 * 1000; // 20 minutes in milliseconds
 let pollInterval = null;
 let reconnectTimeout = null;
 let chunkUploadInterval = null;
-let lastUploadedChunkIndex = -1;
 let currentStream = null; // Keep stream active
+let activeSessions = new Set(); // Track all active sessions for cleanup
 let availableCameras = [];
 let selectedCameraId = null;
 let scoreboardOverlayInterval = null;
@@ -130,13 +128,14 @@ let currentScoreboardData = null; // Store current scoreboard data for canvas re
 let overlaySettings = {
     x: 10,
     y: 10,
-    width: 2500,
+    width: 600,
     height: "auto",
-    scale: 100
+    scale: 30
 };
 let cachedOverlayCanvas = null; // Cached canvas of the iframe overlay
 let lastOverlayCaptureTime = 0;
 const OVERLAY_CAPTURE_INTERVAL = 200; // Capture iframe every 200ms
+let wakeLock = null; // Wake Lock to prevent screen sleep during recording
 
 // Get camera ID from localStorage or input
 function getCameraId() {
@@ -199,10 +198,52 @@ function formatTime(ms) {
 
 // Update recording time display
 function updateRecordingTime() {
-    if (!recordingStartTime) return;
-    const elapsed = Date.now() - recordingStartTime;
+    if (!currentRecordingSession) return;
+    const elapsed = Date.now() - currentRecordingSession.startTime;
     document.getElementById('recording-time').textContent = formatTime(elapsed);
 }
+
+// Request wake lock to prevent screen sleep during recording
+async function requestWakeLock() {
+    if (!('wakeLock' in navigator)) {
+        console.log('Wake Lock API not supported');
+        return;
+    }
+    
+    try {
+        wakeLock = await navigator.wakeLock.request('screen');
+        console.log('Wake lock acquired');
+        
+        // Handle wake lock release (e.g., user switches tabs)
+        wakeLock.addEventListener('release', () => {
+            console.log('Wake lock released');
+        });
+    } catch (error) {
+        console.error('Error requesting wake lock:', error);
+        // Wake lock might fail if user denies permission or browser doesn't support it
+        // Continue recording anyway
+    }
+}
+
+// Release wake lock
+async function releaseWakeLock() {
+    if (wakeLock) {
+        try {
+            await wakeLock.release();
+            wakeLock = null;
+            console.log('Wake lock released');
+        } catch (error) {
+            console.error('Error releasing wake lock:', error);
+        }
+    }
+}
+
+// Re-request wake lock if it was released (e.g., user switched tabs)
+document.addEventListener('visibilitychange', async () => {
+    if (document.visibilityState === 'visible' && isRecording && wakeLock === null) {
+        await requestWakeLock();
+    }
+});
 
 // Check if field has active match
 async function checkMatchStatus() {
@@ -289,20 +330,23 @@ async function populateCameraSelect() {
     });
     
     // Load saved selection (or use current selectedCameraId if already set)
-    if (!selectedCameraId) {
-        const saved = localStorage.getItem(`selected_camera_${tournamentUrl}_${fieldName}`);
-        if (saved && availableCameras.some(cam => cam.deviceId === saved)) {
-            selectedCameraId = saved;
-        } else if (availableCameras.length > 0) {
-            // If no saved selection or saved is invalid, use first camera
-            selectedCameraId = availableCameras[0].deviceId;
-        }
+    // if (!selectedCameraId) {
+    //     const saved = localStorage.getItem(`selected_camera_${tournamentUrl}_${fieldName}`);
+    //     if (saved && availableCameras.some(cam => cam.deviceId === saved)) {
+    //         selectedCameraId = saved;
+    //     } else if (availableCameras.length > 0) {
+    //         // If no saved selection or saved is invalid, use first camera
+    //         selectedCameraId = availableCameras[0].deviceId;
+    //     }
+    // }
+    if (availableCameras.length > 0) {
+        select.value = availableCameras[0].deviceId;
     }
     
-    // Update dropdown to reflect current selection
-    if (selectedCameraId) {
-        select.value = selectedCameraId;
-    }
+    // // Update dropdown to reflect current selection
+    // if (selectedCameraId) {
+    //     select.value = selectedCameraId;
+    // }
     
     // Save selection on change
     select.addEventListener('change', (e) => {
@@ -327,17 +371,17 @@ async function initializeCamera() {
     
     try {
         // First, get available cameras and load saved selection if not already done
-        if (availableCameras.length === 0) {
-            availableCameras = await getAvailableCameras();
-            // Load saved selection before initializing
-            const saved = localStorage.getItem(`selected_camera_${tournamentUrl}_${fieldName}`);
-            if (saved && availableCameras.some(cam => cam.deviceId === saved)) {
-                selectedCameraId = saved;
-            } else if (availableCameras.length > 0) {
-                // If no saved selection or saved is invalid, use first camera
-                selectedCameraId = availableCameras[0].deviceId;
-            }
-        }
+        // if (availableCameras.length === 0) {
+        //     availableCameras = await getAvailableCameras();
+        //     // Load saved selection before initializing
+        //     const saved = localStorage.getItem(`selected_camera_${tournamentUrl}_${fieldName}`);
+        //     if (saved && availableCameras.some(cam => cam.deviceId === saved)) {
+        //         selectedCameraId = saved;
+        //     } else if (availableCameras.length > 0) {
+        //         // If no saved selection or saved is invalid, use first camera
+        //         selectedCameraId = availableCameras[0].deviceId;
+        //     }
+        // }
         
         const constraints = {
             video: {
@@ -677,6 +721,16 @@ async function startRecording() {
     }
     
     try {
+        // Create new recording session with its own state
+        const session = {
+            id: generateSessionId(),
+            matchId: matchId,
+            startTime: Date.now(),
+            chunks: [],
+            lastUploadedChunkIndex: -1,
+            recorder: null
+        };
+        
         // Determine which stream to use
         let recordingStream = currentStream;
         if (showScoreboardOverlay) {
@@ -700,41 +754,70 @@ async function startRecording() {
             options.mimeType = 'video/webm';
         }
         
-        mediaRecorder = new MediaRecorder(recordingStream, options);
-        recordedChunks = [];
-        recordingStartTime = Date.now();
-        recordingSessionId = generateSessionId();
+        session.recorder = new MediaRecorder(recordingStream, options);
+        mediaRecorder = session.recorder;
+        currentRecordingSession = session;
+        activeSessions.add(session);
         
-        // Handle data available events (chunks)
-        mediaRecorder.ondataavailable = (event) => {
+        // Handle data available events (chunks) - use session's state
+        session.recorder.ondataavailable = (event) => {
             if (event.data && event.data.size > 0) {
-                recordedChunks.push({
+                const chunkIndex = session.chunks.length;
+                session.chunks.push({
                     data: event.data,
                     timestamp: Date.now(),
-                    index: recordedChunks.length
+                    index: chunkIndex,
+                    uploaded: false
                 });
                 
-                // Upload chunk immediately
-                uploadChunk(event.data, recordedChunks.length - 1);
+                // Upload chunk immediately using session's state
+                uploadChunkForSession(event.data, chunkIndex, session);
             }
         };
         
-        mediaRecorder.onstop = () => {
-            // Upload any remaining chunks
-            uploadRemainingChunks();
-            
-            // Finalize recording
-            finalizeRecording();
-        };
+        // Set up periodic cleanup of old uploaded chunks during recording
+        session.cleanupInterval = setInterval(() => {
+            if (session.recorder && session.recorder.state !== 'inactive') {
+                cleanupOldChunks(session);
+            }
+        }, 30000); // Clean up every 30 seconds
         
-        mediaRecorder.onerror = (event) => {
+        // Handle stop event - cleanup this session independently
+        session.recorder.addEventListener('stop', async () => {
+            // Clear periodic cleanup interval
+            if (session.cleanupInterval) {
+                clearInterval(session.cleanupInterval);
+                session.cleanupInterval = null;
+            }
+            
+            try {
+                await uploadRemainingChunksForSession(session);
+            } catch (uploadErr) {
+                console.error(`Error uploading remaining chunks for session ${session.id}:`, uploadErr);
+            }
+            try {
+                await finalizeRecordingForSession(session);
+            } catch (finalizeErr) {
+                console.error(`Error finalizing recording for session ${session.id}:`, finalizeErr);
+            } finally {
+                activeSessions.delete(session);
+                if (currentRecordingSession === session) {
+                    currentRecordingSession = null;
+                }
+            }
+        }, { once: true });
+        
+        session.recorder.onerror = (event) => {
             console.error('MediaRecorder error:', event.error);
             showError('Recording error: ' + event.error.message);
         };
         
         // Start recording with timeslice (every 5 seconds)
-        mediaRecorder.start(5000);
+        session.recorder.start(5000);
         isRecording = true;
+        
+        // Request wake lock to prevent screen sleep during recording
+        await requestWakeLock();
         
         // Show recording status (video container should already be visible)
         document.getElementById('recording-status').style.display = 'block';
@@ -746,20 +829,20 @@ async function startRecording() {
         }
         
         // Notify server that recording started
-        notifyRecordingStart();
+        notifyRecordingStart(session);
         
         // Start timer
         recordingTimer = setInterval(() => {
             updateRecordingTime();
             
             // Check if max duration reached
-            const elapsed = Date.now() - recordingStartTime;
+            const elapsed = Date.now() - session.startTime;
             if (elapsed >= maxRecordingDuration) {
                 stopRecording();
             }
         }, 1000);
         
-        console.log('Recording started');
+        console.log(`Recording started for session ${session.id}`);
     } catch (error) {
         console.error('Error starting recording:', error);
         showError('Failed to start recording: ' + error.message);
@@ -767,7 +850,7 @@ async function startRecording() {
 }
 
 // Notify server that a new recording session started
-async function notifyRecordingStart() {
+async function notifyRecordingStart(session) {
     try {
         const response = await fetch('/api/camera/recording-started', {
             method: 'POST',
@@ -777,10 +860,10 @@ async function notifyRecordingStart() {
             body: JSON.stringify({
                 tournament: tournamentUrl,
                 field: fieldName,
-                match_id: matchId,
-                session_id: recordingSessionId,
+                match_id: session.matchId,
+                session_id: session.id,
                 camera_id: getCameraId(),
-                start_timestamp: recordingStartTime
+                start_timestamp: session.startTime
             })
         });
         
@@ -797,6 +880,9 @@ function stopRecording() {
     if (mediaRecorder && isRecording) {
         mediaRecorder.stop();
         isRecording = false;
+        
+        // Release wake lock when recording stops
+        releaseWakeLock();
         
         // Stop timer
         if (recordingTimer) {
@@ -819,17 +905,22 @@ function stopRecording() {
     }
 }
 
-// Upload a single chunk
-async function uploadChunk(chunkData, chunkIndex) {
+// Upload a single chunk for a specific session
+async function uploadChunkForSession(chunkData, chunkIndex, session) {
+    // Skip if chunk data is already cleared (was uploaded and cleaned up)
+    if (!chunkData) {
+        return;
+    }
+    
     try {
         const formData = new FormData();
         formData.append('chunk', chunkData, `chunk_${chunkIndex}.webm`);
         formData.append('tournament', tournamentUrl);
         formData.append('field', fieldName);
-        formData.append('match_id', matchId || '');
-        formData.append('session_id', recordingSessionId);
+        formData.append('match_id', session.matchId || '');
+        formData.append('session_id', session.id);
         formData.append('chunk_index', chunkIndex);
-        formData.append('start_timestamp', recordingStartTime);
+        formData.append('start_timestamp', session.startTime);
         
         const response = await fetch('/api/camera/upload-chunk', {
             method: 'POST',
@@ -842,24 +933,61 @@ async function uploadChunk(chunkData, chunkIndex) {
         
         const result = await response.json();
         if (result.success) {
-            lastUploadedChunkIndex = Math.max(lastUploadedChunkIndex, chunkIndex);
-            console.log(`Chunk ${chunkIndex} uploaded successfully`);
+            session.lastUploadedChunkIndex = Math.max(session.lastUploadedChunkIndex, chunkIndex);
+            console.log(`Chunk ${chunkIndex} uploaded successfully for session ${session.id}`);
+            
+            // Mark chunk as uploaded and clear its data to free memory
+            if (session.chunks[chunkIndex]) {
+                session.chunks[chunkIndex].uploaded = true;
+                session.chunks[chunkIndex].data = null;
+            }
+            
+            // Periodically clean up old uploaded chunks (keep last 5 for retry buffer)
+            cleanupOldChunks(session);
         }
     } catch (error) {
-        console.error(`Error uploading chunk ${chunkIndex}:`, error);
-        // Don't throw - we'll retry in uploadRemainingChunks
+        console.error(`Error uploading chunk ${chunkIndex} for session ${session.id}:`, error);
+        // Don't throw - we'll retry in uploadRemainingChunksForSession
     }
 }
 
-// Upload remaining chunks (for retry on failure)
-async function uploadRemainingChunks() {
-    for (let i = lastUploadedChunkIndex + 1; i < recordedChunks.length; i++) {
-        await uploadChunk(recordedChunks[i].data, i);
+// Clean up old uploaded chunks, keeping a buffer for retry purposes
+function cleanupOldChunks(session) {
+    const KEEP_BUFFER = 5; // Keep last 5 uploaded chunks for retry buffer
+    
+    // Find the last uploaded chunk index
+    let lastUploaded = session.lastUploadedChunkIndex;
+    
+    if (lastUploaded < 0) {
+        return; // No chunks uploaded yet
+    }
+    
+    // Clear chunks that are older than the buffer
+    // Only clear chunks that are confirmed uploaded and beyond the buffer
+    const clearUpTo = Math.max(0, lastUploaded - KEEP_BUFFER);
+    for (let i = 0; i <= clearUpTo; i++) {
+        if (session.chunks[i] && session.chunks[i].uploaded && session.chunks[i].data) {
+            session.chunks[i].data = null;
+        }
     }
 }
 
-// Finalize recording
-async function finalizeRecording() {
+// Upload remaining chunks for a specific session (for retry on failure)
+async function uploadRemainingChunksForSession(session) {
+    for (let i = session.lastUploadedChunkIndex + 1; i < session.chunks.length; i++) {
+        const chunk = session.chunks[i];
+        // Skip chunks that are already uploaded and cleared
+        if (chunk && chunk.data) {
+            await uploadChunkForSession(chunk.data, i, session);
+        } else if (chunk && chunk.uploaded) {
+            // Chunk was uploaded but we need to update lastUploadedChunkIndex
+            session.lastUploadedChunkIndex = Math.max(session.lastUploadedChunkIndex, i);
+        }
+    }
+}
+
+// Finalize recording for a specific session
+async function finalizeRecordingForSession(session) {
     try {
         const response = await fetch('/api/camera/finalize', {
             method: 'POST',
@@ -869,10 +997,10 @@ async function finalizeRecording() {
             body: JSON.stringify({
                 tournament: tournamentUrl,
                 field: fieldName,
-                match_id: matchId,
-                session_id: recordingSessionId,
-                start_timestamp: recordingStartTime,
-                total_chunks: recordedChunks.length
+                match_id: session.matchId,
+                session_id: session.id,
+                start_timestamp: session.startTime,
+                total_chunks: session.chunks.length
             })
         });
         
@@ -881,9 +1009,14 @@ async function finalizeRecording() {
         }
         
         const result = await response.json();
-        console.log('Recording finalized:', result);
+        console.log(`Recording finalized for session ${session.id}:`, result);
+        
+        // Clear all chunks from memory after successful finalization
+        // The server has all the data, so we can free client memory
+        session.chunks = [];
+        session.lastUploadedChunkIndex = -1;
     } catch (error) {
-        console.error('Error finalizing recording:', error);
+        console.error(`Error finalizing recording for session ${session.id}:`, error);
     }
 }
 
@@ -1013,9 +1146,9 @@ function startScoreboardPolling() {
     if (scoreboardOverlayInterval) {
         clearInterval(scoreboardOverlayInterval);
     }
-    // Poll immediately, then every 2 seconds
+    // Poll immediately, then every 1.5 ish seconds
     pollScoreboardState();
-    scoreboardOverlayInterval = setInterval(pollScoreboardState, 2000);
+    scoreboardOverlayInterval = setInterval(pollScoreboardState, 1427);
 }
 
 // Stop scoreboard polling
@@ -1036,8 +1169,8 @@ async function pollMatchStatus() {
     
     if (data.error) {
         // If endpoint is unreachable and we're recording, continue for max duration
-        if (isRecording) {
-            const elapsed = Date.now() - recordingStartTime;
+        if (isRecording && currentRecordingSession) {
+            const elapsed = Date.now() - currentRecordingSession.startTime;
             if (elapsed >= maxRecordingDuration) {
                 stopRecording();
                 showError('Maximum recording duration reached (20 minutes). Recording stopped.');
@@ -1045,7 +1178,7 @@ async function pollMatchStatus() {
                 // Show warning that endpoint is unreachable but continue recording
                 const statusEl = document.getElementById('status');
                 statusEl.className = 'alert alert-warning';
-                statusEl.innerHTML = `<i class="fas fa-exclamation-triangle"></i> Cannot reach server, but recording continues (max 20 min). Elapsed: ${formatTime(Date.now() - recordingStartTime)}`;
+                statusEl.innerHTML = `<i class="fas fa-exclamation-triangle"></i> Cannot reach server, but recording continues (max 20 min). Elapsed: ${formatTime(elapsed)}`;
             }
         } else {
             showError('Cannot reach server. Please check your connection.');
@@ -1100,13 +1233,13 @@ async function pollMatchStatus() {
 
 // Handle reconnection
 function handleReconnection() {
-    if (isRecording) {
+    if (isRecording && currentRecordingSession) {
         // Resume recording - upload any chunks that weren't uploaded
-        uploadRemainingChunks();
+        uploadRemainingChunksForSession(currentRecordingSession);
         
         // Continue polling
         if (!pollInterval) {
-            pollInterval = setInterval(pollMatchStatus, 5000);
+            pollInterval = setInterval(pollMatchStatus, 2000);
         }
     }
 }
@@ -1201,7 +1334,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     
     // Start polling
     pollMatchStatus();
-    pollInterval = setInterval(pollMatchStatus, 5000);
+    pollInterval = setInterval(pollMatchStatus, 2000);
     
     // Handle visibility change (reconnection)
     document.addEventListener('visibilitychange', () => {
@@ -1230,6 +1363,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             currentStream.getTracks().forEach(track => track.stop());
         }
         stopScoreboardPolling();
+        releaseWakeLock();
     });
 });
 </script>

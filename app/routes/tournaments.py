@@ -989,124 +989,47 @@ def chop_to_points(output_path, match_id, start_time, buffer=3):
         return []
     
     pts = Point.query.filter_by(match=match_id).order_by(Point.stamp.asc()).all()
-    print(f"chop_to_points: Found {len(pts)} points for match_id '{match_id}'")
-    
-    if not pts:
-        print(f"chop_to_points: No points found. Checking if match exists...")
-        from models import Match
-        match = Match.query.get(match_id)
-        if match:
-            print(f"chop_to_points: Match exists: {match.name}, status: {match.status}")
-            # Try querying all points to see if any exist
-            all_pts = Point.query.all()
-            print(f"chop_to_points: Total points in database: {len(all_pts)}")
-            if all_pts:
-                print(f"chop_to_points: Sample point match field: '{all_pts[0].match}'")
-        else:
-            print(f"chop_to_points: Match with id '{match_id}' does not exist")
-        return []
-    print([(pt.stamp, pt.end_stamp) for pt in pts])
+    print([repr(i.stamp) for i in pts])
     times = [
-        (max(0, (pt.stamp.astimezone(timezone.utc)-start_time).total_seconds()-buffer),
-         max(0, (pt.end_stamp.astimezone(timezone.utc)-start_time).total_seconds()+buffer))
+        (max(0, (pt.stamp.replace(tzinfo=timezone.utc)-start_time).total_seconds()-buffer),
+         max(0, (pt.end_stamp.replace(tzinfo=timezone.utc)-start_time).total_seconds()+buffer))
     for pt in pts if pt.end_stamp]
+    print("TIMES HERE:", times)
     subprocess.run(['ffmpeg', '-i', os.path.join(output_path, 'match_video.webm'), '-c', 'copy', '-map', '0', os.path.join(output_path, 'output_fixed.webm')])
-    make_concatenated_video(os.path.join(output_path, 'output_fixed.webm'), times, os.path.join(output_path, 'final_video.webm'))
-    # os.remove(os.path.join(output_path, 'output_fixed.webm'))
-    # os.remove(os.path.join(output_path, 'match_video.webm'))
+    os.remove(os.path.join(output_path, 'match_video.webm'))
+    make_concatenated_video(output_path, times)
+    os.remove(os.path.join(output_path, 'output_fixed.webm'))
     
-    new_times = [times[0][0]]
-    for i in range(1, len(times)):
-        new_times.append(new_times[-1]+times[i][0]-times[i-1][0])
+    new_times = [0]
+    for i in range(0, len(times)-1):
+        new_times.append(new_times[-1] + times[i][1]-times[i][0])
     return new_times
 
 
 def make_concatenated_video(
-    input_path: str,
+    workdir: str,
     clips: list[tuple[float, float]],
-    output_path: str,
-    video_codec="libvpx-vp9",
-    audio_codec="libvorbis"
+    input_file: str = 'output_fixed.webm',
+    output_file: str = 'final_video.webm',
 ):
-    """
-    Concatenate multiple clips (start, end) from a single source video
-    into one video using ffmpeg-python.
-
-    :param input_path: path to the input .webm (or any video)
-    :param clips: list of (start, end) float seconds
-    :param output_path: final concatenated video file
-    """
-    import ffmpeg
-
-    # Check if there are any clips to process
-    if not clips or len(clips) == 0:
-        raise ValueError("No clips provided to concatenate")
-
-    # Probe the input to check for audio
-    try:
-        probe = ffmpeg.probe(input_path)
-        has_audio = any(stream.get('codec_type') == 'audio' for stream in probe.get('streams', []))
-    except Exception as e:
-        print(f"Warning: Could not probe input file: {e}")
-        has_audio = True  # Assume audio exists as fallback
-
-    # Load the input
-    input_stream = ffmpeg.input(input_path)
-
-    # Create trimmed video and audio streams for each clip
-    video_streams = []
-    audio_streams = []
-
-    for start, end in clips:
-        # Trim video
-        v_trimmed = input_stream['v'].filter('trim', start=start, end=end).filter('setpts', 'PTS-STARTPTS')
-        video_streams.append(v_trimmed)
-
-        # Trim audio if it exists
-        if has_audio:
-            try:
-                a_trimmed = input_stream['a'].filter('atrim', start=start, end=end).filter('asetpts', 'PTS-STARTPTS')
-                audio_streams.append(a_trimmed)
-            except Exception:
-                # If audio stream doesn't exist or can't be accessed, skip it
-                has_audio = False
-                audio_streams = []
-
-    # Concatenate streams
-    # ffmpeg.concat expects all video inputs first, then all audio inputs
-    if has_audio and len(audio_streams) > 0:
-        # Concat with both video and audio
-        # Pass all video streams first, then all audio streams
-        if len(video_streams) > 1 or len(audio_streams) > 1:
-            concat_output = ffmpeg.concat(*video_streams, *audio_streams, v=1, a=1)
-        else:
-            # Single clip, no need to concat
-            concat_output = {'v': video_streams[0], 'a': audio_streams[0]}
+    import subprocess
+    from os import path
+    with open(path.join(workdir, 'clips.txt'), 'w') as f:
+        for i, (start, stop) in enumerate(clips):
+            filename = path.join(workdir, f'point_{i}.webm')
+            subprocess.run([
+                'ffmpeg', '-i', path.join(workdir, input_file), '-c', 'copy', 
+                '-ss', str(start),
+                '-t', str(stop-start),
+                filename
+            ])
+            print(f'file {filename}', file=f)
         
-        # Create output
-        output = ffmpeg.output(
-            concat_output['v'],
-            concat_output['a'],
-            output_path,
-            vcodec=video_codec,
-            acodec=audio_codec
-        )
-    else:
-        # Video only - concat all video streams
-        if len(video_streams) > 1:
-            concat_output = ffmpeg.concat(*video_streams, v=1, a=0)
-        else:
-            concat_output = video_streams[0]
-        
-        # Create output
-        output = ffmpeg.output(
-            concat_output,
-            output_path,
-            vcodec=video_codec
-        )
 
-    # Run the conversion
-    ffmpeg.run(output, overwrite_output=True, quiet=True)
+    subprocess.run([
+        'ffmpeg', '-f', 'concat', '-safe', '0', '-i', path.join(workdir, 'clips.txt'), '-c', 'copy', 
+        path.join(workdir, output_file)
+    ])
 
 @bp.route('/<tournament_url>/update-settings', methods=['POST'])
 @login_required
