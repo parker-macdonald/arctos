@@ -1099,7 +1099,7 @@ def chop_to_points(output_path, match_id, start_time, buffer=3):
     make_concatenated_video(output_path, times)
     os.remove(os.path.join(output_path, 'output_fixed.webm'))
     
-    new_times = [0]
+    new_times = [0.01] # nonzero so js doesn't freak out trying to scrub to a non positive value
     for i in range(0, len(times)-1):
         new_times.append(new_times[-1] + times[i][1]-times[i][0])
     return new_times
