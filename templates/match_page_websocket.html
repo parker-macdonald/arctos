@@ -609,22 +609,58 @@ async function syncWithServerTime() {
 
 // Stones remaining update (for STONES matches)
 {% if match.set_type == 'STONES' %}
-let stonesAtStart = null;
-let startStamp = null;
-let isPointInProgress = false;
-
-function updateStonesRemaining() {
-    if (isPointInProgress && stonesAtStart !== null && startStamp !== null) {
-        const stonesElement = document.getElementById('live-stones-remaining');
-        if (stonesElement) {
-            const remaining = stonesAtStart - (Math.floor(new Date().getTime()/1500) - Math.floor(startStamp / 1500));
-            stonesElement.textContent = Math.max(0, remaining);
+// Compute stones_remaining from points list (same logic as run_match page)
+function computeStonesRemainingFromPoints(points) {
+    if (!points || points.length === 0) {
+        // No points yet, return null to indicate unknown
+        return null;
+    }
+    
+    // Find the last point
+    const lastPoint = points[points.length - 1];
+    
+    // If last point is ongoing (no end_stamp or empty end_stamp), compute from it
+    const lastPointIsOngoing = !lastPoint.end_stamp || lastPoint.end_stamp === '';
+    if (lastPointIsOngoing && lastPoint.stones_at_start !== null && lastPoint.stones_at_start !== undefined) {
+        // Point is ongoing: stones_remaining = stones_at_start - elapsed_stones
+        const elapsedStones = computeStonesElapsed(lastPoint.stamp, null);
+        return Math.max(0, lastPoint.stones_at_start - elapsedStones);
+    }
+    
+    // Last point is completed, find the last completed point with stones_at_start
+    // Work backwards to find the most recent completed point
+    for (let i = points.length - 1; i >= 0; i--) {
+        const point = points[i];
+        const pointIsCompleted = point.end_stamp && point.end_stamp !== '';
+        if (pointIsCompleted && point.stones_at_start !== null && point.stones_at_start !== undefined) {
+            // This point is completed, compute stones elapsed for it
+            const elapsedStones = computeStonesElapsed(point.stamp, point.end_stamp);
+            // stones_remaining = stones_at_start - elapsed_stones
+            return Math.max(0, point.stones_at_start - elapsedStones);
         }
+    }
+    
+    // No points with stones_at_start found
+    return null;
+}
+
+function updateStonesRemaining(points) {
+    const stonesElement = document.getElementById('live-stones-remaining');
+    if (!stonesElement) return;
+    
+    const computedStones = computeStonesRemainingFromPoints(points);
+    if (computedStones !== null && computedStones !== undefined) {
+        stonesElement.textContent = computedStones;
     }
 }
 
-// Update stones remaining every 50ms
-setInterval(updateStonesRemaining, 50);
+// Update stones remaining every 50ms (for ongoing points)
+let currentPoints = [];
+setInterval(() => {
+    if (currentPoints && currentPoints.length > 0) {
+        updateStonesRemaining(currentPoints);
+    }
+}, 50);
 {% endif %}
 
 // Poll for match state updates
@@ -646,30 +682,11 @@ function pollMatchState() {
             // Update scores
             updateScores(data);
             
-            // Update stones remaining (track point in progress like scoreboard)
+            // Update stones remaining (compute from points)
             {% if match.set_type == 'STONES' %}
-            if (data.points && data.points.length > 0) {
-                const lastPoint = data.points[data.points.length - 1];
-                isPointInProgress = lastPoint.end_stamp === null;
-                if (isPointInProgress && lastPoint.stones_at_start !== null && lastPoint.stones_at_start !== undefined && lastPoint.stamp) {
-                    // Point in progress - track it for real-time updates
-                    stonesAtStart = lastPoint.stones_at_start;
-                    startStamp = new Date(lastPoint.stamp).getTime();
-                } else {
-                    // No point in progress - use server value
-                    isPointInProgress = false;
-                    const stonesElement = document.getElementById('live-stones-remaining');
-                    if (stonesElement && data.stones_remaining !== null && data.stones_remaining !== undefined) {
-                        stonesElement.textContent = data.stones_remaining;
-                    }
-                }
-            } else {
-                isPointInProgress = false;
-                const stonesElement = document.getElementById('live-stones-remaining');
-                if (stonesElement && data.stones_remaining !== null && data.stones_remaining !== undefined) {
-                    stonesElement.textContent = data.stones_remaining;
-                }
-            }
+            // Store points for continuous updates
+            currentPoints = data.points || [];
+            updateStonesRemaining(currentPoints);
             {% endif %}
             
             // Update points table
@@ -944,6 +961,37 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         }
     }, 100);
+    
+    // Compute initial stones_remaining from server-rendered points
+    {% if match.set_type == 'STONES' and points %}
+    try {
+        // Build points array from server-rendered data
+        const serverPoints = [
+            {% for point in points %}
+            {
+                uuid: '{{ point.uuid }}',
+                stamp: '{{ point.stamp.isoformat() if point.stamp else "" }}',
+                end_stamp: '{{ point.end_stamp.isoformat() if point.end_stamp else "" }}',
+                stones_at_start: {{ point.stones_at_start if point.stones_at_start is not none else 'null' }}
+            }{% if not loop.last %},{% endif %}
+            {% endfor %}
+        ];
+        
+        // Store for continuous updates
+        currentPoints = serverPoints;
+        
+        // Compute and display initial value
+        const computedStones = computeStonesRemainingFromPoints(serverPoints);
+        if (computedStones !== null && computedStones !== undefined) {
+            const stonesElement = document.getElementById('live-stones-remaining');
+            if (stonesElement) {
+                stonesElement.textContent = computedStones;
+            }
+        }
+    } catch (e) {
+        console.error('Error computing initial stones_remaining:', e);
+    }
+    {% endif %}
 });
 
 function formatDuration(totalSeconds) {
