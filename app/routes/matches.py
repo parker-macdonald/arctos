@@ -502,14 +502,14 @@ def match_page(tournament_url):
                 'camera_id': recording.get('camera_id', 'unknown'),
                 'session_id': recording.get('session_id', ''),
                 'point_timestamps': recording.get('point_timestamps')
-            })
+                })
     
     # Use first available camera for backward compatibility
     if available_cameras:
         first_cam = available_cameras[0]
         if first_cam.get('type') == 'youtube':
             camera_url = first_cam['url']
-    
+            
     # Debug: log camera availability
     if not available_cameras and match.field:
         field_obj = Field.query.filter_by(event=tournament_url, name=match.field).first()
@@ -1154,8 +1154,6 @@ def match_state(tournament_url):
             'team2_score': sum(1 for p in set_points if p.winner == 'TEAM2' and not p.rerolled)
         }
     
-    stones_remaining = match.stones_remaining
-    
     # Build points data
     points_data = []
     for p in points:
@@ -1200,7 +1198,6 @@ def match_state(tournament_url):
         'team1_score': team1_score,
         'team2_score': team2_score,
         'scores_by_set': scores_by_set,
-        'stones_remaining': stones_remaining,
         'points': points_data,
         'finalized_at': finalized_at,
         'timestamp': datetime.now(timezone.utc).isoformat()
@@ -1213,6 +1210,8 @@ def add_point(tournament_url):
     """Add a new point to a match."""
     match_id = request.json.get('match_id')
     set_number = request.json.get('set_number', 1)
+    timestamp = request.json.get('timestamp')
+    stones_at_start = request.json.get('stones_at_start')  # Client-computed value
     
     if not match_id:
         return jsonify({'success': False, 'error': 'Match ID required'}), 400
@@ -1227,12 +1226,18 @@ def add_point(tournament_url):
     new_point = Point(
         match=match_id,
         set_number=set_number,
-        stamp=datetime.now(timezone.utc)
+        stamp=datetime.fromtimestamp(timestamp/1000, tz=timezone.utc)
     )
     
-    # For STONES matches, record stones_remaining when point starts
+    # For STONES matches, use client-computed stones_at_start value
+    # This ensures accuracy even if the request takes time to send
     if match.set_type == 'STONES':
-        new_point.stones_at_start = match.stones_remaining
+        if stones_at_start is not None and isinstance(stones_at_start, int) and 0 <= stones_at_start <= 10000:
+            new_point.stones_at_start = stones_at_start
+        else:
+            # Fallback to server-side value if client didn't send it or it's invalid
+            print(f"Warning: Invalid stones_at_start from client ({stones_at_start}). Falling back to server value: {match.stones_remaining}")
+            new_point.stones_at_start = match.stones_remaining
     
     # Calculate and store camera stream timestamp if cameras are configured
     if match.field:
@@ -1280,7 +1285,8 @@ def add_point(tournament_url):
         'point_id': new_point.uuid,
         'set_number': new_point.set_number,
         'stamp': stamp_iso,
-        'end_stamp': end_stamp_iso
+        'end_stamp': end_stamp_iso,
+        'stones_at_start': new_point.stones_at_start if match.set_type == 'STONES' else None
     })
 
 
