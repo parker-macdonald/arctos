@@ -20,6 +20,8 @@ bp = Blueprint('matches', __name__)
 @bp.route('/api/scoreboard')
 def scoreboard():
     """Scoreboard page for OBS overlay. Public endpoint."""
+    from flask import make_response
+    
     tournament_url = request.args.get('tournament')
     field_name = request.args.get('field')
     
@@ -72,7 +74,7 @@ def scoreboard():
                 'stones_remaining': match.stones_remaining
             }
         
-        return render_template(
+        response = make_response(render_template(
             'scoreboard.html',
             match=match,
             team1_name=team1_name,
@@ -85,7 +87,10 @@ def scoreboard():
             tournament_url=tournament_url,
             field_name=field_name,
             show_between_matches=False
-        )
+        ))
+        # Cache the HTML page for 1 second (short cache since it updates frequently)
+        response.cache_control.max_age = 1
+        return response
     
     # No active match - find previous and next matches
     # Get all matches on this field, ordered by time
@@ -108,7 +113,9 @@ def scoreboard():
     
     # If no matches found at all
     if not prev_match and not next_match:
-        return render_template('scoreboard.html', error='No match found on this field', tournament_url=tournament_url, field_name=field_name), 404
+        response = make_response(render_template('scoreboard.html', error='No match found on this field', tournament_url=tournament_url, field_name=field_name), 404)
+        response.cache_control.max_age = 1
+        return response
     
     # Get team info for previous and next matches
     if prev_match:
@@ -132,7 +139,7 @@ def scoreboard():
     if prev_match and prev_match.match_winner:
         prev_winner = prev_match.match_winner
     
-    return render_template(
+    response = make_response(render_template(
         'scoreboard.html',
         match=None,
         show_between_matches=True,
@@ -149,7 +156,9 @@ def scoreboard():
         next_team2_photo=next_team2_photo,
         tournament_url=tournament_url,
         field_name=field_name
-    )
+    ))
+    response.cache_control.max_age = 1
+    return response
 
 
 @bp.route('/api/scoreboard-state')

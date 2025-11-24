@@ -235,6 +235,34 @@
     {% endif %}
     
     <script>
+        // Image caching: Preload team profile images to leverage browser's HTTP cache
+        // This ensures images are in the browser's cache before they're needed
+        function preloadImages() {
+            const teamPhotos = document.querySelectorAll('.team-photo');
+            teamPhotos.forEach(img => {
+                if (img.src && !img.complete) {
+                    // Create a new Image object to preload (browser will use HTTP cache)
+                    const preloadImg = new Image();
+                    preloadImg.src = img.src;
+                }
+            });
+        }
+        
+        // Preload images immediately (don't wait for DOMContentLoaded)
+        // Also preload on page load to ensure cache is warm
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', preloadImages);
+        } else {
+            preloadImages();
+        }
+        
+        // Also preload on page visibility change (when iframe becomes visible)
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden) {
+                preloadImages();
+            }
+        });
+        
         const tournamentUrl = '{{ tournament_url }}';
         const fieldName = '{{ field_name }}';
         {% if match %}

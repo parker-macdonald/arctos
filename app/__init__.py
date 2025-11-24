@@ -121,6 +121,18 @@ def create_app(config=None):
     def inject_url_for():
         return dict(url_for=url_for)
     
+    # Add cache headers to static file responses (especially images)
+    @app.after_request
+    def add_cache_headers(response):
+        from flask import request
+        # Check if this is a static file request
+        if response.status_code == 200 and request.endpoint == 'static':
+            # Cache images and other static assets for 1 hour
+            if request.path.startswith('/static/uploads/') or request.path.startswith('/static/'):
+                response.cache_control.max_age = 3600
+                response.cache_control.public = True
+        return response
+    
     # Initialize websocket handlers
     
     # Error handlers
