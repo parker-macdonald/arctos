@@ -404,7 +404,7 @@ def match_page(tournament_url):
     stream_starts = {}
     recorded_videos = []  # List of recorded video sessions
     camera_urls = []
-    
+
     if match.camera_stream_starts:
         try:
             stream_starts_data = json.loads(match.camera_stream_starts)

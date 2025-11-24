@@ -1030,63 +1030,83 @@ def make_concatenated_video(
 ):
     """
     Concatenate multiple clips (start, end) from a single source video
-    into one video using FFmpeg filter_complex trim/atrim + concat.
+    into one video using ffmpeg-python.
 
     :param input_path: path to the input .webm (or any video)
     :param clips: list of (start, end) float seconds
     :param output_path: final concatenated video file
     """
-    import subprocess
+    import ffmpeg
 
     # Check if there are any clips to process
     if not clips or len(clips) == 0:
         raise ValueError("No clips provided to concatenate")
 
-    filter_lines = []
-    v_labels = []
-    a_labels = []
+    # Probe the input to check for audio
+    try:
+        probe = ffmpeg.probe(input_path)
+        has_audio = any(stream.get('codec_type') == 'audio' for stream in probe.get('streams', []))
+    except Exception as e:
+        print(f"Warning: Could not probe input file: {e}")
+        has_audio = True  # Assume audio exists as fallback
 
-    for idx, (start, end) in enumerate(clips):
-        v_label = f"v{idx}"
-        a_label = f"a{idx}"
+    # Load the input
+    input_stream = ffmpeg.input(input_path)
 
-        # Video trim
-        filter_lines.append(
-            f"[0:v]trim=start={start}:end={end},setpts=PTS-STARTPTS[{v_label}]"
+    # Create trimmed video and audio streams for each clip
+    video_streams = []
+    audio_streams = []
+
+    for start, end in clips:
+        # Trim video
+        v_trimmed = input_stream['v'].filter('trim', start=start, end=end).filter('setpts', 'PTS-STARTPTS')
+        video_streams.append(v_trimmed)
+
+        # Trim audio if it exists
+        if has_audio:
+            try:
+                a_trimmed = input_stream['a'].filter('atrim', start=start, end=end).filter('asetpts', 'PTS-STARTPTS')
+                audio_streams.append(a_trimmed)
+            except Exception:
+                # If audio stream doesn't exist or can't be accessed, skip it
+                has_audio = False
+                audio_streams = []
+
+    # Concatenate streams
+    # ffmpeg.concat expects all video inputs first, then all audio inputs
+    if has_audio and len(audio_streams) > 0:
+        # Concat with both video and audio
+        # Pass all video streams first, then all audio streams
+        if len(video_streams) > 1 or len(audio_streams) > 1:
+            concat_output = ffmpeg.concat(*video_streams, *audio_streams, v=1, a=1)
+        else:
+            # Single clip, no need to concat
+            concat_output = {'v': video_streams[0], 'a': audio_streams[0]}
+        
+        # Create output
+        output = ffmpeg.output(
+            concat_output['v'],
+            concat_output['a'],
+            output_path,
+            vcodec=video_codec,
+            acodec=audio_codec
+        )
+    else:
+        # Video only - concat all video streams
+        if len(video_streams) > 1:
+            concat_output = ffmpeg.concat(*video_streams, v=1, a=0)
+        else:
+            concat_output = video_streams[0]
+        
+        # Create output
+        output = ffmpeg.output(
+            concat_output,
+            output_path,
+            vcodec=video_codec
         )
 
-        # Audio trim
-        filter_lines.append(
-            f"[0:a]atrim=start={start}:end={end},asetpts=PTS-STARTPTS[{a_label}]"
-        )
-
-        v_labels.append(f"[{v_label}]")
-        a_labels.append(f"[{a_label}]")
-
-    # Build concat filter line
-    concat_line = (
-        "".join(v_labels + a_labels)
-        + f"concat=n={len(clips)}:v=1:a=1[outv][outa]"
-    )
-
-    filter_lines.append(concat_line)
-
-    filter_complex = "; ".join(filter_lines)
-
-    # Construct FFmpeg command
-    cmd = [
-        "ffmpeg",
-        "-i", input_path,
-        "-filter_complex", filter_complex,
-        "-map", "[outv]",
-        "-map", "[outa]",
-        "-c:v", video_codec,
-        "-c:a", audio_codec,
-        "-y",  # overwrite output silently
-        output_path,
-    ]
-
-    subprocess.run(cmd, check=True)
+    # Run the conversion
+    ffmpeg.run(output, overwrite_output=True, quiet=True)
 
 @bp.route('/<tournament_url>/update-settings', methods=['POST'])
 @login_required

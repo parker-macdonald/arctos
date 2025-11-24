@@ -462,7 +462,7 @@ function checkForUnfinishedPoint() {
                         stonesBaseline = latestPoint.stones_at_start;
                         console.log('Starting stones ticker with baseline from stones_at_start:', stonesBaseline);
                         startStonesTicker(latestPoint.stamp, latestPoint.stones_at_start);
-                    } else {
+            } else {
                         // Fallback: compute from points list
                         const computedStones = computeStonesRemainingFromPoints(data.points);
                         const stonesInput = document.getElementById('stones-remaining');
@@ -471,10 +471,10 @@ function checkForUnfinishedPoint() {
                         }
                         stonesBaseline = computedStones;
                         startStonesTicker(latestPoint.stamp, computedStones);
-                    }
+            }
                 }
                 {% endif %}
-            } else {
+        } else {
                 console.log('Latest point is finished, enabling Start Point button');
                 // No in-progress point, enable the Start Point button
                 updatePointButtons('Start Point');
@@ -1006,7 +1006,7 @@ function startStonesTicker(pointStartIso, stonesAtStartValue) {
         stonesBaseline = stonesAtStartValue;
         console.log('Stones ticker started with baseline from stones_at_start:', stonesBaseline);
         // Also update the input to match the baseline (for display consistency)
-        const input = document.getElementById('stones-remaining');
+    const input = document.getElementById('stones-remaining');
         if (input && document.activeElement !== input) {
             input.value = stonesBaseline;
         }
@@ -1880,25 +1880,25 @@ async function loadAllPoints() {
             });
             
             // Update stones elapsed for all points
-            const stonesCells = document.querySelectorAll('[id^="stones-"]');
-            stonesCells.forEach(cell => {
-                const s = cell.getAttribute('data-stamp');
-                const e = cell.getAttribute('data-end');
-                cell.textContent = computeStonesElapsed(s, e);
-            });
+        const stonesCells = document.querySelectorAll('[id^="stones-"]');
+        stonesCells.forEach(cell => {
+            const s = cell.getAttribute('data-stamp');
+            const e = cell.getAttribute('data-end');
+            cell.textContent = computeStonesElapsed(s, e);
+        });
             
             // Set up periodic update for ongoing last point
-            setInterval(() => {
-                const cells = document.querySelectorAll('[id^="stones-"]');
-                if (cells.length) {
-                    const last = cells[cells.length - 1];
-                    const end = last.getAttribute('data-end');
-                    if (!end) {
-                        const s = last.getAttribute('data-stamp');
-                        last.textContent = computeStonesElapsed(s, null);
-                    }
+        setInterval(() => {
+            const cells = document.querySelectorAll('[id^="stones-"]');
+            if (cells.length) {
+                const last = cells[cells.length - 1];
+                const end = last.getAttribute('data-end');
+                if (!end) {
+                    const s = last.getAttribute('data-stamp');
+                    last.textContent = computeStonesElapsed(s, null);
                 }
-            }, 500);
+            }
+        }, 500);
             
             // Check for in-progress point and set up accordingly
             if (data.points.length > 0) {

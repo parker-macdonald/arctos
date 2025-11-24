@@ -645,7 +645,7 @@ function computeStonesRemainingFromPoints(points) {
 }
 
 function updateStonesRemaining(points) {
-    const stonesElement = document.getElementById('live-stones-remaining');
+        const stonesElement = document.getElementById('live-stones-remaining');
     if (!stonesElement) return;
     
     const computedStones = computeStonesRemainingFromPoints(points);
