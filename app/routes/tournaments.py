@@ -1,10 +1,13 @@
 """
 Tournament management routes.
 """
-from flask import Blueprint, render_template, request, redirect, flash, jsonify
+from flask import Blueprint, render_template, request, redirect, flash, jsonify, current_app
 from flask_login import login_required, current_user
 from datetime import datetime, timedelta, timezone
 import json
+import hmac
+import hashlib
+import base64
 from models import (
     Tournament, Match, Field, Tag, TeamRegistration, PlayerRegistration,
     Team, TO, db
@@ -14,6 +17,47 @@ from app.utils.scheduling import compute_dynamic_match_nominal_start_time, valid
 from app.filters import is_head_ref
 
 bp = Blueprint('tournaments', __name__)
+
+def generate_camera_key(tournament_url, field_name):
+    """Generate a secure camera access key for a field."""
+    secret = current_app.config.get('SECRET_KEY')
+    message = f"{tournament_url}:{field_name}".encode('utf-8')
+    key = hmac.new(secret.encode('utf-8'), message, hashlib.sha256).digest()
+    # Return a URL-safe base64 encoded key
+    return base64.urlsafe_b64encode(key).decode('utf-8').rstrip('=')
+
+def validate_camera_key(tournament_url, field_name, provided_key):
+    """Validate a camera access key."""
+    expected_key = generate_camera_key(tournament_url, field_name)
+    # Use constant-time comparison to prevent timing attacks
+    return hmac.compare_digest(expected_key, provided_key)
+
+def get_camera_key_from_request():
+    """Extract camera access key from request (query params, JSON body, or form data)."""
+    # Try query parameters first
+    key = request.args.get('key', '').strip()
+    if key:
+        return key
+    
+    # Try JSON body
+    if request.is_json and request.json:
+        key = request.json.get('key', '').strip()
+        if key:
+            return key
+    
+    # Try form data
+    key = request.form.get('key', '').strip()
+    if key:
+        return key
+    
+    return None
+
+def require_camera_key(tournament_url, field_name):
+    """Validate camera access key from request. Returns (is_valid, error_response_tuple)."""
+    access_key = get_camera_key_from_request()
+    if not access_key or not validate_camera_key(tournament_url, field_name, access_key):
+        return (False, (jsonify({'error': 'Invalid or missing access key'}), 403))
+    return (True, None)
 
 def update_match_previous_link(match: Match, prev_match_id: str, tournament_url: str, is_new: bool = False) -> None:
     """
@@ -725,34 +769,74 @@ def tournament_register(tournament_url):
     return render_template('tournament_register.html', tournament=tournament, registered_teams=registered_teams)
 
 
+@bp.route('/api/camera-url')
+@login_required
+def camera_url_api():
+    """Generate camera recording URL with access key. Requires TO access."""
+    try:
+        tournament_url = request.args.get('tournament')
+        field_name = request.args.get('field')
+        
+        if not tournament_url or not field_name:
+            return jsonify({'error': 'Tournament and field parameters required'}), 400
+        
+        # Check if user is a TO for this tournament
+        if is_not_TO(tournament_url):
+            return jsonify({'error': 'Unauthorized: You must be a TO for this tournament'}), 403
+        
+        # Verify field exists
+        field = Field.query.filter_by(event=tournament_url, name=field_name).first()
+        if not field:
+            return jsonify({'error': f'Field "{field_name}" not found'}), 404
+        
+        # Generate the camera URL with key
+        access_key = generate_camera_key(tournament_url, field_name)
+        from flask import url_for
+        camera_url = url_for('tournaments.camera_page', tournament_url=tournament_url, field=field_name, key=access_key, _external=True)
+        
+        return jsonify({'url': camera_url})
+    except Exception as e:
+        import traceback
+        print(f"Error in camera_url_api: {e}")
+        print(traceback.format_exc())
+        return jsonify({'error': f'Server error: {str(e)}'}), 500
+
 @bp.route('/<tournament_url>/camera')
 def camera_page(tournament_url):
-    """Camera recording page for a field."""
+    """Camera recording page for a field. Requires a special access key."""
     tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
     field_name = request.args.get('field', '').strip()
+    access_key = request.args.get('key', '').strip()
     
     if not field_name:
-        flash('Field name is required', 'error')
-        return redirect(f'/{tournament_url}')
+        return render_template('camera.html', tournament=tournament, field_name='', error='Field name is required'), 400
     
     # Verify field exists
     field = Field.query.filter_by(event=tournament_url, name=field_name).first()
     if not field:
-        flash(f'Field "{field_name}" not found', 'error')
-        return redirect(f'/{tournament_url}')
+        return render_template('camera.html', tournament=tournament, field_name=field_name, error=f'Field "{field_name}" not found'), 404
+    
+    # Validate access key
+    if not access_key or not validate_camera_key(tournament_url, field_name, access_key):
+        return render_template('camera.html', tournament=tournament, field_name=field_name, error='Invalid or missing access key. Please use the recording URL provided by the tournament organizer.'), 403
     
     return render_template('camera.html', tournament=tournament, field_name=field_name)
 
 
 @bp.route('/api/camera/match-status')
 def camera_match_status():
-    """Check if a field has an active match. Public endpoint for polling."""
+    """Check if a field has an active match. Requires camera access key."""
     tournament_url = request.args.get('tournament')
     field_name = request.args.get('field')
     current_match_id = request.args.get('current_match_id')  # Optional: track specific match
     
     if not tournament_url or not field_name:
         return jsonify({'error': 'Tournament and field parameters required'}), 400
+    
+    # Validate camera access key
+    is_valid, error_response = require_camera_key(tournament_url, field_name)
+    if not is_valid:
+        return error_response[0], error_response[1]
     
     # If we're tracking a specific match, check its status
     if current_match_id:
@@ -801,7 +885,7 @@ def camera_match_status():
 
 @bp.route('/api/camera/recording-started', methods=['POST'])
 def camera_recording_started():
-    """Notify server that a new recording session has started. Updates match's camera_stream_starts."""
+    """Notify server that a new recording session has started. Updates match's camera_stream_starts. Requires camera access key."""
     data = request.json
     tournament_url = data.get('tournament')
     field_name = data.get('field')
@@ -812,6 +896,11 @@ def camera_recording_started():
     
     if not tournament_url or not field_name or not session_id or not match_id:
         return jsonify({'error': 'Missing required parameters'}), 400
+    
+    # Validate camera access key
+    is_valid, error_response = require_camera_key(tournament_url, field_name)
+    if not is_valid:
+        return error_response[0], error_response[1]
     
     try:
         # Find the match
@@ -865,7 +954,7 @@ def camera_recording_started():
 
 @bp.route('/api/camera/upload-chunk', methods=['POST'])
 def camera_upload_chunk():
-    """Receive and store a video chunk. Public endpoint."""
+    """Receive and store a video chunk. Requires camera access key."""
     import os
     from flask import current_app
     from datetime import datetime
@@ -879,6 +968,11 @@ def camera_upload_chunk():
     
     if not tournament_url or not field_name or not session_id or chunk_index is None:
         return jsonify({'error': 'Missing required parameters'}), 400
+    
+    # Validate camera access key
+    is_valid, error_response = require_camera_key(tournament_url, field_name)
+    if not is_valid:
+        return error_response[0], error_response[1]
     
     if 'chunk' not in request.files:
         return jsonify({'error': 'No chunk file provided'}), 400
@@ -922,7 +1016,7 @@ def camera_upload_chunk():
 
 @bp.route('/api/camera/finalize', methods=['POST'])
 def camera_finalize():
-    """Finalize a recording session. Public endpoint."""
+    """Finalize a recording session. Requires camera access key."""
     import os
     from flask import current_app
     from datetime import datetime
@@ -934,6 +1028,11 @@ def camera_finalize():
     session_id = data.get('session_id')
     if not tournament_url or not field_name or not session_id:
         return jsonify({'error': 'Missing required parameters'}), 400
+    
+    # Validate camera access key
+    is_valid, error_response = require_camera_key(tournament_url, field_name)
+    if not is_valid:
+        return error_response[0], error_response[1]
     
     try:
         # Directory where chunks are stored
@@ -1013,7 +1112,8 @@ def make_concatenated_video(
     output_file: str = 'final_video.webm',
 ):
     import subprocess
-    from os import path
+    from os import path, remove
+    point_files = []
     with open(path.join(workdir, 'clips.txt'), 'w') as f:
         for i, (start, stop) in enumerate(clips):
             filename = path.join(workdir, f'point_{i}.webm')
@@ -1024,13 +1124,16 @@ def make_concatenated_video(
                 filename
             ])
             print(f'file {filename}', file=f)
+            point_files.append(filename)
         
 
     subprocess.run([
         'ffmpeg', '-f', 'concat', '-safe', '0', '-i', path.join(workdir, 'clips.txt'), '-c', 'copy', 
         path.join(workdir, output_file)
     ])
-
+    for point in point_files:
+        remove(point)
+    
 @bp.route('/<tournament_url>/update-settings', methods=['POST'])
 @login_required
 def update_tournament_settings(tournament_url):

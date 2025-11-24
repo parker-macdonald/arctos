@@ -11,6 +11,15 @@
         </div>
     </div>
 
+    {% if error %}
+    <div class="row mt-4">
+        <div class="col-12">
+            <div class="alert alert-danger">
+                <i class="fas fa-exclamation-triangle"></i> {{ error }}
+            </div>
+        </div>
+    </div>
+    {% else %}
     <div class="row mt-4">
         <div class="col-12">
             <div class="card">
@@ -99,11 +108,39 @@
             </div>
         </div>
     </div>
+    {% endif %}
 </div>
 
 <script>
 const tournamentUrl = '{{ tournament.url }}';
 const fieldName = '{{ field_name }}';
+
+// Extract camera access key from URL
+const urlParams = new URLSearchParams(window.location.search);
+const cameraAccessKey = urlParams.get('key');
+
+if (!cameraAccessKey) {
+    console.error('Camera access key is missing from URL');
+}
+
+// Helper function to add key to URL parameters
+function addKeyToUrl(url) {
+    const urlObj = new URL(url, window.location.origin);
+    urlObj.searchParams.set('key', cameraAccessKey);
+    return urlObj.toString();
+}
+
+// Helper function to add key to FormData
+function addKeyToFormData(formData) {
+    formData.append('key', cameraAccessKey);
+    return formData;
+}
+
+// Helper function to add key to JSON body
+function addKeyToJson(data) {
+    data.key = cameraAccessKey;
+    return data;
+}
 
 let mediaRecorder = null;
 let currentRecordingSession = null; // Active recording session
@@ -253,6 +290,7 @@ async function checkMatchStatus() {
         if (matchId && isRecording) {
             url += `&current_match_id=${matchId}`;
         }
+        url += `&key=${encodeURIComponent(cameraAccessKey)}`;
         
         const response = await fetch(url);
         if (!response.ok) {
@@ -857,14 +895,14 @@ async function notifyRecordingStart(session) {
             headers: {
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify({
+            body: JSON.stringify(addKeyToJson({
                 tournament: tournamentUrl,
                 field: fieldName,
                 match_id: session.matchId,
                 session_id: session.id,
                 camera_id: getCameraId(),
                 start_timestamp: session.startTime
-            })
+            }))
         });
         
         if (!response.ok) {
@@ -921,6 +959,7 @@ async function uploadChunkForSession(chunkData, chunkIndex, session) {
         formData.append('session_id', session.id);
         formData.append('chunk_index', chunkIndex);
         formData.append('start_timestamp', session.startTime);
+        addKeyToFormData(formData);
         
         const response = await fetch('/api/camera/upload-chunk', {
             method: 'POST',
@@ -994,14 +1033,14 @@ async function finalizeRecordingForSession(session) {
             headers: {
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify({
+            body: JSON.stringify(addKeyToJson({
                 tournament: tournamentUrl,
                 field: fieldName,
                 match_id: session.matchId,
                 session_id: session.id,
                 start_timestamp: session.startTime,
                 total_chunks: session.chunks.length
-            })
+            }))
         });
         
         if (!response.ok) {
