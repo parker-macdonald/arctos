@@ -488,7 +488,6 @@ window.MathJax = {
     </div>
     
     <div class="col-md-4">
-        {% if current_user.is_authenticated and current_user.__class__.__name__ == 'Player' and is_head_ref %}
         <div class="card">
             <div class="card-header">
                 <h5 class="mb-0">Head Ref Notes</h5>
@@ -557,7 +556,6 @@ window.MathJax = {
                 {% endif %}
             </div>
         </div>
-        {% endif %}
     </div>
 </div>
 
