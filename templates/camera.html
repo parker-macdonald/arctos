@@ -36,40 +36,6 @@
                         <small class="form-text text-muted">Video recording bitrate in megabits per second. Default: 2.5 Mbps. Saved in your browser.</small>
                     </div>
                     
-                    <div class="mb-3">
-                        <div class="form-check">
-                            <input class="form-check-input" type="checkbox" id="show-scoreboard-overlay">
-                            <label class="form-check-label" for="show-scoreboard-overlay">
-                                Show scoreboard overlay on video
-                            </label>
-                        </div>
-                        <small class="form-text text-muted">Overlay the live scoreboard on the recorded video. Saved in your browser.</small>
-                    </div>
-                    
-                    <div id="overlay-settings" style="display: none;">
-                        <div class="row mb-3">
-                            <div class="col-md-4">
-                                <label for="overlay-x" class="form-label">X Position (px):</label>
-                                <input type="number" class="form-control form-control-sm" id="overlay-x" value="10" min="0">
-                            </div>
-                            <div class="col-md-4">
-                                <label for="overlay-y" class="form-label">Y Position (px):</label>
-                                <input type="number" class="form-control form-control-sm" id="overlay-y" value="10" min="0">
-                            </div>
-                            <div class="col-md-4">
-                                <label for="overlay-width" class="form-label">Width (px):</label>
-                                <input type="number" class="form-control form-control-sm" id="overlay-width" value="2500" min="100">
-                            </div>
-                        </div>
-                        <div class="row mb-3">
-                            <div class="col-md-12">
-                                <label for="overlay-scale" class="form-label">Scale (%):</label>
-                                <input type="number" class="form-control form-control-sm" id="overlay-scale" value="100" min="10" max="500" step="1">
-                                <small class="form-text text-muted">Scale the overlay size as a percentage (100% = normal size).</small>
-                            </div>
-                        </div>
-                    </div>
-                    
                     <div class="mb-3" id="camera-select-container" style="display: none;">
                         <label for="camera-select" class="form-label">Select Camera:</label>
                         <select class="form-select" id="camera-select">
@@ -82,13 +48,8 @@
                     </div>
                     
                     <div id="video-container" style="display: none;">
-                        <div class="mb-2" style="position: relative; display: inline-block;">
-                            <video id="preview" autoplay muted playsinline style="width: 100%; max-width: 640px; border: 2px solid #333; background: #000; position: relative;"></video>
-                            <iframe id="scoreboard-overlay" 
-                                    style="position: absolute; top: 10px; left: 10px; display: none; z-index: 1000; pointer-events: none; border: none; background: transparent; width: 2500px; height: auto; min-width: 600px; transform-origin: top left;"
-                                    src=""
-                                    scrolling="no">
-                            </iframe>
+                        <div class="mb-2">
+                            <video id="preview" autoplay muted playsinline style="width: 100%; max-width: 640px; border: 2px solid #333; background: #000;"></video>
                         </div>
                         <div class="mt-2">
                             <div id="recording-status" class="alert alert-danger" style="display: none;">
@@ -97,6 +58,17 @@
                             </div>
                             <div id="upload-status" class="alert alert-info" style="display: none;">
                                 <i class="fas fa-upload"></i> Uploading video chunks...
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div id="debug-panel" class="card mt-3">
+                        <div class="card-header">
+                            <h6 class="mb-0">Debug Info</h6>
+                        </div>
+                        <div class="card-body" style="max-height: 400px; overflow-y: auto; font-size: 0.85rem;">
+                            <div id="debug-content">
+                                <p class="text-muted small">Waiting for recording to start...</p>
                             </div>
                         </div>
                     </div>
@@ -151,28 +123,15 @@ let maxRecordingDuration = 20 * 60 * 1000; // 20 minutes in milliseconds
 let pollInterval = null;
 let reconnectTimeout = null;
 let chunkUploadInterval = null;
-let currentStream = null; // Keep stream active
+let currentStream = null; // Keep stream active (high quality for recording)
 let activeSessions = new Set(); // Track all active sessions for cleanup
 let availableCameras = [];
 let selectedCameraId = null;
-let scoreboardOverlayInterval = null;
-let showScoreboardOverlay = false;
-let canvasStream = null; // Canvas stream for compositing video + overlay
-let canvasContext = null;
-let canvasElement = null;
-let animationFrameId = null;
-let currentScoreboardData = null; // Store current scoreboard data for canvas rendering
-let overlaySettings = {
-    x: 10,
-    y: 10,
-    width: 600,
-    height: "auto",
-    scale: 30
-};
-let cachedOverlayCanvas = null; // Cached canvas of the iframe overlay
-let lastOverlayCaptureTime = 0;
-const OVERLAY_CAPTURE_INTERVAL = 200; // Capture iframe every 200ms
 let wakeLock = null; // Wake Lock to prevent screen sleep during recording
+let debugUpdateInterval = null; // Interval for updating debug display
+let currentPoints = []; // Track points for the current match
+const POINT_LATENCY_MS = 10000; // 10 seconds latency between "start point" click and actual point start
+const POINT_BUFFER_MS = 3000; // 3 seconds buffer around points
 
 // Get camera ID from localStorage or input
 function getCameraId() {
@@ -240,6 +199,105 @@ function updateRecordingTime() {
     document.getElementById('recording-time').textContent = formatTime(elapsed);
 }
 
+// Update debug display with chunk information
+function updateDebugDisplay() {
+    const debugContent = document.getElementById('debug-content');
+    if (!debugContent) return;
+    
+    let html = '';
+    
+    // Recording status
+    if (isRecording && currentRecordingSession) {
+        const session = currentRecordingSession;
+        const elapsed = Date.now() - session.startTime;
+        html += `<div class="mb-2"><strong>Recording Status:</strong> Active</div>`;
+        html += `<div class="mb-2"><strong>Session ID:</strong> ${session.id.substring(0, 20)}...</div>`;
+        html += `<div class="mb-2"><strong>Match ID:</strong> ${session.matchId || 'None'}</div>`;
+        html += `<div class="mb-2"><strong>Elapsed Time:</strong> ${formatTime(elapsed)}</div>`;
+            html += `<div class="mb-2"><strong>Last Uploaded Chunk:</strong> ${session.lastUploadedChunkIndex}</div>`;
+        
+        // Points information
+        html += `<div class="mb-2"><strong>Points Tracked:</strong> ${currentPoints.length}</div>`;
+        if (currentPoints.length > 0) {
+            html += `<div class="mb-2 small">`;
+            currentPoints.forEach((p, idx) => {
+                const startTime = p.stamp ? new Date(p.stamp).toLocaleTimeString() : 'N/A';
+                const endTime = p.end_stamp ? new Date(p.end_stamp).toLocaleTimeString() : 'Ongoing';
+                // Calculate relative times for debugging
+                const pointStartAbs = p.stamp ? p.stamp.getTime() : null;
+                const pointEndAbs = p.end_stamp ? p.end_stamp.getTime() : null;
+                const pointStartTime = pointStartAbs ? new Date(pointStartAbs).toLocaleTimeString() : 'N/A';
+                const pointEndTime = pointEndAbs ? new Date(pointEndAbs).toLocaleTimeString() : 'Ongoing';
+                html += `Point ${idx + 1}: ${p.uuid.substring(0, 8)}... (${pointStartTime} - ${pointEndTime})<br>`;
+            });
+            html += `</div>`;
+        } else {
+            html += `<div class="mb-2 text-warning small">⚠️ No points found - chunks won't be uploaded!</div>`;
+        }
+        
+        // Chunks information
+        html += `<div class="mb-2"><strong>Total Chunks:</strong> ${session.chunks.length}</div>`;
+        
+        if (session.chunks.length > 0) {
+            html += `<div class="table-responsive"><table class="table table-sm table-bordered mb-0" style="font-size: 0.75rem;">`;
+            html += `<thead><tr><th>Idx</th><th>Size</th><th>Status</th><th>Point</th><th>Start Time</th><th>Duration</th><th>Has Data</th></tr></thead><tbody>`;
+            
+            // Show last 20 chunks (most recent first)
+            const chunksToShow = session.chunks.slice(-20).reverse();
+            chunksToShow.forEach(chunk => {
+                const sizeMB = chunk.size ? (chunk.size / 1024 / 1024).toFixed(2) : '?';
+                const status = chunk.uploaded ? '<span class="text-success">✓ Uploaded</span>' : 
+                              chunk.data ? '<span class="text-warning">⏳ Pending</span>' : 
+                              '<span class="text-muted">🗑️ Cleared</span>';
+                const pointId = chunk.point_id ? chunk.point_id.substring(0, 8) + '...' : 'None';
+                const startTime = chunk.chunkStartTimestamp ? new Date(chunk.chunkStartTimestamp).toLocaleTimeString() : '?';
+                const duration = chunk.duration ? (chunk.duration / 1000).toFixed(1) + 's' : '?';
+                const hasData = chunk.data ? 'Yes' : 'No';
+                
+                html += `<tr>`;
+                html += `<td>${chunk.index}</td>`;
+                html += `<td>${sizeMB}MB</td>`;
+                html += `<td>${status}</td>`;
+                html += `<td>${pointId}</td>`;
+                html += `<td>${startTime}</td>`;
+                html += `<td>${duration}</td>`;
+                html += `<td>${hasData}</td>`;
+                html += `</tr>`;
+            });
+            
+            html += `</tbody></table></div>`;
+            
+            // Summary
+            const uploadedCount = session.chunks.filter(c => c.uploaded).length;
+            const pendingCount = session.chunks.filter(c => !c.uploaded && c.data).length;
+            const clearedCount = session.chunks.filter(c => !c.uploaded && !c.data).length;
+            
+            html += `<div class="mt-2 small">`;
+            html += `<strong>Summary:</strong> `;
+            html += `<span class="text-success">${uploadedCount} uploaded</span>, `;
+            html += `<span class="text-warning">${pendingCount} pending</span>, `;
+            html += `<span class="text-muted">${clearedCount} cleared</span>`;
+            html += `</div>`;
+        } else {
+            html += `<div class="text-warning small">⚠️ No chunks created yet</div>`;
+        }
+        
+        // Recorder state
+        if (session.recorder) {
+            html += `<div class="mt-2"><strong>Recorder State:</strong> ${session.recorder.state}</div>`;
+        }
+    } else {
+        html += `<div class="text-muted">Not recording</div>`;
+        if (currentPoints.length > 0) {
+            html += `<div class="mt-2"><strong>Points Available:</strong> ${currentPoints.length}</div>`;
+        } else {
+            html += `<div class="mt-2 text-warning">⚠️ No points available - check match status</div>`;
+        }
+    }
+    
+    debugContent.innerHTML = html;
+}
+
 // Request wake lock to prevent screen sleep during recording
 async function requestWakeLock() {
     if (!('wakeLock' in navigator)) {
@@ -297,11 +355,81 @@ async function checkMatchStatus() {
             throw new Error(`HTTP error! status: ${response.status}`);
         }
         const data = await response.json();
+        
+        // Update current points if available
+        if (data.points) {
+            currentPoints = data.points.map(p => {
+                // Parse timestamps as UTC to ensure consistent timezone handling
+                let stamp = null;
+                let end_stamp = null;
+                
+                if (p.stamp) {
+                    // If it's an ISO string, parse it explicitly as UTC
+                    if (typeof p.stamp === 'string') {
+                        // Ensure it's treated as UTC (add Z if not present)
+                        const isoString = p.stamp.endsWith('Z') ? p.stamp : p.stamp + 'Z';
+                        stamp = new Date(isoString);
+                    } else {
+                        stamp = new Date(p.stamp);
+                    }
+                }
+                
+                if (p.end_stamp) {
+                    if (typeof p.end_stamp === 'string') {
+                        const isoString = p.end_stamp.endsWith('Z') ? p.end_stamp : p.end_stamp + 'Z';
+                        end_stamp = new Date(isoString);
+                    } else {
+                        end_stamp = new Date(p.end_stamp);
+                    }
+                }
+                
+                return {
+                    uuid: p.uuid,
+                    stamp: stamp,
+                    end_stamp: end_stamp
+                };
+            });
+        }
+        
+        updateDebugDisplay(); // Update debug display when points change
+        
         return data;
     } catch (error) {
         console.error('Error checking match status:', error);
         return { hasActiveMatch: false, error: error.message };
     }
+}
+
+// Determine which point a chunk belongs to based on absolute timestamps
+// Returns { point_id } or null if chunk doesn't belong to any point
+// chunkStartTimestamp is absolute world time in milliseconds (UTC)
+function getChunkPointMetadata(chunkStartTimestamp, chunkDuration) {
+    // chunkStartTimestamp is already in UTC milliseconds (from Date.now() + timecode offset)
+    const chunkStartTime = chunkStartTimestamp;
+    const chunkEndTime = chunkStartTimestamp + chunkDuration;
+    
+    // Find the point that overlaps with this chunk (with buffer)
+    for (const point of currentPoints) {
+        if (!point.stamp) continue;
+        
+        // Get point timestamps in milliseconds (absolute world time, UTC)
+        // getTime() always returns UTC milliseconds regardless of how Date was created
+        const pointStartAbsolute = point.stamp.getTime();
+        const pointEndAbsolute = point.end_stamp ? point.end_stamp.getTime() : Date.now();
+        
+        // Point time range (with buffer on both ends)
+        const pointStart = pointStartAbsolute - POINT_BUFFER_MS;
+        const pointEnd = pointEndAbsolute + POINT_BUFFER_MS;
+        
+        // Check if chunk overlaps with point
+        if (chunkEndTime >= pointStart && chunkStartTime <= pointEnd) {
+            return {
+                point_id: point.uuid
+            };
+        }
+    }
+    
+    return null; // Chunk doesn't belong to any point
 }
 
 // Check if getUserMedia is available
@@ -391,10 +519,6 @@ async function populateCameraSelect() {
         selectedCameraId = e.target.value;
         localStorage.setItem(`selected_camera_${tournamentUrl}_${fieldName}`, selectedCameraId);
         // Restart stream with new camera
-        if (currentStream) {
-            currentStream.getTracks().forEach(track => track.stop());
-            currentStream = null;
-        }
         initializeCamera();
     });
 }
@@ -408,23 +532,12 @@ async function initializeCamera() {
     }
     
     try {
-        // First, get available cameras and load saved selection if not already done
-        // if (availableCameras.length === 0) {
-        //     availableCameras = await getAvailableCameras();
-        //     // Load saved selection before initializing
-        //     const saved = localStorage.getItem(`selected_camera_${tournamentUrl}_${fieldName}`);
-        //     if (saved && availableCameras.some(cam => cam.deviceId === saved)) {
-        //         selectedCameraId = saved;
-        //     } else if (availableCameras.length > 0) {
-        //         // If no saved selection or saved is invalid, use first camera
-        //         selectedCameraId = availableCameras[0].deviceId;
-        //     }
-        // }
-        
+        // Request high-quality stream for both preview and recording
         const constraints = {
             video: {
-                width: { ideal: 1280 },
-                height: { ideal: 720 },
+                width: { ideal: 4096 },
+                height: { ideal: 2160 },
+                frameRate: { ideal: 60 },
                 deviceId: selectedCameraId ? { exact: selectedCameraId } : undefined
             },
             audio: true
@@ -432,7 +545,7 @@ async function initializeCamera() {
         
         currentStream = await navigator.mediaDevices.getUserMedia(constraints);
         
-        // Show preview immediately
+        // Show preview with the same stream
         const preview = document.getElementById('preview');
         preview.srcObject = currentStream;
         document.getElementById('video-container').style.display = 'block';
@@ -465,292 +578,6 @@ async function initializeCamera() {
     }
 }
 
-// Draw scoreboard overlay on canvas
-function drawScoreboardOnCanvas(ctx, x, y, width, height, data) {
-    // Always draw the overlay if enabled, even if there's no match
-    // The scoreboard page will show "between matches" state
-    
-    const padding = 12;
-    const rowHeight = 50;
-    const fontSize = 20;
-    const scoreFontSize = 28;
-    
-    // Draw background
-    ctx.save();
-    ctx.globalAlpha = 0.85;
-    ctx.fillStyle = '#000000';
-    ctx.fillRect(x, y, width, height);
-    ctx.restore();
-    
-    // If there's no match data, just draw a placeholder
-    if (!data || !data.has_active_match) {
-        ctx.fillStyle = '#ffffff';
-        ctx.font = `16px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`;
-        ctx.fillText('Waiting for match...', x + padding, y + padding + fontSize);
-        return;
-    }
-    
-    // Draw team 1 row
-    const team1Y = y + padding;
-    ctx.fillStyle = '#ffffff';
-    ctx.font = `600 ${fontSize}px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`;
-    ctx.fillText(data.team1_name || 'Team 1', x + padding, team1Y + fontSize);
-    
-    // Draw team 1 scores
-    if (data.scores_by_set && Object.keys(data.scores_by_set).length > 0) {
-        const sets = data.sets || Object.keys(data.scores_by_set).sort((a, b) => parseInt(a) - parseInt(b));
-        ctx.font = `bold ${scoreFontSize}px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`;
-        let scoreX = x + width - padding - (sets.length * 60);
-        sets.forEach((setNum, idx) => {
-            const setData = data.scores_by_set[setNum];
-            const score = setData.team1_score || 0;
-            if (idx > 0) {
-                ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
-                ctx.beginPath();
-                ctx.moveTo(scoreX - 5, team1Y);
-                ctx.lineTo(scoreX - 5, team1Y + rowHeight);
-                ctx.stroke();
-            }
-            ctx.fillText(score.toString(), scoreX, team1Y + scoreFontSize);
-            scoreX += 60;
-        });
-    } else {
-        ctx.font = `bold ${scoreFontSize}px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`;
-        ctx.fillText('-', x + width - padding - 30, team1Y + scoreFontSize);
-    }
-    
-    // Draw team 2 row
-    const team2Y = y + padding + rowHeight;
-    ctx.font = `600 ${fontSize}px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`;
-    ctx.fillText(data.team2_name || 'Team 2', x + padding, team2Y + fontSize);
-    
-    // Draw team 2 scores
-    if (data.scores_by_set && Object.keys(data.scores_by_set).length > 0) {
-        const sets = data.sets || Object.keys(data.scores_by_set).sort((a, b) => parseInt(a) - parseInt(b));
-        ctx.font = `bold ${scoreFontSize}px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`;
-        let scoreX = x + width - padding - (sets.length * 60);
-        sets.forEach((setNum, idx) => {
-            const setData = data.scores_by_set[setNum];
-            const score = setData.team2_score || 0;
-            if (idx > 0) {
-                ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
-                ctx.beginPath();
-                ctx.moveTo(scoreX - 5, team2Y);
-                ctx.lineTo(scoreX - 5, team2Y + rowHeight);
-                ctx.stroke();
-            }
-            ctx.fillText(score.toString(), scoreX, team2Y + scoreFontSize);
-            scoreX += 60;
-        });
-    } else {
-        ctx.font = `bold ${scoreFontSize}px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`;
-        ctx.fillText('-', x + width - padding - 30, team2Y + scoreFontSize);
-    }
-    
-    // Draw stones info if available
-    if (data.stones_info) {
-        const stonesY = team2Y + rowHeight + padding;
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
-        ctx.beginPath();
-        ctx.moveTo(x + padding, stonesY);
-        ctx.lineTo(x + width - padding, stonesY);
-        ctx.stroke();
-        
-        ctx.font = `16px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`;
-        ctx.fillText('Stones Remaining:', x + padding, stonesY + 20);
-        
-        const stonesRemaining = data.stones_info.stones_remaining !== null && data.stones_info.stones_remaining !== undefined 
-            ? data.stones_info.stones_remaining 
-            : (data.stones_info.stones_per_set || '-');
-        ctx.font = `bold 20px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`;
-        ctx.fillText(stonesRemaining.toString(), x + width - padding - 30, stonesY + 20);
-    }
-}
-
-// Capture iframe overlay to canvas (async, updates cachedOverlayCanvas)
-async function captureOverlayIframe() {
-    if (!showScoreboardOverlay) {
-        cachedOverlayCanvas = null;
-        return;
-    }
-    
-    const overlay = document.getElementById('scoreboard-overlay');
-    if (!overlay || !overlay.contentWindow || !overlay.contentDocument) {
-        cachedOverlayCanvas = null;
-        return;
-    }
-    
-    try {
-        const iframeBody = overlay.contentDocument.body;
-        if (!iframeBody) {
-            cachedOverlayCanvas = null;
-            return;
-        }
-        
-        const settings = getOverlaySettings();
-        
-        // Calculate height - use "auto" as a reasonable default based on width
-        const height = (settings.height === 'auto' || settings.height === '') 
-            ? Math.round(settings.width * 0.2) // Approximate height for scoreboard
-            : settings.height;
-        
-        // Use html2canvas to capture the iframe content
-        if (typeof html2canvas !== 'undefined') {
-            const canvas = await html2canvas(iframeBody, {
-                width: settings.width,
-                height: height,
-                useCORS: true,
-                allowTaint: false,
-                scale: 1,
-                backgroundColor: null,
-                logging: false
-            });
-            cachedOverlayCanvas = canvas;
-            lastOverlayCaptureTime = Date.now();
-            console.log('Overlay captured successfully:', canvas.width, 'x', canvas.height);
-        } else {
-            console.warn('html2canvas not available');
-            cachedOverlayCanvas = null;
-        }
-    } catch (error) {
-        console.warn('Failed to capture iframe overlay:', error);
-        cachedOverlayCanvas = null;
-    }
-}
-
-// Setup canvas for compositing video + overlay
-function setupCanvasCompositing() {
-    if (!currentStream || !showScoreboardOverlay) {
-        return null;
-    }
-    
-    const video = document.getElementById('preview');
-    
-    if (!video) {
-        return null;
-    }
-    
-    // Create canvas
-    if (!canvasElement) {
-        canvasElement = document.createElement('canvas');
-        canvasContext = canvasElement.getContext('2d');
-    }
-    
-    // Function to update canvas size
-    function updateCanvasSize() {
-        if (video.videoWidth && video.videoHeight) {
-            canvasElement.width = video.videoWidth;
-            canvasElement.height = video.videoHeight;
-        } else {
-            canvasElement.width = 1280;
-            canvasElement.height = 720;
-        }
-    }
-    
-    // Initial size update
-    updateCanvasSize();
-    
-    // Update size when video metadata loads
-    video.addEventListener('loadedmetadata', updateCanvasSize);
-    
-    // Start capturing iframe overlay periodically
-    function captureOverlayLoop() {
-        const now = Date.now();
-        if (now - lastOverlayCaptureTime >= OVERLAY_CAPTURE_INTERVAL) {
-            captureOverlayIframe();
-        }
-        setTimeout(captureOverlayLoop, OVERLAY_CAPTURE_INTERVAL);
-    }
-    captureOverlayLoop(); // Start the capture loop
-    
-    // Function to draw frame
-    function drawFrame() {
-        if (!canvasContext || !video || video.readyState < 2) {
-            animationFrameId = requestAnimationFrame(drawFrame);
-            return;
-        }
-        
-        // Update canvas size if video size changed
-        if (canvasElement.width !== video.videoWidth || canvasElement.height !== video.videoHeight) {
-            updateCanvasSize();
-        }
-        
-        // Draw video frame
-        canvasContext.drawImage(video, 0, 0, canvasElement.width, canvasElement.height);
-        
-        // Draw scoreboard overlay if enabled (always show, even if no match)
-        if (showScoreboardOverlay) {
-            const settings = getOverlaySettings();
-            const scaleFactor = settings.scale / 100;
-            const videoClientWidth = video.clientWidth || canvasElement.width;
-            const videoClientHeight = video.clientHeight || canvasElement.height;
-            
-            // Calculate height - handle "auto" case
-            const actualHeight = (settings.height === 'auto' || settings.height === '') 
-                ? Math.round(settings.width * 0.2) // Approximate height for scoreboard
-                : settings.height;
-            
-            // Calculate the actual displayed size (after scale transform) in preview
-            const displayedWidth = settings.width * scaleFactor;
-            const displayedHeight = actualHeight * scaleFactor;
-            
-            // Scale positions and sizes from preview dimensions to canvas dimensions
-            const overlayX = settings.x * (canvasElement.width / videoClientWidth);
-            const overlayY = settings.y * (canvasElement.height / videoClientHeight);
-            const overlayWidth = displayedWidth * (canvasElement.width / videoClientWidth);
-            const overlayHeight = displayedHeight * (canvasElement.height / videoClientHeight);
-            
-            // Try to use cached iframe capture, otherwise fallback to manual drawing
-            if (cachedOverlayCanvas) {
-                try {
-                    canvasContext.drawImage(cachedOverlayCanvas, overlayX, overlayY, overlayWidth, overlayHeight);
-                } catch (e) {
-                    console.warn('Failed to draw cached overlay, using fallback:', e);
-                    drawScoreboardOnCanvas(canvasContext, overlayX, overlayY, overlayWidth, overlayHeight, currentScoreboardData || {});
-                }
-            } else {
-                // Fallback to manual drawing
-                if (Date.now() - lastOverlayCaptureTime > 1000) {
-                    // Only log if it's been more than a second since last attempt (to avoid spam)
-                    console.log('No cached overlay available, using manual drawing');
-                }
-                drawScoreboardOnCanvas(canvasContext, overlayX, overlayY, overlayWidth, overlayHeight, currentScoreboardData || {});
-            }
-        }
-        
-        animationFrameId = requestAnimationFrame(drawFrame);
-    }
-    
-    // Start drawing loop
-    drawFrame();
-    
-    // Get canvas stream
-    try {
-        canvasStream = canvasElement.captureStream(30); // 30 fps
-        // Add audio from original stream
-        const audioTracks = currentStream.getAudioTracks();
-        audioTracks.forEach(track => {
-            canvasStream.addTrack(track);
-        });
-        return canvasStream;
-    } catch (error) {
-        console.error('Error creating canvas stream:', error);
-        return null;
-    }
-}
-
-// Stop canvas compositing
-function stopCanvasCompositing() {
-    if (animationFrameId) {
-        cancelAnimationFrame(animationFrameId);
-        animationFrameId = null;
-    }
-    if (canvasStream) {
-        canvasStream.getTracks().forEach(track => track.stop());
-        canvasStream = null;
-    }
-}
-
 // Start video recording
 async function startRecording() {
     if (!currentStream) {
@@ -763,22 +590,14 @@ async function startRecording() {
         const session = {
             id: generateSessionId(),
             matchId: matchId,
-            startTime: Date.now(),
+            startTime: Date.now(), // Recording start timestamp (absolute world time)
             chunks: [],
             lastUploadedChunkIndex: -1,
             recorder: null
         };
         
-        // Determine which stream to use
+        // Use the raw camera stream directly (no canvas compositing)
         let recordingStream = currentStream;
-        if (showScoreboardOverlay) {
-            // Force immediate capture of overlay before starting recording
-            await captureOverlayIframe();
-            const compositeStream = setupCanvasCompositing();
-            if (compositeStream) {
-                recordingStream = compositeStream;
-            }
-        }
         
         // Create MediaRecorder with options for streaming
         const bitrate = getBitrate(); // Get bitrate from input (in bits per second)
@@ -801,18 +620,62 @@ async function startRecording() {
         session.recorder.ondataavailable = (event) => {
                 if (event.data && event.data.size > 0) {
                 const chunkIndex = session.chunks.length;
-                session.chunks.push({
-                        data: event.data,
-                        timestamp: Date.now(),
-                    index: chunkIndex,
-                    uploaded: false
-                    });
+                
+                // Get chunk duration (approximate - MediaRecorder chunks are typically 2-5 seconds)
+                // We'll get the actual duration from the blob when we process it
+                // Use shorter duration for high-res to reduce memory footprint
+                const chunkDuration = 2000; // Default 2 seconds, will be updated
+                
+                // Use event.timecode to get precise chunk start time (in seconds relative to recording start)
+                // event.timecode is the timecode of the chunk in the recording (in seconds)
+                // Convert to absolute world time by adding to session start time
+                
+                const chunkStartTimestamp = Date.now(); // Absolute world time in milliseconds
+                
+                // Determine if this chunk belongs to a point
+                const pointMetadata = getChunkPointMetadata(chunkStartTimestamp, chunkDuration);
+                
+                // Only store chunks that belong to points (or are within buffer of points)
+                if (pointMetadata) {
+                    // Store minimal metadata, but don't keep the blob in memory
+                    // The blob will be uploaded immediately and then released
+                    const chunkInfo = {
+                        data: event.data, // Will be cleared after upload starts
+                        timestamp: Date.now(), // Upload timestamp
+                        chunkStartTimestamp: chunkStartTimestamp, // Absolute world time when chunk started
+                        index: chunkIndex,
+                        uploaded: false,
+                        point_id: pointMetadata.point_id,
+                        duration: chunkDuration, // Will be updated with actual duration
+                        size: event.data.size // Track size for memory monitoring
+                    };
                     
-                // Upload chunk immediately using session's state
-                uploadChunkForSession(event.data, chunkIndex, session);
+                    session.chunks.push(chunkInfo);
+                    updateDebugDisplay(); // Update debug display
+                    
+                    // Upload chunk immediately - this is async and will clear the blob after upload starts
+                    uploadChunkForSession(event.data, chunkIndex, session, pointMetadata.point_id, chunkStartTimestamp, chunkDuration).then(() => {
+                        // After upload completes, clear the blob from memory immediately
+                        if (session.chunks[chunkIndex]) {
+                            session.chunks[chunkIndex].data = null;
+                        }
+                        updateDebugDisplay(); // Update debug display
+                    }).catch((error) => {
+                        console.error(`Upload failed for chunk ${chunkIndex}:`, error);
+                        updateDebugDisplay(); // Update debug display
+                        // Even on error, we'll retry later but don't need to keep the blob
+                        // The retry will need to re-upload, but that's better than crashing
+                    });
+        } else {
+                    // Chunk doesn't belong to any point - discard it immediately to save memory
+                    console.log(`Chunk ${chunkIndex} discarded - not within any point (size: ${(event.data.size / 1024 / 1024).toFixed(2)}MB, start: ${new Date(chunkStartTimestamp).toLocaleTimeString()})`);
+                    // Release the blob immediately
+                    event.data = null;
+                    updateDebugDisplay(); // Update debug display
+                }
                 }
             };
-            
+    
         // Set up periodic cleanup of old uploaded chunks during recording
         session.cleanupInterval = setInterval(() => {
             if (session.recorder && session.recorder.state !== 'inactive') {
@@ -826,7 +689,7 @@ async function startRecording() {
             if (session.cleanupInterval) {
                 clearInterval(session.cleanupInterval);
                 session.cleanupInterval = null;
-            }
+                }
             
             try {
                 await uploadRemainingChunksForSession(session);
@@ -850,8 +713,12 @@ async function startRecording() {
                 showError('Recording error: ' + event.error.message);
         };
             
-        // Start recording with timeslice (every 5 seconds)
-        session.recorder.start(5000);
+        // For high-resolution recordings, use shorter chunks to reduce memory usage
+        // 4K 60fps can produce 50-100MB+ chunks, so we use 2-second chunks instead of 5
+        const chunkInterval = 2000; // 2 seconds for high-res, reduces memory per chunk
+            
+        // Start recording with timeslice
+        session.recorder.start(chunkInterval);
         isRecording = true;
         
         // Request wake lock to prevent screen sleep during recording
@@ -860,11 +727,6 @@ async function startRecording() {
         // Show recording status (video container should already be visible)
         document.getElementById('recording-status').style.display = 'block';
         document.getElementById('no-match').style.display = 'none';
-        
-        // Start scoreboard polling if overlay is enabled
-        if (showScoreboardOverlay) {
-            startScoreboardPolling();
-        }
         
         // Notify server that recording started
         notifyRecordingStart(session);
@@ -879,6 +741,13 @@ async function startRecording() {
                 stopRecording();
             }
         }, 1000);
+        
+        // Start debug display updates
+        updateDebugDisplay();
+        if (debugUpdateInterval) {
+            clearInterval(debugUpdateInterval);
+        }
+        debugUpdateInterval = setInterval(updateDebugDisplay, 1000); // Update every second
         
         console.log(`Recording started for session ${session.id}`);
     } catch (error) {
@@ -928,29 +797,43 @@ function stopRecording() {
             recordingTimer = null;
         }
         
+        // Stop debug updates
+        if (debugUpdateInterval) {
+            clearInterval(debugUpdateInterval);
+            debugUpdateInterval = null;
+        }
+        
         // Don't stop the stream - keep it active for next recording
         // Only stop the MediaRecorder
         
         document.getElementById('recording-status').style.display = 'none';
         
-        // Stop scoreboard polling
-        stopScoreboardPolling();
-        
-        // Stop canvas compositing
-        stopCanvasCompositing();
+        updateDebugDisplay(); // Final debug update
         
         console.log('Recording stopped');
     }
 }
 
+// Get actual chunk duration from blob (async)
 // Upload a single chunk for a specific session
-async function uploadChunkForSession(chunkData, chunkIndex, session) {
+async function uploadChunkForSession(chunkData, chunkIndex, session, pointId, chunkStartTimestamp, chunkDuration) {
     // Skip if chunk data is already cleared (was uploaded and cleaned up)
     if (!chunkData) {
         return;
     }
     
     try {
+        // Use the timeslice interval as the chunk duration
+        // Note: Chunks can be shorter than the timeslice (especially the last chunk when recording stops),
+        // but we can't reliably decode individual WebM chunks to get their actual duration.
+        // The server can calculate actual durations later using ffprobe on the concatenated video if needed.
+        const actualDuration = chunkDuration;
+        
+        // Update the chunk's duration in the session
+        if (session.chunks[chunkIndex]) {
+            session.chunks[chunkIndex].duration = actualDuration;
+        }
+        
         const formData = new FormData();
         formData.append('chunk', chunkData, `chunk_${chunkIndex}.webm`);
         formData.append('tournament', tournamentUrl);
@@ -958,7 +841,10 @@ async function uploadChunkForSession(chunkData, chunkIndex, session) {
         formData.append('match_id', session.matchId || '');
         formData.append('session_id', session.id);
         formData.append('chunk_index', chunkIndex);
-        formData.append('start_timestamp', session.startTime);
+        formData.append('start_timestamp', session.startTime); // Recording start timestamp
+        formData.append('chunk_start_timestamp', chunkStartTimestamp); // Absolute world time when chunk started
+        formData.append('chunk_duration', actualDuration); // Duration in milliseconds
+        formData.append('point_id', pointId || '');
         addKeyToFormData(formData);
         
         const response = await fetch('/api/camera/upload-chunk', {
@@ -973,27 +859,50 @@ async function uploadChunkForSession(chunkData, chunkIndex, session) {
         const result = await response.json();
         if (result.success) {
             session.lastUploadedChunkIndex = Math.max(session.lastUploadedChunkIndex, chunkIndex);
-            console.log(`Chunk ${chunkIndex} uploaded successfully for session ${session.id}`);
+            const chunkSizeMB = chunkData.size / 1024 / 1024;
+            console.log(`Chunk ${chunkIndex} uploaded successfully (${chunkSizeMB.toFixed(2)}MB) for session ${session.id} (point: ${pointId || 'none'})`);
             
-            // Mark chunk as uploaded and clear its data to free memory
+            // Mark chunk as uploaded and clear its data to free memory IMMEDIATELY
             if (session.chunks[chunkIndex]) {
                 session.chunks[chunkIndex].uploaded = true;
                 session.chunks[chunkIndex].data = null;
-            }
-            
-            // Periodically clean up old uploaded chunks (keep last 5 for retry buffer)
+}
+
+            // Clean up old uploaded chunks more aggressively for high-res
             cleanupOldChunks(session);
+            updateDebugDisplay(); // Update debug display
+        } else {
+            console.error(`Chunk ${chunkIndex} upload failed:`, result);
+            updateDebugDisplay(); // Update debug display
         }
     } catch (error) {
         console.error(`Error uploading chunk ${chunkIndex} for session ${session.id}:`, error);
+        updateDebugDisplay(); // Update debug display
         // Don't throw - we'll retry in uploadRemainingChunksForSession
     }
 }
 
 // Clean up old uploaded chunks, keeping a buffer for retry purposes
 function cleanupOldChunks(session) {
-    const KEEP_BUFFER = 5; // Keep last 5 uploaded chunks for retry buffer
+    // For high-resolution recordings, use smaller buffer to save memory
+    // Calculate total memory usage
+    let totalMemoryMB = 0;
+    let chunksWithData = 0;
+    for (const chunk of session.chunks) {
+        if (chunk && chunk.data) {
+            totalMemoryMB += (chunk.size || chunk.data.size || 0) / 1024 / 1024;
+            chunksWithData++;
+        }
+    }
     
+    // If memory usage is high (>500MB), be more aggressive with cleanup
+    const KEEP_BUFFER = totalMemoryMB > 500 ? 2 : 5; // Keep last 2-5 uploaded chunks for retry buffer
+    
+    // Log memory usage for debugging
+    if (totalMemoryMB > 100) {
+        console.log(`Memory usage: ${totalMemoryMB.toFixed(2)}MB across ${chunksWithData} chunks`);
+}
+
     // Find the last uploaded chunk index
     let lastUploaded = session.lastUploadedChunkIndex;
     
@@ -1004,10 +913,16 @@ function cleanupOldChunks(session) {
     // Clear chunks that are older than the buffer
     // Only clear chunks that are confirmed uploaded and beyond the buffer
     const clearUpTo = Math.max(0, lastUploaded - KEEP_BUFFER);
+    let clearedCount = 0;
     for (let i = 0; i <= clearUpTo; i++) {
         if (session.chunks[i] && session.chunks[i].uploaded && session.chunks[i].data) {
             session.chunks[i].data = null;
-        }
+            clearedCount++;
+}
+    }
+    
+    if (clearedCount > 0) {
+        console.log(`Cleaned up ${clearedCount} old chunks, freed memory`);
     }
 }
 
@@ -1017,7 +932,14 @@ async function uploadRemainingChunksForSession(session) {
         const chunk = session.chunks[i];
         // Skip chunks that are already uploaded and cleared
         if (chunk && chunk.data) {
-            await uploadChunkForSession(chunk.data, i, session);
+            await uploadChunkForSession(
+                chunk.data, 
+                i, 
+                session, 
+                chunk.point_id, 
+                chunk.chunkStartTimestamp, 
+                chunk.duration
+            );
         } else if (chunk && chunk.uploaded) {
             // Chunk was uploaded but we need to update lastUploadedChunkIndex
             session.lastUploadedChunkIndex = Math.max(session.lastUploadedChunkIndex, i);
@@ -1056,149 +978,6 @@ async function finalizeRecordingForSession(session) {
         session.lastUploadedChunkIndex = -1;
     } catch (error) {
         console.error(`Error finalizing recording for session ${session.id}:`, error);
-    }
-}
-
-// Get overlay settings from inputs
-function getOverlaySettings() {
-    const x = parseInt(document.getElementById('overlay-x').value) || 10;
-    const y = parseInt(document.getElementById('overlay-y').value) || 10;
-    const width = parseInt(document.getElementById('overlay-width').value) || 600;
-    const scale = parseFloat(document.getElementById('overlay-scale').value) || 30;
-    
-    return {
-        x: x,
-        y: y,
-        width: width,
-        height: width,
-        scale: scale
-    };
-}
-
-// Save overlay settings to localStorage
-function saveOverlaySettings() {
-    overlaySettings = getOverlaySettings();
-    localStorage.setItem(`overlay_settings_${tournamentUrl}_${fieldName}`, JSON.stringify(overlaySettings));
-}
-
-// Load overlay settings from localStorage
-function loadOverlaySettings() {
-    const saved = localStorage.getItem(`overlay_settings_${tournamentUrl}_${fieldName}`);
-    if (saved) {
-        try {
-            overlaySettings = JSON.parse(saved);
-            // Apply to inputs
-            document.getElementById('overlay-x').value = overlaySettings.x || 10;
-            document.getElementById('overlay-y').value = overlaySettings.y || 10;
-            document.getElementById('overlay-width').value = overlaySettings.width || 2500;
-            document.getElementById('overlay-scale').value = overlaySettings.scale || 30;
-        } catch (e) {
-            console.error('Error loading overlay settings:', e);
-        }
-    }
-}
-
-// Apply overlay settings to iframe
-function applyOverlaySettings() {
-    const overlay = document.getElementById('scoreboard-overlay');
-    if (!overlay) return;
-    
-    const settings = getOverlaySettings();
-    const scaleFactor = settings.scale / 100;
-    
-    // Use full width/height and scale with transform to match canvas behavior
-    overlay.style.left = settings.x + 'px';
-    overlay.style.top = settings.y + 'px';
-    overlay.style.width = settings.width + 'px';
-    overlay.style.minWidth = settings.width + 'px';
-    overlay.style.height = settings.height + 'px';
-    
-    // Apply transform for scaling (this matches how canvas scales)
-    overlay.style.transform = `scale(${scaleFactor})`;
-    overlay.style.transformOrigin = 'top left';
-}
-
-// Update scoreboard overlay visibility
-function updateScoreboardOverlayVisibility() {
-    const overlay = document.getElementById('scoreboard-overlay');
-    if (overlay) {
-        if (showScoreboardOverlay) {
-            // Set iframe src to load the actual scoreboard page
-            const scoreboardUrl = `/api/scoreboard?tournament=${encodeURIComponent(tournamentUrl)}&field=${encodeURIComponent(fieldName)}`;
-            overlay.src = scoreboardUrl;
-            overlay.style.display = 'block';
-            applyOverlaySettings();
-        } else {
-            overlay.style.display = 'none';
-            overlay.src = ''; // Clear src when hidden
-        }
-    }
-    
-    // Show/hide settings panel
-    const settingsPanel = document.getElementById('overlay-settings');
-    if (settingsPanel) {
-        settingsPanel.style.display = showScoreboardOverlay ? 'block' : 'none';
-    }
-}
-
-// Update scoreboard overlay with match data (for canvas rendering)
-function updateScoreboardOverlay(data) {
-    // Store data for canvas rendering
-    currentScoreboardData = data;
-    
-    // The iframe will automatically update via the scoreboard page's own polling
-    // We just need to ensure it's visible when enabled
-    if (showScoreboardOverlay) {
-        const overlay = document.getElementById('scoreboard-overlay');
-        if (overlay && overlay.style.display === 'none') {
-            updateScoreboardOverlayVisibility();
-        }
-    }
-}
-
-// Poll scoreboard state for overlay (for canvas rendering data)
-async function pollScoreboardState() {
-    if (!showScoreboardOverlay) {
-        // Hide overlay if disabled
-        const overlay = document.getElementById('scoreboard-overlay');
-        if (overlay) overlay.style.display = 'none';
-        return;
-    }
-    
-    try {
-        const response = await fetch(`/api/scoreboard-state?tournament=${tournamentUrl}&field=${encodeURIComponent(fieldName)}`);
-        if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-        }
-        const data = await response.json();
-        // Store data for canvas rendering (the iframe updates itself)
-        updateScoreboardOverlay(data);
-    } catch (error) {
-        console.error('Error polling scoreboard state:', error);
-        // Store empty data for canvas rendering
-        currentScoreboardData = { has_active_match: false };
-    }
-}
-
-// Start scoreboard polling
-function startScoreboardPolling() {
-    if (scoreboardOverlayInterval) {
-        clearInterval(scoreboardOverlayInterval);
-    }
-    // Poll immediately, then every 1.5 ish seconds
-    pollScoreboardState();
-    scoreboardOverlayInterval = setInterval(pollScoreboardState, 1427);
-}
-
-// Stop scoreboard polling
-function stopScoreboardPolling() {
-    if (scoreboardOverlayInterval) {
-        clearInterval(scoreboardOverlayInterval);
-        scoreboardOverlayInterval = null;
-    }
-    const overlay = document.getElementById('scoreboard-overlay');
-    if (overlay) {
-        overlay.style.display = 'none';
     }
 }
 
@@ -1317,46 +1096,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         getBitrate(); // This saves it
     });
     
-    // Load saved scoreboard overlay preference
-    const savedOverlay = localStorage.getItem(`show_scoreboard_overlay_${tournamentUrl}_${fieldName}`);
-    if (savedOverlay === 'true') {
-        document.getElementById('show-scoreboard-overlay').checked = true;
-        showScoreboardOverlay = true;
-    }
-    
-    // Load overlay settings
-    loadOverlaySettings();
-    
-    // Save scoreboard overlay preference on change
-    document.getElementById('show-scoreboard-overlay').addEventListener('change', (e) => {
-        showScoreboardOverlay = e.target.checked;
-        localStorage.setItem(`show_scoreboard_overlay_${tournamentUrl}_${fieldName}`, showScoreboardOverlay.toString());
-        updateScoreboardOverlayVisibility();
-        if (showScoreboardOverlay) {
-            // Start polling immediately and show overlay
-            startScoreboardPolling();
-            // Also trigger an immediate poll to get current state
-            pollScoreboardState();
-        } else {
-            stopScoreboardPolling();
-        }
-    });
-    
-    // Save overlay settings on input change
-    ['overlay-x', 'overlay-y', 'overlay-width', 'overlay-scale'].forEach(id => {
-        const input = document.getElementById(id);
-        if (input) {
-            input.addEventListener('input', () => {
-                saveOverlaySettings();
-                applyOverlaySettings();
-            });
-            input.addEventListener('change', () => {
-                saveOverlaySettings();
-                applyOverlaySettings();
-            });
-        }
-    });
-    
     // Check media support on page load
     const support = checkMediaSupport();
     if (!support.supported) {
@@ -1388,24 +1127,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         console.log('Connection lost, will resume when reconnected');
     });
     
-    // Initialize scoreboard overlay if enabled
-    if (showScoreboardOverlay) {
-        updateScoreboardOverlayVisibility();
-        startScoreboardPolling();
-        // Trigger immediate poll to get current state
-        pollScoreboardState();
-    }
-    
     // Cleanup on page unload
     window.addEventListener('beforeunload', () => {
         if (currentStream) {
             currentStream.getTracks().forEach(track => track.stop());
         }
-        stopScoreboardPolling();
         releaseWakeLock();
     });
 });
 </script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 {% endblock %}
 

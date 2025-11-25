@@ -826,6 +826,8 @@ def camera_page(tournament_url):
 @bp.route('/api/camera/match-status')
 def camera_match_status():
     """Check if a field has an active match. Requires camera access key."""
+    from models import Point
+    
     tournament_url = request.args.get('tournament')
     field_name = request.args.get('field')
     current_match_id = request.args.get('current_match_id')  # Optional: track specific match
@@ -838,6 +840,47 @@ def camera_match_status():
     if not is_valid:
         return error_response[0], error_response[1]
     
+    # Helper function to get points for a match
+    def get_points_data(match):
+        points = Point.query.filter_by(match=match.uuid).order_by(Point.stamp).all()
+        points_data = []
+        for p in points:
+            # Ensure timestamps are sent as UTC with 'Z' suffix
+            stamp_str = None
+            end_stamp_str = None
+            
+            if p.stamp:
+                # Convert to UTC if timezone-aware, or assume UTC if naive
+                if p.stamp.tzinfo is None:
+                    # Naive datetime - assume it's UTC
+                    stamp_str = p.stamp.replace(tzinfo=timezone.utc).isoformat()
+                else:
+                    # Timezone-aware - convert to UTC
+                    stamp_str = p.stamp.astimezone(timezone.utc).isoformat()
+                # Ensure 'Z' suffix for UTC
+                if not stamp_str.endswith('Z'):
+                    stamp_str = stamp_str.replace('+00:00', 'Z').replace('-00:00', 'Z')
+                    if not stamp_str.endswith('Z'):
+                        stamp_str += 'Z'
+            
+            if p.end_stamp:
+                if p.end_stamp.tzinfo is None:
+                    end_stamp_str = p.end_stamp.replace(tzinfo=timezone.utc).isoformat()
+                else:
+                    end_stamp_str = p.end_stamp.astimezone(timezone.utc).isoformat()
+                if not end_stamp_str.endswith('Z'):
+                    end_stamp_str = end_stamp_str.replace('+00:00', 'Z').replace('-00:00', 'Z')
+                    if not end_stamp_str.endswith('Z'):
+                        end_stamp_str += 'Z'
+            
+            point_data = {
+                'uuid': p.uuid,
+                'stamp': stamp_str,
+                'end_stamp': end_stamp_str
+            }
+            points_data.append(point_data)
+        return points_data
+    
     # If we're tracking a specific match, check its status
     if current_match_id:
         match = Match.query.filter_by(uuid=current_match_id, event=tournament_url).first()
@@ -849,7 +892,8 @@ def camera_match_status():
                     'match_id': match.uuid,
                     'match_name': match.name,
                     'start_time': match.confirmed_start_time.isoformat() if match.confirmed_start_time else None,
-                    'status': match.status
+                    'status': match.status,
+                    'points': get_points_data(match)
                 })
             else:
                 # Match is completed or in another state - stop recording
@@ -875,7 +919,8 @@ def camera_match_status():
             'match_id': match.uuid,
             'match_name': match.name,
             'start_time': match.confirmed_start_time.isoformat() if match.confirmed_start_time else None,
-            'status': match.status
+            'status': match.status,
+            'points': get_points_data(match)
         })
     else:
         return jsonify({
@@ -965,6 +1010,9 @@ def camera_upload_chunk():
     session_id = request.form.get('session_id')
     chunk_index = request.form.get('chunk_index')
     start_timestamp = request.form.get('start_timestamp')
+    chunk_start_timestamp = request.form.get('chunk_start_timestamp')  # Absolute world time when chunk started
+    chunk_duration = request.form.get('chunk_duration')  # Duration in milliseconds
+    point_id = request.form.get('point_id', '')
     
     if not tournament_url or not field_name or not session_id or chunk_index is None:
         return jsonify({'error': 'Missing required parameters'}), 400
@@ -991,8 +1039,35 @@ def camera_upload_chunk():
     )
     os.makedirs(upload_dir, exist_ok=True)
     
-    with open(os.path.join(upload_dir, 'match_video.webm'), 'ab') as f:
-        chunk_file.save(f)
+    # Save chunk with index in filename for ordering
+    chunk_filename = f'chunk_{int(chunk_index):06d}.webm'
+    chunk_path = os.path.join(upload_dir, chunk_filename)
+    chunk_file.save(chunk_path)
+    
+    # Load or create chunks metadata
+    chunks_meta_path = os.path.join(upload_dir, 'chunks_meta.json')
+    chunks_meta = {}
+    if os.path.exists(chunks_meta_path):
+        try:
+            with open(chunks_meta_path, 'r') as f:
+                chunks_meta = json.load(f)
+        except (json.JSONDecodeError, IOError):
+            chunks_meta = {}
+    
+    # Store chunk metadata
+    chunk_meta = {
+        'chunk_index': int(chunk_index),
+        'filename': chunk_filename,
+        'chunk_start_timestamp': float(chunk_start_timestamp) if chunk_start_timestamp else None,  # Absolute world time in milliseconds
+        'chunk_duration': float(chunk_duration) if chunk_duration else None,  # Duration in milliseconds
+        'point_id': point_id if point_id else None,
+        'upload_timestamp': datetime.now(timezone.utc).isoformat()
+    }
+    chunks_meta[chunk_index] = chunk_meta
+    
+    # Save chunks metadata
+    with open(chunks_meta_path, 'w') as f:
+        json.dump(chunks_meta, f, indent=2)
     
     # Save metadata file (first chunk only)
     if chunk_index == '0' or chunk_index == 0:
@@ -1054,26 +1129,111 @@ def camera_finalize():
             with open(metadata_path, 'r') as f:
                 metadata = json.load(f)
         
+        # Read chunks metadata
+        chunks_meta_path = os.path.join(chunk_dir, 'chunks_meta.json')
+        chunks_meta = {}
+        if os.path.exists(chunks_meta_path):
+            with open(chunks_meta_path, 'r') as f:
+                chunks_meta = json.load(f)
         
-        times = chop_to_points(chunk_dir, metadata['match_id'], datetime.fromtimestamp(int(metadata['start_timestamp'])/1000, tz=timezone.utc))
+        # Concatenate chunks in correct order (by chunk_index, handling out-of-order uploads)
+        concatenated_video = concatenate_chunks(chunk_dir, chunks_meta)
+        
+        if concatenated_video:
+            # Now chop to points using the concatenated video
+            times = chop_to_points(chunk_dir, metadata['match_id'], 
+                                 datetime.fromtimestamp(int(metadata['start_timestamp'])/1000, tz=timezone.utc),
+                                 input_file=concatenated_video)
 
-        # Store point timestamps in metadata
-        if times:
-            metadata['point_timestamps'] = times
-            with open(metadata_path, 'w') as f:
-                json.dump(metadata, f, indent=2)
+            # Store point timestamps in metadata
+            if times:
+                metadata['point_timestamps'] = times
+                with open(metadata_path, 'w') as f:
+                    json.dump(metadata, f, indent=2)
 
-        # subprocess.run('rm', '-rf', chunk_dir)
         return jsonify({
             'success': True,
             'session_id': session_id,
             'message': 'Recording finalized successfully'
         })
     except Exception as e:
+        import traceback
         print(f"Error finalizing recording: {e}")
+        print(traceback.format_exc())
         return jsonify({'error': str(e)}), 500
 
-def chop_to_points(output_path, match_id, start_time, buffer=3):
+def concatenate_chunks(chunk_dir, chunks_meta):
+    """Concatenate video chunks in correct order based on chunk_index."""
+    import subprocess
+    import os
+    
+    if not chunks_meta:
+        return None
+    
+    # Sort chunks by chunk_index to ensure correct order (handles out-of-order uploads)
+    sorted_chunks = sorted(chunks_meta.items(), key=lambda x: int(x[0]))
+    
+    if not sorted_chunks:
+        return None
+    
+    # Check if first chunk (index 0) exists
+    first_chunk_index = sorted_chunks[0][0]
+    has_first_chunk = (first_chunk_index == '0' or first_chunk_index == 0)
+    
+    # Create concat file list
+    concat_file = os.path.join(chunk_dir, 'concat_chunks.txt')
+    with open(concat_file, 'w') as f:
+        for chunk_index, chunk_info in sorted_chunks:
+            chunk_filename = chunk_info.get('filename', f'chunk_{int(chunk_index):06d}.webm')
+            chunk_path = os.path.join(chunk_dir, chunk_filename)
+            if os.path.exists(chunk_path):
+                # Use absolute path for concat file
+                abs_path = os.path.abspath(chunk_path)
+                f.write(f"file '{abs_path}'\n")
+    
+    # Concatenate chunks
+    temp_output = os.path.join(chunk_dir, 'match_video_temp.webm')
+    output_file = os.path.join(chunk_dir, 'match_video.webm')
+    
+    result = subprocess.run([
+        'ffmpeg', '-f', 'concat', '-safe', '0', '-i', concat_file,
+        '-c', 'copy', '-map', '0', temp_output
+    ], capture_output=True, text=True)
+    
+    if result.returncode != 0:
+        print(f"Error concatenating chunks: {result.stderr}")
+        # Clean up concat file
+        if os.path.exists(concat_file):
+            os.remove(concat_file)
+        return None
+    
+    # Always remux the concatenated file to ensure proper WebM headers
+    # This is especially important if the first chunk (with initialization segment) is missing
+    print("Remuxing concatenated video to ensure proper WebM headers")
+    remux_result = subprocess.run([
+        'ffmpeg', '-i', temp_output, '-c', 'copy', '-map', '0',
+        '-f', 'webm', '-avoid_negative_ts', 'make_zero', output_file
+    ], capture_output=True, text=True)
+    
+    if remux_result.returncode != 0:
+        print(f"Error remuxing video to add headers: {remux_result.stderr}")
+        # Fall back to temp file if remux fails
+        if os.path.exists(temp_output):
+            if os.path.exists(output_file):
+                os.remove(output_file)
+            os.rename(temp_output, output_file)
+    else:
+        # Remove temp file if remux succeeded
+        if os.path.exists(temp_output):
+            os.remove(temp_output)
+    
+    # Clean up concat file
+    if os.path.exists(concat_file):
+        os.remove(concat_file)
+    
+    return 'match_video.webm'
+
+def chop_to_points(output_path, match_id, start_time, buffer=3, input_file='match_video.webm'):
     from models import Point
     import subprocess
     import os
@@ -1087,17 +1247,94 @@ def chop_to_points(output_path, match_id, start_time, buffer=3):
         print(f"chop_to_points: match_id is empty or None, returning empty list")
         return []
     
+    input_path = os.path.join(output_path, input_file)
+    if not os.path.exists(input_path):
+        print(f"chop_to_points: input file {input_path} not found")
+        return []
+    
+    # Load chunks metadata to build timeline
+    chunks_meta_path = os.path.join(output_path, 'chunks_meta.json')
+    chunks_meta = {}
+    if os.path.exists(chunks_meta_path):
+        with open(chunks_meta_path, 'r') as f:
+            chunks_meta = json.load(f)
+    
+    # Build video timeline from chunks
+    # Sort chunks by chunk_start_timestamp (absolute world time) to handle out-of-order uploads
+    sorted_chunks = sorted(
+        chunks_meta.items(),
+        key=lambda x: x[1].get('chunk_start_timestamp', 0) if x[1].get('chunk_start_timestamp') else 0
+    )
+    
+    # Build cumulative timeline: track where each chunk starts in the video (in seconds)
+    video_timeline = []  # List of (chunk_start_in_video, chunk_info) tuples
+    cumulative_time = 0.0
+    for chunk_index, chunk_info in sorted_chunks:
+        chunk_duration = chunk_info.get('chunk_duration', 0) / 1000.0  # Convert ms to seconds
+        video_timeline.append((cumulative_time, chunk_info))
+        cumulative_time += chunk_duration
+    
+    # Get all points for the match
     pts = Point.query.filter_by(match=match_id).order_by(Point.stamp.asc()).all()
     print([repr(i.stamp) for i in pts])
-    times = [
-        (max(0, (pt.stamp.replace(tzinfo=timezone.utc)-start_time).total_seconds()-buffer),
-         max(0, (pt.end_stamp.replace(tzinfo=timezone.utc)-start_time).total_seconds()+buffer))
-    for pt in pts if pt.end_stamp]
+    
+    # Calculate point times in the video
+    times = []
+    for pt in pts:
+        if not pt.end_stamp:
+            continue
+        
+        # Convert point timestamps to milliseconds for comparison
+        point_start_ms = int(pt.stamp.replace(tzinfo=timezone.utc).timestamp() * 1000)
+        point_end_ms = int(pt.end_stamp.replace(tzinfo=timezone.utc).timestamp() * 1000)
+        
+        # Find chunks that overlap with this point
+        point_start_in_video = None
+        point_end_in_video = None
+        
+        for video_time, chunk_info in video_timeline:
+            chunk_start_ms = chunk_info.get('chunk_start_timestamp')
+            chunk_duration_ms = chunk_info.get('chunk_duration', 0)
+            chunk_end_ms = chunk_start_ms + chunk_duration_ms if chunk_start_ms else None
+            
+            if chunk_start_ms is None:
+                continue
+            
+            # Check if point overlaps with this chunk (with buffer)
+            chunk_start_with_buffer = chunk_start_ms - (buffer * 1000)
+            chunk_end_with_buffer = chunk_end_ms + (buffer * 1000) if chunk_end_ms else None
+            
+            # Point start is within this chunk (with buffer)
+            if point_start_in_video is None and chunk_start_with_buffer <= point_start_ms <= chunk_end_with_buffer:
+                # Calculate offset from chunk start to point start
+                offset_from_chunk_start = (point_start_ms - chunk_start_ms) / 1000.0  # Convert to seconds
+                point_start_in_video = max(0, video_time + offset_from_chunk_start - buffer)
+            
+            # Point end is within this chunk (with buffer)
+            if chunk_end_with_buffer and chunk_start_with_buffer <= point_end_ms <= chunk_end_with_buffer:
+                # Calculate offset from chunk start to point end
+                offset_from_chunk_start = (point_end_ms - chunk_start_ms) / 1000.0  # Convert to seconds
+                point_end_in_video = video_time + offset_from_chunk_start + buffer
+        
+        # If we found both start and end, add to times list
+        if point_start_in_video is not None and point_end_in_video is not None:
+            times.append((point_start_in_video, point_end_in_video))
+    
     print("TIMES HERE:", times)
-    subprocess.run(['ffmpeg', '-i', os.path.join(output_path, 'match_video.webm'), '-c', 'copy', '-map', '0', os.path.join(output_path, 'output_fixed.webm')])
-    os.remove(os.path.join(output_path, 'match_video.webm'))
+    
+    # Fix the video (re-encode if needed)
+    fixed_file = os.path.join(output_path, 'output_fixed.webm')
+    subprocess.run(['ffmpeg', '-i', input_path, '-c', 'copy', '-map', '0', fixed_file], 
+                  capture_output=True)
+    
+    # Only remove input if it's not the same as the fixed file
+    if input_file != 'output_fixed.webm' and os.path.exists(input_path):
+        os.remove(input_path)
+    
     make_concatenated_video(output_path, times)
-    os.remove(os.path.join(output_path, 'output_fixed.webm'))
+    
+    if os.path.exists(fixed_file):
+        os.remove(fixed_file)
     
     new_times = [0.01] # nonzero so js doesn't freak out trying to scrub to a non positive value
     for i in range(0, len(times)-1):
