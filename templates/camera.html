@@ -609,7 +609,7 @@ async function startRecording() {
         
         // Use the raw camera stream directly (no canvas compositing)
         let recordingStream = currentStream;
-        
+    
         // Create MediaRecorder with options for streaming
         const bitrate = getBitrate(); // Get bitrate from input (in bits per second)
         const options = {
@@ -658,22 +658,22 @@ async function startRecording() {
                     if (session.pendingChunks.includes(pendingChunk) && pendingChunk.data) {
                         console.log(`Processing pending chunk ${pendingChunk.chunkIndex} after ${timeoutDelay}ms delay`);
                         await processPendingChunk(pendingChunk, session);
-                    } else {
+        } else {
                         console.log(`Skipping chunk ${pendingChunk.chunkIndex} - already processed or no data`);
-                    }
+        }
                     session.chunkTimeouts.delete(pendingChunk.chunkIndex);
                 }, timeoutDelay); // 10 second delay
                 
                 session.chunkTimeouts.set(pendingChunk.chunkIndex, timeoutId);
                 console.log(`Chunk ${pendingChunk.chunkIndex} scheduled for processing in ${timeoutDelay}ms (at ${new Date(Date.now() + timeoutDelay).toLocaleTimeString()})`);
-                }
+    }
             };
     
         // Set up periodic cleanup of old uploaded chunks during recording
         session.cleanupInterval = setInterval(() => {
             if (session.recorder && session.recorder.state !== 'inactive') {
                 cleanupOldChunks(session);
-            }
+        }
         }, 30000); // Clean up every 30 seconds
         
         // Handle stop event - cleanup this session independently
@@ -720,8 +720,8 @@ async function startRecording() {
                             });
                             timeoutPromises.push(timeoutPromise);
                         }
-                    }
-                    
+    }
+    
                     // Wait for all timeouts to complete naturally
                     await Promise.all(timeoutPromises);
                     
@@ -745,7 +745,7 @@ async function startRecording() {
                     
                     // Upload any remaining chunks that might have failed
                     await uploadRemainingChunksForSession(session);
-                    
+        
                     // Wait for any remaining uploads from retries
                     await Promise.all([...session.pendingUploads]);
                     
@@ -972,30 +972,30 @@ async function uploadChunkWithRetry(chunkIndex, session, pointId, chunkStartTime
                 session.chunks[chunkIndex].duration = actualDuration;
             }
             
-            const formData = new FormData();
-            formData.append('chunk', chunkData, `chunk_${chunkIndex}.webm`);
-            formData.append('tournament', tournamentUrl);
-            formData.append('field', fieldName);
+        const formData = new FormData();
+        formData.append('chunk', chunkData, `chunk_${chunkIndex}.webm`);
+        formData.append('tournament', tournamentUrl);
+        formData.append('field', fieldName);
             formData.append('match_id', session.matchId || '');
             formData.append('session_id', session.id);
-            formData.append('chunk_index', chunkIndex);
+        formData.append('chunk_index', chunkIndex);
             formData.append('start_timestamp', session.startTime);
             formData.append('chunk_start_timestamp', chunkStartTimestamp);
             formData.append('chunk_duration', actualDuration);
             formData.append('point_id', pointId || '');
             addKeyToFormData(formData);
-            
-            const response = await fetch('/api/camera/upload-chunk', {
-                method: 'POST',
-                body: formData
-            });
-            
-            if (!response.ok) {
-                throw new Error(`Upload failed: ${response.status}`);
-            }
-            
-            const result = await response.json();
-            if (result.success) {
+        
+        const response = await fetch('/api/camera/upload-chunk', {
+            method: 'POST',
+            body: formData
+        });
+        
+        if (!response.ok) {
+            throw new Error(`Upload failed: ${response.status}`);
+        }
+        
+        const result = await response.json();
+        if (result.success) {
                 session.lastUploadedChunkIndex = Math.max(session.lastUploadedChunkIndex, chunkIndex);
                 const chunkSizeMB = chunkData.size / 1024 / 1024;
                 console.log(`Chunk ${chunkIndex} uploaded successfully (${chunkSizeMB.toFixed(2)}MB) for session ${session.id} (point: ${pointId || 'none'}) on attempt ${attempt}`);
@@ -1021,8 +1021,8 @@ async function uploadChunkWithRetry(chunkIndex, session, pointId, chunkStartTime
                 // Chunk was cleared or removed, stop retrying
                 console.log(`Chunk ${chunkIndex} no longer available, stopping retry`);
                 return;
-            }
-            
+}
+
             // Wait before retrying with exponential backoff
             await new Promise(resolve => setTimeout(resolve, retryDelay));
             retryDelay = Math.min(retryDelay * 2, maxRetryDelay); // Exponential backoff, capped at 30s
@@ -1074,7 +1074,7 @@ function cleanupOldChunks(session) {
             // Only clear if successfully uploaded
             session.chunks[i].data = null;
             clearedCount++;
-        }
+}
         // Don't clear chunks that aren't uploaded - they need to be retried
     }
     
@@ -1156,7 +1156,7 @@ async function pollMatchStatus() {
     const data = await checkMatchStatus();
     
     if (data.error) {
-        showError('Cannot reach server. Please check your connection.');
+            showError('Cannot reach server. Please check your connection.');
         return;
     }
     

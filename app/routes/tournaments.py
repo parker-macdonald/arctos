@@ -1091,16 +1091,16 @@ def camera_upload_chunk():
 
 @bp.route('/api/camera/finalize', methods=['POST'])
 def camera_finalize():
-    """Finalize a recording session. Requires camera access key."""
+    """Finalize a recording session. Adds WebM header to first chunk if missing. Requires camera access key."""
     import os
-    from flask import current_app
-    from datetime import datetime
     import subprocess
+    from flask import current_app
     
     data = request.json
     tournament_url = data.get('tournament')
     field_name = data.get('field')
     session_id = data.get('session_id')
+    
     if not tournament_url or not field_name or not session_id:
         return jsonify({'error': 'Missing required parameters'}), 400
     
@@ -1122,38 +1122,63 @@ def camera_finalize():
         if not os.path.exists(chunk_dir):
             return jsonify({'error': 'Session directory not found'}), 404
         
-        # Read metadata
-        metadata_path = os.path.join(chunk_dir, 'metadata.json')
-        metadata = {}
-        if os.path.exists(metadata_path):
-            with open(metadata_path, 'r') as f:
-                metadata = json.load(f)
+        # Check if first chunk exists
+        first_chunk_path = os.path.join(chunk_dir, 'chunk_000000.webm')
+        if not os.path.exists(first_chunk_path):
+            return jsonify({'error': 'First chunk (chunk_000000.webm) not found'}), 404
         
-        # Read chunks metadata
-        chunks_meta_path = os.path.join(chunk_dir, 'chunks_meta.json')
-        chunks_meta = {}
-        if os.path.exists(chunks_meta_path):
-            with open(chunks_meta_path, 'r') as f:
-                chunks_meta = json.load(f)
+        # Check if first chunk has WebM header
+        # WebM files start with EBML header: 0x1A45DFA3
+        has_header = False
+        try:
+            with open(first_chunk_path, 'rb') as f:
+                header = f.read(4)
+                # Check for EBML header (0x1A45DFA3)
+                if len(header) == 4 and header == b'\x1a\x45\xdf\xa3':
+                    has_header = True
+        except Exception as e:
+            print(f"Error reading first chunk header: {e}")
+            return jsonify({'error': f'Error reading chunk file: {str(e)}'}), 500
         
-        # Concatenate chunks in correct order (by chunk_index, handling out-of-order uploads)
-        concatenated_video = concatenate_chunks(chunk_dir, chunks_meta)
+        # If header is missing, add it using ffmpeg
+        if not has_header:
+            print(f"First chunk missing WebM header, adding it...")
+            
+            with open(first_chunk_path, 'rb') as f:
+                chunk_data = f.read()
+            # cursed but it works ok
+            header_bytes = b'\x1aE\xdf\xa3\x01\x00\x00\x00\x00\x00\x00\x1fB\x86\x81\x01B\xf7\x81\x01B\xf2\x81\x04B\xf3\x81\x08B\x82\x84webmB\x87\x81\x02B\x85\x81\x02\x18S\x80g\x01\xff\xff\xff\xff\xff\xff\xff\x11M\x9bt\x01\x00\x00\x00\x00\x00\x00\x00\x15I\xa9f\x01\x00\x00\x00\x00\x00\x00I*\xd7\xb1\x83\x0fB@D\x89\x88\x00\x00\x00\x00\x00\x00\x00\x00M\x80\x98QTmuxingAppLibWebM-0.0.1WA\x99QTwritingAppLibWebM-0.0.1\x16T\xaek\x01\x00\x00\x00\x00\x00\x00\x95\xae\x01\x00\x00\x00\x00\x00\x00,\xd7\x81\x01s\xc5\x84\x1f\xb5)\x91%\x86\x88\x83VP8\x83\x81\x01\x86\x85V_VP8\xe0\x01\x00\x00\x00\x00\x00\x00\x08\xb0\x82\x07\x80\xba\x82\x048\xae\x01\x00\x00\x00\x00\x00\x00W\xd7\x81\x02s\xc5\x84\x9d\xe8\xd1\x8b\x83\x81\x02V\xaa\x84\x00c.\xa0V\xbb\x84\x04\xc4\xb4\x00\x86\x86A_OPUSc\xa2\x93OpusHead\x01\x028\x01\x80\xbb\x00\x00\x00\x00\x00%\x86\x88\x84OPUS\xe1\x01\x00\x00\x00\x00\x00\x00\r\xb5\x88@\xe7p\x00\x00\x00\x00\x00\x9f\x81\x02'
+            temp_output = os.path.join(chunk_dir, 'chunk_000000_temp.webm')
+            with open(temp_output, 'wb') as f:
+                f.write(header_bytes)
+                f.write(chunk_data)
+            
+            # Now try to remux with ffmpeg to ensure it's valid
+            final_result = subprocess.run([
+                'ffmpeg', '-i', temp_output,
+                '-c', 'copy',
+                '-f', 'webm',
+                '-avoid_negative_ts', 'make_zero',
+                '-y', first_chunk_path
+            ], capture_output=True, text=True, timeout=30)
+            
+            if final_result.returncode == 0:
+                if os.path.exists(temp_output):
+                    os.remove(temp_output)
+                print(f"Successfully added WebM header manually")
+            else:
+                # Manual header didn't work, return error
+                if os.path.exists(temp_output):
+                    os.remove(temp_output)
+                print(f"Error remuxing with manual header: {final_result.stderr}")
+                return jsonify({
+                    'error': f'Failed to add WebM header. mkvmerge not available and manual construction failed. Error: {final_result.stderr[:300]}'
+                }), 500
         
-        if concatenated_video:
-            # Now chop to points using the concatenated video
-            times = chop_to_points(chunk_dir, metadata['match_id'], 
-                                 datetime.fromtimestamp(int(metadata['start_timestamp'])/1000, tz=timezone.utc),
-                                 input_file=concatenated_video)
-
-            # Store point timestamps in metadata
-            if times:
-                metadata['point_timestamps'] = times
-                with open(metadata_path, 'w') as f:
-                    json.dump(metadata, f, indent=2)
-
         return jsonify({
             'success': True,
             'session_id': session_id,
+            'header_added': not has_header,
             'message': 'Recording finalized successfully'
         })
     except Exception as e:
@@ -1162,214 +1187,6 @@ def camera_finalize():
         print(traceback.format_exc())
         return jsonify({'error': str(e)}), 500
 
-def concatenate_chunks(chunk_dir, chunks_meta):
-    """Concatenate video chunks in correct order based on chunk_index."""
-    import subprocess
-    import os
-    
-    if not chunks_meta:
-        return None
-    
-    # Sort chunks by chunk_index to ensure correct order (handles out-of-order uploads)
-    sorted_chunks = sorted(chunks_meta.items(), key=lambda x: int(x[0]))
-    
-    if not sorted_chunks:
-        return None
-    
-    # Check if first chunk (index 0) exists
-    first_chunk_index = sorted_chunks[0][0]
-    has_first_chunk = (first_chunk_index == '0' or first_chunk_index == 0)
-    
-    # Create concat file list
-    concat_file = os.path.join(chunk_dir, 'concat_chunks.txt')
-    with open(concat_file, 'w') as f:
-        for chunk_index, chunk_info in sorted_chunks:
-            chunk_filename = chunk_info.get('filename', f'chunk_{int(chunk_index):06d}.webm')
-            chunk_path = os.path.join(chunk_dir, chunk_filename)
-            if os.path.exists(chunk_path):
-                # Use absolute path for concat file
-                abs_path = os.path.abspath(chunk_path)
-                f.write(f"file '{abs_path}'\n")
-    
-    # Concatenate chunks
-    temp_output = os.path.join(chunk_dir, 'match_video_temp.webm')
-    output_file = os.path.join(chunk_dir, 'match_video.webm')
-    
-    result = subprocess.run([
-        'ffmpeg', '-f', 'concat', '-safe', '0', '-i', concat_file,
-        '-c', 'copy', '-map', '0', temp_output
-    ], capture_output=True, text=True)
-    
-    if result.returncode != 0:
-        print(f"Error concatenating chunks: {result.stderr}")
-        # Clean up concat file
-        if os.path.exists(concat_file):
-            os.remove(concat_file)
-        return None
-    
-    # Always remux the concatenated file to ensure proper WebM headers
-    # This is especially important if the first chunk (with initialization segment) is missing
-    print("Remuxing concatenated video to ensure proper WebM headers")
-    remux_result = subprocess.run([
-        'ffmpeg', '-i', temp_output, '-c', 'copy', '-map', '0',
-        '-f', 'webm', '-avoid_negative_ts', 'make_zero', output_file
-    ], capture_output=True, text=True)
-    
-    if remux_result.returncode != 0:
-        print(f"Error remuxing video to add headers: {remux_result.stderr}")
-        # Fall back to temp file if remux fails
-        if os.path.exists(temp_output):
-            if os.path.exists(output_file):
-                os.remove(output_file)
-            os.rename(temp_output, output_file)
-    else:
-        # Remove temp file if remux succeeded
-        if os.path.exists(temp_output):
-            os.remove(temp_output)
-    
-    # Clean up concat file
-    if os.path.exists(concat_file):
-        os.remove(concat_file)
-    
-    return 'match_video.webm'
-
-def chop_to_points(output_path, match_id, start_time, buffer=3, input_file='match_video.webm'):
-    from models import Point
-    import subprocess
-    import os
-    db.session.flush()
-    
-    # Debug: print match_id to see what we're querying
-    print(f"chop_to_points: match_id = '{match_id}' (type: {type(match_id)})")
-    
-    # Check if match_id is valid
-    if not match_id or match_id == '':
-        print(f"chop_to_points: match_id is empty or None, returning empty list")
-        return []
-    
-    input_path = os.path.join(output_path, input_file)
-    if not os.path.exists(input_path):
-        print(f"chop_to_points: input file {input_path} not found")
-        return []
-    
-    # Load chunks metadata to build timeline
-    chunks_meta_path = os.path.join(output_path, 'chunks_meta.json')
-    chunks_meta = {}
-    if os.path.exists(chunks_meta_path):
-        with open(chunks_meta_path, 'r') as f:
-            chunks_meta = json.load(f)
-    
-    # Build video timeline from chunks
-    # Sort chunks by chunk_start_timestamp (absolute world time) to handle out-of-order uploads
-    sorted_chunks = sorted(
-        chunks_meta.items(),
-        key=lambda x: x[1].get('chunk_start_timestamp', 0) if x[1].get('chunk_start_timestamp') else 0
-    )
-    
-    # Build cumulative timeline: track where each chunk starts in the video (in seconds)
-    video_timeline = []  # List of (chunk_start_in_video, chunk_info) tuples
-    cumulative_time = 0.0
-    for chunk_index, chunk_info in sorted_chunks:
-        chunk_duration = chunk_info.get('chunk_duration', 0) / 1000.0  # Convert ms to seconds
-        video_timeline.append((cumulative_time, chunk_info))
-        cumulative_time += chunk_duration
-    
-    # Get all points for the match
-    pts = Point.query.filter_by(match=match_id).order_by(Point.stamp.asc()).all()
-    print([repr(i.stamp) for i in pts])
-    
-    # Calculate point times in the video
-    times = []
-    for pt in pts:
-        if not pt.end_stamp:
-            continue
-        
-        # Convert point timestamps to milliseconds for comparison
-        point_start_ms = int(pt.stamp.replace(tzinfo=timezone.utc).timestamp() * 1000)
-        point_end_ms = int(pt.end_stamp.replace(tzinfo=timezone.utc).timestamp() * 1000)
-        
-        # Find chunks that overlap with this point
-        point_start_in_video = None
-        point_end_in_video = None
-        
-        for video_time, chunk_info in video_timeline:
-            chunk_start_ms = chunk_info.get('chunk_start_timestamp')
-            chunk_duration_ms = chunk_info.get('chunk_duration', 0)
-            chunk_end_ms = chunk_start_ms + chunk_duration_ms if chunk_start_ms else None
-            
-            if chunk_start_ms is None:
-                continue
-            
-            # Check if point overlaps with this chunk (with buffer)
-            chunk_start_with_buffer = chunk_start_ms - (buffer * 1000)
-            chunk_end_with_buffer = chunk_end_ms + (buffer * 1000) if chunk_end_ms else None
-            
-            # Point start is within this chunk (with buffer)
-            if point_start_in_video is None and chunk_start_with_buffer <= point_start_ms <= chunk_end_with_buffer:
-                # Calculate offset from chunk start to point start
-                offset_from_chunk_start = (point_start_ms - chunk_start_ms) / 1000.0  # Convert to seconds
-                point_start_in_video = max(0, video_time + offset_from_chunk_start - buffer)
-            
-            # Point end is within this chunk (with buffer)
-            if chunk_end_with_buffer and chunk_start_with_buffer <= point_end_ms <= chunk_end_with_buffer:
-                # Calculate offset from chunk start to point end
-                offset_from_chunk_start = (point_end_ms - chunk_start_ms) / 1000.0  # Convert to seconds
-                point_end_in_video = video_time + offset_from_chunk_start + buffer
-        
-        # If we found both start and end, add to times list
-        if point_start_in_video is not None and point_end_in_video is not None:
-            times.append((point_start_in_video, point_end_in_video))
-    
-    print("TIMES HERE:", times)
-    
-    # Fix the video (re-encode if needed)
-    fixed_file = os.path.join(output_path, 'output_fixed.webm')
-    subprocess.run(['ffmpeg', '-i', input_path, '-c', 'copy', '-map', '0', fixed_file], 
-                  capture_output=True)
-    
-    # Only remove input if it's not the same as the fixed file
-    if input_file != 'output_fixed.webm' and os.path.exists(input_path):
-        os.remove(input_path)
-    
-    make_concatenated_video(output_path, times)
-    
-    if os.path.exists(fixed_file):
-        os.remove(fixed_file)
-    
-    new_times = [0.01] # nonzero so js doesn't freak out trying to scrub to a non positive value
-    for i in range(0, len(times)-1):
-        new_times.append(new_times[-1] + times[i][1]-times[i][0])
-    return new_times
-
-
-def make_concatenated_video(
-    workdir: str,
-    clips: list[tuple[float, float]],
-    input_file: str = 'output_fixed.webm',
-    output_file: str = 'final_video.webm',
-):
-    import subprocess
-    from os import path, remove
-    point_files = []
-    with open(path.join(workdir, 'clips.txt'), 'w') as f:
-        for i, (start, stop) in enumerate(clips):
-            filename = path.join(workdir, f'point_{i}.webm')
-            subprocess.run([
-                'ffmpeg', '-i', path.join(workdir, input_file), '-c', 'copy', 
-                '-ss', str(start),
-                '-t', str(stop-start),
-                filename
-            ])
-            print(f'file {filename}', file=f)
-            point_files.append(filename)
-        
-
-    subprocess.run([
-        'ffmpeg', '-f', 'concat', '-safe', '0', '-i', path.join(workdir, 'clips.txt'), '-c', 'copy', 
-        path.join(workdir, output_file)
-    ])
-    for point in point_files:
-        remove(point)
     
 @bp.route('/<tournament_url>/update-settings', methods=['POST'])
 @login_required
