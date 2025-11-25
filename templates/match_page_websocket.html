@@ -338,9 +338,7 @@ window.MathJax = {
                                 <th>Stones Elapsed</th>
                                 <th>Winner</th>
                                 <th>Rerun</th>
-                                {% if current_user.is_authenticated and current_user.__class__.__name__ == 'Player' and is_head_ref %}
                                 <th>Notes</th>
-                                {% endif %}
                             </tr>
                         </thead>
                         <tbody id="live-points-table">
@@ -365,11 +363,12 @@ window.MathJax = {
                                         <span class="badge bg-success">Normal</span>
                                     {% endif %}
                                 </td>
-                                {% if current_user.is_authenticated and current_user.__class__.__name__ == 'Player' and is_head_ref %}
                                 <td>
                                     {% set pnotes = point_notes_map.get(point.uuid, []) %}
                                     {% if pnotes %}
                                         {% for n in pnotes %}
+                                            {# Only show point notes (target='match') to non-head-refs #}
+                                            {% if (current_user.is_authenticated and current_user.__class__.__name__ == 'Player' and is_head_ref) or n.target == 'match' %}
                                             {% set targetDisplay = n.target %}
                                             {% set linkUrl = '' %}
                                             {% if n.target=='team1' %}
@@ -403,12 +402,12 @@ window.MathJax = {
                                                     {{ prefix }}{{ n.text }}
                                                 {% endif %}
                                             </div>
+                                            {% endif %}
                                         {% endfor %}
                                     {% else %}
                                         <span class="text-muted">—</span>
                                     {% endif %}
                                 </td>
-                                {% endif %}
                             </tr>
                             {% endfor %}
                         </tbody>

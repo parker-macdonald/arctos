@@ -184,9 +184,9 @@ def assign_notes_to_point(tournament_url):
 
 
 @bp.route('/<tournament_url>/get-point-notes')
-@login_required
 def get_point_notes(tournament_url):
-    """Get notes for a specific point."""
+    """Get notes for a specific point. Point notes (target='match') are visible to everyone.
+    Team and player notes are only visible to authorized users."""
     match_id = request.args.get('match_id')
     point_id = request.args.get('point_id')
     
@@ -197,13 +197,20 @@ def get_point_notes(tournament_url):
     if not match or match.event != tournament_url:
         return jsonify({'success': False, 'error': 'Match not found'})
     
-    if not can_head_ref_match(tournament_url, current_user.id, match=match):
-        return jsonify({'success': False, 'error': 'Not authorized'})
+    # Check if user is a head ref (for full access to all notes)
+    is_head_ref = False
+    if current_user.is_authenticated and current_user.__class__.__name__ == 'Player':
+        is_head_ref = can_head_ref_match(tournament_url, current_user.id, match=match)
     
+    # Get all notes for this point
     notes = MatchNote.query.filter_by(match=match_id, point_id=point_id).order_by(MatchNote.created_at.desc()).all()
     
     notes_data = []
     for note in notes:
+        # Filter: only show point notes (target='match') to everyone
+        # Team and player notes are only visible to head refs
+        if not is_head_ref and note.target != 'match':
+            continue
         player_name = None
         player_display = None
         if note.player_id:

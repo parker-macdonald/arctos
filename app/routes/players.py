@@ -6,9 +6,9 @@ from flask_login import login_required, current_user, logout_user
 from datetime import datetime
 import os
 from models import (
-    Player, PlayerRegistration, Injury, MatchNote, Point, db
+    Player, PlayerRegistration, Injury, MatchNote, Match, Point, db
 )
-from app.utils.helpers import is_head_ref_any
+from app.utils.helpers import is_head_ref_any, can_head_ref_match
 
 bp = Blueprint('players', __name__)
 
@@ -26,11 +26,26 @@ def player_profile(player_id):
     else:
         injuries = Injury.query.filter_by(player=player_id, show=True).order_by(Injury.stamp.desc()).all()
     
-    is_head_ref_flag = is_head_ref_any(player_id)
     player_notes = []
-    if current_user.is_authenticated and (current_user.id == player_id or is_head_ref_flag):
+    if current_user.is_authenticated:
         try:
-            player_notes = MatchNote.query.filter_by(player_id=player_id).order_by(MatchNote.created_at.desc()).all()
+            all_player_notes = MatchNote.query.filter_by(player_id=player_id).order_by(MatchNote.created_at.desc()).all()
+            # Filter notes based on visibility rules
+            for note in all_player_notes:
+                can_see_note = False
+                
+                # Player themselves can always see their notes
+                if current_user.id == player_id:
+                    can_see_note = True
+                # Head refs from the tournament this note is from can see it
+                elif current_user.__class__.__name__ == 'Player':
+                    # Get the match to determine the tournament
+                    match_obj = Match.query.get(note.match) if note.match else None
+                    if match_obj and can_head_ref_match(match_obj.event, current_user.id, match=match_obj):
+                        can_see_note = True
+                
+                if can_see_note:
+                    player_notes.append(note)
         except Exception:
             player_notes = []
     
@@ -39,7 +54,7 @@ def player_profile(player_id):
         match_to_points = {}
         for note in player_notes:
             idx = '-'
-            match_obj = getattr(note, 'match_obj', None)
+            match_obj = Match.query.get(note.match) if note.match else None
             if match_obj and note.point_id:
                 match_id = match_obj.uuid
                 if match_id not in match_to_points:
@@ -54,6 +69,9 @@ def player_profile(player_id):
                 'match_obj': match_obj,
                 'point_index': idx
             })
+    
+    # Check if user is head ref for any tournament (for template display purposes)
+    is_head_ref_flag = is_head_ref_any(player_id)
     return render_template('player_profile.html', player=player, registrations=registrations, 
                          injuries=injuries, player_notes=player_note_rows, is_head_ref=is_head_ref_flag)
 
