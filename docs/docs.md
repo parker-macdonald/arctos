@@ -5,28 +5,28 @@ or, "i type forever and still don't produce something that feels complete"
 ## Table of Contents
 
 - Just Me Yapping
-  - [FAQ](#faq)
+- [FAQ](#faq)
   - [What Arctos *is* and what it is *not*](#what-arctos-is-and-what-it-is-not)
-  - [Design Philosophy](#design-philosophy)
-  - [Bugs, Feature Requests, and Contributing](#bugs-feature-requests-and-contributing)
+- [Design Philosophy](#design-philosophy)
+- [Bugs, Feature Requests, and Contributing](#bugs-feature-requests-and-contributing)
 
 - High Level Overview
   - [Functionality Overview](#functionality-overview)
     - [BEFORE THE TOURNAMENT:](#before-the-tournament)
     - [ON THE DAY OF:](#on-the-day-of)
-  - [Stones](#stones)
-  - [Account Types](#account-types)
-  - [Ref Notes](#ref-notes)
+- [Stones](#stones)
+- [Account Types](#account-types)
+- [Ref Notes](#ref-notes)
 
 - For Players
-  - [Phone Number](#phone-number)
-  - [Logging Injuries](#logging-injuries)
+- [Phone Number](#phone-number)
+- [Logging Injuries](#logging-injuries)
 
 - For TOs
-  - [Tournament Settings](#tournament-settings)
-    - [Basic Information](#basic-information)
-    - [Head Ref Options](#head-ref-options)
-    - [Visibility and Access Control](#visibility-and-access-control)
+- [Tournament Settings](#tournament-settings)
+  - [Basic Information](#basic-information)
+  - [Head Ref Options](#head-ref-options)
+  - [Visibility and Access Control](#visibility-and-access-control)
   - [Match Schedule Setup](#match-schedule-setup)
     - [Tags and References: Specifying Teams](#tags-and-references-specifying-teams)
     - [Static Scheduling](#static-scheduling)
@@ -34,7 +34,7 @@ or, "i type forever and still don't produce something that feels complete"
     - [Breaks](#breaks)
     - [Joins](#joins)
     - [Ribbon Games](#ribbon-games)
-  - [YouTube Livestream Integration](#youtube-livestream-integration)
+- [YouTube Livestream Integration](#youtube-livestream-integration)
   - [OBS Scoreboard Integration](#obs-scoreboard-integration)
   - [Recording Matches](#recording-matches)
 
@@ -265,10 +265,10 @@ You can add other TOs by entering their exact username. Only TOs can mark people
 
 All matches have (among other things) the following information:
 
-  - nominal start time
-  - nominal length
-  - previous match (if one exists)
-  - next match (if one exists)
+- nominal start time
+- nominal length
+- previous match (if one exists)
+- next match (if one exists)
 
 ### Tags and References: Specifying Teams
 
@@ -295,8 +295,8 @@ Unless you are willing to cut a large portion of matches short, however, this re
 
 Dynamic matches do not have a nominal start time (that you, the TO, can set, at least). Instead, their nominal start time is computed based on the nominal length of their dependencies. Match dependencies are:
 
-  - the preceding match: this match has to wait until the previous match is over.
-  - dependent teams: if "match1 winner" is one of the teams playing or reffing in this match, this match is dependent on match 1
+- the preceding match: this match has to wait until the previous match is over.
+- dependent teams: if "match1 winner" is one of the teams playing or reffing in this match, this match is dependent on match 1
 
 The system sets this match's start time to the latest possible end time across all dependencies.
 
@@ -334,9 +334,9 @@ Setup:
 
   1. Go to the tournament's match setup page and configure fields
   2. For each field that will be livestreamed, click "edit field" and add all stream urls to the field. To get the embed link:
-     1. Go to your YouTube stream
-     2. Click **Share** → **Embed**
-     3. Copy the link inside the `src="..."` attribute of the embed code
+   1. Go to your YouTube stream
+   2. Click **Share** → **Embed**
+   3. Copy the link inside the `src="..."` attribute of the embed code
 
 ## OBS Scoreboard Integration
 
@@ -344,15 +344,15 @@ Arctos provides a public scoreboard endpoint that can be embedded in OBS or your
 
 To set it up:
 
-  1. In OBS, add a new **Browser Source**
+1. In OBS, add a new **Browser Source**
   2. Set the URL to: `https://events.californiajugger.org/api/scoreboard?tournament=TOURNAMENT_URL&field=FIELD_NAME`
-    - Replace `TOURNAMENT_URL` with your tournament's URL
-    - Replace `FIELD_NAME` with the name of the field you're streaming
+   - Replace `TOURNAMENT_URL` with your tournament's URL
+   - Replace `FIELD_NAME` with the name of the field you're streaming
 
 The scoreboard displays:
 
   - Team names and profile photos
-  - Current score by set
+- Current score by set
   - For stones matches: the stones remaining countdown with a progress bar
   - When no match is active: the previous and next match's teams (with winner listed for the previous match).
 

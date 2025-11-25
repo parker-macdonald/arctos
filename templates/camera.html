@@ -130,7 +130,6 @@ let selectedCameraId = null;
 let wakeLock = null; // Wake Lock to prevent screen sleep during recording
 let debugUpdateInterval = null; // Interval for updating debug display
 let currentPoints = []; // Track points for the current match
-const POINT_LATENCY_MS = 10000; // 10 seconds latency between "start point" click and actual point start
 const POINT_BUFFER_MS = 3000; // 3 seconds buffer around points
 
 // Get camera ID from localStorage or input
@@ -282,6 +281,13 @@ function updateDebugDisplay() {
             html += `<div class="text-warning small">⚠️ No chunks created yet</div>`;
         }
         
+        // Show pending chunks
+        if (session.pendingChunks && session.pendingChunks.length > 0) {
+            html += `<div class="mt-2 small">`;
+            html += `<strong>Pending Chunks:</strong> ${session.pendingChunks.length} waiting for processing`;
+            html += `</div>`;
+        }
+        
         // Recorder state
         if (session.recorder) {
             html += `<div class="mt-2"><strong>Recorder State:</strong> ${session.recorder.state}</div>`;
@@ -334,8 +340,9 @@ async function releaseWakeLock() {
 }
 
 // Re-request wake lock if it was released (e.g., user switched tabs)
+// Keep wake lock active as long as user is on the camera page
 document.addEventListener('visibilitychange', async () => {
-    if (document.visibilityState === 'visible' && isRecording && wakeLock === null) {
+    if (document.visibilityState === 'visible' && wakeLock === null) {
         await requestWakeLock();
     }
 });
@@ -593,7 +600,11 @@ async function startRecording() {
             startTime: Date.now(), // Recording start timestamp (absolute world time)
             chunks: [],
             lastUploadedChunkIndex: -1,
-            recorder: null
+            recorder: null,
+            pendingChunks: [], // Chunks waiting to be processed (10s delay)
+            chunkTimeouts: new Map(), // Track timeouts for pending chunks
+            pendingUploads: new Set(), // Track pending upload promises
+            finalizePromise: null // Promise that resolves when finalization is complete
         };
         
         // Use the raw camera stream directly (no canvas compositing)
@@ -619,60 +630,42 @@ async function startRecording() {
         // Handle data available events (chunks) - use session's state
         session.recorder.ondataavailable = (event) => {
                 if (event.data && event.data.size > 0) {
-                const chunkIndex = session.chunks.length;
+                const chunkIndex = session.chunks.length + session.pendingChunks.length;
                 
                 // Get chunk duration (approximate - MediaRecorder chunks are typically 2-5 seconds)
-                // We'll get the actual duration from the blob when we process it
                 // Use shorter duration for high-res to reduce memory footprint
-                const chunkDuration = 2000; // Default 2 seconds, will be updated
-                
-                // Use event.timecode to get precise chunk start time (in seconds relative to recording start)
-                // event.timecode is the timecode of the chunk in the recording (in seconds)
-                // Convert to absolute world time by adding to session start time
+                const chunkDuration = 2000; // Default 2 seconds
                 
                 const chunkStartTimestamp = Date.now(); // Absolute world time in milliseconds
                 
-                // Determine if this chunk belongs to a point
-                const pointMetadata = getChunkPointMetadata(chunkStartTimestamp, chunkDuration);
+                // Store chunk in pending queue - will be processed after 10 second delay
+                // This allows point information to arrive late and still match chunks
+                const pendingChunk = {
+                    data: event.data,
+                    chunkStartTimestamp: chunkStartTimestamp,
+                    chunkDuration: chunkDuration,
+                    chunkIndex: chunkIndex,
+                    receivedAt: Date.now()
+                };
                 
-                // Only store chunks that belong to points (or are within buffer of points)
-                if (pointMetadata) {
-                    // Store minimal metadata, but don't keep the blob in memory
-                    // The blob will be uploaded immediately and then released
-                    const chunkInfo = {
-                        data: event.data, // Will be cleared after upload starts
-                        timestamp: Date.now(), // Upload timestamp
-                        chunkStartTimestamp: chunkStartTimestamp, // Absolute world time when chunk started
-                        index: chunkIndex,
-                        uploaded: false,
-                        point_id: pointMetadata.point_id,
-                        duration: chunkDuration, // Will be updated with actual duration
-                        size: event.data.size // Track size for memory monitoring
-                    };
-                    
-                    session.chunks.push(chunkInfo);
-                    updateDebugDisplay(); // Update debug display
-                    
-                    // Upload chunk immediately - this is async and will clear the blob after upload starts
-                    uploadChunkForSession(event.data, chunkIndex, session, pointMetadata.point_id, chunkStartTimestamp, chunkDuration).then(() => {
-                        // After upload completes, clear the blob from memory immediately
-                        if (session.chunks[chunkIndex]) {
-                            session.chunks[chunkIndex].data = null;
-                        }
-                        updateDebugDisplay(); // Update debug display
-                    }).catch((error) => {
-                        console.error(`Upload failed for chunk ${chunkIndex}:`, error);
-                        updateDebugDisplay(); // Update debug display
-                        // Even on error, we'll retry later but don't need to keep the blob
-                        // The retry will need to re-upload, but that's better than crashing
-                    });
-        } else {
-                    // Chunk doesn't belong to any point - discard it immediately to save memory
-                    console.log(`Chunk ${chunkIndex} discarded - not within any point (size: ${(event.data.size / 1024 / 1024).toFixed(2)}MB, start: ${new Date(chunkStartTimestamp).toLocaleTimeString()})`);
-                    // Release the blob immediately
-                    event.data = null;
-                    updateDebugDisplay(); // Update debug display
-                }
+                session.pendingChunks.push(pendingChunk);
+                updateDebugDisplay(); // Update debug display
+                
+                // Schedule processing after 10 second delay
+                const timeoutDelay = 10000; // 10 seconds
+                const timeoutId = setTimeout(async () => {
+                    // Check if chunk is still pending (hasn't been processed yet)
+                    if (session.pendingChunks.includes(pendingChunk) && pendingChunk.data) {
+                        console.log(`Processing pending chunk ${pendingChunk.chunkIndex} after ${timeoutDelay}ms delay`);
+                        await processPendingChunk(pendingChunk, session);
+                    } else {
+                        console.log(`Skipping chunk ${pendingChunk.chunkIndex} - already processed or no data`);
+                    }
+                    session.chunkTimeouts.delete(pendingChunk.chunkIndex);
+                }, timeoutDelay); // 10 second delay
+                
+                session.chunkTimeouts.set(pendingChunk.chunkIndex, timeoutId);
+                console.log(`Chunk ${pendingChunk.chunkIndex} scheduled for processing in ${timeoutDelay}ms (at ${new Date(Date.now() + timeoutDelay).toLocaleTimeString()})`);
                 }
             };
     
@@ -684,28 +677,99 @@ async function startRecording() {
         }, 30000); // Clean up every 30 seconds
         
         // Handle stop event - cleanup this session independently
-        session.recorder.addEventListener('stop', async () => {
+        session.recorder.addEventListener('stop', () => {
             // Clear periodic cleanup interval
             if (session.cleanupInterval) {
                 clearInterval(session.cleanupInterval);
                 session.cleanupInterval = null;
-                }
+            }
             
-            try {
-                await uploadRemainingChunksForSession(session);
-            } catch (uploadErr) {
-                console.error(`Error uploading remaining chunks for session ${session.id}:`, uploadErr);
-            }
-            try {
-                await finalizeRecordingForSession(session);
-            } catch (finalizeErr) {
-                console.error(`Error finalizing recording for session ${session.id}:`, finalizeErr);
-            } finally {
-                activeSessions.delete(session);
-                if (currentRecordingSession === session) {
-                    currentRecordingSession = null;
+            // Don't clear timeouts - let them complete naturally
+            // Wait for all timeouts to complete, then finalize
+            // This allows new matches to start recording immediately
+            (async () => {
+                try {
+                    // Create promises that resolve when each timeout completes
+                    const timeoutPromises = [];
+                    const pendingChunksSnapshot = [...session.pendingChunks];
+                    
+                    console.log(`Waiting for ${pendingChunksSnapshot.length} pending chunk timeouts to complete...`);
+                    
+                    for (const pendingChunk of pendingChunksSnapshot) {
+                        const timeoutId = session.chunkTimeouts.get(pendingChunk.chunkIndex);
+                        if (timeoutId) {
+                            // Create a promise that resolves when this specific timeout completes
+                            const timeoutPromise = new Promise((resolve) => {
+                                // Check periodically if the chunk has been processed
+                                const checkInterval = setInterval(() => {
+                                    // Chunk is processed if it's no longer in pendingChunks or has no data
+                                    if (!session.pendingChunks.includes(pendingChunk) || !pendingChunk.data) {
+                                        clearInterval(checkInterval);
+                                        resolve();
+                                    }
+                                }, 100); // Check every 100ms
+                                
+                                // Also set a maximum wait time (slightly longer than timeout)
+                                const elapsed = Date.now() - pendingChunk.receivedAt;
+                                const remainingWait = Math.max(0, 10000 - elapsed) + 1000; // 10s timeout + 1s buffer
+                                
+                                setTimeout(() => {
+                                    clearInterval(checkInterval);
+                                    resolve();
+                                }, remainingWait);
+                            });
+                            timeoutPromises.push(timeoutPromise);
+                        }
+                    }
+                    
+                    // Wait for all timeouts to complete naturally
+                    await Promise.all(timeoutPromises);
+                    
+                    console.log(`All timeout callbacks completed. Processing any remaining chunks...`);
+                    
+                    // Process any remaining pending chunks that didn't get processed by timeouts
+                    // (should be none if timeouts worked correctly)
+                    const remainingPendingChunks = [...session.pendingChunks];
+                    session.pendingChunks = [];
+                    const processingPromises = remainingPendingChunks
+                        .filter(chunk => chunk.data) // Only process chunks that still have data
+                        .map(chunk => processPendingChunk(chunk, session));
+                    
+                    // Wait for all remaining chunks to be processed
+                    await Promise.all(processingPromises);
+                    
+                    console.log(`All chunks processed. Waiting for uploads to complete...`);
+                    
+                    // Wait for all pending uploads to complete
+                    await Promise.all([...session.pendingUploads]);
+                    
+                    // Upload any remaining chunks that might have failed
+                    await uploadRemainingChunksForSession(session);
+                    
+                    // Wait for any remaining uploads from retries
+                    await Promise.all([...session.pendingUploads]);
+                    
+                    console.log(`All uploads complete. Finalizing...`);
+                    
+                    // Now finalize
+                    await finalizeRecordingForSession(session);
+                    
+                    console.log(`Finalization complete for session ${session.id}`);
+                } catch (err) {
+                    console.error(`Error processing/finalizing session ${session.id}:`, err);
+                } finally {
+                    // Clear any remaining timeouts (should be none at this point)
+                    session.chunkTimeouts.forEach((timeoutId) => {
+                        clearTimeout(timeoutId);
+                    });
+                    session.chunkTimeouts.clear();
+                    
+                    activeSessions.delete(session);
+                    if (currentRecordingSession === session) {
+                        currentRecordingSession = null;
+                    }
                 }
-            }
+            })();
         }, { once: true });
             
         session.recorder.onerror = (event) => {
@@ -721,8 +785,7 @@ async function startRecording() {
         session.recorder.start(chunkInterval);
         isRecording = true;
         
-        // Request wake lock to prevent screen sleep during recording
-        await requestWakeLock();
+        // Wake lock is already active (requested on page load)
         
         // Show recording status (video container should already be visible)
         document.getElementById('recording-status').style.display = 'block';
@@ -788,8 +851,7 @@ function stopRecording() {
         mediaRecorder.stop();
         isRecording = false;
         
-        // Release wake lock when recording stops
-        releaseWakeLock();
+        // Wake lock remains active (stays active as long as user is on camera page)
         
         // Stop timer
         if (recordingTimer) {
@@ -814,72 +876,164 @@ function stopRecording() {
     }
 }
 
-// Get actual chunk duration from blob (async)
-// Upload a single chunk for a specific session
-async function uploadChunkForSession(chunkData, chunkIndex, session, pointId, chunkStartTimestamp, chunkDuration) {
-    // Skip if chunk data is already cleared (was uploaded and cleaned up)
-    if (!chunkData) {
+// Process a pending chunk after the 10 second delay
+// Checks if chunk belongs to a point and either uploads or discards it
+// Returns a promise that resolves when processing (and upload if applicable) is complete
+async function processPendingChunk(pendingChunk, session) {
+    // Check if chunk has already been processed (data is null) or is no longer in pending queue
+    if (!pendingChunk.data) {
+        // Chunk was already processed, skip
+        return Promise.resolve();
+    }
+    
+    // Remove from pending queue
+    const index = session.pendingChunks.indexOf(pendingChunk);
+    if (index > -1) {
+        session.pendingChunks.splice(index, 1);
+    } else {
+        // Chunk is not in pending queue, might have already been processed
+        if (!pendingChunk.data) {
+            return Promise.resolve();
+        }
+    }
+    
+    // Check if chunk belongs to a point (point information may have arrived in the last 10 seconds)
+    const pointMetadata = getChunkPointMetadata(pendingChunk.chunkStartTimestamp, pendingChunk.chunkDuration);
+    
+    if (pointMetadata) {
+        // Chunk belongs to a point - add to chunks array and upload
+        const chunkIndex = session.chunks.length;
+        const elapsed = Date.now() - pendingChunk.receivedAt;
+        console.log(`Chunk ${pendingChunk.chunkIndex} matches point ${pointMetadata.point_id.substring(0, 8)}... (waited ${(elapsed / 1000).toFixed(1)}s)`);
+        
+        const chunkInfo = {
+            data: pendingChunk.data, // Will be cleared after upload starts
+            timestamp: Date.now(), // Upload timestamp
+            chunkStartTimestamp: pendingChunk.chunkStartTimestamp,
+            index: chunkIndex,
+            uploaded: false,
+            point_id: pointMetadata.point_id,
+            duration: pendingChunk.chunkDuration,
+            size: pendingChunk.data ? pendingChunk.data.size : 0
+        };
+        
+        session.chunks.push(chunkInfo);
+        updateDebugDisplay();
+        
+        // Upload chunk and track the promise (with retry logic)
+        const uploadPromise = uploadChunkWithRetry(chunkIndex, session, pointMetadata.point_id, pendingChunk.chunkStartTimestamp, pendingChunk.chunkDuration).then(() => {
+            // After upload completes, clear the blob from memory immediately
+            if (session.chunks[chunkIndex]) {
+                session.chunks[chunkIndex].data = null;
+            }
+            updateDebugDisplay();
+        }).catch((error) => {
+            // Should never reach here if retry logic works correctly
+            console.error(`Upload permanently failed for chunk ${chunkIndex} after all retries:`, error);
+            updateDebugDisplay();
+        }).finally(() => {
+            // Remove from pending uploads when done
+            session.pendingUploads.delete(uploadPromise);
+        });
+        
+        session.pendingUploads.add(uploadPromise);
+        return uploadPromise;
+    } else {
+        // Chunk doesn't belong to any point - discard it to save memory
+        const sizeMB = pendingChunk.data ? (pendingChunk.data.size / 1024 / 1024).toFixed(2) : '0';
+        console.log(`Chunk ${pendingChunk.chunkIndex} discarded after delay - not within any point (size: ${sizeMB}MB, start: ${new Date(pendingChunk.chunkStartTimestamp).toLocaleTimeString()})`);
+        pendingChunk.data = null; // Release the blob
+        updateDebugDisplay();
+        return Promise.resolve(); // Resolve immediately for discarded chunks
+    }
+}
+
+// Upload a chunk with retry logic - keeps trying until it succeeds
+async function uploadChunkWithRetry(chunkIndex, session, pointId, chunkStartTimestamp, chunkDuration) {
+    const chunk = session.chunks[chunkIndex];
+    if (!chunk || !chunk.data) {
+        // Chunk already uploaded or doesn't exist
         return;
     }
     
-    try {
-        // Use the timeslice interval as the chunk duration
-        // Note: Chunks can be shorter than the timeslice (especially the last chunk when recording stops),
-        // but we can't reliably decode individual WebM chunks to get their actual duration.
-        // The server can calculate actual durations later using ffprobe on the concatenated video if needed.
-        const actualDuration = chunkDuration;
-        
-        // Update the chunk's duration in the session
-        if (session.chunks[chunkIndex]) {
-            session.chunks[chunkIndex].duration = actualDuration;
-        }
-        
-        const formData = new FormData();
-        formData.append('chunk', chunkData, `chunk_${chunkIndex}.webm`);
-        formData.append('tournament', tournamentUrl);
-        formData.append('field', fieldName);
-        formData.append('match_id', session.matchId || '');
-        formData.append('session_id', session.id);
-        formData.append('chunk_index', chunkIndex);
-        formData.append('start_timestamp', session.startTime); // Recording start timestamp
-        formData.append('chunk_start_timestamp', chunkStartTimestamp); // Absolute world time when chunk started
-        formData.append('chunk_duration', actualDuration); // Duration in milliseconds
-        formData.append('point_id', pointId || '');
-        addKeyToFormData(formData);
-        
-        const response = await fetch('/api/camera/upload-chunk', {
-            method: 'POST',
-            body: formData
-        });
-        
-        if (!response.ok) {
-            throw new Error(`Upload failed: ${response.status}`);
-        }
-        
-        const result = await response.json();
-        if (result.success) {
-            session.lastUploadedChunkIndex = Math.max(session.lastUploadedChunkIndex, chunkIndex);
-            const chunkSizeMB = chunkData.size / 1024 / 1024;
-            console.log(`Chunk ${chunkIndex} uploaded successfully (${chunkSizeMB.toFixed(2)}MB) for session ${session.id} (point: ${pointId || 'none'})`);
+    const chunkData = chunk.data;
+    const maxRetryDelay = 30000; // Max 30 seconds between retries
+    let retryDelay = 1000; // Start with 1 second delay
+    let attempt = 0;
+    
+    while (true) {
+        attempt++;
+        try {
+            // Use the timeslice interval as the chunk duration
+            const actualDuration = chunkDuration;
             
-            // Mark chunk as uploaded and clear its data to free memory IMMEDIATELY
+            // Update the chunk's duration in the session
             if (session.chunks[chunkIndex]) {
-                session.chunks[chunkIndex].uploaded = true;
-                session.chunks[chunkIndex].data = null;
+                session.chunks[chunkIndex].duration = actualDuration;
+            }
+            
+            const formData = new FormData();
+            formData.append('chunk', chunkData, `chunk_${chunkIndex}.webm`);
+            formData.append('tournament', tournamentUrl);
+            formData.append('field', fieldName);
+            formData.append('match_id', session.matchId || '');
+            formData.append('session_id', session.id);
+            formData.append('chunk_index', chunkIndex);
+            formData.append('start_timestamp', session.startTime);
+            formData.append('chunk_start_timestamp', chunkStartTimestamp);
+            formData.append('chunk_duration', actualDuration);
+            formData.append('point_id', pointId || '');
+            addKeyToFormData(formData);
+            
+            const response = await fetch('/api/camera/upload-chunk', {
+                method: 'POST',
+                body: formData
+            });
+            
+            if (!response.ok) {
+                throw new Error(`Upload failed: ${response.status}`);
+            }
+            
+            const result = await response.json();
+            if (result.success) {
+                session.lastUploadedChunkIndex = Math.max(session.lastUploadedChunkIndex, chunkIndex);
+                const chunkSizeMB = chunkData.size / 1024 / 1024;
+                console.log(`Chunk ${chunkIndex} uploaded successfully (${chunkSizeMB.toFixed(2)}MB) for session ${session.id} (point: ${pointId || 'none'}) on attempt ${attempt}`);
+                
+                // Mark chunk as uploaded (but don't clear data yet - let the caller do that)
+                if (session.chunks[chunkIndex]) {
+                    session.chunks[chunkIndex].uploaded = true;
+                }
+                
+                // Clean up old uploaded chunks
+                cleanupOldChunks(session);
+                updateDebugDisplay();
+                return; // Success!
+            } else {
+                throw new Error(`Upload failed: ${result.error || 'Unknown error'}`);
+            }
+        } catch (error) {
+            console.error(`Chunk ${chunkIndex} upload attempt ${attempt} failed:`, error.message);
+            updateDebugDisplay();
+            
+            // Check if chunk still exists and has data
+            if (!session.chunks[chunkIndex] || !session.chunks[chunkIndex].data) {
+                // Chunk was cleared or removed, stop retrying
+                console.log(`Chunk ${chunkIndex} no longer available, stopping retry`);
+                return;
+            }
+            
+            // Wait before retrying with exponential backoff
+            await new Promise(resolve => setTimeout(resolve, retryDelay));
+            retryDelay = Math.min(retryDelay * 2, maxRetryDelay); // Exponential backoff, capped at 30s
+        }
+    }
 }
 
-            // Clean up old uploaded chunks more aggressively for high-res
-            cleanupOldChunks(session);
-            updateDebugDisplay(); // Update debug display
-        } else {
-            console.error(`Chunk ${chunkIndex} upload failed:`, result);
-            updateDebugDisplay(); // Update debug display
-        }
-    } catch (error) {
-        console.error(`Error uploading chunk ${chunkIndex} for session ${session.id}:`, error);
-        updateDebugDisplay(); // Update debug display
-        // Don't throw - we'll retry in uploadRemainingChunksForSession
-    }
+// Upload a single chunk for a specific session (legacy function, now calls uploadChunkWithRetry)
+async function uploadChunkForSession(chunkData, chunkIndex, session, pointId, chunkStartTimestamp, chunkDuration) {
+    // This function is kept for compatibility but now uses the retry logic
+    return uploadChunkWithRetry(chunkIndex, session, pointId, chunkStartTimestamp, chunkDuration);
 }
 
 // Clean up old uploaded chunks, keeping a buffer for retry purposes
@@ -912,13 +1066,16 @@ function cleanupOldChunks(session) {
     
     // Clear chunks that are older than the buffer
     // Only clear chunks that are confirmed uploaded and beyond the buffer
+    // Never clear chunks that failed to upload (they need to be retried)
     const clearUpTo = Math.max(0, lastUploaded - KEEP_BUFFER);
     let clearedCount = 0;
     for (let i = 0; i <= clearUpTo; i++) {
         if (session.chunks[i] && session.chunks[i].uploaded && session.chunks[i].data) {
+            // Only clear if successfully uploaded
             session.chunks[i].data = null;
             clearedCount++;
-}
+        }
+        // Don't clear chunks that aren't uploaded - they need to be retried
     }
     
     if (clearedCount > 0) {
@@ -928,23 +1085,36 @@ function cleanupOldChunks(session) {
 
 // Upload remaining chunks for a specific session (for retry on failure)
 async function uploadRemainingChunksForSession(session) {
-    for (let i = session.lastUploadedChunkIndex + 1; i < session.chunks.length; i++) {
+    const uploadPromises = [];
+    // Start from the beginning to catch any failed chunks, not just after lastUploadedChunkIndex
+    for (let i = 0; i < session.chunks.length; i++) {
         const chunk = session.chunks[i];
-        // Skip chunks that are already uploaded and cleared
-        if (chunk && chunk.data) {
-            await uploadChunkForSession(
-                chunk.data, 
+        // Only upload chunks that have data and haven't been uploaded yet
+        if (chunk && chunk.data && !chunk.uploaded) {
+            const uploadPromise = uploadChunkWithRetry(
                 i, 
                 session, 
                 chunk.point_id, 
                 chunk.chunkStartTimestamp, 
                 chunk.duration
-            );
+            ).then(() => {
+                // Clear data after successful upload
+                if (session.chunks[i]) {
+                    session.chunks[i].data = null;
+                }
+            });
+            uploadPromises.push(uploadPromise);
+            session.pendingUploads.add(uploadPromise);
+            uploadPromise.finally(() => {
+                session.pendingUploads.delete(uploadPromise);
+            });
         } else if (chunk && chunk.uploaded) {
-            // Chunk was uploaded but we need to update lastUploadedChunkIndex
+            // Chunk was uploaded, update lastUploadedChunkIndex
             session.lastUploadedChunkIndex = Math.max(session.lastUploadedChunkIndex, i);
         }
     }
+    // Wait for all uploads to complete (they will retry until successful)
+    await Promise.all(uploadPromises);
 }
 
 // Finalize recording for a specific session
@@ -986,21 +1156,7 @@ async function pollMatchStatus() {
     const data = await checkMatchStatus();
     
     if (data.error) {
-        // If endpoint is unreachable and we're recording, continue for max duration
-        if (isRecording && currentRecordingSession) {
-            const elapsed = Date.now() - currentRecordingSession.startTime;
-            if (elapsed >= maxRecordingDuration) {
-                stopRecording();
-                showError('Maximum recording duration reached (20 minutes). Recording stopped.');
-            } else {
-                // Show warning that endpoint is unreachable but continue recording
-                const statusEl = document.getElementById('status');
-                statusEl.className = 'alert alert-warning';
-                statusEl.innerHTML = `<i class="fas fa-exclamation-triangle"></i> Cannot reach server, but recording continues (max 20 min). Elapsed: ${formatTime(elapsed)}`;
-            }
-        } else {
-            showError('Cannot reach server. Please check your connection.');
-        }
+        showError('Cannot reach server. Please check your connection.');
         return;
     }
     
@@ -1109,6 +1265,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (!cameraInitialized) {
         return;
     }
+    
+    // Request wake lock to keep screen awake while on camera page
+    await requestWakeLock();
     
     // Start polling
     pollMatchStatus();
