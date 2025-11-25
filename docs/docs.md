@@ -4,29 +4,25 @@ or, "i type forever and still don't produce something that feels complete"
 
 ## Table of Contents
 
-Just Me Yapping:
+- Just Me Yapping
+  - [FAQ](#faq)
+  - [What Arctos *is* and what it is *not*](#what-arctos-is-and-what-it-is-not)
+  - [Design Philosophy](#design-philosophy)
+  - [Bugs, Feature Requests, and Contributing](#bugs-feature-requests-and-contributing)
 
-- [FAQ](#faq)
-- [What Arctos *is* and what it is *not*](#what-arctos-is-and-what-it-is-not)
-- [Design Philosophy](#design-philosophy)
-- [Bugs, Feature Requests, and Contributing](#bugs-feature-requests-and-contributing)
-
-High Level Overview
-
-- [Functionality Overview](#functionality-overview)
+- High Level Overview
+  - [Functionality Overview](#functionality-overview)
     - [BEFORE THE TOURNAMENT:](#before-the-tournament)
     - [ON THE DAY OF:](#on-the-day-of)
-- [Stones](#stones)
-- [Account Types](#account-types)
-- [Ref Notes](#ref-notes)
+  - [Stones](#stones)
+  - [Account Types](#account-types)
+  - [Ref Notes](#ref-notes)
 
-For Players
+- For Players
+  - [Phone Number](#phone-number)
+  - [Logging Injuries](#logging-injuries)
 
-- [Phone Number](#phone-number)
-- [Logging Injuries](#logging-injuries)
-
-For TOs
-
+- For TOs
   - [Tournament Settings](#tournament-settings)
     - [Basic Information](#basic-information)
     - [Head Ref Options](#head-ref-options)
@@ -42,50 +38,54 @@ For TOs
   - [OBS Scoreboard Integration](#obs-scoreboard-integration)
   - [Recording Matches](#recording-matches)
 
-
-For Head Refs
-
-- [Running Games](#running-games)
+- For Head Refs
+  - [Running Games](#running-games)
 
 ---
 
 ## FAQ
 
-- I want to test this out for my tournament, but I don't want to create a bunch of fake teams on the official site. What can i do? 
-  - Contact me! I have a dev server where I stage changes before they go live; i can give you access and you can do whatever you want there without affecting the real data.
-- Can I register two teams for a tournament under one team account?
-  - No; make a second team account. Team accounts are meant to represent the ephemeral groupings that we Juggers call 'teams', not clubs.
+- **I want to test this out for my tournament, but I don't want to create a bunch of fake teams on the official site. What can i do?**
+  
+  Contact me! I have a dev server where I stage changes before they go live; i can give you access and you can do whatever you want there without affecting the real data.
+
+- **Can I register two teams for a tournament under one team account?**
+  
+  No; make a second team account. Team accounts are meant to represent the ephemeral groupings that we Juggers call 'teams', not clubs.
 
 ## What Arctos *is* and what it is *not*
 
 Arctos is a tool for Jugger events that aims to:
-- unify the tracking of results and statistics
-- reduce the workload of organizers while planning events, by:
-  - managing registration
-  - enforcing team size and team count limits
-  - making tournament information easily accessible (giving tournaments a web presence)
-- reduce the workload of organizers during events, by:
-  - communicating the schedule to teams so they know when and where to show up for matches
-  - collecting and organizing footage
-  - collecting and organizing results
-  - managing brackets and updating the schedule accordingly
-- reduce the workload of head refs while running games, by:
-  - keeping score
-  - counting stones
-  - tracking penalties/notes
+
+  - unify the tracking of results and statistics
+  - reduce the workload of organizers while planning events, by:
+    - managing registration
+    - enforcing team size and team count limits
+    - making tournament information easily accessible (giving tournaments a web presence)
+  - reduce the workload of organizers during events, by:
+    - communicating the schedule to teams so they know when and where to show up for matches
+    - collecting and organizing footage
+    - collecting and organizing results
+    - managing brackets and updating the schedule accordingly
+  - reduce the workload of head refs while running games, by:
+    - keeping score
+    - counting stones
+    - tracking penalties/notes
 
 Arctos is ***not***:
-- a bracketing engine
-- a scheduling engine
-- a social media platform
+
+  - a bracketing engine
+  - a scheduling engine
+  - a social media platform
 
 While there is limited functionality for these things, they are not the main design intent. The presence of profile photos and bios does not mean this is meant to be a web presence for you or your team. Likewise, dynamic scheduling, tags, references, breaks, and joins are powerful tools for creating a complex, efficient bracket & schedule, but you should be developing these externally - Arctos is meant to run tournaments, not do in-depth bracket analysis or solve massive mixed integer nonlinear programs to schedule your matches.
 
 ## Design Philosophy
 
 With the above goals in mind, Arctos has been designed to be:
-- **Capable**: it makes it easier to run tournaments by as much as possible. I measure this by reduction in admin staffing requirements:
-- **Accessible**: it gives as much information and tooling as it can to as many people as possible (as allowable by privacy constraints). This includes small things like ensuring the signup process and data api are simple and don't require any restrictive infrastructure, but it also includes larger things, like maintaining separation from existing regulatory or organizational bodies (e.g., Arctos still aims to help TOs of non-NJA sanctioned tournaments)
+
+- **Capable**: it makes it easier to run tournaments by as much as possible. I measure this by reduction in admin staffing requirements.
+- **Accessible**: it gives as much information and tooling as it can to as many people as possible (as allowable by privacy constraints). This includes small things like ensuring the signup process and data api are simple and don't require any restrictive infrastructure, but it also includes larger things, like maintaining separation from existing regulatory or organizational bodies (e.g., Arctos still aims to help TOs of non-NJA sanctioned tournaments).
 - **Unonpinionated**: Jugger tournaments come in many shapes and sizes, and in order to best help organize these, it should not expect tournaments to fall into preexisting patterns. This is why sets are not automatically counted/completed and match winners need to be explicitly set by head refs: this way, if TOs want to run a strange scoring system, they can use Arctos without any special development/modifications needed.
 - **Minimal**: Don't do more than advertised. Don't collect more data than needed. I don't need to send you email updates on cool tournaments you should try to register for; I don't even need your email. I don't need to know how old, tall, heavy, or gender you are.
 
@@ -104,46 +104,46 @@ Here's, briefly, how it works.
 
 #### BEFORE THE TOURNAMENT:
 
-1. TOs create a tournament, with:
-   - basic configuration: max team size, max team counts, number of fields and their names, location, dates, about, etc.
-   - head ref policy: let anyone head ref, or just teams assigned to ref, or just a list of specific users (or any combination of those).
-   - registration configuration: terms that registrants need to agree to, the registration price for teams and players, etc. (eventually registrants will be able to pay these fees through Arctos, but that functionality has not been implemented yet).
-   - a schedule: This can be as simple as matches at specific times, or it can have dynamically schedule matches, breaks, synchronization points, and more. Match participats can either be specific teams or the winner/loser of another match. If desired, stone counting functionality is set up. Each match has two teams playing and any number of ref teams.
-   - a bracket: optionally, TOs may upload (a) bracket diagram(s), which they may then annotate with team names and/or the winner/loser of specific matches, which will then update as the tournament progresses.
-   - youtube livestream links for each field, if set up
-2. TOs make the tournament public and open registration (and eventually make the schedule public too)
-3. Teams register, setting a pseudonym for this tournament
-4. Players register
-   - they select either a team to register under or they register unattached (as a free merc)
-   - they enter their jersey name and number for this tournament
-5. Teams accept player's requests to join their team, finalizing the player's registration.
-6. TOs continuously perform registration management
-   - As teams and/or players submit their registration payments, TOs mark them paid (optionally notating the amount paid) on the registration management page.
-   - TOs may deregister players and/or teams as they see fit
+  1. TOs create a tournament, with:
+     - basic configuration: max team size, max team counts, number of fields and their names, location, dates, about, etc.
+     - head ref policy: let anyone head ref, or just teams assigned to ref, or just a list of specific users (or any combination of those).
+     - registration configuration: terms that registrants need to agree to, the registration price for teams and players, etc. (eventually registrants will be able to pay these fees through Arctos, but that functionality has not been implemented yet).
+     - a schedule: This can be as simple as matches at specific times, or it can have dynamically schedule matches, breaks, synchronization points, and more. Match participats can either be specific teams or the winner/loser of another match. If desired, stone counting functionality is set up. Each match has two teams playing and any number of ref teams.
+     - a bracket: optionally, TOs may upload (a) bracket diagram(s), which they may then annotate with team names and/or the winner/loser of specific matches, which will then update as the tournament progresses.
+     - youtube livestream links for each field, if set up
+  2. TOs make the tournament public and open registration (and eventually make the schedule public too)
+  3. Teams register, setting a pseudonym for this tournament
+  4. Players register
+     - they select either a team to register under or they register unattached (as a free merc)
+     - they enter their jersey name and number for this tournament
+  5. Teams accept player's requests to join their team, finalizing the player's registration.
+  6. TOs continuously perform registration management
+     - As teams and/or players submit their registration payments, TOs mark them paid (optionally notating the amount paid) on the registration management page.
+     - TOs may deregister players and/or teams as they see fit
 
 
 #### ON THE DAY OF:
 
-0. TOs optionally set up phones to record the matches (different from live stream integration). These phones will automatically record and upload footage, which will automatically be clipped to just the points and displayed in the same place as the live stream footage.
-1. TOs set up stones, playing them from the stones player. Multiple devices can be used to play syncronized stones from multiple speakers.
-2. Players check the schedule to see when they need to play.
-  - guarantees provided by the dynamic scheduling system ensure they always know the deadline to arrive at their match at least one match in advance
-3. Head Refs click the "start match" button, and are taken to a page where they:
-   - select who of each team are playing (typically everyone, unless the team is larger than the max field size)
-     - they can only select players who have been marked paid!
-   - search for and add any free mercs (same thing; must have been marked paid by TOs)
-   - can view other refs' notes on the players and teams selected for this match
-   - can view players' active logged injuries
-   - can notate any important match-level notes (public) like qwik contact and any rules variations
-4. Head Refs submit this information at the end of the pre-game meeting, officially starting the match (and updating the schedule for other matches based on the time). They then run the match:
-   - click 'start point' on the 'J' in "3, 2, 1, Jugger"
-   - click 'end point' when point is called
-   - select the winner of each point, or leave it as None if nobody scored
-   - select a box to note if the point is being rerun
-   - add notes to each point if needed, targeted at the point, a specific team, or a specific player.
-5. spectators watch, either in person, or on the match page, which updates live with score results and the stone count.
-6. Head refs click "finalize match" when all points are over. They select the winner, write any final match-level notes (public), and obtain signatures from each team's captain.
-7. Head Refs submit this form, officially marking the end of the match. The schedule updates based on the results and timestamp.
+  1. TOs optionally set up phones to record the matches (different from live stream integration). These phones will automatically record and upload footage, which will automatically be clipped to just the points and displayed in the same place as the live stream footage.
+  2. TOs set up stones, playing them from the stones player. Multiple devices can be used to play syncronized stones from multiple speakers.
+  3. Players check the schedule to see when they need to play.
+     - guarantees provided by the dynamic scheduling system ensure they always know the deadline to arrive at their match at least one match in advance
+  4. Head Refs click the "start match" button, and are taken to a page where they:
+     - select who of each team are playing (typically everyone, unless the team is larger than the max field size)
+       - they can only select players who have been marked paid!
+     - search for and add any free mercs (same thing; must have been marked paid by TOs)
+     - can view other refs' notes on the players and teams selected for this match
+     - can view players' active logged injuries
+     - can notate any important match-level notes (public) like qwik contact and any rules variations
+  5. Head Refs submit this information at the end of the pre-game meeting, officially starting the match (and updating the schedule for other matches based on the time). They then run the match:
+     - click 'start point' on the 'J' in "3, 2, 1, Jugger"
+     - click 'end point' when point is called
+     - select the winner of each point, or leave it as None if nobody scored
+     - select a box to note if the point is being rerun
+     - add notes to each point if needed, targeted at the point, a specific team, or a specific player.
+  6. spectators watch, either in person, or on the match page, which updates live with score results and the stone count.
+  7. Head refs click "finalize match" when all points are over. They select the winner, write any final match-level notes (public), and obtain signatures from each team's captain.
+  8. Head Refs submit this form, officially marking the end of the match. The schedule updates based on the results and timestamp.
 
 
 ## Stones
@@ -237,18 +237,20 @@ When you log injuries on your profile, all it does is add a little bit of text u
 ## Tournament Settings
 
 ### Basic Information
+
 This is pretty self explanatory so I only have a few notes:
-- The start date is not optional. You must enter something.
-- to hide the registration fee callouts on the event page and registration forms, just set the value to zero. 
-- When entering other TOs, you must enter their exact username for it to work.
-- The max team size on field and roster are actually enforced; don't just choose random numbers.
+
+  - The start date is not optional. You must enter something.
+  - to hide the registration fee callouts on the event page and registration forms, just set the value to zero. 
+  - When entering other TOs, you must enter their exact username for it to work.
+  - The max team size on field and roster are actually enforced; don't just choose random numbers.
 
 ### Head Ref Options
 
 As it says on the form:
 
-> Arctos was designed around having dedicated head refs. However, this is not always feasible, so there are a few other options. If you do any of these, please make sure to communicate to players how the system works, in particular that you cannot un-start a match!
-> Explicitly listed player usernames will always be allowed, regardless of their registration status. Anyone else must be registered if they want to head ref.
+> Arctos was designed around having dedicated head refs. However, this is not always feasible, so there are a few other options. If you do any of these, please make sure to communicate to players how the system works, in particular that you cannot un-start a match!  
+> Explicitly listed player usernames will always be allowed, regardless of their registration status. Anyone else must be registered if they want to head ref.  
 > **Please note that only players are allowed to head ref, not teams. This is to enforce accountability for ref responsibilities, as team accounts are/can be shared.**
 
 TOs can enter an explicit list of allowed usernames, allow players on ref teams to head ref, or just allow all registered players to head ref. The union of all selected options is used, and the players explicitly listed need not be registered to head ref.
@@ -262,17 +264,19 @@ You can add other TOs by entering their exact username. Only TOs can mark people
 ## Match Schedule Setup
 
 All matches have (among other things) the following information:
-- nominal start time
-- nominal length
-- previous match (if one exists)
-- next match (if one exists)
+
+  - nominal start time
+  - nominal length
+  - previous match (if one exists)
+  - next match (if one exists)
 
 ### Tags and References: Specifying Teams
 
 Each match as two teams playing in it as well as any number of teams assigned to ref. Let's take a breif aside on how to specify teams. You have three options:
-1. explicit team name: just type their name (autocomplete will help you). They must be registered in the tournament.
-2. tag: after adding a tag in the sidebar, you can enter it as a team
-3. reference: if there's another match called `M1`, you can enter `M1::winner` or `M1::loser`, and Arctos will update these when the results of `M1` become available.
+
+  1. explicit team name: just type their name (autocomplete will help you). They must be registered in the tournament.
+  2. tag: after adding a tag in the sidebar, you can enter it as a team
+  3. reference: if there's another match called `M1`, you can enter `M1::winner` or `M1::loser`, and Arctos will update these when the results of `M1` become available.
 
 Tags are how you can set up a schedule without knowing what teams are actually playing. A tag is like a generic team; whenever you want, you can use the "update tags" button to replace all instances of any given tag with a specific team.
 
@@ -290,8 +294,9 @@ Unless you are willing to cut a large portion of matches short, however, this re
 ### Dynamic Matches
 
 Dynamic matches do not have a nominal start time (that you, the TO, can set, at least). Instead, their nominal start time is computed based on the nominal length of their dependencies. Match dependencies are:
-- the preceding match: this match has to wait until the previous match is over.
-- dependent teams: if "match1 winner" is one of the teams playing or reffing in this match, this match is dependent on match 1
+
+  - the preceding match: this match has to wait until the previous match is over.
+  - dependent teams: if "match1 winner" is one of the teams playing or reffing in this match, this match is dependent on match 1
 
 The system sets this match's start time to the latest possible end time across all dependencies.
 
@@ -321,32 +326,35 @@ Ribbon games are matches that are not counted in tournament results (or rather, 
 ## YouTube Livestream Integration
 
 If you plan on live streaming the matches to youtube, Arctos can be configured to recognize this. If you do this, it will:
+
 - show the relevant live stream on each match's page
 - after the match is complete, provide easy shortcuts to seek to the start of each point.
 
-Setup:  
+Setup:
 
-1. Go to the tournament's match setup page and configure fields
-2. For each field that will be livestreamed, click "edit field" and add all stream urls to the field. To get the embed link:
-   1. Go to your YouTube stream
-   2. Click **Share** → **Embed**
-   3. Copy the link inside the `src="..."` attribute of the embed code
+  1. Go to the tournament's match setup page and configure fields
+  2. For each field that will be livestreamed, click "edit field" and add all stream urls to the field. To get the embed link:
+     1. Go to your YouTube stream
+     2. Click **Share** → **Embed**
+     3. Copy the link inside the `src="..."` attribute of the embed code
 
 ## OBS Scoreboard Integration
 
 Arctos provides a public scoreboard endpoint that can be embedded in OBS or your streaming software of choice as a browser source. This creates a live scoreboard overlay for your stream.
 
 To set it up:
-1. In OBS, add a new **Browser Source**
-2. Set the URL to: `https://events.californiajugger.org/api/scoreboard?tournament=TOURNAMENT_URL&field=FIELD_NAME`
-   - Replace `TOURNAMENT_URL` with your tournament's URL
-   - Replace `FIELD_NAME` with the name of the field you're streaming
+
+  1. In OBS, add a new **Browser Source**
+  2. Set the URL to: `https://events.californiajugger.org/api/scoreboard?tournament=TOURNAMENT_URL&field=FIELD_NAME`
+    - Replace `TOURNAMENT_URL` with your tournament's URL
+    - Replace `FIELD_NAME` with the name of the field you're streaming
 
 The scoreboard displays:
-- Team names and profile photos
-- Current score by set
-- For stones matches: the stones remaining countdown with a progress bar
-- When no match is active: the previous and next match's teams (with winner listed for the previous match).
+
+  - Team names and profile photos
+  - Current score by set
+  - For stones matches: the stones remaining countdown with a progress bar
+  - When no match is active: the previous and next match's teams (with winner listed for the previous match).
 
 The scoreboard automatically polls for updates and refreshes when match state changes. For stones matches, the countdown updates in real-time using the same synchronization system as the match pages.
 
@@ -361,9 +369,10 @@ If you're okay with the match videos not being available until after the match i
 ## Running Games
 
 Running games is mostly self explanatory. If there's no option for you to start a match that you think you should be able to start, check that:
-- you're logged in
-- the teams are all ready (even refs), not involved in other games or still references to other games' winners and losers
-- everything before this match on the schedule on this field has been marked completed
+
+  - you're logged in
+  - the teams are all ready (even refs), not involved in other games or still references to other games' winners and losers
+  - everything before this match on the schedule on this field has been marked completed
 
 For the actual workflow to run games, a textual description is even more unhelpful than it is dry. Instead, i've made this [nice big diagram showing how to do it](/static/run_match_pipeline.png). it's a bit large to display here well, but if you click the link, you can zoom in however much you want.
 
