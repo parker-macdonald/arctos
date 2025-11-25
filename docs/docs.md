@@ -27,6 +27,10 @@ For Players
 
 For TOs
 
+  - [Tournament Settings](#tournament-settings)
+    - [Basic Information](#basic-information)
+    - [Head Ref Options](#head-ref-options)
+    - [Visibility and Access Control](#visibility-and-access-control)
   - [Match Schedule Setup](#match-schedule-setup)
     - [Tags and References: Specifying Teams](#tags-and-references-specifying-teams)
     - [Static Scheduling](#static-scheduling)
@@ -38,16 +42,10 @@ For TOs
   - [OBS Scoreboard Integration](#obs-scoreboard-integration)
   - [Recording Matches](#recording-matches)
 
+
 For Head Refs
 
-- [Running Games (for Head Refs)](#running-games-for-head-refs)
-  - [All Data is Good Data: Don't Delete Points!](#all-data-is-good-data-dont-delete-points)
-  - [Arbitrary Set Assignment](#arbitrary-set-assignment)
-  - [Adding Notes](#adding-notes)
-  - [Starting Matches](#starting-matches)
-    - [Constraints When Starting Matches](#constraints-when-starting-matches)
-    - [When to Actually Start the Match](#when-to-actually-start-the-match)
-  - [Running the Match](#running-the-match)
+- [Running Games](#running-games)
 
 ---
 
@@ -362,146 +360,10 @@ If you're okay with the match videos not being available until after the match i
 
 ## Running Games
 
-As a head ref, you are responsible for running individual matches. This section covers everything you need to know about managing matches from start to finish.
+Running games is mostly self explanatory. If there's no option for you to start a match that you think you should be able to start, check that:
+- you're logged in
+- the teams are all ready (even refs), not involved in other games or still references to other games' winners and losers
+- everything before this match on the schedule on this field has been marked completed
 
-### All Data is Good Data: Don't Delete Points!
-
-**Important Philosophy:** The system is designed around the principle that "all data is good data." This means you should never delete points, even if they were rerolled or need to be corrected.
-
-Instead of deleting points:
-- **Mark points as rerolled:** If a point needs to be rerolled, use the "Rerolled" checkbox on the point. Rerolled points are excluded from scoring but remain in the match history.
-- **Update point winners:** If you recorded the wrong winner, simply change the winner dropdown - the point stays in the record.
-- **Adjust set numbers:** If a point was recorded in the wrong set, use the set number controls to move it to the correct set.
-
-This approach ensures a complete audit trail of everything that happened during the match, which is valuable for reviewing disputes, understanding match flow, and maintaining accurate statistics.
-
-**[SCREENSHOT NEEDED]**
-
-**Location:** Match running page, points table
-
-**What to show:** The points table showing:
-- A point with the "Rerolled" checkbox checked
-- How rerolled points are visually distinguished (if they are)
-- The set number controls (+ and - buttons)
-- Annotate to emphasize that there is no delete button for points, only the reroll checkbox
-
-### Arbitrary Set Assignment
-
-You can assign any point to any set number, regardless of when it was scored. This is useful for:
-- **Correcting mistakes:** If you accidentally recorded a point in the wrong set, you can move it later.
-- **Handling set boundaries:** Sometimes it's unclear when a set ended. You can adjust set assignments after the fact to match the actual set structure.
-- **Special formats:** For matches with unusual set structures, you have full control over how points are grouped into sets.
-
-To change a point's set number, use the **+** and **−** buttons next to the set number in the points table. The set number cannot go below 1.
-
-The score-by-set display automatically updates to reflect your set assignments, and rerolled points are excluded from scoring calculations.
-
-**[SCREENSHOT NEEDED]**
-
-**Location:** Match running page, points table with set number controls
-
-**What to show:**
-- The set number controls (+ and - buttons) clearly visible
-- Multiple points with different set numbers to show flexibility
-- The score-by-set table showing how points are grouped
-- Annotate to show how changing a set number updates the score display
-
-### Adding Notes
-
-You can add notes at several levels to record important information:
-- **Match Notes:** General notes about the match (visible to head refs for this match)
-- **Team Notes:** Notes about a specific team (visible to that team and all head refs)
-- **Player Notes:** Notes about a specific player (visible to that player and all head refs)
-- **Point Notes:** Notes attached to a specific point (visible to head refs for this match)
-
-To add notes:
-1. On the match running page, find the notes section or the "Notes" button for a specific point
-2. Enter your note text
-3. Optionally select a target (team1, team2, match, or a specific player)
-4. If adding a point note, select the point first
-5. Submit the note
-
-Notes are timestamped and include who created them. They're useful for:
-- Recording injuries or substitutions
-- Noting rule interpretations or disputes
-- Tracking patterns or concerns about teams/players
-- Documenting special circumstances
-
-**[SCREENSHOT NEEDED]**
-
-**Location:** Match running page, notes interface
-
-**What to show:**
-- The notes input form showing text field and target dropdown
-- How to add a note to a specific point (the Notes button in the points table)
-- A list of existing notes showing timestamps and creators
-- Annotate to show the different note types and where they appear
-
-### Starting Matches
-
-Before starting a match, you'll see the match start page where you can:
-- **View existing notes and injuries:** The system shows you any relevant notes about the teams and players, as well as any active injuries for players. This information is displayed when you select players for each team.
-- **Add mercenaries (mercs):** You can search for and add players who aren't on either team's roster. This is useful for pickup games or when teams need additional players. Use the search box to find players by name, jersey name, or jersey number.
-- **Select players for each team:** Check boxes to select which players will play for each team. Players are shown with their jersey information if available.
-
-#### Constraints When Starting Matches
-
-The system enforces several constraints to prevent errors:
-- **Maximum field size:** You cannot select more players than the tournament's maximum field size (configured by the TO). If you try to select too many players, you'll get an error message.
-- **Unpaid players:** Players who haven't paid their registration fee cannot be selected. They will appear grayed out with an "Unpaid" badge. You must ensure players have paid before they can participate.
-- **No duplicate players:** A player cannot be on both teams simultaneously. If you try to select a player for both teams, the system will prevent it.
-- **Player already on other team:** If a player is selected for one team, they cannot be selected for the other team until you uncheck them from the first team.
-
-#### When to Actually Start the Match
-
-You should start the match when:
-- Both teams are ready to play
-- All players are selected and confirmed
-- You've reviewed any relevant notes or injuries
-- You're ready to begin scoring points
-
-**Important:** Once you start a match, you cannot un-start it. The match status changes to "IN_PROGRESS" and the confirmed start time is recorded. Make sure everything is correct before clicking "Start Match".
-
-If a team doesn't show up, you can still start the match with zero players for that team - the system will prompt you to confirm this unusual situation.
-
-For STONES matches, you'll also need to set the "stones per set" value before starting. This determines how many stones each set will have.
-
-**[SCREENSHOT NEEDED]**
-
-**Location:** Match start page
-
-**What to show:**
-- The player selection interface showing checkboxes for each team
-- An unpaid player shown grayed out with "Unpaid" badge
-- A player with an active injury displayed
-- The "View Notes" button and notes modal
-- The search box for adding mercs
-- The match notes textarea
-- For STONES matches: the stones per set input field
-- Annotate to show all the constraints and features mentioned above
-
-### Running the Match
-
-Once the match is started, you'll be taken to the match running page where you can:
-- Add points as they're scored
-- Update point winners, set numbers, and reroll status
-- Add notes about the match, teams, players, or specific points
-- For STONES matches: monitor and update the stones countdown
-- Finalize the match when it's complete
-
-The match page updates in real-time, and changes are synchronized across all viewers (head refs, public viewers, and scoreboard overlays).
-
-**[SCREENSHOT NEEDED]**
-
-**Location:** Match running page (full view)
-
-**What to show:**
-- The complete match running interface
-- Score by set display
-- Points table with all controls visible
-- Add point button
-- Notes section
-- For STONES matches: stones countdown display
-- Finalize match button
-- Annotate to show the workflow of running a match
+For the actual workflow to run games, a textual description is even more unhelpful than it is dry. Instead, i've made this [nice big diagram showing how to do it](/static/run_match_pipeline.png). it's a bit large to display here well, but if you click the link, you can zoom in however much you want.
 

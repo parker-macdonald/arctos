@@ -193,7 +193,40 @@
                     <p class="mb-0"><strong>Teams:</strong> {{ match.team1_registration.pseudonym if match.team1_registration else match.team1 }} vs {{ match.team2_registration.pseudonym if match.team2_registration else match.team2 }}</p>
                 </div>
                 <div class="col-md-4">
-                    <p class="mb-0"><strong>Refs:</strong> {{ match.refs or match.refs_initial }}</p>
+                    <p class="mb-0"><strong>Refs:</strong> 
+                        {% set refs_string = match.refs or match.refs_initial %}
+                        {% if refs_string %}
+                            {% for ref_trimmed in refs_string.split(',') %}
+                                {% set ref_trimmed = ref_trimmed.strip() %}
+                                {% if ref_trimmed %}
+                                    {% if ref_trimmed.endswith('::winner') or ref_trimmed.endswith('::loser') or ref_trimmed.endswith(' winner') or ref_trimmed.endswith(' loser') %}
+                                        {% if '::' in ref_trimmed %}
+                                            {% set match_ref = ref_trimmed.split('::')[0] %}
+                                            {% set display_text = ref_trimmed.replace('::', ' ') %}
+                                        {% else %}
+                                            {% set match_ref = ref_trimmed.rsplit(' ', 1)[0] %}
+                                            {% set display_text = ref_trimmed %}
+                                        {% endif %}
+                                        {{ display_text }}{% if not loop.last %}, {% endif %}
+                                    {% else %}
+                                        {% set team_registration = ref_trimmed | team_registration_for_tournament(tournament.url) %}
+                                        {% if team_registration %}
+                                            {{ team_registration.pseudonym }}{% if not loop.last %}, {% endif %}
+                                        {% else %}
+                                            {% set team_by_pseudonym = ref_trimmed | team_by_pseudonym_for_tournament(tournament.url) %}
+                                            {% if team_by_pseudonym %}
+                                                {{ team_by_pseudonym.pseudonym }}{% if not loop.last %}, {% endif %}
+                                            {% else %}
+                                                {{ ref_trimmed }}{% if not loop.last %}, {% endif %}
+                                            {% endif %}
+                                        {% endif %}
+                                    {% endif %}
+                                {% endif %}
+                            {% endfor %}
+                        {% else %}
+                            -
+                        {% endif %}
+                    </p>
                 </div>
                 <div class="col-md-2">
                     {% if match.nominal_length %}
@@ -211,7 +244,36 @@
                 <div class="col-12">
                     <p class="small mb-0">
                         {{ match.team1_registration.pseudonym if match.team1_registration else match.team1 }} vs {{ match.team2_registration.pseudonym if match.team2_registration else match.team2 }}
-                        {% if match.refs or match.refs_initial %} | Refs: {{ match.refs or match.refs_initial }}{% endif %}
+                        {% if match.refs or match.refs_initial %} | Refs: 
+                            {% set refs_string = match.refs or match.refs_initial %}
+                            {% for ref_trimmed in refs_string.split(',') %}
+                                {% set ref_trimmed = ref_trimmed.strip() %}
+                                {% if ref_trimmed %}
+                                    {% if ref_trimmed.endswith('::winner') or ref_trimmed.endswith('::loser') or ref_trimmed.endswith(' winner') or ref_trimmed.endswith(' loser') %}
+                                        {% if '::' in ref_trimmed %}
+                                            {% set match_ref = ref_trimmed.split('::')[0] %}
+                                            {% set display_text = ref_trimmed.replace('::', ' ') %}
+                                        {% else %}
+                                            {% set match_ref = ref_trimmed.rsplit(' ', 1)[0] %}
+                                            {% set display_text = ref_trimmed %}
+                                        {% endif %}
+                                        {{ display_text }}{% if not loop.last %}, {% endif %}
+                                    {% else %}
+                                        {% set team_registration = ref_trimmed | team_registration_for_tournament(tournament.url) %}
+                                        {% if team_registration %}
+                                            {{ team_registration.pseudonym }}{% if not loop.last %}, {% endif %}
+                                        {% else %}
+                                            {% set team_by_pseudonym = ref_trimmed | team_by_pseudonym_for_tournament(tournament.url) %}
+                                            {% if team_by_pseudonym %}
+                                                {{ team_by_pseudonym.pseudonym }}{% if not loop.last %}, {% endif %}
+                                            {% else %}
+                                                {{ ref_trimmed }}{% if not loop.last %}, {% endif %}
+                                            {% endif %}
+                                        {% endif %}
+                                    {% endif %}
+                                {% endif %}
+                            {% endfor %}
+                        {% endif %}
                         {% if match.nominal_length %} | {{ match.nominal_length }}m{% endif %}
                         {% if match.field %} | Field: {{ match.field }}{% endif %}
                     </p>
