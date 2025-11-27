@@ -308,7 +308,7 @@ def match_page(tournament_url):
     # Get match notes and point notes
     match_notes = []
     point_notes_map = {}
-    from models import MatchNote, PlayerRegistration, Player
+        from models import MatchNote, PlayerRegistration, Player
     
     # Get match-level notes (point_id is None) - only for head refs
     if is_head_ref_flag:
@@ -346,53 +346,53 @@ def match_page(tournament_url):
                 'team_id': team_id,
                 'created_at': note.created_at.isoformat() if note.created_at else None,
             })
-    
+        
     # Get point-specific notes - point notes (target='match') visible to everyone
     # Team and player notes only visible to head refs
-    if points:
-        point_ids = [p.uuid for p in points if getattr(p, 'uuid', None)]
-        if point_ids:
-            point_notes = MatchNote.query.filter_by(match=match.uuid).filter(
-                MatchNote.point_id.in_(point_ids)
-            ).order_by(MatchNote.created_at.asc()).all()
-            for n in point_notes:
+        if points:
+            point_ids = [p.uuid for p in points if getattr(p, 'uuid', None)]
+            if point_ids:
+                point_notes = MatchNote.query.filter_by(match=match.uuid).filter(
+                    MatchNote.point_id.in_(point_ids)
+                ).order_by(MatchNote.created_at.asc()).all()
+                for n in point_notes:
                 # Filter: only show point notes (target='match') to everyone
                 # Team and player notes are only visible to head refs
                 if not is_head_ref_flag and n.target != 'match':
                     continue
                 
-                player_name = None
-                player_display = None
-                if n.player_id:
-                    pl = Player.query.get(n.player_id)
-                    if pl:
-                        player_name = pl.name
-                        reg = PlayerRegistration.query.filter_by(event=tournament_url, player=pl.id).first()
-                        if reg:
-                            if getattr(reg, 'jersey_name', None) and getattr(reg, 'jersey_number', None):
-                                player_display = f"{reg.jersey_name} #{reg.jersey_number}"
-                            elif getattr(reg, 'jersey_name', None):
-                                player_display = reg.jersey_name
-                            elif getattr(reg, 'jersey_number', None):
-                                player_display = f"#{reg.jersey_number}"
-                        if not player_display:
-                            player_display = pl.name
-                # Determine team_id if target is TEAM1 or TEAM2
-                team_id = None
-                if n.target=='team1':
-                    team_id = match.team1
-                elif n.target=='team2':
-                    team_id = match.team2
-                
-                point_notes_map.setdefault(n.point_id, []).append({
-                    'text': n.text,
-                    'target': n.target,
-                    'player_id': n.player_id,
-                    'player_name': player_name,
-                    'player_display': player_display,
-                    'team_id': team_id,
-                    'created_at': n.created_at.isoformat() if getattr(n, 'created_at', None) else None,
-                })
+                    player_name = None
+                    player_display = None
+                    if n.player_id:
+                        pl = Player.query.get(n.player_id)
+                        if pl:
+                            player_name = pl.name
+                            reg = PlayerRegistration.query.filter_by(event=tournament_url, player=pl.id).first()
+                            if reg:
+                                if getattr(reg, 'jersey_name', None) and getattr(reg, 'jersey_number', None):
+                                    player_display = f"{reg.jersey_name} #{reg.jersey_number}"
+                                elif getattr(reg, 'jersey_name', None):
+                                    player_display = reg.jersey_name
+                                elif getattr(reg, 'jersey_number', None):
+                                    player_display = f"#{reg.jersey_number}"
+                            if not player_display:
+                                player_display = pl.name
+                    # Determine team_id if target is TEAM1 or TEAM2
+                    team_id = None
+                    if n.target=='team1':
+                        team_id = match.team1
+                    elif n.target=='team2':
+                        team_id = match.team2
+                    
+                    point_notes_map.setdefault(n.point_id, []).append({
+                        'text': n.text,
+                        'target': n.target,
+                        'player_id': n.player_id,
+                        'player_name': player_name,
+                        'player_display': player_display,
+                        'team_id': team_id,
+                        'created_at': n.created_at.isoformat() if getattr(n, 'created_at', None) else None,
+                    })
     
     # Compute end time for display
     computed_end_time = None
@@ -410,19 +410,19 @@ def match_page(tournament_url):
     camera_url = None
     available_cameras = []  # List of dicts: {index, url, stream_start_time, type, video_path, camera_id, session_id}
     
-    from app.utils.camera_helpers import parse_camera_urls
-    from datetime import datetime, timezone
-    import json
+            from app.utils.camera_helpers import parse_camera_urls
+            from datetime import datetime, timezone
+            import json
     import os
     from flask import current_app
     
     # Get stream start times and recorded videos from match (check even if no field cameras)
-    stream_starts = {}
+                stream_starts = {}
     recorded_videos = []  # List of recorded video sessions
     camera_urls = []
     
-    if match.camera_stream_starts:
-        try:
+                if match.camera_stream_starts:
+                    try:
             stream_starts_data = json.loads(match.camera_stream_starts)
             
             # Parse the new format: camera_id -> recording info (single or list)
@@ -518,19 +518,19 @@ def match_page(tournament_url):
                 'camera_id': recording.get('camera_id', 'unknown'),
                 'session_id': recording.get('session_id', ''),
                 'point_timestamps': recording.get('point_timestamps')
-            })
-    
-    # Use first available camera for backward compatibility
-    if available_cameras:
+                        })
+            
+            # Use first available camera for backward compatibility
+            if available_cameras:
         first_cam = available_cameras[0]
         if first_cam.get('type') == 'youtube':
             camera_url = first_cam['url']
-    
-    # Debug: log camera availability
+            
+            # Debug: log camera availability
     if not available_cameras and match.field:
         field_obj = Field.query.filter_by(event=tournament_url, name=match.field).first()
         if field_obj and field_obj.camera:
-            print(f"Warning: No cameras available for match {match.uuid} on field {match.field}. Field has {len(camera_urls)} camera(s). Match status: {match.status}")
+                print(f"Warning: No cameras available for match {match.uuid} on field {match.field}. Field has {len(camera_urls)} camera(s). Match status: {match.status}")
 
     return render_template('match_page_websocket.html', 
                          tournament=tournament, 

@@ -1109,84 +1109,62 @@ def camera_finalize():
     if not is_valid:
         return error_response[0], error_response[1]
     
+    # Directory where chunks are stored
+    chunk_dir = os.path.join(
+        current_app.root_path,
+        '../static/uploads/videos',
+        tournament_url,
+        field_name,
+        session_id
+    )
+    
+    if not os.path.exists(chunk_dir):
+        return jsonify({'error': 'Session directory not found'}), 404
+    
+    # Check if first chunk exists
+    first_chunk_path = os.path.join(chunk_dir, 'chunk_000000.webm')
+    if not os.path.exists(first_chunk_path):
+        return jsonify({'error': 'First chunk (chunk_000000.webm) not found'}), 404
+    
+    # Check if first chunk has WebM header
+    # WebM files start with EBML header: 0x1A45DFA3
+    has_header = False
     try:
-        # Directory where chunks are stored
-        chunk_dir = os.path.join(
-            current_app.root_path,
-            '../static/uploads/videos',
-            tournament_url,
-            field_name,
-            session_id
-        )
-        
-        if not os.path.exists(chunk_dir):
-            return jsonify({'error': 'Session directory not found'}), 404
-        
-        # Check if first chunk exists
-        first_chunk_path = os.path.join(chunk_dir, 'chunk_000000.webm')
-        if not os.path.exists(first_chunk_path):
-            return jsonify({'error': 'First chunk (chunk_000000.webm) not found'}), 404
-        
-        # Check if first chunk has WebM header
-        # WebM files start with EBML header: 0x1A45DFA3
-        has_header = False
-        try:
-            with open(first_chunk_path, 'rb') as f:
-                header = f.read(4)
-                # Check for EBML header (0x1A45DFA3)
-                if len(header) == 4 and header == b'\x1a\x45\xdf\xa3':
-                    has_header = True
-        except Exception as e:
-            print(f"Error reading first chunk header: {e}")
-            return jsonify({'error': f'Error reading chunk file: {str(e)}'}), 500
-        
-        # If header is missing, add it using ffmpeg
-        if not has_header:
-            print(f"First chunk missing WebM header, adding it...")
-            
-            with open(first_chunk_path, 'rb') as f:
-                chunk_data = f.read()
-            # cursed but it works ok
-            header_bytes = b'\x1aE\xdf\xa3\x01\x00\x00\x00\x00\x00\x00\x1fB\x86\x81\x01B\xf7\x81\x01B\xf2\x81\x04B\xf3\x81\x08B\x82\x84webmB\x87\x81\x02B\x85\x81\x02\x18S\x80g\x01\xff\xff\xff\xff\xff\xff\xff\x11M\x9bt\x01\x00\x00\x00\x00\x00\x00\x00\x15I\xa9f\x01\x00\x00\x00\x00\x00\x00I*\xd7\xb1\x83\x0fB@D\x89\x88\x00\x00\x00\x00\x00\x00\x00\x00M\x80\x98QTmuxingAppLibWebM-0.0.1WA\x99QTwritingAppLibWebM-0.0.1\x16T\xaek\x01\x00\x00\x00\x00\x00\x00\x95\xae\x01\x00\x00\x00\x00\x00\x00,\xd7\x81\x01s\xc5\x84\x1f\xb5)\x91%\x86\x88\x83VP8\x83\x81\x01\x86\x85V_VP8\xe0\x01\x00\x00\x00\x00\x00\x00\x08\xb0\x82\x07\x80\xba\x82\x048\xae\x01\x00\x00\x00\x00\x00\x00W\xd7\x81\x02s\xc5\x84\x9d\xe8\xd1\x8b\x83\x81\x02V\xaa\x84\x00c.\xa0V\xbb\x84\x04\xc4\xb4\x00\x86\x86A_OPUSc\xa2\x93OpusHead\x01\x028\x01\x80\xbb\x00\x00\x00\x00\x00%\x86\x88\x84OPUS\xe1\x01\x00\x00\x00\x00\x00\x00\r\xb5\x88@\xe7p\x00\x00\x00\x00\x00\x9f\x81\x02'
-            temp_output = os.path.join(chunk_dir, 'chunk_000000_temp.webm')
-            with open(temp_output, 'wb') as f:
-                f.write(header_bytes)
-                f.write(chunk_data)
-            
-            # Now try to remux with ffmpeg to ensure it's valid
-            final_result = subprocess.run([
-                'ffmpeg', '-i', temp_output,
-                '-c', 'copy',
-                '-f', 'webm',
-                '-avoid_negative_ts', 'make_zero',
-                '-y', first_chunk_path
-            ], capture_output=True, text=True, timeout=30)
-            
-            if final_result.returncode == 0:
-                if os.path.exists(temp_output):
-                    os.remove(temp_output)
-                print(f"Successfully added WebM header manually")
-            else:
-                # Manual header didn't work, return error
-                if os.path.exists(temp_output):
-                    os.remove(temp_output)
-                print(f"Error remuxing with manual header: {final_result.stderr}")
-                return jsonify({
-                    'error': f'Failed to add WebM header. mkvmerge not available and manual construction failed. Error: {final_result.stderr[:300]}'
-                }), 500
-        
-        return jsonify({
-            'success': True,
-            'session_id': session_id,
-            'header_added': not has_header,
-            'message': 'Recording finalized successfully'
-        })
+        with open(first_chunk_path, 'rb') as f:
+            header = f.read(4)
+            # Check for EBML header (0x1A45DFA3)
+            if len(header) == 4 and header == b'\x1a\x45\xdf\xa3':
+                has_header = True
     except Exception as e:
-        import traceback
-        print(f"Error finalizing recording: {e}")
-        print(traceback.format_exc())
-        return jsonify({'error': str(e)}), 500
+        print(f"Error reading first chunk header: {e}")
+        return jsonify({'error': f'Error reading chunk file: {str(e)}'}), 500
+    combined = os.path.join(chunk_dir, 'combined.webm')
+    # If header is missing, add
+    if not has_header:
+        header_bytes = b'\x1aE\xdf\xa3\x01\x00\x00\x00\x00\x00\x00\x1fB\x86\x81\x01B\xf7\x81\x01B\xf2\x81\x04B\xf3\x81\x08B\x82\x84webmB\x87\x81\x02B\x85\x81\x02\x18S\x80g\x01\xff\xff\xff\xff\xff\xff\xff\x11M\x9bt\x01\x00\x00\x00\x00\x00\x00\x00\x15I\xa9f\x01\x00\x00\x00\x00\x00\x00I*\xd7\xb1\x83\x0fB@D\x89\x88\x00\x00\x00\x00\x00\x00\x00\x00M\x80\x98QTmuxingAppLibWebM-0.0.1WA\x99QTwritingAppLibWebM-0.0.1\x16T\xaek\x01\x00\x00\x00\x00\x00\x00\x95\xae\x01\x00\x00\x00\x00\x00\x00,\xd7\x81\x01s\xc5\x84\x1f\xb5)\x91%\x86\x88\x83VP8\x83\x81\x01\x86\x85V_VP8\xe0\x01\x00\x00\x00\x00\x00\x00\x08\xb0\x82\x07\x80\xba\x82\x048\xae\x01\x00\x00\x00\x00\x00\x00W\xd7\x81\x02s\xc5\x84\x9d\xe8\xd1\x8b\x83\x81\x02V\xaa\x84\x00c.\xa0V\xbb\x84\x04\xc4\xb4\x00\x86\x86A_OPUSc\xa2\x93OpusHead\x01\x028\x01\x80\xbb\x00\x00\x00\x00\x00%\x86\x88\x84OPUS\xe1\x01\x00\x00\x00\x00\x00\x00\r\xb5\x88@\xe7p\x00\x00\x00\x00\x00\x9f\x81\x02'
+        with open(combined, 'wb') as f:
+            f.write(header_bytes)
 
+
+    # now combine the recordings by appending them all
+    with open(combined, 'ab') as c:
+        files = os.listdir(chunk_dir)
+        files = [i for i in files if 'chunk_' in i and i.endswith('.webm')]
+        files.sort(key=lambda x: int(x.split('_')[1].split('.')[0]))
+        for chunk in files:
+            with open(os.path.join(chunk_dir, chunk), 'rb') as f:
+                c.write(f.read())
+    
+    subprocess.run(['ffmpeg', '-i', combined, '-c', 'copy', '-map', '0', '-y', os.path.join(chunk_dir, 'final_video.webm')])
+
+
+
+    return jsonify({
+        'success': True,
+        'session_id': session_id,
+        'header_added': not has_header,
+        'message': 'Recording finalized successfully'
+    })
     
 @bp.route('/<tournament_url>/update-settings', methods=['POST'])
 @login_required
