@@ -308,7 +308,7 @@ def match_page(tournament_url):
     # Get match notes and point notes
     match_notes = []
     point_notes_map = {}
-        from models import MatchNote, PlayerRegistration, Player
+    from models import MatchNote, PlayerRegistration, Player
     
     # Get match-level notes (point_id is None) - only for head refs
     if is_head_ref_flag:
@@ -349,13 +349,19 @@ def match_page(tournament_url):
         
     # Get point-specific notes - point notes (target='match') visible to everyone
     # Team and player notes only visible to head refs
-        if points:
-            point_ids = [p.uuid for p in points if getattr(p, 'uuid', None)]
-            if point_ids:
-                point_notes = MatchNote.query.filter_by(match=match.uuid).filter(
-                    MatchNote.point_id.in_(point_ids)
-                ).order_by(MatchNote.created_at.asc()).all()
-                for n in point_notes:
+    if points:
+        point_ids = [p.uuid for p in points if getattr(p, 'uuid', None)]
+        if point_ids:
+            point_notes_query = MatchNote.query.filter_by(match=match.uuid).filter(
+                MatchNote.point_id.in_(point_ids)
+            ).order_by(MatchNote.created_at.asc())
+            
+            # Filter for non-head-refs: only show 'match' target notes
+            if not is_head_ref_flag:
+                point_notes_query = point_notes_query.filter_by(target='match')
+            
+            point_notes = point_notes_query.all()
+            for n in point_notes:
                 # Filter: only show point notes (target='match') to everyone
                 # Team and player notes are only visible to head refs
                 if not is_head_ref_flag and n.target != 'match':
@@ -410,19 +416,19 @@ def match_page(tournament_url):
     camera_url = None
     available_cameras = []  # List of dicts: {index, url, stream_start_time, type, video_path, camera_id, session_id}
     
-            from app.utils.camera_helpers import parse_camera_urls
-            from datetime import datetime, timezone
-            import json
+    from app.utils.camera_helpers import parse_camera_urls
+    from datetime import datetime, timezone
+    import json
     import os
     from flask import current_app
     
     # Get stream start times and recorded videos from match (check even if no field cameras)
-                stream_starts = {}
+    stream_starts = {}
     recorded_videos = []  # List of recorded video sessions
     camera_urls = []
     
-                if match.camera_stream_starts:
-                    try:
+    if match.camera_stream_starts:
+        try:
             stream_starts_data = json.loads(match.camera_stream_starts)
             
             # Parse the new format: camera_id -> recording info (single or list)
@@ -498,9 +504,9 @@ def match_page(tournament_url):
                     if not stream_start_str and isinstance(stream_starts, dict):
                         stream_start_str = stream_starts.get(str(idx))
                     
-                        available_cameras.append({
-                            'index': idx,
-                            'url': url,
+                    available_cameras.append({
+                        'index': idx,
+                        'url': url,
                         'stream_start_time': stream_start_str if stream_start_str else None,
                         'type': 'youtube'
                     })
@@ -518,19 +524,19 @@ def match_page(tournament_url):
                 'camera_id': recording.get('camera_id', 'unknown'),
                 'session_id': recording.get('session_id', ''),
                 'point_timestamps': recording.get('point_timestamps')
-                        })
+            })
             
-            # Use first available camera for backward compatibility
-            if available_cameras:
+    # Use first available camera for backward compatibility
+    if available_cameras:
         first_cam = available_cameras[0]
         if first_cam.get('type') == 'youtube':
             camera_url = first_cam['url']
             
-            # Debug: log camera availability
+    # Debug: log camera availability
     if not available_cameras and match.field:
         field_obj = Field.query.filter_by(event=tournament_url, name=match.field).first()
         if field_obj and field_obj.camera:
-                print(f"Warning: No cameras available for match {match.uuid} on field {match.field}. Field has {len(camera_urls)} camera(s). Match status: {match.status}")
+            print(f"Warning: No cameras available for match {match.uuid} on field {match.field}. Field has {len(camera_urls)} camera(s). Match status: {match.status}")
 
     return render_template('match_page_websocket.html', 
                          tournament=tournament, 
