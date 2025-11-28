@@ -1084,13 +1084,12 @@ def record_upload_chunk():
 
 @bp.route('/api/record/finalize', methods=['POST'])
 def record_finalize():
-    """Finalize a recording session. Placeholder endpoint - user will implement later."""
-
     data = request.json
     tournament_url = data.get('tournament')
     field_name = data.get('field')
     session_id = data.get('session_id')
     match_id = data.get('match_id')
+    camera_name = data.get('camera_name')
 
     # Validate camera access key
     is_valid, error_response = require_camera_key(tournament_url, field_name)
@@ -1124,12 +1123,11 @@ def record_finalize():
         return jsonify({'error': 'First chunk (chunk_000000.webm) not found'}), 404
     
     with open(path.join(chunk_dir, 'chunks_meta.json'), 'r') as f:
-        meta = list(json.load(f).values())
         consecutive = list(
             map(
                 lambda x: sorted(
-                    x, 
-                    key=lambda x: x['chunk_start_timestamp']
+                    x[1], 
+                    key=lambda c: c['chunk_start_timestamp']
                 ),
                 groupby(
                     sorted(
@@ -1145,7 +1143,7 @@ def record_finalize():
     # concatenate the chunks from each point into a single playable video
     for idx, chunks in enumerate(consecutive):
         print(f"chunk {idx} has length {len(chunks)}")
-        with open(path.join(chunk_dir, chunks[0]['point_id']), 'ab') as c:
+        with open(path.join(chunk_dir, f"{chunks[0]['point_id']}.webm"), 'ab') as c:
             for chunk in chunks:
                 with open(path.join(chunk_dir, chunk['filename']), 'rb') as f:
                     c.write(f.read())
@@ -1153,10 +1151,14 @@ def record_finalize():
     from models import Point
     pts = Point.query.filter_by(match=match_id).order_by(Point.stamp.asc()).all()
     point_table = { chunks[0]['point_id']: (chunks[0]['chunk_start_timestamp'], len(chunks)) for chunks in consecutive }
-    in_video_times = [(None, 0.01)]
+    in_video_times = [[None, 0.01]]
     with open(path.join(chunk_dir, 'clips.txt'), 'w') as clips:
         for pt in pts:
             output_filename = path.join(chunk_dir, f'{pt.uuid}_clipped.webm')
+            if pt.uuid not in point_table:
+                print(f'POINT {pt.uuid} NOT FOUND IN POINT TABLE!')
+                print(f'point_table={point_table}')
+                continue
             start_stamp, end_stamp = \
                 pt.stamp.replace(tzinfo=timezone.utc).timestamp() - point_table[pt.uuid][0]/1000, \
                 pt.end_stamp.replace(tzinfo=timezone.utc).timestamp() - point_table[pt.uuid][0]/1000
@@ -1167,9 +1169,10 @@ def record_finalize():
                 # point's length to zero and skip adding
                 # the footage.
                 print(f'somethings wrong! start: {start_stamp}, end: {end_stamp} (duration {end_stamp-start_stamp}), point table entry: {point_table[pt.uuid]}')
-                in_video_times.append((None, in_video_times[-1][1]))
+                print(f'point_table={point_table}')
+                in_video_times.append([None, in_video_times[-1][1]])
                 continue
-            in_video_times.append((None, in_video_times[-1][1] + end_stamp-start_stamp))
+            in_video_times.append([None, in_video_times[-1][1] + end_stamp-start_stamp])
             subprocess.run(['ffmpeg',
                 '-i', path.join(chunk_dir, f'{pt.uuid}.webm'),
                 '-ss', str(start_stamp),
@@ -1191,13 +1194,33 @@ def record_finalize():
     ])
     
 
-    with open(path.join(chunk_dir, 'metadata.json'), 'rw') as f:
+
+    with open(path.join(chunk_dir, 'metadata.json'), 'r') as f:
         metadata = json.load(f)
-        # eventually this should actually use the point uuid data and
-        # display more information about the point on the match page. but for now
-        # this is totally fine and im so done with this
-        metadata['point_timestamps'] = [i[1] for i in in_video_times]
+
+    # for debug visibility
+    metadata['point_timestamps'] = [i[1] for i in in_video_times]
+    with open(path.join(chunk_dir, 'metadata.json'), 'w') as f:
         json.dump(metadata, f)
+
+    from models import Match
+    print("match id:", match_id)
+    match = Match.query.filter_by(uuid=match_id).first()
+    stream_starts = json.loads(match.camera_stream_starts) if match.camera_stream_starts else dict()
+    print("STREAM STARTS:", stream_starts)
+    stream_starts[camera_name] = {
+        'video_path': path.join(
+            'uploads/videos',
+            tournament_url,
+            field_name,
+            session_id,
+            'final_video.webm'
+        ),
+        'point_timestamps': [i[1] for i in in_video_times],
+        'type': 'recorded',
+    }
+    match.camera_stream_starts = json.dumps(stream_starts)
+    db.session.commit()
 
     # For now, just return success
     return jsonify({

@@ -440,9 +440,6 @@ def match_page(tournament_url):
                     # Check if this is a recorded video (has video_path)
                     if isinstance(recording, dict) and 'video_path' in recording:
                         video_path = recording.get('video_path', '')
-                        session_id = recording.get('session_id', '')
-                        start_timestamp = recording.get('start_timestamp')
-                        start_time = recording.get('start_time')
                         
                         # Check if video file exists
                         if video_path:
@@ -453,26 +450,11 @@ def match_page(tournament_url):
                                 video_path
                             )
                             
-                            if os.path.exists(video_full_path):
-                                # Load metadata.json to get point_timestamps
-                                point_timestamps = None
-                                video_dir = os.path.dirname(video_full_path)
-                                metadata_path = os.path.join(video_dir, 'metadata.json')
-                                if os.path.exists(metadata_path):
-                                    try:
-                                        with open(metadata_path, 'r') as f:
-                                            video_metadata = json.load(f)
-                                            point_timestamps = video_metadata.get('point_timestamps')
-                                    except (json.JSONDecodeError, IOError) as e:
-                                        print(f"Error reading metadata.json: {e}")
-                                
+                            if os.path.exists(video_full_path):                                
                                 recorded_videos.append({
                                     'camera_id': camera_id,
-                                    'session_id': session_id,
                                     'video_path': video_path,  # Keep relative path for URL
-                                    'start_timestamp': start_timestamp,
-                                    'start_time': start_time,
-                                    'point_timestamps': point_timestamps,
+                                    'point_timestamps': recording.get('point_timestamps'),
                                     'type': 'recorded'
                                 })
                     
