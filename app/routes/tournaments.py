@@ -1147,6 +1147,13 @@ def record_finalize():
             for chunk in chunks:
                 with open(path.join(chunk_dir, chunk['filename']), 'rb') as f:
                     c.write(f.read())
+        subprocess.run(['ffmpeg',
+            '-i', path.join(chunk_dir, f"{chunks[0]['point_id']}.webm"),
+            '-map', '0',
+            '-c', 'copy',
+            'y',
+            path.join(chunk_dir, f"{chunks[0]['point_id']}_fixedstamps.webm")
+        ])
 
     from models import Point
     pts = Point.query.filter_by(match=match_id).order_by(Point.stamp.asc()).all()
@@ -1174,7 +1181,7 @@ def record_finalize():
                 continue
             in_video_times.append([None, in_video_times[-1][1] + end_stamp-start_stamp])
             subprocess.run(['ffmpeg',
-                '-i', path.join(chunk_dir, f'{pt.uuid}.webm'),
+                '-i', path.join(chunk_dir, f'{pt.uuid}_fixedstamps.webm'),
                 '-ss', str(start_stamp),
                 '-t', str(end_stamp - start_stamp),
                 '-c', 'copy',
