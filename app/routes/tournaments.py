@@ -1,6 +1,7 @@
 """
 Tournament management routes.
 """
+from tracemalloc import start
 from flask import Blueprint, render_template, request, redirect, flash, jsonify, current_app
 from flask_login import login_required, current_user
 from datetime import datetime, timedelta, timezone
@@ -15,6 +16,10 @@ from models import (
 from app.utils.helpers import check_tournament_access, resolve_team_name_to_id, validate_permission_key
 from app.utils.scheduling import compute_dynamic_match_nominal_start_time, validate_match_input, recompute_all_match_times, detect_match_conflicts
 from app.filters import is_head_ref
+
+from os import path
+import subprocess
+from itertools import groupby
 
 bp = Blueprint('tournaments', __name__)
 
@@ -792,7 +797,7 @@ def camera_url_api():
         # Generate the camera URL with key
         access_key = generate_camera_key(tournament_url, field_name)
         from flask import url_for
-        camera_url = url_for('tournaments.camera_page', tournament_url=tournament_url, field=field_name, key=access_key, _external=True)
+        camera_url = url_for('tournaments.record_page', tournament_url=tournament_url, field=field_name, key=access_key, _external=True)
         
         return jsonify({'url': camera_url})
     except Exception as e:
@@ -804,8 +809,13 @@ def camera_url_api():
 @bp.route('/<tournament_url>/record')
 def record_page(tournament_url):
     """Point recording page for a field."""
-    tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
+    # Validate camera access key
     field_name = request.args.get('field', '').strip()
+    is_valid, error_response = require_camera_key(tournament_url, field_name)
+    if not is_valid:
+        return error_response[0], error_response[1]
+
+    tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
     
     if not field_name:
         return render_template('record.html', tournament=tournament, field_name='', error='Field name is required'), 400
@@ -923,78 +933,6 @@ def record_match_status():
         })
 
 
-
-
-
-@bp.route('/api/camera/recording-started', methods=['POST'])
-def camera_recording_started():
-    """Notify server that a new recording session has started. Updates match's camera_stream_starts. Requires camera access key."""
-    data = request.json
-    tournament_url = data.get('tournament')
-    field_name = data.get('field')
-    match_id = data.get('match_id', '')
-    session_id = data.get('session_id')
-    camera_id = data.get('camera_id', 'camera')
-    start_timestamp = data.get('start_timestamp')
-    
-    if not tournament_url or not field_name or not session_id or not match_id:
-        return jsonify({'error': 'Missing required parameters'}), 400
-    
-    # Validate camera access key
-    is_valid, error_response = require_camera_key(tournament_url, field_name)
-    if not is_valid:
-        return error_response[0], error_response[1]
-    
-    try:
-        # Find the match
-        match = Match.query.filter_by(uuid=match_id, event=tournament_url).first()
-        if not match:
-            return jsonify({'error': 'Match not found'}), 404
-        
-        # Get or create camera_stream_starts
-        stream_starts = {}
-        if match.camera_stream_starts:
-            try:
-                stream_starts = json.loads(match.camera_stream_starts)
-            except (json.JSONDecodeError, TypeError):
-                stream_starts = {}
-        
-        # Build video file path for reference
-        video_path = f"uploads/videos/{tournament_url}/{field_name}/{session_id}/final_video.webm"
-        
-        # Store recording info
-        # Use camera_id as key, or create a list if multiple recordings from same camera
-        recording_info = {
-            'session_id': session_id,
-            'start_timestamp': start_timestamp,
-            'camera_id': camera_id,
-            'field': field_name,
-            'video_path': video_path,
-            'start_time': datetime.utcnow().isoformat() + 'Z'
-        }
-        
-        # Store in stream_starts - use camera_id as key, or append to list if exists
-        if camera_id in stream_starts:
-            # If there's already a recording from this camera, make it a list
-            if not isinstance(stream_starts[camera_id], list):
-                stream_starts[camera_id] = [stream_starts[camera_id]]
-            stream_starts[camera_id].append(recording_info)
-        else:
-            stream_starts[camera_id] = recording_info
-        
-        # Save back to match
-        match.camera_stream_starts = json.dumps(stream_starts)
-        db.session.commit()
-        
-        return jsonify({
-            'success': True,
-            'message': 'Recording start recorded'
-        })
-    except Exception as e:
-        print(f"Error recording start: {e}")
-        return jsonify({'error': str(e)}), 500
-
-
 @bp.route('/api/record/upload-chunk', methods=['POST'])
 def record_upload_chunk():
     """Receive and store a video chunk for point recording. No access key required."""
@@ -1011,6 +949,11 @@ def record_upload_chunk():
     chunk_start_timestamp = request.form.get('chunk_start_timestamp')  # Absolute world time when chunk started
     chunk_duration = request.form.get('chunk_duration')  # Duration in milliseconds
     point_id = request.form.get('point_id', '')
+
+    # Validate camera access key
+    is_valid, error_response = require_camera_key(tournament_url, field_name)
+    if not is_valid:
+        return error_response[0], error_response[1]
     
     if not tournament_url or not field_name or not session_id or chunk_index is None:
         return jsonify({'error': 'Missing required parameters'}), 400
@@ -1142,14 +1085,17 @@ def record_upload_chunk():
 @bp.route('/api/record/finalize', methods=['POST'])
 def record_finalize():
     """Finalize a recording session. Placeholder endpoint - user will implement later."""
-    from os import path
-    import subprocess
 
     data = request.json
     tournament_url = data.get('tournament')
     field_name = data.get('field')
     session_id = data.get('session_id')
     match_id = data.get('match_id')
+
+    # Validate camera access key
+    is_valid, error_response = require_camera_key(tournament_url, field_name)
+    if not is_valid:
+        return error_response[0], error_response[1]
     
     if not tournament_url or not field_name or not session_id:
         return jsonify({'error': 'Missing required parameters'}), 400
@@ -1178,65 +1124,81 @@ def record_finalize():
         return jsonify({'error': 'First chunk (chunk_000000.webm) not found'}), 404
     
     with open(path.join(chunk_dir, 'chunks_meta.json'), 'r') as f:
-        meta = list(json.load(f).items())
-        meta.sort(key=lambda x: int(x[0]))
-        meta = list(map(lambda x: x[1], meta))        
-
-    consecutive = [[meta[0]]]
-    start_times = [0.01, meta[0]['chunk_duration']]
-    for chunk in meta[1:]:
-        if chunk['chunk_start_timestamp'] - consecutive[-1][-1]['chunk_start_timestamp'] < 2500:
-            consecutive[-1].append(chunk)
-            start_times[-1] += chunk['chunk_duration']
-        else:
-            consecutive.append([chunk])
-            start_times.append(start_times[-1] + chunk['chunk_duration'])
-    print("CONSECUTIVE SEGMENTS:", consecutive)
-
+        meta = list(json.load(f).values())
+        consecutive = list(
+            map(
+                lambda x: sorted(
+                    x, 
+                    key=lambda x: x['chunk_start_timestamp']
+                ),
+                groupby(
+                    sorted(
+                        json.load(f)
+                            .values(),
+                        key=lambda x: x['point_id']
+                    ),
+                    key=lambda x: x['point_id']
+                )
+            )
+        )
+    
+    # concatenate the chunks from each point into a single playable video
     for idx, chunks in enumerate(consecutive):
         print(f"chunk {idx} has length {len(chunks)}")
-        with open(path.join(chunk_dir, 'consecutive_segments.txt'), 'a') as con_segments, \
-             open(path.join(chunk_dir, chunks[0]['filename']), 'ab') as c:
-            for chunk in chunks[1:]:
+        with open(path.join(chunk_dir, chunks[0]['point_id']), 'ab') as c:
+            for chunk in chunks:
                 with open(path.join(chunk_dir, chunk['filename']), 'rb') as f:
                     c.write(f.read())
-            print(f"file {path.join(chunk_dir, chunks[0]['filename'])}", file=con_segments)
-    subprocess.run(['ffmpeg', 
-        '-f', 'concat',
-        '-safe', '0',
-        '-i', path.join(chunk_dir, 'consecutive_segments.txt'), 
-        '-c', 'copy', 
-        '-map', '0', 
-        '-y', 
-        path.join(chunk_dir, f'combined.webm')])
 
     from models import Point
     pts = Point.query.filter_by(match=match_id).order_by(Point.stamp.asc()).all()
-    in_video_times = []
-    with open(path.join(chunk_dir, 'clips.txt'), 'a') as clips:
+    point_table = { chunks[0]['point_id']: (chunks[0]['chunk_start_timestamp'], len(chunks)) for chunks in consecutive }
+    in_video_times = [(None, 0.01)]
+    with open(path.join(chunk_dir, 'clips.txt'), 'w') as clips:
         for pt in pts:
-            start_stamp, end_stamp = pt.stamp.replace(tzinfo=timezone.utc).timestamp()*1000, pt.end_stamp.replace(tzinfo=timezone.utc).timestamp()*1000
-            print('STAMPS:', start_stamp, end_stamp)
-            for idx, chunks in enumerate(consecutive):
-                print('HERE!!', idx, chunks[0]['chunk_start_timestamp'], '<', start_stamp, '<', chunks[-1]['chunk_start_timestamp'] + chunks[-1]['chunk_duration'])
-                if chunks[0]['chunk_start_timestamp'] < start_stamp < chunks[-1]['chunk_start_timestamp'] + chunks[-1]['chunk_duration']:
-                    in_video_times.append((start_times[idx] + (start_stamp - chunks[0]['chunk_start_timestamp']))/1000)
-                    filename = path.join(chunk_dir, f'{pt.uuid}.webm')
-                    subprocess.run(['ffmpeg', 
-                        '-i', path.join(chunk_dir, 'combined.webm'), 
-                        '-ss', str(in_video_times[-1]-3), 
-                        '-t', str((end_stamp-start_stamp)/1000 + 3), 
-                        '-c', 'copy', filename
-                    ])
-                    print(f"file {filename}", file=clips)
-                    break
+            output_filename = path.join(chunk_dir, f'{pt.uuid}_clipped.webm')
+            start_stamp, end_stamp = \
+                pt.stamp.replace(tzinfo=timezone.utc).timestamp() - point_table[pt.uuid][0]/1000, \
+                pt.end_stamp.replace(tzinfo=timezone.utc).timestamp() - point_table[pt.uuid][0]/1000
+            in_video_times[-1][0] = pt.uuid
+            if (end_stamp > point_table[pt.uuid][1]*2) or (start_stamp < 0.0) or (start_stamp > end_stamp):
+                # something's wrong; we don't have all the 
+                # footage from this point. so just set this
+                # point's length to zero and skip adding
+                # the footage.
+                print(f'somethings wrong! start: {start_stamp}, end: {end_stamp} (duration {end_stamp-start_stamp}), point table entry: {point_table[pt.uuid]}')
+                in_video_times.append((None, in_video_times[-1][1]))
+                continue
+            in_video_times.append((None, in_video_times[-1][1] + end_stamp-start_stamp))
+            subprocess.run(['ffmpeg',
+                '-i', path.join(chunk_dir, f'{pt.uuid}.webm'),
+                '-ss', str(start_stamp),
+                '-t', str(end_stamp - start_stamp),
+                '-c', 'copy',
+                '-y',
+                output_filename
+            ])
+            print(f"file {output_filename}", file=clips)
 
-    subprocess.run([
-        'ffmpeg', '-f', 'concat', '-safe', '0', '-i', path.join(chunk_dir, 'clips.txt'),
-        '-c', 'copy', '-map', '0', '-y', path.join(chunk_dir, 'final_video.webm')
+    subprocess.run(['ffmpeg', 
+        '-f', 'concat', 
+        '-safe', '0', 
+        '-i', path.join(chunk_dir, 'clips.txt'),
+        '-c', 'copy', 
+        '-map', '0', 
+        '-y', 
+        path.join(chunk_dir, 'final_video.webm')
     ])
     
-    
+
+    with open(path.join(chunk_dir, 'metadata.json'), 'rw') as f:
+        metadata = json.load(f)
+        # eventually this should actually use the point uuid data and
+        # display more information about the point on the match page. but for now
+        # this is totally fine and im so done with this
+        metadata['point_timestamps'] = [i[1] for i in in_video_times]
+        json.dump(metadata, f)
+
     # For now, just return success
     return jsonify({
         'success': True,

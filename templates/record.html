@@ -64,6 +64,30 @@
 const tournamentUrl = '{{ tournament.url }}';
 const fieldName = '{{ field_name }}';
 
+// Extract camera access key from URL
+const urlParams = new URLSearchParams(window.location.search);
+const cameraAccessKey = urlParams.get('key');
+
+if (!cameraAccessKey) {
+    console.error('Camera access key is missing from URL');
+}
+
+// Helper function to add key to FormData
+function addKeyToFormData(formData) {
+    if (cameraAccessKey) {
+        formData.append('key', cameraAccessKey);
+    }
+    return formData;
+}
+
+// Helper function to add key to JSON body
+function addKeyToJson(data) {
+    if (cameraAccessKey) {
+        data.key = cameraAccessKey;
+    }
+    return data;
+}
+
 let matchId = null;
 let isRecording = false;
 let currentStream = null;
@@ -92,6 +116,8 @@ let currentSessionId = null; // Session ID for the current match
 let globalChunkIndex = 0; // Global sequential chunk index for the active recording session
 let uploadedChunks = new Set(); // Track which chunks have been uploaded
 let currentPointId = null; // Current point being recorded
+let recorder1PointId = null; // Point ID that recorder1 is currently recording (null if not recording a point)
+let recorder2PointId = null; // Point ID that recorder2 is currently recording (null if not recording a point)
 
 // Generate unique session ID for this recording session
 function generateSessionId() {
@@ -304,12 +330,12 @@ async function endRecordingSession() {
             headers: {
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify({
+            body: JSON.stringify(addKeyToJson({
                 tournament: tournamentUrl,
                 field: fieldName,
                 session_id: currentSessionId,
                 match_id: matchId
-            })
+            }))
         });
         
         if (!response.ok) {
@@ -323,6 +349,8 @@ async function endRecordingSession() {
     matchId = null;
     currentSessionId = null;
     currentPointId = null;
+    recorder1PointId = null;
+    recorder2PointId = null;
     document.getElementById('recording-status').style.display = 'none';
 }
 
@@ -356,20 +384,22 @@ function startRecorder1() {
                 };
                 recorder1Chunks.push(chunk);
                 
-                // If this is the active recorder for a point, upload it
-                if (activeRecorder === recorder1 && currentPointId) {
-                    uploadChunk(chunk, 1, currentPointId);
+                // If recorder1 is recording a point, upload the chunk with that point's ID
+                if (recorder1PointId) {
+                    uploadChunk(chunk, 1, recorder1PointId);
                 }
             }
         };
         
         recorder1.onstop = () => {
-            // Only restart if not the active recorder for a point
-            if (activeRecorder !== recorder1 && currentStream && recorder1) {
+            // Only restart if not recording a point and stream is available
+            if (!recorder1PointId && currentStream && recorder1) {
                 recorder1Chunks = []; // Clear chunks
                 recorder1CycleStartTime = Date.now();
                 try {
-                    recorder1.start(2000);
+                    if (recorder1.state === 'inactive') {
+                        recorder1.start(2000);
+                    }
                 } catch (error) {
                     console.error('Error restarting recorder1:', error);
                 }
@@ -386,8 +416,8 @@ function startRecorder1() {
             // Set up 10-second cycle (stop, clear, restart every 10 seconds)
             recorder1Timer = setInterval(() => {
                 if (recorder1 && recorder1.state !== 'inactive') {
-                    // Only restart if not the active recorder for a point
-                    if (activeRecorder !== recorder1) {
+                    // Only restart if not recording a point
+                    if (!recorder1PointId) {
                         recorder1.stop();
                         // onstop handler will restart it
                     }
@@ -432,16 +462,16 @@ function startRecorder2() {
                 };
                 recorder2Chunks.push(chunk);
                 
-                // If this is the active recorder for a point, upload it
-                if (activeRecorder === recorder2 && currentPointId) {
-                    uploadChunk(chunk, 2, currentPointId);
+                // If recorder2 is recording a point, upload the chunk with that point's ID
+                if (recorder2PointId) {
+                    uploadChunk(chunk, 2, recorder2PointId);
                 }
             }
         };
         
         recorder2.onstop = () => {
-            // Only restart if not the active recorder for a point and recorder still exists
-            if (activeRecorder !== recorder2 && currentStream && recorder2) {
+            // Only restart if not recording a point and stream is available
+            if (!recorder2PointId && currentStream && recorder2) {
                 recorder2Chunks = []; // Clear chunks
                 recorder2CycleStartTime = Date.now();
                 try {
@@ -464,8 +494,8 @@ function startRecorder2() {
             // Set up 10-second cycle (stop, clear, restart every 10 seconds)
             recorder2Timer = setInterval(() => {
                 if (recorder2 && recorder2.state !== 'inactive') {
-                    // Only restart if not the active recorder for a point
-                    if (activeRecorder !== recorder2) {
+                    // Only restart if not recording a point
+                    if (!recorder2PointId) {
                         recorder2.stop();
                         // onstop handler will restart it
                     }
@@ -505,68 +535,100 @@ function stopRecorder2() {
 
 // Handle point start
 function handlePointStart(pointUuid) {
-    if (currentPointId) {
-        // Already recording a point, ignore
+    // Check if either recorder is still recording a previous point
+    // If so, use the OTHER recorder for this new point
+    let selectedRecorder = null;
+    let selectedRecorderChunks = null;
+    let selectedRecorderNum = null;
+    
+    if (recorder1PointId && !recorder2PointId) {
+        // Recorder1 is still recording a point, use recorder2
+        selectedRecorder = recorder2;
+        selectedRecorderChunks = recorder2Chunks;
+        selectedRecorderNum = 2;
+    } else if (recorder2PointId && !recorder1PointId) {
+        // Recorder2 is still recording a point, use recorder1
+        selectedRecorder = recorder1;
+        selectedRecorderChunks = recorder1Chunks;
+        selectedRecorderNum = 1;
+    } else if (!recorder1PointId && !recorder2PointId) {
+        // Both recorders are available - use the older one
+        const recorder1Age = Date.now() - (recorder1CycleStartTime || recorder1StartTime || 0);
+        const recorder2Age = Date.now() - (recorder2CycleStartTime || recorder2StartTime || 0);
+        
+        if (recorder2Age < recorder1Age || !recorder2) {
+            // Recorder 2 is newer (or doesn't exist) - stop it and delete its data
+            if (recorder2 && recorder2.state !== 'inactive') {
+                // Save original onstop
+                const originalOnStop = recorder2.onstop;
+                // Override onstop to clear chunks, then restore
+                recorder2.onstop = () => {
+                    recorder2Chunks = []; // Delete data
+                    // Restore original onstop handler
+                    if (originalOnStop) {
+                        recorder2.onstop = originalOnStop;
+                    }
+                };
+                recorder2.stop();
+            }
+            // Use recorder 1
+            selectedRecorder = recorder1;
+            selectedRecorderChunks = recorder1Chunks;
+            selectedRecorderNum = 1;
+        } else {
+            // Recorder 1 is newer - stop it and delete its data
+            if (recorder1 && recorder1.state !== 'inactive') {
+                // Save original onstop
+                const originalOnStop = recorder1.onstop;
+                // Override onstop to clear chunks, then restore
+                recorder1.onstop = () => {
+                    recorder1Chunks = []; // Delete data
+                    // Restore original onstop handler
+                    if (originalOnStop) {
+                        recorder1.onstop = originalOnStop;
+                    }
+                };
+                recorder1.stop();
+            }
+            // Use recorder 2
+            selectedRecorder = recorder2;
+            selectedRecorderChunks = recorder2Chunks;
+            selectedRecorderNum = 2;
+        }
+    } else {
+        // Both recorders are still recording points - this shouldn't happen, but log it
+        console.warn('Both recorders are still recording points, cannot start new point');
         return;
     }
     
-    currentPointId = pointUuid;
+    if (!selectedRecorder) {
+        console.error('No recorder available for new point');
+        return;
+    }
     
-    // Determine which recorder is newer (started more recently)
-    // Older recorder = started earlier = larger age
-    const recorder1Age = Date.now() - (recorder1CycleStartTime || recorder1StartTime || 0);
-    const recorder2Age = Date.now() - (recorder2CycleStartTime || recorder2StartTime || 0);
-    
-    // Stop the newer recorder and delete its data
-    // Keep the older recorder and continue it
-    if (recorder2Age < recorder1Age || !recorder2) {
-        // Recorder 2 is newer (or doesn't exist) - stop it and delete its data
-        if (recorder2 && recorder2.state !== 'inactive') {
-            // Save original onstop
-            const originalOnStop = recorder2.onstop;
-            // Override onstop to clear chunks, then restore
-            recorder2.onstop = () => {
-                recorder2Chunks = []; // Delete data
-                // Restore original onstop handler
-                if (originalOnStop) {
-                    recorder2.onstop = originalOnStop;
-                }
-            };
-            recorder2.stop();
-        }
-        // Keep recorder 1 as active
+    // Set the point ID for the selected recorder
+    if (selectedRecorderNum === 1) {
+        recorder1PointId = pointUuid;
         activeRecorder = recorder1;
         activeRecorderChunks = recorder1Chunks;
     } else {
-        // Recorder 1 is newer - stop it and delete its data
-        if (recorder1 && recorder1.state !== 'inactive') {
-            // Save original onstop
-            const originalOnStop = recorder1.onstop;
-            // Override onstop to clear chunks, then restore
-            recorder1.onstop = () => {
-                recorder1Chunks = []; // Delete data
-                // Restore original onstop handler
-                if (originalOnStop) {
-                    recorder1.onstop = originalOnStop;
-                }
-            };
-            recorder1.stop();
-        }
-        // Keep recorder 2 as active
+        recorder2PointId = pointUuid;
         activeRecorder = recorder2;
         activeRecorderChunks = recorder2Chunks;
     }
     
-    // Upload all existing chunks from the active recorder
-    if (activeRecorderChunks) {
-        for (const chunk of activeRecorderChunks) {
+    currentPointId = pointUuid;
+    
+    // Upload all existing chunks from the selected recorder
+    if (selectedRecorderChunks) {
+        for (const chunk of selectedRecorderChunks) {
             if (!chunk.uploaded && !uploadedChunks.has(chunk)) {
-                uploadChunk(chunk, activeRecorder === recorder1 ? 1 : 2, pointUuid);
+                uploadChunk(chunk, selectedRecorderNum, pointUuid);
             }
         }
     }
     
-    // Continue recording with the active recorder (don't stop it)
+    // Continue recording with the selected recorder (don't stop it)
     // Upload chunks as they become available (already handled in ondataavailable)
 }
 
@@ -576,13 +638,20 @@ function handlePointEnd() {
         return;
     }
     
-    const wasActiveRecorder1 = (activeRecorder === recorder1);
-    const pointIdToUpload = currentPointId; // Save point ID before clearing
+    // Determine which recorder was recording this point
+    const wasRecorder1 = (recorder1PointId === currentPointId);
+    const wasRecorder2 = (recorder2PointId === currentPointId);
+    const pointIdToUpload = currentPointId; // Save point ID
     
-    // Start the other recorder immediately (before stopping the active one)
+    // Clear currentPointId immediately so a new point can start
+    currentPointId = null;
+    activeRecorder = null;
+    activeRecorderChunks = [];
+    
+    // Start the other recorder immediately (if not already recording a point)
     // This ensures we have a recorder ready for the next point
-    if (wasActiveRecorder1 && recorder2) {
-        // Recorder 1 was active, start recorder 2 immediately
+    if (wasRecorder1 && recorder2 && !recorder2PointId) {
+        // Recorder 1 was recording this point, start recorder 2 if it's not recording
         if (recorder2.state === 'inactive' && currentStream) {
             recorder2CycleStartTime = Date.now();
             try {
@@ -595,8 +664,8 @@ function handlePointEnd() {
             // Recorder 2 is already running, just update cycle start time
             recorder2CycleStartTime = Date.now();
         }
-    } else if (!wasActiveRecorder1 && recorder1) {
-        // Recorder 2 was active, start recorder 1 immediately
+    } else if (wasRecorder2 && recorder1 && !recorder1PointId) {
+        // Recorder 2 was recording this point, start recorder 1 if it's not recording
         if (recorder1.state === 'inactive' && currentStream) {
             recorder1CycleStartTime = Date.now();
             try {
@@ -611,63 +680,72 @@ function handlePointEnd() {
         }
     }
     
-    // Continue recording for 5 more seconds, then stop the active recorder
+    // Continue recording for 5 more seconds, then stop and finalize
     pointEndTimer = setTimeout(() => {
-        // Stop the active recorder
-        if (activeRecorder && activeRecorder.state !== 'inactive') {
+        let recorderToStop = null;
+        let recorderNum = null;
+        let chunksToUpload = null;
+        
+        if (wasRecorder1 && recorder1) {
+            recorderToStop = recorder1;
+            recorderNum = 1;
+            chunksToUpload = recorder1Chunks;
+        } else if (wasRecorder2 && recorder2) {
+            recorderToStop = recorder2;
+            recorderNum = 2;
+            chunksToUpload = recorder2Chunks;
+        }
+        
+        if (recorderToStop && recorderToStop.state !== 'inactive') {
             // Save original onstop handler
-            const originalOnStop = activeRecorder.onstop;
+            const originalOnStop = recorderToStop.onstop;
             
-            // Override onstop to upload remaining chunks, then restore normal behavior
-            activeRecorder.onstop = () => {
+            // Override onstop to upload remaining chunks, then clear point ID and restore normal behavior
+            recorderToStop.onstop = () => {
                 // Upload any remaining chunks
-                if (activeRecorderChunks) {
-                    for (const chunk of activeRecorderChunks) {
+                if (chunksToUpload) {
+                    for (const chunk of chunksToUpload) {
                         if (!chunk.uploaded && !uploadedChunks.has(chunk)) {
-                            uploadChunk(chunk, wasActiveRecorder1 ? 1 : 2, pointIdToUpload);
+                            uploadChunk(chunk, recorderNum, pointIdToUpload);
                         }
                     }
                 }
                 
-                // Clear active recorder state
-                activeRecorder = null;
-                activeRecorderChunks = [];
-                currentPointId = null;
+                // Clear the point ID from this recorder
+                if (recorderNum === 1) {
+                    recorder1PointId = null;
+                } else {
+                    recorder2PointId = null;
+                }
                 
                 // Restore original onstop handler so the recorder can restart in its cycle
                 if (originalOnStop) {
-                    if (wasActiveRecorder1 && recorder1) {
-                        recorder1.onstop = originalOnStop;
-                        // Restart recorder1 in its cycle (it will clear chunks and restart)
-                        if (recorder1.state === 'inactive' && currentStream) {
-                            recorder1CycleStartTime = Date.now();
-                            try {
-                                recorder1.start(2000);
-                            } catch (error) {
-                                console.error('Error restarting recorder1 after point upload:', error);
-                            }
-                        }
-                    } else if (!wasActiveRecorder1 && recorder2) {
-                        recorder2.onstop = originalOnStop;
-                        // Restart recorder2 in its cycle (it will clear chunks and restart)
-                        if (recorder2.state === 'inactive' && currentStream) {
-                            recorder2CycleStartTime = Date.now();
-                            try {
-                                recorder2.start(2000);
-                            } catch (error) {
-                                console.error('Error restarting recorder2 after point upload:', error);
-                            }
-                        }
+                    recorderToStop.onstop = originalOnStop;
+                }
+                
+                // Restart the recorder in its cycle (it will clear chunks and restart)
+                if (recorderToStop.state === 'inactive' && currentStream) {
+                    if (recorderNum === 1) {
+                        recorder1CycleStartTime = Date.now();
+                    } else {
+                        recorder2CycleStartTime = Date.now();
+                    }
+                    try {
+                        recorderToStop.start(2000);
+                    } catch (error) {
+                        console.error(`Error restarting recorder${recorderNum} after point upload:`, error);
                     }
                 }
             };
             
-            activeRecorder.stop();
+            recorderToStop.stop();
         } else {
-            // Recorder already stopped, just clear state
-            activeRecorder = null;
-            activeRecorderChunks = [];
-            currentPointId = null;
+            // Recorder already stopped, just clear point ID
+            if (recorderNum === 1) {
+                recorder1PointId = null;
+            } else {
+                recorder2PointId = null;
+            }
         }
     }, 5000);
 }
@@ -703,6 +781,7 @@ async function uploadChunk(chunk, recorderNum, pointId) {
                 if (pointId) {
                     formData.append('point_id', pointId);
                 }
+                addKeyToFormData(formData);
                 
                 const response = await fetch('/api/record/upload-chunk', {
                     method: 'POST',
