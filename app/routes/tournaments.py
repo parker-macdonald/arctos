@@ -1151,7 +1151,7 @@ def record_finalize():
             '-i', path.join(chunk_dir, f"{chunks[0]['point_id']}.webm"),
             '-map', '0',
             '-c', 'copy',
-            'y',
+            '-y',
             path.join(chunk_dir, f"{chunks[0]['point_id']}_fixedstamps.webm")
         ])
 
@@ -1167,10 +1167,15 @@ def record_finalize():
                 print(f'point_table={point_table}')
                 continue
             start_stamp, end_stamp = \
-                pt.stamp.replace(tzinfo=timezone.utc).timestamp() - point_table[pt.uuid][0]/1000, \
-                pt.end_stamp.replace(tzinfo=timezone.utc).timestamp() - point_table[pt.uuid][0]/1000
+                pt.stamp.replace(tzinfo=timezone.utc).timestamp() - point_table[pt.uuid][0]/1000 - 3, \
+                pt.end_stamp.replace(tzinfo=timezone.utc).timestamp() - point_table[pt.uuid][0]/1000 + 3
+            if start_stamp < -3:
+                print(f'what the fuck?? point starts before recording? start: {start_stamp}+3, end: {end_stamp}-3, point table: {point_table}')
+                in_video_times.append([None, in_video_times[-1][1]])
+                continue
+            start_stamp = max(0, start_stamp)
             in_video_times[-1][0] = pt.uuid
-            if (end_stamp > point_table[pt.uuid][1]*2) or (start_stamp < 0.0) or (start_stamp > end_stamp):
+            if (end_stamp > point_table[pt.uuid][1]*2) or (start_stamp > end_stamp):
                 # something's wrong; we don't have all the 
                 # footage from this point. so just set this
                 # point's length to zero and skip adding
@@ -1181,9 +1186,13 @@ def record_finalize():
                 continue
             in_video_times.append([None, in_video_times[-1][1] + end_stamp-start_stamp])
             subprocess.run(['ffmpeg',
-                '-i', path.join(chunk_dir, f'{pt.uuid}_fixedstamps.webm'),
                 '-ss', str(start_stamp),
-                '-t', str(end_stamp - start_stamp),
+                '-to', str(end_stamp),
+                '-i', path.join(chunk_dir, f'{pt.uuid}_fixedstamps.webm'),
+                # '-c:v', 'libvpx-vp9', 
+                # '-crf', '16',
+                # '-b:v', '0',
+                # '-c:a', 'copy',
                 '-c', 'copy',
                 '-y',
                 output_filename
