@@ -4,6 +4,8 @@ Tournament management routes.
 from tracemalloc import start
 from flask import Blueprint, render_template, request, redirect, flash, jsonify, current_app
 from flask_login import login_required, current_user
+from flask_executor import Executor
+
 from datetime import datetime, timedelta, timezone
 import json
 import hmac
@@ -20,12 +22,10 @@ from app.filters import is_head_ref
 from os import path
 
 from app.utils.footage import finalize_recording_worker
-from concurrent.futures import ThreadPoolExecutor
-
 # for finalizing recordings which calls ffmpeg
 # only one worker bc ffmpeg does its own parallelism 
 # so we only ever want to run one at a time 
-executor = ThreadPoolExecutor(1)
+executor = Executor(current_app)
 
 bp = Blueprint('tournaments', __name__)
 
@@ -1119,8 +1119,8 @@ def record_finalize():
     )
     if not path.exists(chunk_dir):
         return jsonify({'error': 'Session directory not found'}), 404
-    
-    executor.submit(finalize_recording_worker, tournament_url, field_name, session_id, match_id, camera_name, chunk_dir)
+
+    _ = executor.submit(finalize_recording_worker, current_app.logger, tournament_url, field_name, session_id, match_id, camera_name, chunk_dir)
 
     # For now, just return success
     return jsonify({

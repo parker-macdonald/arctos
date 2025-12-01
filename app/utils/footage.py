@@ -1,11 +1,11 @@
 import json
-from models import Field, Point, db
+from models import Match, Point, db
 from os import path
 import subprocess 
 from itertools import groupby
 from datetime import datetime, timezone
 
-def finalize_recording_worker(tournament_url, field_name, session_id, match_id, camera_name, chunk_dir):
+def finalize_recording_worker(logger, tournament_url, field_name, session_id, match_id, camera_name, chunk_dir):
     # Check if first chunk exists
     first_chunk_path = path.join(chunk_dir, 'chunk_000000.webm')
     if not path.exists(first_chunk_path):
@@ -40,11 +40,14 @@ def finalize_recording_worker(tournament_url, field_name, session_id, match_id, 
             '-i', path.join(chunk_dir, f"{chunks[0]['point_id']}.webm"),
             '-map', '0',
             '-c', 'copy',
+            '-loglevel', 'error',
             '-y',
             path.join(chunk_dir, f"{chunks[0]['point_id']}_fixedstamps.webm")
         ])
+        print('Subprocess call complete!')
 
     pts = Point.query.filter_by(match=match_id).order_by(Point.stamp.asc()).all()
+    print(f"len(pts) is {len(pts)}")
     point_table = { chunks[0]['point_id']: (chunks[0]['chunk_start_timestamp'], len(chunks)) for chunks in consecutive }
     in_video_times = [[None, 0.01]]
     with open(path.join(chunk_dir, 'clips.txt'), 'w') as clips:
@@ -73,6 +76,7 @@ def finalize_recording_worker(tournament_url, field_name, session_id, match_id, 
                 in_video_times.append([None, in_video_times[-1][1]])
                 continue
             in_video_times.append([None, in_video_times[-1][1] + end_stamp-start_stamp])
+            print(f"RUNNING FFMPEG FOR POINT {pt.uuid} !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
             subprocess.run(['ffmpeg',
                 '-ss', str(start_stamp),
                 '-to', str(end_stamp),
@@ -81,6 +85,7 @@ def finalize_recording_worker(tournament_url, field_name, session_id, match_id, 
                 '-crf', '16',
                 '-b:v', '0',
                 '-c:a', 'copy',
+                '-loglevel', 'error',
                 # '-c', 'copy',
                 '-y',
                 output_filename
@@ -98,7 +103,6 @@ def finalize_recording_worker(tournament_url, field_name, session_id, match_id, 
     ])
     
 
-
     with open(path.join(chunk_dir, 'metadata.json'), 'r') as f:
         metadata = json.load(f)
 
@@ -107,11 +111,10 @@ def finalize_recording_worker(tournament_url, field_name, session_id, match_id, 
     with open(path.join(chunk_dir, 'metadata.json'), 'w') as f:
         json.dump(metadata, f)
 
-    from models import Match
-    print("match id:", match_id)
+    print(f"match id: {match_id}")
     match = Match.query.filter_by(uuid=match_id).first()
     stream_starts = json.loads(match.camera_stream_starts) if match.camera_stream_starts else dict()
-    print("STREAM STARTS:", stream_starts)
+    print(f"STREAM STARTS: {stream_starts}")
     stream_starts[camera_name] = {
         'video_path': path.join(
             'uploads/videos',
@@ -125,11 +128,3 @@ def finalize_recording_worker(tournament_url, field_name, session_id, match_id, 
     }
     match.camera_stream_starts = json.dumps(stream_starts)
     db.session.commit()
-
-    # For now, just return success
-    return jsonify({
-        'success': True,
-        'message': 'Recording session finalized',
-        'session_id': session_id,
-        'match_id': match_id
-    })
