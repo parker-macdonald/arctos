@@ -1,5 +1,3 @@
-from concurrent.futures import ThreadPoolExecutor
-executor = ThreadPoolExecutor(1)
 import json
 from models import Field, Point, db
 from os import path
