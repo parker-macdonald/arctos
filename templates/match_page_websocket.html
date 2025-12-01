@@ -1519,13 +1519,13 @@ function switchCamera(cameraIndex) {
         if (camera.url) {
             currentCameraUrl = camera.url;
             initializeYouTubePlayer(camera.url);
-    if (camera.streamStartTime) {
-        let streamStartStr = camera.streamStartTime;
-        if (!streamStartStr.match(/[zZ]|[\+\-]\d{2}:?\d{2}$/)) {
-            streamStartStr = streamStartStr.replace(/\.\d+$/, '') + 'Z';
-        }
-        streamStartTime = new Date(streamStartStr);
-        window.streamStartTimeRaw = streamStartStr;
+            if (camera.streamStartTime) {
+                let streamStartStr = camera.streamStartTime;
+                if (!streamStartStr.match(/[zZ]|[\+\-]\d{2}:?\d{2}$/)) {
+                    streamStartStr = streamStartStr.replace(/\.\d+$/, '') + 'Z';
+                }
+                streamStartTime = new Date(streamStartStr);
+                window.streamStartTimeRaw = streamStartStr;
             }
             // Reinitialize player and check stream status
             checkStreamStatus(camera.url);

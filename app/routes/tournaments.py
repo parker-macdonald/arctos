@@ -1081,7 +1081,6 @@ def record_upload_chunk():
         'session_id': session_id
     })
 
-
 @bp.route('/api/record/finalize', methods=['POST'])
 def record_finalize():
     data = request.json
@@ -1189,11 +1188,11 @@ def record_finalize():
                 '-ss', str(start_stamp),
                 '-to', str(end_stamp),
                 '-i', path.join(chunk_dir, f'{pt.uuid}_fixedstamps.webm'),
-                # '-c:v', 'libvpx-vp9', 
-                # '-crf', '16',
-                # '-b:v', '0',
-                # '-c:a', 'copy',
-                '-c', 'copy',
+                '-c:v', 'libvpx-vp9', 
+                '-crf', '16',
+                '-b:v', '0',
+                '-c:a', 'copy',
+                # '-c', 'copy',
                 '-y',
                 output_filename
             ])
