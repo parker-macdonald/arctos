@@ -232,7 +232,7 @@ window.MathJax = {
                 <div class="row mt-3">
                     <div class="col-12">
                         <div class="d-flex gap-2">
-                            {% if match.status == 'NOT_STARTED' and match.team1 and match.team2 and (match.refs or match.refs_initial) %}
+                            {% if match.status == 'NOT_STARTED' and match.team1 and match.team2 and (not match.refs_initial or match.refs) %}
                                 {% if match.schedule_type == 'STATIC' or match.ready_to_start %}
                                     <a href="/{{ tournament.url }}/start-match?id={{ match.uuid }}" class="btn btn-success">Start Match</a>
                                 {% else %}

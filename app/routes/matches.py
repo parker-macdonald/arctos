@@ -555,8 +555,13 @@ def start_match(tournament_url):
         flash('This match has already been started or completed', 'error')
         return redirect(f'/{tournament_url}/schedule')
     
-    if not match.team1 or not match.team2 or not (match.refs or match.refs_initial):
-        flash('Cannot start match - teams and refs not yet determined', 'error')
+    if not match.team1 or not match.team2:
+        flash('Cannot start match - teams not yet determined', 'error')
+        return redirect(f'/{tournament_url}/schedule')
+    
+    # If refs_initial is specified, all refs must be resolved (available)
+    if match.refs_initial and not match.refs:
+        flash('Cannot start match - ref teams not yet available', 'error')
         return redirect(f'/{tournament_url}/schedule')
     
     # For dynamic matches, require dependencies to be completed (or marked ready)

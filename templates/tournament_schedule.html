@@ -351,7 +351,7 @@
                                                             {% endif %}
                                                             
                                                             {% set is_special = match.schedule_type in ['BREAK','JOIN'] %}
-                                                            {% set can_start = (match.team1 and match.team2 and (match.refs or match.refs_initial)) and ((match.schedule_type == 'STATIC') or match.ready_to_start) %}
+                                                            {% set can_start = (match.team1 and match.team2 and (not match.refs_initial or match.refs)) and ((match.schedule_type == 'STATIC') or match.ready_to_start) %}
                                                             
                                                             <div class="schedule-match-status">
                                                                 {% if match.status == 'NOT_STARTED' and can_start and (not is_special) %}
@@ -516,7 +516,7 @@
                                 
                                 {% set match_winner = match.match_winner %}
                                 {% set is_special = match.schedule_type in ['BREAK','JOIN'] %}
-                                {% set can_start = (match.team1 and match.team2 and (match.refs or match.refs_initial)) and ((match.schedule_type == 'STATIC') or match.ready_to_start) %}
+                                {% set can_start = (match.team1 and match.team2 and (not match.refs_initial or match.refs)) and ((match.schedule_type == 'STATIC') or match.ready_to_start) %}
                                 <tr data-field="{{ match.field or '' }}" 
                                     data-team1="{{ team1_actual_highlight.replace('::', ' ') if team1_actual_highlight else '' }}" 
                                     data-team2="{{ team2_actual_highlight.replace('::', ' ') if team2_actual_highlight else '' }}"
