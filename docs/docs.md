@@ -61,7 +61,7 @@ Arctos is a tool for Jugger events that aims to:
   - reduce the workload of organizers while planning events, by:
     - managing registration
     - enforcing team size and team count limits
-    - making tournament information easily accessible (giving tournaments a web presence)
+    - making tournament information easily accessible (giving tournaments a basic web presence)
   - reduce the workload of organizers during events, by:
     - communicating the schedule to teams so they know when and where to show up for matches
     - collecting and organizing footage
@@ -78,7 +78,7 @@ Arctos is ***not***:
   - a scheduling engine
   - a social media platform
 
-While there is limited functionality for these things, they are not the main design intent. The presence of profile photos and bios does not mean this is meant to be a web presence for you or your team. Likewise, dynamic scheduling, tags, references, breaks, and joins are powerful tools for creating a complex, efficient bracket & schedule, but you should be developing these externally - Arctos is meant to run tournaments, not do in-depth bracket analysis or solve massive mixed integer nonlinear programs to schedule your matches.
+While there is limited functionality for these things, they are not the main design intent. The presence of profile photos and bios does not mean this is meant to be a web presence for you or your team. Likewise, dynamic scheduling, tags, references, breaks, and joins are powerful tools for expressing a complex, efficient bracket & schedule, but you should be developing these externally - Arctos is meant to run tournaments, not do in-depth bracket analysis or solve massive mixed integer nonlinear programs to schedule your matches.
 
 ## Design Philosophy
 
@@ -362,7 +362,13 @@ The scoreboard automatically polls for updates and refreshes when match state ch
 
 Live streaming matches can be very difficult in terms of bandwidth, not to mention that the best cameras that are easily accessible are phones, for which setting up streaming to an rtmp server and then pulling that to OBS is quite an involved process.
 
-If you're okay with the match videos not being available until after the match is complete, there's a much easier option. If you go to the setup matches page of your tournament, in the fields section, you can see buttons that say "Copy Recording URL" next to each field. Devices that go to these urls will automatically record and upload video of each match on the relevant field. There are options to add the scoreboard overlay as well. If you want a more comprehensive processing setup, just run OBS and select the OBS virtual camera as the input on the recording page (though this is much harder to do on mobile). 
+If you're okay with the match videos not being available until after the match is complete, there's a much easier option. If you go to the setup matches page of your tournament, in the fields section, you can see buttons that say "Copy Recording URL" next to each field. Devices that go to these urls will automatically record and upload video of each match on the relevant field. 
+
+This is possible because they only record points, not the entire match. This means that they can use the full match time to upload high-resolution video from just the points. 
+
+When a match is completed, Arctos will clip the videos to the correct lengths to display a final video containing only the points. Note that this may take a while, since it involves re-encoding all of the video.
+
+If you want to add overlays like the scoreboard, you'll still need to run OBS and use a virtual camera setup to pass the feed to the recording page.
 
 ---
 
