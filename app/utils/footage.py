@@ -63,7 +63,7 @@ def finalize_recording_worker(logger, tournament_url, field_name, session_id, ma
             if start_stamp < -3:
                 print(f'what the fuck?? point starts before recording? start: {start_stamp}+3, end: {end_stamp}-3, point table: {point_table}')
                 # in_video_times.append([None, in_video_times[-1][1]])
-                # continue
+                continue
             start_stamp = max(0, start_stamp)
             in_video_times[-1][0] = pt.uuid
             if (end_stamp > point_table[pt.uuid][1]*2) or (start_stamp > end_stamp):
