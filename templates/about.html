@@ -28,7 +28,11 @@
             <li><strong>minimal</strong>: collect all data necessary for functionality and nothing more.</li>
         </ul>
         
-        <h2 class="mt-5">Functionality</h2>        
+        <div class="alert alert-info mt-5">
+            <i class="fas fa-book"></i> Read more in the <a href="{{ url_for('main.docs') }}" class="alert-link">User Documentation</a>.
+        </div>
+        
+        <h2 class="mt-4">Functionality</h2>        
         <div class="row mt-4">
             <div class="col-md-4 mb-3">
                 <div class="card h-100 border-0 shadow-sm">
@@ -82,7 +86,8 @@
                 </div>
             </div>
         </div>
-        <p>and more, that i'm too lazy to list here nicely!</p>
+        <p>and more, that i'm too lazy to list here nicely! Again, see the <a href="{{ url_for('main.docs') }}" class="alert-link">User Documentation</a> for more details.</p>
+        <p>Arctos was written by <a href="https://reid.xz.ax/">me</a>.</p>
     </div>
 </div>
 {% endblock %}

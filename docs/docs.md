@@ -4,13 +4,15 @@ or, "i type forever and still don't produce something that feels complete"
 
 ## Table of Contents
 
-- Just Me Yapping
+Just Me Yapping
+
 - [FAQ](#faq)
   - [What Arctos *is* and what it is *not*](#what-arctos-is-and-what-it-is-not)
 - [Design Philosophy](#design-philosophy)
 - [Bugs, Feature Requests, and Contributing](#bugs-feature-requests-and-contributing)
 
-- High Level Overview
+High Level Overview
+
   - [Functionality Overview](#functionality-overview)
     - [BEFORE THE TOURNAMENT:](#before-the-tournament)
     - [ON THE DAY OF:](#on-the-day-of)
@@ -18,11 +20,13 @@ or, "i type forever and still don't produce something that feels complete"
 - [Account Types](#account-types)
 - [Ref Notes](#ref-notes)
 
-- For Players
+For Players
+
 - [Phone Number](#phone-number)
 - [Logging Injuries](#logging-injuries)
 
-- For TOs
+For TOs
+
 - [Tournament Settings](#tournament-settings)
   - [Basic Information](#basic-information)
   - [Head Ref Options](#head-ref-options)
@@ -38,20 +42,25 @@ or, "i type forever and still don't produce something that feels complete"
   - [OBS Scoreboard Integration](#obs-scoreboard-integration)
   - [Recording Matches](#recording-matches)
 
-- For Head Refs
+For Head Refs
+
   - [Running Games](#running-games)
 
 ---
 
 ## FAQ
 
-- **I want to test this out for my tournament, but I don't want to create a bunch of fake teams on the official site. What can i do?**
+**I want to test this out for my tournament, but I don't want to create a bunch of fake teams on the official site. What can i do?**
   
-  Contact me! I have a dev server where I stage changes before they go live; i can give you access and you can do whatever you want there without affecting the real data.
+  - Contact me! I have a dev server where I stage changes before they go live; i can give you access and you can do whatever you want there without affecting the real data.
 
-- **Can I register two teams for a tournament under one team account?**
+**Can I register two teams for a tournament under one team account?**
   
-  No; make a second team account. Team accounts are meant to represent the ephemeral groupings that we Juggers call 'teams', not clubs.
+  - No; make a second team account. Team accounts are meant to represent the ephemeral groupings that we Juggers call 'teams', not clubs.
+
+**How do I change my username (url)?**
+
+   - You can change your *display name*, but your username is permanent. This is to ensure links to your profile anywhere will always work (unless you delete your aaccount).
 
 ## What Arctos *is* and what it is *not*
 
