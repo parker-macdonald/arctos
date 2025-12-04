@@ -1241,7 +1241,7 @@ def add_point(tournament_url):
         else:
             # Fallback to server-side value if client didn't send it or it's invalid
             print(f"Warning: Invalid stones_at_start from client ({stones_at_start}). Falling back to server value: {match.stones_remaining}")
-        new_point.stones_at_start = match.stones_remaining
+            new_point.stones_at_start = match.stones_remaining
     
     # Calculate and store camera stream timestamp if cameras are configured
     if match.field:

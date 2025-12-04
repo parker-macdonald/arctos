@@ -48,10 +48,11 @@ def create_app(config=None):
     if config:
         app.config.update(config)
     
-    # Initialize OAuth (after config is finalized)
+    # Initialize OAuth and Executor (after config is finalized)
     from app.routes.auth import oauth
     oauth.init_app(app)
-    
+    from app.routes.tournaments import executor
+    executor.init_app(app)
     # Register Google OAuth client
     if app.config.get('GOOGLE_CLIENT_ID') and app.config.get('GOOGLE_CLIENT_SECRET'):
         oauth.register(

@@ -6,7 +6,7 @@
 <div class="container mt-4">
     <div class="row">
         <div class="col-12">
-            <h1>Point Recording - {{ field_name }}</h1>
+            <h1>Point Recording [BETA]- {{ field_name }}</h1>
             <p class="lead">Tournament: {{ tournament.name }}</p>
         </div>
     </div>
@@ -26,7 +26,8 @@
                 <div class="card-body">
                     <div class="mb-3">
                         <label for="camera-name" class="form-label">Camera Name</label>
-                        <input class="form-input" id="camera-name"></input>
+                        <input type="text" class="form-control" id="camera-name" name="camera-name" 
+                               value="camera-1" required>
                     </div>
                     <div class="mb-3">
                         <label for="camera-select" class="form-label">Select Camera:</label>
@@ -122,6 +123,7 @@ let uploadedChunks = new Set(); // Track which chunks have been uploaded
 let currentPointId = null; // Current point being recorded
 let recorder1PointId = null; // Point ID that recorder1 is currently recording (null if not recording a point)
 let recorder2PointId = null; // Point ID that recorder2 is currently recording (null if not recording a point)
+let isEndingPoint = false; // Flag to prevent new points from starting while ending a point
 
 // Generate unique session ID for this recording session
 function generateSessionId() {
@@ -350,12 +352,19 @@ async function endRecordingSession() {
         console.error('Error calling finalization endpoint:', error);
     }
     
+    // Clear point end timer if it's running
+    if (pointEndTimer) {
+        clearTimeout(pointEndTimer);
+        pointEndTimer = null;
+    }
+    
     isRecording = false;
     matchId = null;
     currentSessionId = null;
     currentPointId = null;
     recorder1PointId = null;
     recorder2PointId = null;
+    isEndingPoint = false; // Clear flag when ending session
     document.getElementById('recording-status').style.display = 'none';
 }
 
@@ -381,9 +390,13 @@ function startRecorder1() {
         
         recorder1.ondataavailable = (event) => {
             if (event.data && event.data.size > 0) {
+                // Calculate actual chunk start time: ondataavailable fires at the END of the chunk
+                // Chunks are 2 seconds long, so start time = now - 2000ms
+                const chunkEndTime = Date.now();
+                const chunkStartTime = chunkEndTime - 2000; // 2 second chunks
                 const chunk = {
                     data: event.data,
-                    timestamp: Date.now(),
+                    timestamp: chunkStartTime, // Store start time, not end time
                     recorder: 1,
                     uploaded: false
                 };
@@ -459,9 +472,13 @@ function startRecorder2() {
             
         recorder2.ondataavailable = (event) => {
             if (event.data && event.data.size > 0) {
+                // Calculate actual chunk start time: ondataavailable fires at the END of the chunk
+                // Chunks are 2 seconds long, so start time = now - 2000ms
+                const chunkEndTime = Date.now();
+                const chunkStartTime = chunkEndTime - 2000; // 2 second chunks
                 const chunk = {
                     data: event.data,
-                    timestamp: Date.now(),
+                    timestamp: chunkStartTime, // Store start time, not end time
                     recorder: 2,
                     uploaded: false
                 };
@@ -541,6 +558,13 @@ function stopRecorder2() {
 // Handle point start
 function handlePointStart(pointUuid) {
     console.log("starting point:", pointUuid);
+    
+    // Prevent starting a new point if we're still ending a previous point
+    if (isEndingPoint) {
+        console.log("Cannot start new point: still ending previous point");
+        return;
+    }
+    
     // Check if either recorder is still recording a previous point
     // If so, use the OTHER recorder for this new point
     let selectedRecorder = null;
@@ -650,12 +674,15 @@ function handlePointEnd() {
 
     console.log("handle point end called!");
     
+    // Set flag to prevent new points from starting during cleanup
+    isEndingPoint = true;
+    
     // Determine which recorder was recording this point
     const wasRecorder1 = (recorder1PointId === currentPointId);
     const wasRecorder2 = (recorder2PointId === currentPointId);
     const pointIdToUpload = currentPointId; // Save point ID
     
-    // Clear currentPointId immediately so a new point can start
+    // Clear currentPointId (but isEndingPoint flag prevents new points)
     currentPointId = null;
     activeRecorder = null;
     activeRecorderChunks = [];
@@ -748,6 +775,10 @@ function handlePointEnd() {
                         console.error(`Error restarting recorder${recorderNum} after point upload:`, error);
                     }
                 }
+                
+                // Clear the flag to allow new points to start
+                isEndingPoint = false;
+                console.log("Point end cleanup complete, ready for new points");
             };
             
             recorderToStop.stop();
@@ -758,6 +789,9 @@ function handlePointEnd() {
             } else {
                 recorder2PointId = null;
             }
+            // Clear the flag to allow new points to start
+            isEndingPoint = false;
+            console.log("Point end cleanup complete (recorder already stopped), ready for new points");
         }
     }, 5000);
 }

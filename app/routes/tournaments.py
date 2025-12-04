@@ -25,7 +25,7 @@ from app.utils.footage import finalize_recording_worker
 # for finalizing recordings which calls ffmpeg
 # only one worker bc ffmpeg does its own parallelism 
 # so we only ever want to run one at a time 
-executor = Executor(current_app)
+executor = Executor()
 
 bp = Blueprint('tournaments', __name__)
 
