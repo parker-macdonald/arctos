@@ -145,6 +145,9 @@ function getVideoConstraints() {
 
 // Get supported MediaRecorder mime type
 function getSupportedMimeType() {
+    if (MediaRecorder.isTypeSupported('video/mp4; codecs="avc1.42E01E, opus"')) {
+        return 'video/mp4; codecs="avc1.42E01E, opus"';
+    }
     if (MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus')) {
         return 'video/webm;codecs=vp8,opus';
     }
