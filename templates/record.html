@@ -170,7 +170,12 @@ async function checkMatchStatus() {
             url += `&current_match_id=${matchId}`;
         }
         
-        const response = await fetch(url);
+        // Use high priority and keepalive to ensure polling requests get through quickly
+        // even when there are many chunk uploads in progress
+        const response = await fetch(url, {
+            Priority: 'medium', // Prioritize this request over chunk uploads
+            cache: 'no-store'  // Always get fresh data
+        });
         if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`);
         }
@@ -895,9 +900,12 @@ async function uploadChunk(chunk, recorderNum, pointId) {
                 }
                 addKeyToFormData(formData);
                 
+                // Use low priority for chunk uploads so polling requests can get through quickly
+                // The polling requests are small and time-sensitive, while uploads can tolerate slight delays
                 const response = await fetch('/api/record/upload-chunk', {
                     method: 'POST',
-                    body: formData
+                    body: formData,
+                    Priority: 'low', // Allow polling requests to take precedence
                 });
                 
                 if (!response.ok) {
