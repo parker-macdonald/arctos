@@ -37,13 +37,24 @@ def finalize_recording_worker(logger, tournament_url, field_name, session_id, ma
                 with open(path.join(chunk_dir, chunk['filename']), 'rb') as f:
                     c.write(f.read())
         # Fix timestamps - works for both WebM and MP4 (even with .webm extension)
+
+        probe_result = subprocess.run(['ffprobe',
+            '-v', 'error',
+            '-select_streams', 'v:0',
+            '-show_entries', 'stream=codec_name',
+            '-of', 'default=noprint_wrappers=1:nokey=1',
+            f"{chunks[0]['point_id']}.webm"
+        ], capture_output=True, text=True)
+        
+        codec_name = probe_result.stdout.strip() if probe_result.returncode == 0 else ''
+
         subprocess.run(['ffmpeg',
             '-i', path.join(chunk_dir, f"{chunks[0]['point_id']}.webm"),
             '-map', '0',
             '-c', 'copy',
             '-loglevel', 'error',
             '-y',
-            path.join(chunk_dir, f"{chunks[0]['point_id']}_fixedstamps.webm")
+            path.join(chunk_dir, f"{chunks[0]['point_id']}_fixedstamps.{'mp4' if codec_name == 'h264' else 'webm'}")
         ])
         print('Subprocess call complete!')
 
@@ -82,6 +93,8 @@ def finalize_recording_worker(logger, tournament_url, field_name, session_id, ma
             # Clip the video - works for both WebM and MP4 input (even with .webm extension)
             # Always output as WebM/VP9 for consistency, so concatenation works smoothly
             input_file = path.join(chunk_dir, f'{pt.uuid}_fixedstamps.webm')
+            if not path.exists(input_file):
+                input_file = path.join(chunk_dir, f'{pt.uuid}_fixedstamps.mp4')
             
             # Probe the input file to detect codec
             probe_result = subprocess.run(['ffprobe',
