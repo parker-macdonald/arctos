@@ -36,6 +36,7 @@ def finalize_recording_worker(logger, tournament_url, field_name, session_id, ma
             for chunk in chunks:
                 with open(path.join(chunk_dir, chunk['filename']), 'rb') as f:
                     c.write(f.read())
+        # Fix timestamps - works for both WebM and MP4 (even with .webm extension)
         subprocess.run(['ffmpeg',
             '-i', path.join(chunk_dir, f"{chunks[0]['point_id']}.webm"),
             '-map', '0',
@@ -77,26 +78,60 @@ def finalize_recording_worker(logger, tournament_url, field_name, session_id, ma
                 continue
             in_video_times.append([None, in_video_times[-1][1] + end_stamp-start_stamp])
             print(f"RUNNING FFMPEG FOR POINT {pt.uuid} !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
-            subprocess.run(['ffmpeg',
-                '-ss', str(start_stamp),
-                '-to', str(end_stamp),
-                '-i', path.join(chunk_dir, f'{pt.uuid}_fixedstamps.webm'),
-                '-c:v', 'libvpx-vp9', 
-                '-crf', '16',
-                '-b:v', '0',
-                '-c:a', 'copy',
-                '-loglevel', 'error',
-                # '-c', 'copy',
-                '-y',
-                output_filename
-            ])
+            
+            # Clip the video - works for both WebM and MP4 input (even with .webm extension)
+            # Always output as WebM/VP9 for consistency, so concatenation works smoothly
+            input_file = path.join(chunk_dir, f'{pt.uuid}_fixedstamps.webm')
+            
+            # Probe the input file to detect codec
+            probe_result = subprocess.run(['ffprobe',
+                '-v', 'error',
+                '-select_streams', 'v:0',
+                '-show_entries', 'stream=codec_name',
+                '-of', 'default=noprint_wrappers=1:nokey=1',
+                input_file
+            ], capture_output=True, text=True)
+            
+            codec_name = probe_result.stdout.strip() if probe_result.returncode == 0 else ''
+            
+            # Always output as WebM/VP9 format for consistency
+            # If input is already VP9, we can copy; otherwise re-encode
+            if codec_name == 'vp9':
+                # Input is already VP9, can copy video codec
+                subprocess.run(['ffmpeg',
+                    '-ss', str(start_stamp),
+                    '-to', str(end_stamp),
+                    '-i', input_file,
+                    '-c:v', 'copy',  # Copy VP9 video
+                    '-c:a', 'copy',  # Copy audio
+                    '-loglevel', 'error',
+                    '-y',
+                    output_filename
+                ])
+            else:
+                # Input is MP4/H.264 or VP8, re-encode to VP9/WebM
+                subprocess.run(['ffmpeg',
+                    '-ss', str(start_stamp),
+                    '-to', str(end_stamp),
+                    '-i', input_file,
+                    '-c:v', 'libvpx-vp9', 
+                    '-crf', '16',
+                    '-b:v', '0',
+                    '-c:a', 'libopus',  # Use opus for WebM (works with both MP4 and WebM input)
+                    '-loglevel', 'error',
+                    '-y',
+                    output_filename
+                ])
             print(f"file {output_filename}", file=clips)
 
+    # Concatenate all clips into final video
+    # All clips should now be WebM/VP9 format (from clipping step above)
+    # So we can use copy for fast concatenation
     subprocess.run(['ffmpeg', 
         '-f', 'concat', 
         '-safe', '0', 
         '-i', path.join(chunk_dir, 'clips.txt'),
-        '-c', 'copy', 
+        '-c', 'copy',  # Copy works since all clips are now WebM/VP9
         '-map', '0', 
         '-y', 
         path.join(chunk_dir, 'final_video.webm')
