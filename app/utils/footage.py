@@ -43,7 +43,7 @@ def finalize_recording_worker(logger, tournament_url, field_name, session_id, ma
             '-select_streams', 'v:0',
             '-show_entries', 'stream=codec_name',
             '-of', 'default=noprint_wrappers=1:nokey=1',
-            f"{chunks[0]['point_id']}.webm"
+            path.join(chunk_dir, f"{chunks[0]['point_id']}.webm")
         ], capture_output=True, text=True)
         
         codec_name = probe_result.stdout.strip() if probe_result.returncode == 0 else ''
