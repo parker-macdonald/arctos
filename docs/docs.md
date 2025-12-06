@@ -6,31 +6,47 @@ or, "i type forever and still don't produce something that feels complete"
 
 Just Me Yapping
 
-- [FAQ](#faq)
-  - [What Arctos *is* and what it is *not*](#what-arctos-is-and-what-it-is-not)
-- [Design Philosophy](#design-philosophy)
-- [Bugs, Feature Requests, and Contributing](#bugs-feature-requests-and-contributing)
+ - [FAQ](#faq)
+ - [What Arctos *is* and what it is *not*](#what-arctos-is-and-what-it-is-not)
+ - [Ownership (Arctos not a CAJA project)](#ownership-is-arctos-a-caja-project)
+ - [Design Philosophy](#design-philosophy)
+ - [Bugs, Feature Requests, and Contributing](#bugs-feature-requests-and-contributing)
 
 High Level Overview
 
   - [Functionality Overview](#functionality-overview)
-    - [BEFORE THE TOURNAMENT:](#before-the-tournament)
-    - [ON THE DAY OF:](#on-the-day-of)
-- [Stones](#stones)
-- [Account Types](#account-types)
-- [Ref Notes](#ref-notes)
+   - [BEFORE THE TOURNAMENT:](#before-the-tournament)
+   - [ON THE DAY OF:](#on-the-day-of)
+ - [Stones](#stones)
+ - [Account Types](#account-types)
+ - [Ref Notes](#ref-notes)
 
 For Players
 
-- [Phone Number](#phone-number)
-- [Logging Injuries](#logging-injuries)
+ - [Phone Number](#phone-number)
+ - [Logging Injuries](#logging-injuries)
 
 For TOs
 
-- [Tournament Settings](#tournament-settings)
-  - [Basic Information](#basic-information)
-  - [Head Ref Options](#head-ref-options)
-  - [Visibility and Access Control](#visibility-and-access-control)
+- [User Documentation](#user-documentation)
+  - [Table of Contents](#table-of-contents)
+  - [FAQ](#faq)
+  - [Ownership (is Arctos a CAJA project?)](#ownership-is-arctos-a-caja-project)
+  - [What Arctos *is* and what it is *not*](#what-arctos-is-and-what-it-is-not)
+  - [Design Philosophy](#design-philosophy)
+  - [Bugs, Feature Requests, and Contributing](#bugs-feature-requests-and-contributing)
+  - [Functionality Overview](#functionality-overview)
+      - [BEFORE THE TOURNAMENT:](#before-the-tournament)
+      - [ON THE DAY OF:](#on-the-day-of)
+  - [Stones](#stones)
+  - [Account Types](#account-types)
+  - [Ref Notes](#ref-notes)
+  - [Phone Number](#phone-number)
+  - [Logging Injuries](#logging-injuries)
+  - [Tournament Settings](#tournament-settings)
+    - [Basic Information](#basic-information)
+    - [Head Ref Options](#head-ref-options)
+    - [Visibility and Access Control](#visibility-and-access-control)
   - [Match Schedule Setup](#match-schedule-setup)
     - [Tags and References: Specifying Teams](#tags-and-references-specifying-teams)
     - [Static Scheduling](#static-scheduling)
@@ -38,9 +54,10 @@ For TOs
     - [Breaks](#breaks)
     - [Joins](#joins)
     - [Ribbon Games](#ribbon-games)
-- [YouTube Livestream Integration](#youtube-livestream-integration)
+  - [YouTube Livestream Integration](#youtube-livestream-integration)
   - [OBS Scoreboard Integration](#obs-scoreboard-integration)
   - [Recording Matches](#recording-matches)
+  - [Running Games](#running-games)
 
 For Head Refs
 
@@ -61,6 +78,18 @@ For Head Refs
 **How do I change my username (url)?**
 
    - You can change your *display name*, but your username is permanent. This is to ensure links to your profile anywhere will always work (unless you delete your aaccount).
+
+## Ownership (is Arctos a CAJA project?)
+
+The short answer: No.
+
+The long answer: Arctos is *not* under the jurisdiction of CAJA, the NJA, or any other organization[^1] - I consider it a personal project (and I plan to release it as open source so it can be your personal project too). This does mean that you have to trust me to continue to support this project and be a good maintainer, and find and train other good maintainers to fill my place if/when I leave. I appreciate your trust and acknowledge that this is entirely a leap of faith.
+
+[^1]:  Arctos is hosted on a subdomain of the CAJA site because it was free, jugger related, boosts the CAJA site SEO metrics, and lets me be a proud Californian. 
+
+I have decided to do this because I don't want to give these organizations control over who can use Arctos - I want it to be available to all juggers, regardless of whether they comply with rules that these organizations set out. There is a time and a place for membership requiremens and certifications (and more broadly Jugger politics), but Arctos is meant to be a tool to make Jugger easier, not a tool for enforcing jugger politics.
+
+I think there's precedent for this in other sports (see athletic.net, swimcloud.com, thebluealliance.com, askfred.net, rttimingsolutions.com, etc); the organization + logistics people are often different from the regulatory & political bodies.
 
 ## What Arctos *is* and what it is *not*
 
@@ -368,6 +397,9 @@ The scoreboard displays:
 The scoreboard automatically polls for updates and refreshes when match state changes. For stones matches, the countdown updates in real-time using the same synchronization system as the match pages.
 
 ## Recording Matches
+
+!!! Warning
+    This feature is **still in development**. I cannot guarantee any level of functionality. Please test thoroughly before using. May only work with a specific set of browsers and/or a specific set of hardware and OS version for the recording phone. Video may be choppy if the phone is low on battery or not sufficiently powerful.
 
 Live streaming matches can be very difficult in terms of bandwidth, not to mention that the best cameras that are easily accessible are phones, for which setting up streaming to an rtmp server and then pulling that to OBS is quite an involved process.
 
