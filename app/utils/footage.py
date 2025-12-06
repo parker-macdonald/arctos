@@ -32,31 +32,44 @@ def finalize_recording_worker(logger, tournament_url, field_name, session_id, ma
     # concatenate the chunks from each point into a single playable video
     for idx, chunks in enumerate(consecutive):
         print(f"chunk {idx} has length {len(chunks)}")
-        with open(path.join(chunk_dir, f"{chunks[0]['point_id']}.webm"), 'ab') as c:
-            for chunk in chunks:
-                with open(path.join(chunk_dir, chunk['filename']), 'rb') as f:
-                    c.write(f.read())
-        # Fix timestamps - works for both WebM and MP4 (even with .webm extension)
-
         probe_result = subprocess.run(['ffprobe',
             '-v', 'error',
             '-select_streams', 'v:0',
             '-show_entries', 'stream=codec_name',
             '-of', 'default=noprint_wrappers=1:nokey=1',
-            path.join(chunk_dir, f"{chunks[0]['point_id']}.webm")
+            path.join(chunk_dir, f"{chunks[0]['filename']}")
         ], capture_output=True, text=True)
         
         codec_name = probe_result.stdout.strip() if probe_result.returncode == 0 else ''
+        with open(path.join(chunk_dir, 'clips.txt'), 'w') as f:
+            for chunk in chunks:
+                print(f"file {path.join(chunk_dir, chunk['filename'])}", file=f)
+        subprocess.run(['ffmpeg', '-f', 'concat', '-safe', '0', '-i', path.join(chunk_dir, 'clips.txt'), '-c', 'copy', path.join(chunk_dir, f"{chunks[0]['point_id']}_fixedstamps.{'mp4' if codec_name == 'h264' else 'webm'}")])
+#        with open(path.join(chunk_dir, f"{chunks[0]['point_id']}.webm"), 'ab') as c:
+#            for chunk in chunks:
+#                with open(path.join(chunk_dir, chunk['filename']), 'rb') as f:
+#                    c.write(f.read())
+        # Fix timestamps - works for both WebM and MP4 (even with .webm extension)
 
-        subprocess.run(['ffmpeg',
-            '-i', path.join(chunk_dir, f"{chunks[0]['point_id']}.webm"),
-            '-map', '0',
-            '-c', 'copy',
-            '-loglevel', 'error',
-            '-y',
-            path.join(chunk_dir, f"{chunks[0]['point_id']}_fixedstamps.{'mp4' if codec_name == 'h264' else 'webm'}")
-        ])
-        print('Subprocess call complete!')
+#        probe_result = subprocess.run(['ffprobe',
+#            '-v', 'error',
+#            '-select_streams', 'v:0',
+#            '-show_entries', 'stream=codec_name',
+#            '-of', 'default=noprint_wrappers=1:nokey=1',
+#            path.join(chunk_dir, f"{chunks[0]['point_id']}.webm")
+#        ], capture_output=True, text=True)
+        
+#        codec_name = probe_result.stdout.strip() if probe_result.returncode == 0 else ''
+
+#        subprocess.run(['ffmpeg',
+#            '-i', path.join(chunk_dir, f"{chunks[0]['point_id']}.webm"),
+#            '-map', '0',
+#            '-c', 'copy',
+#            '-loglevel', 'error',
+#            '-y',
+#            path.join(chunk_dir, f"{chunks[0]['point_id']}_fixedstamps.{'mp4' if codec_name == 'h264' else 'webm'}")
+#        ])
+#        print('Subprocess call complete!')
 
     pts = Point.query.filter_by(match=match_id).order_by(Point.stamp.asc()).all()
     print(f"len(pts) is {len(pts)}")
@@ -78,24 +91,41 @@ def finalize_recording_worker(logger, tournament_url, field_name, session_id, ma
                 continue
             start_stamp = max(0, start_stamp)
             in_video_times[-1][0] = pt.uuid
-            if (end_stamp > point_table[pt.uuid][1]*2) or (start_stamp > end_stamp):
+            if start_stamp > end_stamp:
                 # something's wrong; we don't have all the 
                 # footage from this point. so just set this
                 # point's length to zero and skip adding
                 # the footage.
-                print(f'somethings wrong! start: {start_stamp}, end: {end_stamp} (duration {end_stamp-start_stamp}), point table entry: {point_table[pt.uuid]}')
+                print(f'somethings wrong (start > stop)! start: {start_stamp}, end: {end_stamp} (duration {end_stamp-start_stamp}), point table entry: {point_table[pt.uuid]}')
                 print(f'point_table={point_table}')
                 in_video_times.append([None, in_video_times[-1][1]])
                 continue
-            in_video_times.append([None, in_video_times[-1][1] + end_stamp-start_stamp])
-            print(f"RUNNING FFMPEG FOR POINT {pt.uuid} !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+            print(f"# RUNNING FFMPEG FOR POINT {pt.uuid} !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!", file=clips)
             
             # Clip the video - works for both WebM and MP4 input (even with .webm extension)
             # Always output as WebM/VP9 for consistency, so concatenation works smoothly
             input_file = path.join(chunk_dir, f'{pt.uuid}_fixedstamps.webm')
             if not path.exists(input_file):
                 input_file = path.join(chunk_dir, f'{pt.uuid}_fixedstamps.mp4')
-            
+            print(f"# input file: {input_file}", file=clips)
+            # get duration
+            # ffprobe -i 07789c82-54b2-4348-b7cb-0d99437880b5_fixedstamps.mp4 -show_entries format=duration -v quiet -of csv="p=0"
+            duration = subprocess.run(['ffprobe',
+                '-i', input_file,
+                '-show_entries',
+                'format=duration',
+                '-v', 'quiet',
+                '-of', 'csv=p=0',
+            ], capture_output=True, text=True)
+            print(f"# duration: {duration}", file=clips)
+            duration = float(duration.stdout.strip()) if probe_result.returncode==0 else 0.0
+            if end_stamp > duration:
+                print(f'#somethings wrong (duration)! start: {start_stamp}, end: {end_stamp} (duration {end_stamp-start_stamp}), point table entry: {point_table[pt.uuid]}', file=clips)
+                in_video_times.append([None, in_video_times[-1][1]])
+                continue
+
+            in_video_times.append([None, in_video_times[-1][1] + end_stamp-start_stamp])
+            print(f"# post final continue!", file=clips)
             # Probe the input file to detect codec
             probe_result = subprocess.run(['ffprobe',
                 '-v', 'error',
@@ -106,7 +136,7 @@ def finalize_recording_worker(logger, tournament_url, field_name, session_id, ma
             ], capture_output=True, text=True)
             
             codec_name = probe_result.stdout.strip() if probe_result.returncode == 0 else ''
-            
+            print(f"# codec: {codec_name}", file=clips)
             # Always output as WebM/VP9 format for consistency
             # If input is already VP9, we can copy; otherwise re-encode
             if codec_name == 'vp9':
@@ -117,6 +147,8 @@ def finalize_recording_worker(logger, tournament_url, field_name, session_id, ma
                     '-i', input_file,
                     '-c:v', 'copy',  # Copy VP9 video
                     '-c:a', 'copy',  # Copy audio
+                    '-fflags', '+genpts',
+                    '-avoid_negative_ts', 'make_zero',
                     '-loglevel', 'error',
                     '-y',
                     output_filename
@@ -131,6 +163,8 @@ def finalize_recording_worker(logger, tournament_url, field_name, session_id, ma
                     '-crf', '16',
                     '-b:v', '0',
                     '-c:a', 'libopus',  # Use opus for WebM (works with both MP4 and WebM input)
+                    '-fflags', '+genpts',
+                    '-avoid_negative_ts', 'make_zero',
                     '-loglevel', 'error',
                     '-y',
                     output_filename
