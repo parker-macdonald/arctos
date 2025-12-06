@@ -48,10 +48,11 @@ def create_app(config=None):
     if config:
         app.config.update(config)
     
-    # Initialize OAuth (after config is finalized)
+    # Initialize OAuth and Executor (after config is finalized)
     from app.routes.auth import oauth
     oauth.init_app(app)
-    
+    from app.routes.tournaments import executor
+    executor.init_app(app)
     # Register Google OAuth client
     if app.config.get('GOOGLE_CLIENT_ID') and app.config.get('GOOGLE_CLIENT_SECRET'):
         oauth.register(
@@ -121,9 +122,19 @@ def create_app(config=None):
     def inject_url_for():
         return dict(url_for=url_for)
     
+    # Add cache headers to static file responses (especially images)
+    @app.after_request
+    def add_cache_headers(response):
+        from flask import request
+        # Check if this is a static file request
+        if response.status_code == 200 and request.endpoint == 'static':
+            # Cache images and other static assets for 1 hour
+            if request.path.startswith('/static/uploads/') or request.path.startswith('/static/'):
+                response.cache_control.max_age = 3600
+                response.cache_control.public = True
+        return response
+    
     # Initialize websocket handlers
-    from app.routes import websocket
-    websocket.init_websocket_handlers(socketio)
     
     # Error handlers
     @app.errorhandler(413)

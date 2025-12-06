@@ -196,3 +196,16 @@ Sitemap: {sitemap_url}
     
     return Response(robots_txt, mimetype='text/plain')
 
+
+@bp.route('/docs')
+def docs():
+    """User documentation page."""
+    import os
+    from pathlib import Path
+    
+    # Read the markdown file
+    docs_path = Path(__file__).parent.parent.parent / 'docs' / 'docs.md'
+    with open(docs_path, 'r', encoding='utf-8') as f:
+        markdown_content = f.read()
+    return render_template('docs.html', markdown_content=markdown_content)
+

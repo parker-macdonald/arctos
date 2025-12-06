@@ -193,7 +193,40 @@
                     <p class="mb-0"><strong>Teams:</strong> {{ match.team1_registration.pseudonym if match.team1_registration else match.team1 }} vs {{ match.team2_registration.pseudonym if match.team2_registration else match.team2 }}</p>
                 </div>
                 <div class="col-md-4">
-                    <p class="mb-0"><strong>Refs:</strong> {{ match.refs or match.refs_initial }}</p>
+                    <p class="mb-0"><strong>Refs:</strong> 
+                        {% set refs_string = match.refs or match.refs_initial %}
+                        {% if refs_string %}
+                            {% for ref_trimmed in refs_string.split(',') %}
+                                {% set ref_trimmed = ref_trimmed.strip() %}
+                                {% if ref_trimmed %}
+                                    {% if ref_trimmed.endswith('::winner') or ref_trimmed.endswith('::loser') or ref_trimmed.endswith(' winner') or ref_trimmed.endswith(' loser') %}
+                                        {% if '::' in ref_trimmed %}
+                                            {% set match_ref = ref_trimmed.split('::')[0] %}
+                                            {% set display_text = ref_trimmed.replace('::', ' ') %}
+                                        {% else %}
+                                            {% set match_ref = ref_trimmed.rsplit(' ', 1)[0] %}
+                                            {% set display_text = ref_trimmed %}
+                                        {% endif %}
+                                        {{ display_text }}{% if not loop.last %}, {% endif %}
+                                    {% else %}
+                                        {% set team_registration = ref_trimmed | team_registration_for_tournament(tournament.url) %}
+                                        {% if team_registration %}
+                                            {{ team_registration.pseudonym }}{% if not loop.last %}, {% endif %}
+                                        {% else %}
+                                            {% set team_by_pseudonym = ref_trimmed | team_by_pseudonym_for_tournament(tournament.url) %}
+                                            {% if team_by_pseudonym %}
+                                                {{ team_by_pseudonym.pseudonym }}{% if not loop.last %}, {% endif %}
+                                            {% else %}
+                                                {{ ref_trimmed }}{% if not loop.last %}, {% endif %}
+                                            {% endif %}
+                                        {% endif %}
+                                    {% endif %}
+                                {% endif %}
+                            {% endfor %}
+                        {% else %}
+                            -
+                        {% endif %}
+                    </p>
                 </div>
                 <div class="col-md-2">
                     {% if match.nominal_length %}
@@ -211,7 +244,36 @@
                 <div class="col-12">
                     <p class="small mb-0">
                         {{ match.team1_registration.pseudonym if match.team1_registration else match.team1 }} vs {{ match.team2_registration.pseudonym if match.team2_registration else match.team2 }}
-                        {% if match.refs or match.refs_initial %} | Refs: {{ match.refs or match.refs_initial }}{% endif %}
+                        {% if match.refs or match.refs_initial %} | Refs: 
+                            {% set refs_string = match.refs or match.refs_initial %}
+                            {% for ref_trimmed in refs_string.split(',') %}
+                                {% set ref_trimmed = ref_trimmed.strip() %}
+                                {% if ref_trimmed %}
+                                    {% if ref_trimmed.endswith('::winner') or ref_trimmed.endswith('::loser') or ref_trimmed.endswith(' winner') or ref_trimmed.endswith(' loser') %}
+                                        {% if '::' in ref_trimmed %}
+                                            {% set match_ref = ref_trimmed.split('::')[0] %}
+                                            {% set display_text = ref_trimmed.replace('::', ' ') %}
+                                        {% else %}
+                                            {% set match_ref = ref_trimmed.rsplit(' ', 1)[0] %}
+                                            {% set display_text = ref_trimmed %}
+                                        {% endif %}
+                                        {{ display_text }}{% if not loop.last %}, {% endif %}
+                                    {% else %}
+                                        {% set team_registration = ref_trimmed | team_registration_for_tournament(tournament.url) %}
+                                        {% if team_registration %}
+                                            {{ team_registration.pseudonym }}{% if not loop.last %}, {% endif %}
+                                        {% else %}
+                                            {% set team_by_pseudonym = ref_trimmed | team_by_pseudonym_for_tournament(tournament.url) %}
+                                            {% if team_by_pseudonym %}
+                                                {{ team_by_pseudonym.pseudonym }}{% if not loop.last %}, {% endif %}
+                                            {% else %}
+                                                {{ ref_trimmed }}{% if not loop.last %}, {% endif %}
+                                            {% endif %}
+                                        {% endif %}
+                                    {% endif %}
+                                {% endif %}
+                            {% endfor %}
+                        {% endif %}
                         {% if match.nominal_length %} | {{ match.nominal_length }}m{% endif %}
                         {% if match.field %} | Field: {{ match.field }}{% endif %}
                     </p>
@@ -284,7 +346,7 @@
                             </div>
                             <div class="row mt-3">
                                 <div class="col-12">
-                                    <button id="point-button" class="btn btn-success btn-lg w-100 mobile-sticky-button" onclick="startEndPoint()">
+                                    <button id="point-button" class="btn btn-success btn-lg w-100 mobile-sticky-button" onclick="startEndPoint()" disabled>
                                         Start Point
                                     </button>
                                 </div>
@@ -318,43 +380,7 @@
                                 </tr>
                             </thead>
                             <tbody id="points-table-body">
-                                {% for point in points %}
-                                <tr id="point-row-{{ point.uuid }}">
-                                    <td>
-                                        <div class="set-number-controls">
-                                            <button class="btn btn-sm btn-outline-secondary" onclick="changeSetNumber('{{ point.uuid }}', 1)" type="button">+</button>
-                                            <span class="set-number-display" id="set-display-{{ point.uuid }}">{{ point.set_number or 1 }}</span>
-                                            <button class="btn btn-sm btn-outline-secondary" onclick="changeSetNumber('{{ point.uuid }}', -1)" type="button">−</button>
-                                        </div>
-                                    </td>
-                                    <td id="stones-{{ point.uuid }}" data-stamp="{{ point.stamp.isoformat() if point.stamp }}" data-end="{{ point.end_stamp.isoformat() if point.end_stamp }}">0</td>
-                                    <td>
-                                        <select class="form-select form-select-sm" onchange="updatePointWinner('{{ point.uuid }}', this.value)">
-                                            <option value="none" {% if not point.winner %}selected{% endif %}>None</option>
-                                            <option value="TEAM1" {% if point.winner == 'TEAM1' %}selected{% endif %}>{{ match.team1_registration.pseudonym if match.team1_registration else match.team1 }}</option>
-                                            <option value="TEAM2" {% if point.winner == 'TEAM2' %}selected{% endif %}>{{ match.team2_registration.pseudonym if match.team2_registration else match.team2 }}</option>
-                                        </select>
-                                    </td>
-                                    <td>
-                                        <div class="form-check">
-                                            <input class="form-check-input" type="checkbox" 
-                                                   {% if point.rerolled %}checked{% endif %}
-                                                   onchange="toggleRerun('{{ point.uuid }}', this.checked)">
-                                        </div>
-                                    </td>
-                                    <td>
-                                        <button class="btn btn-sm btn-outline-primary" onclick="selectNotesForPoint('{{ point.uuid }}')">
-                                            <i class="fas fa-sticky-note"></i> Notes
-                                        </button>
-                                        <div id="notes-for-point-{{ point.uuid }}" class="mt-1">
-                                            <!-- Selected notes will appear here -->
-                                        </div>
-                                    </td>
-                                    <td>
-                                        <button class="delete-point-btn" onclick="deletePoint('{{ point.uuid }}')" title="Delete">×</button>
-                                    </td>
-                                </tr>
-                                {% endfor %}
+                                <!-- Points will be loaded via JavaScript -->
                             </tbody>
                         </table>
                     </div>
@@ -374,7 +400,7 @@
 <!-- Mobile sticky buttons wrapper (outside container to avoid transform issues) -->
 <div class="mobile-button-wrapper d-md-none">
     <button id="finalize-match-btn-mobile" class="btn btn-warning btn-lg" onclick="endMatch()">Finalize Match</button>
-    <button id="point-button-mobile" class="btn btn-success btn-lg mobile-sticky-button" onclick="startEndPoint()">Start Point</button>
+    <button id="point-button-mobile" class="btn btn-success btn-lg mobile-sticky-button" onclick="startEndPoint()" disabled>Start Point</button>
 </div>
 
 <!-- Removed Add Note Modal -->
@@ -467,10 +493,11 @@ function checkForUnfinishedPoint() {
                     end_stamp: latestPoint.end_stamp
                 };
                 
-                // Update button to "End Point"
+                // Update button to "End Point" and enable it
                 updatePointButtons('End Point');
                 getPointButtons().forEach(btn => {
                     btn.className = 'btn btn-danger btn-lg mobile-sticky-button';
+                    btn.disabled = false;
                 });
                 console.log('Button updated to End Point');
                 
@@ -482,20 +509,60 @@ function checkForUnfinishedPoint() {
                         point_id: latestPoint.uuid,
                         set_number: latestPoint.set_number,
                         stamp: latestPoint.stamp,
-                        end_stamp: latestPoint.end_stamp
+                        end_stamp: latestPoint.end_stamp,
+                        stones_at_start: latestPoint.stones_at_start
                     });
                 } else {
                     console.log('Point already exists in table');
                 }
+                
+                // Start stones ticker for ongoing point
+                {% if match.set_type == 'STONES' %}
+                if (latestPoint.stamp) {
+                    // Use stones_at_start as baseline (this is the key fix!)
+                    if (latestPoint.stones_at_start !== null && latestPoint.stones_at_start !== undefined) {
+                        stonesBaseline = latestPoint.stones_at_start;
+                        console.log('Starting stones ticker with baseline from stones_at_start:', stonesBaseline);
+                        startStonesTicker(latestPoint.stamp, latestPoint.stones_at_start);
             } else {
-                console.log('Latest point is finished, no action needed');
+                        // Fallback: compute from points list
+                        const computedStones = computeStonesRemainingFromPoints(data.points);
+                        const stonesInput = document.getElementById('stones-remaining');
+                        if (stonesInput) {
+                            stonesInput.value = computedStones;
+                        }
+                        stonesBaseline = computedStones;
+                        startStonesTicker(latestPoint.stamp, computedStones);
+            }
+                }
+                {% endif %}
+        } else {
+                console.log('Latest point is finished, enabling Start Point button');
+                // No in-progress point, enable the Start Point button
+                updatePointButtons('Start Point');
+                getPointButtons().forEach(btn => {
+                    btn.className = 'btn btn-success btn-lg mobile-sticky-button';
+                    btn.disabled = false;
+                });
             }
         } else {
-            console.log('No points found or error in response');
+            console.log('No points found or error in response, enabling Start Point button');
+            // No points at all, enable the Start Point button
+            updatePointButtons('Start Point');
+            getPointButtons().forEach(btn => {
+                btn.className = 'btn btn-success btn-lg mobile-sticky-button';
+                btn.disabled = false;
+            });
         }
     })
     .catch(error => {
         console.error('Error checking for unfinished points:', error);
+        // On error, enable the button anyway (better to allow than block)
+        updatePointButtons('Start Point');
+        getPointButtons().forEach(btn => {
+            btn.className = 'btn btn-success btn-lg mobile-sticky-button';
+            btn.disabled = false;
+        });
     });
 }
 
@@ -540,26 +607,13 @@ function pollMatchState() {
             // Update scores
             updateScoresFromPoll(data);
             
-            // Update stones remaining
-            // Only update from polling if:
-            // 1. User is not actively editing (input doesn't have focus)
-            // 2. Current point is still ongoing (no end_stamp)
-            if (data.stones_remaining !== null && data.stones_remaining !== undefined) {
+            // Compute and update stones remaining from points list
+            // Only update if ticker is not running (ticker handles it during active points)
+            if (data.points && data.points.length > 0 && !stonesTicker) {
+                const computedStones = computeStonesRemainingFromPoints(data.points);
                 const stonesInput = document.getElementById('stones-remaining');
-                if (stonesInput) {
-                    // Check if user is actively editing
-                    const isBeingEdited = document.activeElement === stonesInput;
-                    
-                    // Check if current point is ended (find latest point and check for end_stamp)
-                    const latestPoint = data.points && data.points.length > 0 
-                        ? data.points[data.points.length - 1] 
-                        : null;
-                    const pointIsEnded = latestPoint && latestPoint.end_stamp;
-                    
-                    // Only update from server if user isn't editing and point isn't ended
-                    if (!isBeingEdited && !pointIsEnded) {
-                        stonesInput.value = data.stones_remaining;
-                    }
+                if (stonesInput && document.activeElement !== stonesInput) {
+                    stonesInput.value = computedStones;
                 }
             }
             
@@ -647,6 +701,12 @@ async function startEndPoint() {
     if (buttons.length === 0) return;
     const button = buttons[0]; // Use first button to check state
     
+    // Prevent action if button is disabled (waiting for point status check)
+    if (button.disabled) {
+        console.log('Button is disabled, waiting for point status check...');
+        return;
+    }
+    
     if (button.textContent.trim() === 'Start Point') {
         // Start a new point - get set number from last point
         let defaultSetNumber = 1;
@@ -661,11 +721,27 @@ async function startEndPoint() {
         }
         
         console.log('Starting new point...');
+        
+        // For STONES matches, get current stones value from input (computed client-side)
+        // Read it BEFORE making the request to ensure we get the value at the exact moment
+        let stonesAtStart = null;
+        {% if match.set_type == 'STONES' %}
+        const stonesInput = document.getElementById('stones-remaining');
+        if (stonesInput) {
+            stonesAtStart = parseInt(stonesInput.value) || null;
+        }
+        {% endif %}
+        
         const data = await apiRequest('/match-actions/add-point', {
             match_id: matchId,
-            set_number: defaultSetNumber
+            set_number: defaultSetNumber,
+            timestamp: Date.now(),
+            stones_at_start: stonesAtStart
         });
         if (data.success) {
+            // Always use the value we read from input, not what server returns
+            // This ensures we use the exact value at the moment the point started
+            data.stones_at_start = stonesAtStart;
             handlePointAdded(data);
         }
     } else {
@@ -694,10 +770,11 @@ function handlePointAdded(data) {
     updatePointButtons('End Point');
     getPointButtons().forEach(btn => {
         btn.className = 'btn btn-danger btn-lg w-100 mobile-sticky-button';
+        btn.disabled = false;
     });
     
     addPointToTable(data);
-    startStonesTicker(data.stamp);
+    startStonesTicker(data.stamp, data.stones_at_start);
 }
 
 function handlePointUpdated(data) {
@@ -709,8 +786,14 @@ function handlePointUpdated(data) {
             updatePointButtons('Start Point');
             getPointButtons().forEach(btn => {
                 btn.className = 'btn btn-success btn-lg mobile-sticky-button';
+                btn.disabled = false;
             });
             currentPoint = null;
+            
+            // Recompute stones_remaining from points after point ends
+            {% if match.set_type == 'STONES' %}
+            recomputeStonesFromPoints();
+            {% endif %}
         }
     }
     updatePointInTable(data);
@@ -759,17 +842,17 @@ function addPointToTable(data) {
                     <button class="btn btn-sm btn-outline-secondary" onclick="changeSetNumber('${data.point_id}', -1)" type="button">−</button>
                 </div>
             </td>
-            <td id="stones-${data.point_id}" data-stamp="${data.stamp || ''}" data-end="${data.end_stamp || ''}">0</td>
+            <td id="stones-${data.point_id}" data-stamp="${data.stamp || ''}" data-end="${data.end_stamp || ''}" data-stones-at-start="${data.stones_at_start !== null && data.stones_at_start !== undefined ? data.stones_at_start : ''}">0</td>
             <td>
                 <select class="form-select form-select-sm" onchange="updatePointWinner('${data.point_id}', this.value)">
-                    <option value="none" selected>None</option>
-                    <option value="TEAM1">{{ match.team1_registration.pseudonym if match.team1_registration else match.team1 }}</option>
-                    <option value="TEAM2">{{ match.team2_registration.pseudonym if match.team2_registration else match.team2 }}</option>
+                    <option value="none" ${(!data.winner || data.winner === 'none') ? 'selected' : ''}>None</option>
+                    <option value="TEAM1" ${data.winner === 'TEAM1' ? 'selected' : ''}>{{ match.team1_registration.pseudonym if match.team1_registration else match.team1 }}</option>
+                    <option value="TEAM2" ${data.winner === 'TEAM2' ? 'selected' : ''}>{{ match.team2_registration.pseudonym if match.team2_registration else match.team2 }}</option>
                 </select>
             </td>
             <td>
                 <div class="form-check">
-                    <input class="form-check-input" type="checkbox" onchange="toggleRerun('${data.point_id}', this.checked)">
+                    <input class="form-check-input" type="checkbox" ${data.rerolled ? 'checked' : ''} onchange="toggleRerun('${data.point_id}', this.checked)">
                 </div>
             </td>
             <td>
@@ -825,6 +908,9 @@ function updatePointInTable(data) {
     if (stonesCell) {
         if (data.stamp) stonesCell.setAttribute('data-stamp', data.stamp);
         if (data.end_stamp) stonesCell.setAttribute('data-end', data.end_stamp);
+        if (data.stones_at_start !== null && data.stones_at_start !== undefined) {
+            stonesCell.setAttribute('data-stones-at-start', data.stones_at_start);
+        }
         stonesCell.textContent = computeStonesElapsed(
             stonesCell.getAttribute('data-stamp'),
             stonesCell.getAttribute('data-end')
@@ -950,6 +1036,11 @@ async function deletePoint(pointId) {
             }
             // Update score by set table
             updateScoreBySetTable();
+            
+            // Recompute stones_remaining after deletion
+            {% if match.set_type == 'STONES' %}
+            recomputeStonesFromPoints();
+            {% endif %}
         }
     }
 }
@@ -969,12 +1060,30 @@ let stonesTickerStartIso = null;
 let stonesBaseline = null; // baseline stones at point start
 let lastSentStones = null;
 let lastSentAt = 0;
-function startStonesTicker(pointStartIso) {
+function startStonesTicker(pointStartIso, stonesAtStartValue) {
     stonesTickerStartIso = pointStartIso;
-    // Initialize baseline from the current input value at the moment the point starts
+    // Use stones_at_start if provided (for reload scenarios or when starting new point)
+    // This is the authoritative value - don't read from input
+    if (stonesAtStartValue !== null && stonesAtStartValue !== undefined) {
+        stonesBaseline = stonesAtStartValue;
+        console.log('Stones ticker started with baseline from stones_at_start:', stonesBaseline);
+        // Also update the input to match the baseline (for display consistency)
     const input = document.getElementById('stones-remaining');
-    stonesBaseline = input ? parseInt(input.value || '0') : 0;
-    if (isNaN(stonesBaseline)) stonesBaseline = 0;
+        if (input && document.activeElement !== input) {
+            input.value = stonesBaseline;
+        }
+    } else {
+        // Fallback: Initialize baseline from the current input value
+        // This should only happen in edge cases
+        const input = document.getElementById('stones-remaining');
+        if (input) {
+            const currentValue = parseInt(input.value || '0');
+            stonesBaseline = isNaN(currentValue) ? 0 : Math.max(0, currentValue);
+            console.log('Stones ticker started with baseline from input (fallback):', stonesBaseline);
+        } else {
+            stonesBaseline = 0;
+        }
+    }
     if (stonesTicker) clearInterval(stonesTicker);
     stonesTicker = setInterval(recomputeStonesFromEpoch, 50); // check 10x per beat
 }
@@ -1036,17 +1145,20 @@ function recomputeStonesFromEpoch() {
         const startCount = Math.floor(startEpoch / 1.5);
         const nowCount = Math.floor(nowEpoch / 1.5);
         const elapsedBeats = nowCount - startCount;
-        const newRemaining = stonesBaseline - elapsedBeats;
-        if (parseInt(input.value || '0') !== newRemaining) {
+        const newRemaining = Math.max(0, stonesBaseline - elapsedBeats); // Ensure non-negative
+        
+        // Only update if value actually changed to avoid unnecessary DOM updates
+        const currentValue = parseInt(input.value || '0');
+        if (currentValue !== newRemaining) {
             input.value = newRemaining;
         }
         // Authoritatively sync to server when value changes (throttled)
-        const nowMs = Date.now();
-        if (lastSentStones !== newRemaining && (nowMs - lastSentAt) > 300) {
-            lastSentStones = newRemaining;
-            lastSentAt = nowMs;
-            apiRequest('/match-actions/update-stones', { match_id: matchId, stones_remaining: newRemaining });
-        }
+        // const nowMs = Date.now();
+        // if (lastSentStones !== newRemaining && (nowMs - lastSentAt) > 300) {
+        //     lastSentStones = newRemaining;
+        //     lastSentAt = nowMs;
+        //     apiRequest('/match-actions/update-stones', { match_id: matchId, stones_remaining: newRemaining });
+        // }
     } catch (e) {}
 }
 
@@ -1289,6 +1401,8 @@ function checkForInProgressPoint() {
             const stonesCell = row.querySelector('[id^="stones-"]');
             if (stonesCell) {
                 const endStamp = stonesCell.getAttribute('data-end');
+                console.log("HAS IN PROGRESS POINT:", stonesCell);
+                console.log("END STAMP:", endStamp);
                 if (!endStamp || endStamp === '') {
                     hasInProgressPoint = true;
                     break;
@@ -1713,55 +1827,129 @@ function computeStonesElapsed(startIso, endIso) {
     return Math.max(0, endCount - startCount);
 }
 
-// Initialize page
-document.addEventListener('DOMContentLoaded', function() {
-    console.log('DOM loaded, checking for unfinished points...');
-    
-    // Verify table exists
-    const tbody = document.getElementById('points-table-body');
-    if (tbody) {
-        console.log('Points table body found on DOM load');
-    } else {
-        console.error('Points table body NOT found on DOM load');
+// Compute stones_remaining from points list (can be from polling data or DOM)
+function computeStonesRemainingFromPoints(points) {
+    if (!points || points.length === 0) {
+        // No points yet, return initial value from input or default
+        const stonesInput = document.getElementById('stones-remaining');
+        if (stonesInput) {
+            return parseInt(stonesInput.value) || 100;
+        }
+        return 100; // Default fallback
     }
     
-    // Check for unfinished points immediately (fallback in case WebSocket is slow)
-    setTimeout(() => {
-        console.log('Fallback check for unfinished points');
-        checkForUnfinishedPoint();
-    }, 1000);
+    // Find the last point
+    const lastPoint = points[points.length - 1];
     
-    // Load initial notes
-    fetch('/{{ tournament.url }}/get-notes?match_id={{ match.uuid }}')
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            window.currentNotes = data.notes;
-            // Notes are now handled by the new selection system
+    // If last point is ongoing (no end_stamp or empty end_stamp), compute from it
+    const lastPointIsOngoing = !lastPoint.end_stamp || lastPoint.end_stamp === '';
+    if (lastPointIsOngoing && lastPoint.stones_at_start !== null && lastPoint.stones_at_start !== undefined) {
+        // Point is ongoing: stones_remaining = stones_at_start - elapsed_stones
+        const elapsedStones = computeStonesElapsed(lastPoint.stamp, null);
+        return Math.max(0, lastPoint.stones_at_start - elapsedStones);
+    }
+    
+    // Last point is completed, find the last completed point with stones_at_start
+    // Work backwards to find the most recent completed point
+    for (let i = points.length - 1; i >= 0; i--) {
+        const point = points[i];
+        const pointIsCompleted = point.end_stamp && point.end_stamp !== '';
+        if (pointIsCompleted && point.stones_at_start !== null && point.stones_at_start !== undefined) {
+            // This point is completed, compute stones elapsed for it
+            const elapsedStones = computeStonesElapsed(point.stamp, point.end_stamp);
+            // stones_remaining = stones_at_start - elapsed_stones
+            return Math.max(0, point.stones_at_start - elapsedStones);
+        }
+    }
+    
+    // No points with stones_at_start found
+    // Try to get current input value, but don't default to 100
+    // If we can't compute it, return null to indicate we don't know
+    const stonesInput = document.getElementById('stones-remaining');
+    if (stonesInput && stonesInput.value) {
+        const currentValue = parseInt(stonesInput.value);
+        if (!isNaN(currentValue)) {
+            return currentValue;
+        }
+    }
+    // Can't determine value - return null to indicate unknown
+    // Caller should handle this appropriately
+    return null;
+}
+
+// Helper function to get points from DOM and compute stones_remaining
+function recomputeStonesFromPoints() {
+    {% if match.set_type == 'STONES' %}
+    const tbody = document.getElementById('points-table-body');
+    if (!tbody) return;
+    
+    const points = [];
+    const rows = tbody.querySelectorAll('tr[id^="point-row-"]');
+    rows.forEach(row => {
+        const pointId = row.id.replace('point-row-', '');
+        const stonesCell = row.querySelector(`[id^="stones-"]`);
+        if (stonesCell) {
+            points.push({
+                uuid: pointId,
+                stamp: stonesCell.getAttribute('data-stamp') || '',
+                end_stamp: stonesCell.getAttribute('data-end') || '',
+                stones_at_start: stonesCell.getAttribute('data-stones-at-start') ? parseInt(stonesCell.getAttribute('data-stones-at-start')) : null
+            });
         }
     });
     
-    // Load notes for all existing points
-    {% for point in points %}
-    updatePointNotesInTableForPoint('{{ point.uuid }}');
-    {% endfor %}
+    const computedStones = computeStonesRemainingFromPoints(points);
+    const stonesInput = document.getElementById('stones-remaining');
+    if (stonesInput && document.activeElement !== stonesInput) {
+        stonesInput.value = computedStones;
+    }
+    {% endif %}
+}
+
+// Load all points from server and set up the page
+async function loadAllPoints() {
+    console.log('Loading all points from server...');
+    const url = `/{{ tournament.url }}/get-points?match_id=${matchId}`;
     
-    // Start polling for match state updates (poll every 1 second)
-    pollMatchState(); // Initial poll
-    pollingInterval = setInterval(pollMatchState, 1000);
-    
-    // Check for in-progress points periodically and disable finalize button
-    checkForInProgressPoint();
-    setInterval(checkForInProgressPoint, 1000);
-    
-    // Compute initial stones elapsed and set periodic update for ongoing last point
     try {
+        const response = await fetch(url);
+        const data = await response.json();
+        
+        if (data.success && data.points) {
+            console.log(`Loaded ${data.points.length} points from server`);
+            
+            // Add all points to the table
+            const tbody = document.getElementById('points-table-body');
+            if (!tbody) {
+                console.error('Points table body not found');
+                return;
+            }
+            
+            data.points.forEach(point => {
+                // Check if point already exists (shouldn't happen, but be safe)
+                const existingRow = document.getElementById(`point-row-${point.uuid}`);
+                if (!existingRow) {
+                    addPointToTable({
+                        point_id: point.uuid,
+                        set_number: point.set_number,
+                        stamp: point.stamp,
+                        end_stamp: point.end_stamp,
+                        winner: point.winner,
+                        rerolled: point.rerolled,
+                        stones_at_start: point.stones_at_start
+                    });
+                }
+            });
+            
+            // Update stones elapsed for all points
         const stonesCells = document.querySelectorAll('[id^="stones-"]');
         stonesCells.forEach(cell => {
             const s = cell.getAttribute('data-stamp');
             const e = cell.getAttribute('data-end');
             cell.textContent = computeStonesElapsed(s, e);
         });
+            
+            // Set up periodic update for ongoing last point
         setInterval(() => {
             const cells = document.querySelectorAll('[id^="stones-"]');
             if (cells.length) {
@@ -1773,7 +1961,131 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
             }
         }, 500);
-    } catch (e) {}
+            
+            // Check for in-progress point and set up accordingly
+            if (data.points.length > 0) {
+                const latestPoint = data.points[data.points.length - 1];
+                
+                if (!latestPoint.end_stamp) {
+                    // Point is ongoing
+                    console.log('Found ongoing point:', latestPoint);
+                    
+                    currentPoint = {
+                        uuid: latestPoint.uuid,
+                        set_number: latestPoint.set_number,
+                        stamp: latestPoint.stamp,
+                        end_stamp: null
+                    };
+                    
+                    // Update button to "End Point" and enable it
+                    updatePointButtons('End Point');
+                    getPointButtons().forEach(btn => {
+                        btn.className = 'btn btn-danger btn-lg mobile-sticky-button';
+                        btn.disabled = false;
+                    });
+                    
+                    // Start stones ticker for ongoing point
+                    {% if match.set_type == 'STONES' %}
+                    if (latestPoint.stamp) {
+                        // Use stones_at_start as baseline (this is the key fix!)
+                        if (latestPoint.stones_at_start !== null && latestPoint.stones_at_start !== undefined) {
+                            stonesBaseline = latestPoint.stones_at_start;
+                            console.log('Starting stones ticker with baseline from stones_at_start:', stonesBaseline);
+                            startStonesTicker(latestPoint.stamp, latestPoint.stones_at_start);
+                        } else {
+                            // Point doesn't have stones_at_start (created before fix)
+                            // Compute from previous completed points to get the actual value
+                            console.warn('Point missing stones_at_start, computing from previous points');
+                            const computedStones = computeStonesRemainingFromPoints(data.points);
+                            if (computedStones !== null && computedStones !== undefined) {
+                                const stonesInput = document.getElementById('stones-remaining');
+                                if (stonesInput) {
+                                    stonesInput.value = computedStones;
+                                }
+                                // Use computed value as baseline
+                                stonesBaseline = computedStones;
+                                startStonesTicker(latestPoint.stamp, computedStones);
+                            } else {
+                                // Can't determine value - read from current input
+                                const stonesInput = document.getElementById('stones-remaining');
+                                if (stonesInput && stonesInput.value) {
+                                    const currentValue = parseInt(stonesInput.value);
+                                    if (!isNaN(currentValue)) {
+                                        stonesBaseline = currentValue;
+                                        startStonesTicker(latestPoint.stamp, currentValue);
+                                    } else {
+                                        console.error('Cannot determine stones baseline - input value is invalid');
+                                    }
+                                } else {
+                                    console.error('Cannot determine stones baseline - no input value available');
+                                }
+                            }
+                        }
+                    }
+                    {% endif %}
+                } else {
+                    // All points are completed
+                    console.log('All points are completed');
+                    updatePointButtons('Start Point');
+                    getPointButtons().forEach(btn => {
+                        btn.className = 'btn btn-success btn-lg mobile-sticky-button';
+                        btn.disabled = false;
+                    });
+                    
+                    // Compute stones_remaining from completed points
+                    {% if match.set_type == 'STONES' %}
+                    const computedStones = computeStonesRemainingFromPoints(data.points);
+                    const stonesInput = document.getElementById('stones-remaining');
+                    if (stonesInput) {
+                        stonesInput.value = computedStones;
+                    }
+                    {% endif %}
+                }
+            } else {
+                // No points yet
+                updatePointButtons('Start Point');
+                getPointButtons().forEach(btn => {
+                    btn.className = 'btn btn-success btn-lg mobile-sticky-button';
+                    btn.disabled = false;
+                });
+            }
+            
+            // Load notes for all points
+            data.points.forEach(point => {
+                updatePointNotesInTableForPoint(point.uuid);
+            });
+        } else {
+            console.error('Failed to load points:', data);
+        }
+    } catch (error) {
+        console.error('Error loading points:', error);
+    }
+}
+
+// Initialize page
+document.addEventListener('DOMContentLoaded', function() {
+    console.log('DOM loaded, loading all points...');
+    
+    // Load all points first
+    loadAllPoints();
+    
+    // Load initial notes
+    fetch('/{{ tournament.url }}/get-notes?match_id={{ match.uuid }}')
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            window.currentNotes = data.notes;
+            // Notes are now handled by the new selection system
+        }
+    });
+    
+    // Start polling for match state updates (poll every 1 second)
+    pollMatchState(); // Initial poll
+    // pollingInterval = setInterval(pollMatchState, 1000);
+    
+    // Check for in-progress points periodically and disable finalize button
+    checkForInProgressPoint();
+    setInterval(checkForInProgressPoint, 1000);
 
     // Start time elapsed timer using confirmed_start_time (local) if present, else fallback cleanly
     const startRaw = '{{ match.confirmed_start_time.strftime('%Y-%m-%dT%H:%M:%S') if match.confirmed_start_time else (match.nominal_start_time.strftime('%Y-%m-%dT%H:%M:%S') if match.nominal_start_time else '') }}';

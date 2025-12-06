@@ -2,8 +2,11 @@
 Jinja2 template filters for the tournament site.
 """
 import json
+import hmac
+import hashlib
+import base64
 from datetime import timezone, timedelta
-from flask import Blueprint
+from flask import Blueprint, current_app, url_for
 from markupsafe import Markup
 from models import TeamRegistration, Tournament
 from app.utils.helpers import can_head_ref_match
@@ -184,4 +187,23 @@ def to_utc(dt):
         return dt.replace(tzinfo=timezone.utc)
     # If already timezone-aware, convert to UTC
     return dt.astimezone(timezone.utc)
+
+@bp.app_template_filter('camera_url')
+def camera_url(tournament_url, field_name):
+    """Generate camera recording URL with access key for a field."""
+    if not tournament_url or not field_name:
+        return ''
+    
+    try:
+        secret = current_app.config.get('SECRET_KEY', 'dev-key')
+        message = f"{tournament_url}:{field_name}".encode('utf-8')
+        key = hmac.new(secret.encode('utf-8'), message, hashlib.sha256).digest()
+        access_key = base64.urlsafe_b64encode(key).decode('utf-8').rstrip('=')
+        
+        # Generate the full URL
+        base_url = url_for('tournaments.camera_page', tournament_url=tournament_url, field=field_name, key=access_key, _external=True)
+        return base_url
+    except Exception:
+        # Fallback if there's an error
+        return f"/{tournament_url}/camera?field={field_name}&key="
 

@@ -9,7 +9,7 @@ import os
 from models import (
     Team, TeamRegistration, PlayerRegistration, Tournament, MatchNote, Match, Point, db
 )
-from app.utils.helpers import is_head_ref_any
+from app.utils.helpers import is_head_ref_any, can_head_ref_match
 
 bp = Blueprint('teams', __name__)
 
@@ -41,10 +41,22 @@ def team_profile(team_id):
                 })
             tournament_players[team_reg.event] = players_with_data
     
-    is_head_ref_flag = is_head_ref_any(team_id)
     team_notes = []
-    # Only show notes to the team themselves, not to head refs
-    if current_user.is_authenticated and (current_user.id == team_id or is_head_ref_flag):
+    
+    # Check if current user is a player who played with this team
+    player_played_with_team = False
+    player_tournament_registrations = set()
+    if current_user.is_authenticated and current_user.__class__.__name__ == 'Player':
+        player_regs = PlayerRegistration.query.filter_by(
+            player=current_user.id,
+            team=team_id,
+            status='CONFIRMED'
+        ).all()
+        player_tournament_registrations = {reg.event for reg in player_regs}
+        player_played_with_team = len(player_tournament_registrations) > 0
+    
+    # Show notes to: the team themselves, head refs from the relevant tournament, or players who played with the team
+    if current_user.is_authenticated:
         try:
             candidate_notes = MatchNote.query.filter(or_(MatchNote.target=='team1', MatchNote.target=='team2')).order_by(MatchNote.created_at.desc()).all()
             match_to_points = {}
@@ -54,6 +66,25 @@ def team_profile(team_id):
                     continue
                 if not ((n.target=='team1' and m.team1 == team_id) or (n.target=='team2' and m.team2 == team_id)):
                     continue
+                
+                # Check if user should see this note
+                can_see_note = False
+                
+                # Team themselves can always see their notes
+                if current_user.id == team_id:
+                    can_see_note = True
+                # Players who played with the team can see notes from tournaments where they played
+                elif player_played_with_team and current_user.id != team_id:
+                    if m.event in player_tournament_registrations:
+                        can_see_note = True
+                # Head refs from the tournament this note is from can see it
+                elif current_user.is_authenticated and current_user.__class__.__name__ == 'Player':
+                    if can_head_ref_match(m.event, current_user.id, match=m):
+                        can_see_note = True
+                
+                if not can_see_note:
+                    continue
+                
                 idx = '-'
                 if n.point_id:
                     mid = m.uuid
@@ -71,6 +102,9 @@ def team_profile(team_id):
                 })
         except Exception:
             team_notes = []
+    
+    # Check if user is head ref for any tournament (for template display purposes)
+    is_head_ref_flag = is_head_ref_any(team_id)
     return render_template('team_profile.html', team=team, team_registrations=team_registrations, 
                          player_registrations=player_registrations, tournaments=tournaments, 
                          tournament_players=tournament_players, team_notes=team_notes, is_head_ref=is_head_ref_flag)

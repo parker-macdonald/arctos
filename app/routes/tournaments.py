@@ -1,10 +1,16 @@
 """
 Tournament management routes.
 """
-from flask import Blueprint, render_template, request, redirect, flash, jsonify
+from tracemalloc import start
+from flask import Blueprint, render_template, request, redirect, flash, jsonify, current_app
 from flask_login import login_required, current_user
-from datetime import datetime, timedelta
+from flask_executor import Executor
+
+from datetime import datetime, timedelta, timezone
 import json
+import hmac
+import hashlib
+import base64
 from models import (
     Tournament, Match, Field, Tag, TeamRegistration, PlayerRegistration,
     Team, TO, db
@@ -13,7 +19,56 @@ from app.utils.helpers import check_tournament_access, resolve_team_name_to_id, 
 from app.utils.scheduling import compute_dynamic_match_nominal_start_time, validate_match_input, recompute_all_match_times, detect_match_conflicts
 from app.filters import is_head_ref
 
+from os import path
+
+from app.utils.footage import finalize_recording_worker
+# for finalizing recordings which calls ffmpeg
+# only one worker bc ffmpeg does its own parallelism 
+# so we only ever want to run one at a time 
+executor = Executor()
+
 bp = Blueprint('tournaments', __name__)
+
+def generate_camera_key(tournament_url, field_name):
+    """Generate a secure camera access key for a field."""
+    secret = current_app.config.get('SECRET_KEY')
+    message = f"{tournament_url}:{field_name}".encode('utf-8')
+    key = hmac.new(secret.encode('utf-8'), message, hashlib.sha256).digest()
+    # Return a URL-safe base64 encoded key
+    return base64.urlsafe_b64encode(key).decode('utf-8').rstrip('=')
+
+def validate_camera_key(tournament_url, field_name, provided_key):
+    """Validate a camera access key."""
+    expected_key = generate_camera_key(tournament_url, field_name)
+    # Use constant-time comparison to prevent timing attacks
+    return hmac.compare_digest(expected_key, provided_key)
+
+def get_camera_key_from_request():
+    """Extract camera access key from request (query params, JSON body, or form data)."""
+    # Try query parameters first
+    key = request.args.get('key', '').strip()
+    if key:
+        return key
+    
+    # Try JSON body
+    if request.is_json and request.json:
+        key = request.json.get('key', '').strip()
+        if key:
+            return key
+    
+    # Try form data
+    key = request.form.get('key', '').strip()
+    if key:
+        return key
+    
+    return None
+
+def require_camera_key(tournament_url, field_name):
+    """Validate camera access key from request. Returns (is_valid, error_response_tuple)."""
+    access_key = get_camera_key_from_request()
+    if not access_key or not validate_camera_key(tournament_url, field_name, access_key):
+        return (False, (jsonify({'error': 'Invalid or missing access key'}), 403))
+    return (True, None)
 
 def update_match_previous_link(match: Match, prev_match_id: str, tournament_url: str, is_new: bool = False) -> None:
     """
@@ -725,6 +780,356 @@ def tournament_register(tournament_url):
     return render_template('tournament_register.html', tournament=tournament, registered_teams=registered_teams)
 
 
+@bp.route('/api/camera-url')
+@login_required
+def camera_url_api():
+    """Generate camera recording URL with access key. Requires TO access."""
+    try:
+        tournament_url = request.args.get('tournament')
+        field_name = request.args.get('field')
+        
+        if not tournament_url or not field_name:
+            return jsonify({'error': 'Tournament and field parameters required'}), 400
+        
+        # Check if user is a TO for this tournament
+        if is_not_TO(tournament_url):
+            return jsonify({'error': 'Unauthorized: You must be a TO for this tournament'}), 403
+        
+        # Verify field exists
+        field = Field.query.filter_by(event=tournament_url, name=field_name).first()
+        if not field:
+            return jsonify({'error': f'Field "{field_name}" not found'}), 404
+        
+        # Generate the camera URL with key
+        access_key = generate_camera_key(tournament_url, field_name)
+        from flask import url_for
+        camera_url = url_for('tournaments.record_page', tournament_url=tournament_url, field=field_name, key=access_key, _external=True)
+        
+        return jsonify({'url': camera_url})
+    except Exception as e:
+        import traceback
+        print(f"Error in camera_url_api: {e}")
+        print(traceback.format_exc())
+        return jsonify({'error': f'Server error: {str(e)}'}), 500
+
+@bp.route('/<tournament_url>/record')
+def record_page(tournament_url):
+    """Point recording page for a field."""
+    # Validate camera access key
+    field_name = request.args.get('field', '').strip()
+    is_valid, error_response = require_camera_key(tournament_url, field_name)
+    if not is_valid:
+        return error_response[0], error_response[1]
+
+    tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
+    
+    if not field_name:
+        return render_template('record.html', tournament=tournament, field_name='', error='Field name is required'), 400
+    
+    # Verify field exists
+    field = Field.query.filter_by(event=tournament_url, name=field_name).first()
+    if not field:
+        return render_template('record.html', tournament=tournament, field_name=field_name, error=f'Field "{field_name}" not found'), 404
+    
+    return render_template('record.html', tournament=tournament, field_name=field_name)
+
+
+@bp.route('/api/record/match-status')
+def record_match_status():
+    """Check if a field has an active match for point recording. No access key required."""
+    from models import Point
+    
+    tournament_url = request.args.get('tournament')
+    field_name = request.args.get('field')
+    current_match_id = request.args.get('current_match_id')  # Optional: track specific match
+    
+    if not tournament_url or not field_name:
+        return jsonify({'error': 'Tournament and field parameters required'}), 400
+    
+    # Verify field exists
+    field = Field.query.filter_by(event=tournament_url, name=field_name).first()
+    if not field:
+        return jsonify({'error': 'Field not found'}), 404
+    
+    # Helper function to get points for a match
+    def get_points_data(match):
+        points = Point.query.filter_by(match=match.uuid).order_by(Point.stamp).all()
+        points_data = []
+        for p in points:
+            # Ensure timestamps are sent as UTC with 'Z' suffix
+            stamp_str = None
+            end_stamp_str = None
+            
+            if p.stamp:
+                # Convert to UTC if timezone-aware, or assume UTC if naive
+                if p.stamp.tzinfo is None:
+                    # Naive datetime - assume it's UTC
+                    stamp_str = p.stamp.replace(tzinfo=timezone.utc).isoformat()
+                else:
+                    # Timezone-aware - convert to UTC
+                    stamp_str = p.stamp.astimezone(timezone.utc).isoformat()
+                # Ensure 'Z' suffix for UTC
+                if not stamp_str.endswith('Z'):
+                    stamp_str = stamp_str.replace('+00:00', 'Z').replace('-00:00', 'Z')
+                    if not stamp_str.endswith('Z'):
+                        stamp_str += 'Z'
+            
+            if p.end_stamp:
+                if p.end_stamp.tzinfo is None:
+                    end_stamp_str = p.end_stamp.replace(tzinfo=timezone.utc).isoformat()
+                else:
+                    end_stamp_str = p.end_stamp.astimezone(timezone.utc).isoformat()
+                if not end_stamp_str.endswith('Z'):
+                    end_stamp_str = end_stamp_str.replace('+00:00', 'Z').replace('-00:00', 'Z')
+                    if not end_stamp_str.endswith('Z'):
+                        end_stamp_str += 'Z'
+            
+            point_data = {
+                'uuid': p.uuid,
+                'stamp': stamp_str,
+                'end_stamp': end_stamp_str
+            }
+            points_data.append(point_data)
+        return points_data
+    
+    # If we're tracking a specific match, check its status
+    if current_match_id:
+        match = Match.query.filter_by(uuid=current_match_id, event=tournament_url).first()
+        if match:
+            # Continue recording if match is still IN_PROGRESS (not yet finalized)
+            if match.status == 'IN_PROGRESS':
+                return jsonify({
+                    'hasActiveMatch': True,
+                    'match_id': match.uuid,
+                    'match_name': match.name,
+                    'start_time': match.confirmed_start_time.isoformat() if match.confirmed_start_time else None,
+                    'status': match.status,
+                    'points': get_points_data(match)
+                })
+            else:
+                # Match is completed or in another state - stop recording
+                return jsonify({
+                    'hasActiveMatch': False,
+                    'match_id': match.uuid,
+                    'status': match.status,
+                    'reason': 'match_completed'
+                })
+        else:
+            # Match not found - might have been deleted, stop recording
+            return jsonify({
+                'hasActiveMatch': False,
+                'reason': 'match_not_found'
+            })
+    
+    # No specific match tracked - find any active match on this field
+    match = Match.query.filter_by(event=tournament_url, field=field_name, status='IN_PROGRESS').first()
+    
+    if match:
+        return jsonify({
+            'hasActiveMatch': True,
+            'match_id': match.uuid,
+            'match_name': match.name,
+            'start_time': match.confirmed_start_time.isoformat() if match.confirmed_start_time else None,
+            'status': match.status,
+            'points': get_points_data(match)
+        })
+    else:
+        return jsonify({
+            'hasActiveMatch': False
+        })
+
+
+@bp.route('/api/record/upload-chunk', methods=['POST'])
+def record_upload_chunk():
+    """Receive and store a video chunk for point recording. No access key required."""
+    import os
+    from flask import current_app
+    from datetime import datetime
+    
+    tournament_url = request.form.get('tournament')
+    field_name = request.form.get('field')
+    match_id = request.form.get('match_id', '')
+    session_id = request.form.get('session_id')
+    chunk_index = request.form.get('chunk_index')
+    start_timestamp = request.form.get('start_timestamp')
+    chunk_start_timestamp = request.form.get('chunk_start_timestamp')  # Absolute world time when chunk started
+    chunk_duration = request.form.get('chunk_duration')  # Duration in milliseconds
+    point_id = request.form.get('point_id', '')
+
+    # Validate camera access key
+    is_valid, error_response = require_camera_key(tournament_url, field_name)
+    if not is_valid:
+        return error_response[0], error_response[1]
+    
+    if not tournament_url or not field_name or not session_id or chunk_index is None:
+        return jsonify({'error': 'Missing required parameters'}), 400
+    
+    # Verify field exists
+    field = Field.query.filter_by(event=tournament_url, name=field_name).first()
+    if not field:
+        return jsonify({'error': 'Field not found'}), 404
+    
+    if 'chunk' not in request.files:
+        return jsonify({'error': 'No chunk file provided'}), 400
+    
+    chunk_file = request.files['chunk']
+    if chunk_file.filename == '':
+        return jsonify({'error': 'Empty chunk file'}), 400
+    
+    # Create directory structure: static/uploads/videos/{tournament}/{field}/{session_id}/
+    upload_dir = os.path.join(
+        current_app.root_path, 
+        '../static/uploads/videos',
+        tournament_url,
+        field_name,
+        session_id
+    )
+    os.makedirs(upload_dir, exist_ok=True)
+    
+    # Save chunk with index in filename for ordering
+    chunk_filename = f'chunk_{int(chunk_index):06d}.webm'
+    chunk_path = os.path.join(upload_dir, chunk_filename)
+    chunk_file.save(chunk_path)
+    
+    # Load or create chunks metadata with file locking to prevent race conditions
+    chunks_meta_path = os.path.join(upload_dir, 'chunks_meta.json')
+    chunks_meta = {}
+    
+    # Use file locking to prevent concurrent write issues
+    try:
+        import fcntl
+        use_locking = True
+    except ImportError:
+        # fcntl not available (e.g., on Windows)
+        use_locking = False
+    
+    if use_locking:
+        try:
+            # Open file in read-write mode, create if it doesn't exist
+            file_mode = 'r+' if os.path.exists(chunks_meta_path) else 'w+'
+            with open(chunks_meta_path, file_mode) as lock_file:
+                # Acquire exclusive lock
+                try:
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except IOError:
+                    # If we can't get the lock immediately, wait for it
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+                
+                # Read existing metadata
+                lock_file.seek(0)
+                content = lock_file.read()
+                if content.strip():
+                    try:
+                        chunks_meta = json.loads(content)
+                    except (json.JSONDecodeError, ValueError):
+                        chunks_meta = {}
+                
+                # Store chunk metadata
+                chunk_meta = {
+                    'chunk_index': int(chunk_index),
+                    'filename': chunk_filename,
+                    'chunk_start_timestamp': float(chunk_start_timestamp) if chunk_start_timestamp else None,  # Absolute world time in milliseconds
+                    'chunk_duration': float(chunk_duration) if chunk_duration else None,  # Duration in milliseconds
+                    'point_id': point_id if point_id else None,
+                    'upload_timestamp': datetime.now(timezone.utc).isoformat()
+                }
+                chunks_meta[str(chunk_index)] = chunk_meta  # Use string key for consistency
+                
+                # Write metadata back
+                lock_file.seek(0)
+                lock_file.truncate(0)
+                json.dump(chunks_meta, lock_file, indent=2)
+                lock_file.flush()
+                # Lock is released when file is closed
+        except (IOError, OSError) as e:
+            # Fallback if file locking fails (e.g., on NFS)
+            use_locking = False
+    
+    if not use_locking:
+        # Fallback: read-modify-write without locking (less safe but works on all platforms)
+        # This is still better than nothing, but concurrent uploads might lose some metadata
+        if os.path.exists(chunks_meta_path):
+            try:
+                with open(chunks_meta_path, 'r') as f:
+                    chunks_meta = json.load(f)
+            except (json.JSONDecodeError, IOError):
+                chunks_meta = {}
+        
+        chunk_meta = {
+            'chunk_index': int(chunk_index),
+            'filename': chunk_filename,
+            'chunk_start_timestamp': float(chunk_start_timestamp) if chunk_start_timestamp else None,
+            'chunk_duration': float(chunk_duration) if chunk_duration else None,
+            'point_id': point_id if point_id else None,
+            'upload_timestamp': datetime.now(timezone.utc).isoformat()
+        }
+        chunks_meta[str(chunk_index)] = chunk_meta
+        
+        with open(chunks_meta_path, 'w') as f:
+            json.dump(chunks_meta, f, indent=2)
+    
+    # Save metadata file (first chunk only)
+    if chunk_index == '0' or chunk_index == 0:
+        metadata = {
+            'tournament': tournament_url,
+            'field': field_name,
+            'match_id': match_id,
+            'session_id': session_id,
+            'start_timestamp': start_timestamp,
+        }
+        metadata_path = os.path.join(upload_dir, 'metadata.json')
+        with open(metadata_path, 'w') as f:
+            json.dump(metadata, f, indent=2)
+    
+    return jsonify({
+        'success': True,
+        'chunk_index': chunk_index,
+        'session_id': session_id
+    })
+
+@bp.route('/api/record/finalize', methods=['POST'])
+def record_finalize():
+    data = request.json
+    tournament_url = data.get('tournament')
+    field_name = data.get('field')
+    session_id = data.get('session_id')
+    match_id = data.get('match_id')
+    camera_name = data.get('camera_name')
+
+    # Validate camera access key
+    is_valid, error_response = require_camera_key(tournament_url, field_name)
+    if not is_valid:
+        return error_response[0], error_response[1]
+    
+    if not tournament_url or not field_name or not session_id:
+        return jsonify({'error': 'Missing required parameters'}), 400
+    
+    # Verify field exists
+    if not Field.query.filter_by(event=tournament_url, name=field_name).first():
+        return jsonify({'error': 'Field not found'}), 404
+
+    
+    # Directory where chunks are stored
+    chunk_dir = path.join(
+        current_app.root_path,
+        '../static/uploads/videos',
+        tournament_url,
+        field_name,
+        session_id
+    )
+    if not path.exists(chunk_dir):
+        return jsonify({'error': 'Session directory not found'}), 404
+
+    _ = executor.submit(finalize_recording_worker, current_app.logger, tournament_url, field_name, session_id, match_id, camera_name, chunk_dir)
+
+    # For now, just return success
+    return jsonify({
+        'success': True,
+        'message': 'all recordings uploaded; processing has begun',
+        'session_id': session_id,
+        'match_id': match_id
+    })
+    
 @bp.route('/<tournament_url>/update-settings', methods=['POST'])
 @login_required
 def update_tournament_settings(tournament_url):

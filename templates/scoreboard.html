@@ -203,9 +203,6 @@
                     {% for set_num in sets %}
                     <td class="score-cell" id="team1-set-{{ set_num }}">{{ scores_by_set[set_num].team1_score }}</td>
                     {% endfor %}
-                    {% if not sets %}
-                    <td class="score-cell" style="color: rgba(255, 255, 255, 0.5);">-</td>
-                    {% endif %}
                 </tr>
                 <tr class="team-row">
                     <td class="team-cell">
@@ -219,9 +216,6 @@
                     {% for set_num in sets %}
                     <td class="score-cell" id="team2-set-{{ set_num }}">{{ scores_by_set[set_num].team2_score }}</td>
                     {% endfor %}
-                    {% if not sets %}
-                    <td class="score-cell" style="color: rgba(255, 255, 255, 0.5);">-</td>
-                    {% endif %}
                 </tr>
             </tbody>
         </table>
@@ -241,6 +235,34 @@
     {% endif %}
     
     <script>
+        // Image caching: Preload team profile images to leverage browser's HTTP cache
+        // This ensures images are in the browser's cache before they're needed
+        function preloadImages() {
+            const teamPhotos = document.querySelectorAll('.team-photo');
+            teamPhotos.forEach(img => {
+                if (img.src && !img.complete) {
+                    // Create a new Image object to preload (browser will use HTTP cache)
+                    const preloadImg = new Image();
+                    preloadImg.src = img.src;
+                }
+            });
+        }
+        
+        // Preload images immediately (don't wait for DOMContentLoaded)
+        // Also preload on page load to ensure cache is warm
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', preloadImages);
+        } else {
+            preloadImages();
+        }
+        
+        // Also preload on page visibility change (when iframe becomes visible)
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden) {
+                preloadImages();
+            }
+        });
+        
         const tournamentUrl = '{{ tournament_url }}';
         const fieldName = '{{ field_name }}';
         {% if match %}
@@ -351,21 +373,16 @@
                         }
                     }
                     if(isStones) {
+                        const stonesEl = document.getElementById('stones-remaining');
+                        const progressEl = document.getElementById('stones-progress');
                         if(data.points.length > 0) {
+                            start_stamp = new Date(data.points[data.points.length - 1].stamp).getTime();
+                            stones_at_start = data.points[data.points.length - 1].stones_at_start;
                             is_point_in_progress = data.points[data.points.length - 1].end_stamp === null;
-                            if(is_point_in_progress) {
-                                start_stamp = new Date(data.points[data.points.length - 1].stamp).getTime();
-                                stones_at_start = data.points[data.points.length - 1].stones_at_start;
-                            }
-                        } else {
-                            is_point_in_progress = false;
-                        }
-                        if(!is_point_in_progress) {
-                            const stonesEl = document.getElementById('stones-remaining');
-                            const progressEl = document.getElementById('stones-progress');
-                            stonesEl.textContent = data.stones_remaining;
-                            const percentage = (data.stones_remaining / stonesPerSet) * 100;
-                            progressEl.style.width = Math.max(0, Math.min(100, percentage)) + '%';
+                            end_stamp = data.points[data.points.length - 1].end_stamp ? new Date(data.points[data.points.length - 1].end_stamp).getTime() : Date.now().getTime();
+                            stonesEl.textContent = stones_at_start - (Math.floor(end_stamp/1500) - Math.floor(start_stamp/1500));
+                            const percentage = ((stones_at_start - (Math.floor(end_stamp/1500) - Math.floor(start_stamp/1500))) / stonesPerSet) * 100;
+                            progressEl.style.width = Math.max(0, percentage)%100 + '%';
                         }
                     }
                 })
