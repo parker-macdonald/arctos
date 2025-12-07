@@ -4,6 +4,8 @@ __pycache__
 instance/*
 static/uploads/*
 run
+.venv
+.pytest_cache
 *.csr
 *.key
 *.crt
