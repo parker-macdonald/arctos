@@ -1,6 +1,6 @@
 import json
 from models import Match, Point, db
-from os import path
+from os import path, listdir, remove
 import subprocess 
 from itertools import groupby
 from datetime import datetime, timezone
@@ -210,3 +210,10 @@ def finalize_recording_worker(logger, tournament_url, field_name, session_id, ma
     }
     match.camera_stream_starts = json.dumps(stream_starts)
     db.session.commit()
+
+
+    # cleanup all the `chunks`, the raw points, and the clipped points.
+    # keep fixedstamps since that's reliably created, in case there's an issue later on in the pipeline.
+    for file in listdir(chunk_dir):
+        if ('final_video' not in file) and ('fixedstamps' not in file):
+            remove(path.join(chunk_dir, file))
