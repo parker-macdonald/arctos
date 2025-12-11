@@ -66,6 +66,8 @@ def register():
             user = Team(id=username, name=name)
             user.set_password(password)
         
+        if username.lower() in ('jeb', 'jebediah'): user.profile_photo = 'jeb.png'
+        
         db.session.add(user)
         db.session.commit()
         
@@ -267,7 +269,7 @@ def google_complete_profile():
                 name=display_name,
                 google_id=oauth_data['google_id'],
                 email=email,
-                profile_photo=None  # No profile photo from Google
+                profile_photo=None if username.lower() not in ('jeb', 'jebediah') else 'jeb.png'
             )
         else:
             user = Team(
@@ -275,7 +277,7 @@ def google_complete_profile():
                 name=display_name,
                 google_id=oauth_data['google_id'],
                 email=email,
-                profile_photo=None  # No profile photo from Google
+                profile_photo=None if username.lower() not in ('jeb', 'jebediah') else 'jeb.png'
             )
         
         db.session.add(user)
