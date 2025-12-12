@@ -8,6 +8,7 @@ dependencies = [
     "authlib==1.6.5",
     "bcrypt==5.0.0",
     "bleach==6.3.0",
+    "cowponder>=0.1.8",
     "flask==3.1.2",
     "flask-executor>=1.0.0",
     "flask-login==0.6.3",

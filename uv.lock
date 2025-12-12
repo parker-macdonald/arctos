@@ -10,6 +10,7 @@ dependencies = [
     { name = "authlib" },
     { name = "bcrypt" },
     { name = "bleach" },
+    { name = "cowponder" },
     { name = "flask" },
     { name = "flask-executor" },
     { name = "flask-login" },
@@ -33,6 +34,7 @@ requires-dist = [
     { name = "authlib", specifier = "==1.6.5" },
     { name = "bcrypt", specifier = "==5.0.0" },
     { name = "bleach", specifier = "==6.3.0" },
+    { name = "cowponder", specifier = ">=0.1.8" },
     { name = "flask", specifier = "==3.1.2" },
     { name = "flask-executor", specifier = ">=1.0.0" },
     { name = "flask-login", specifier = "==0.6.3" },
@@ -429,6 +431,19 @@ toml = [
 ]
 
 [[package]]
+name = "cowponder"
+version = "0.1.8"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "platformdirs" },
+    { name = "requests" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/01/52/9bc2f15b37ee802c96a240550ec41918873508f4229088277a13af822ca3/cowponder-0.1.8.tar.gz", hash = "sha256:6771cc598fd5a3224bb11951d1e5e567011b6303183ab8ce7754cbee8592b667", size = 5588, upload-time = "2025-12-09T04:37:32.391Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/7f/01/3419dce8a354b16c2d37b20013a8e79b77254ee00e67573535bd02385a6c/cowponder-0.1.8-py3-none-any.whl", hash = "sha256:f376b831ef0a24b1f29e3ea11478ca18c60ad036cd94b7432616a42cec48bfa5", size = 6682, upload-time = "2025-12-09T04:37:31.184Z" },
+]
+
+[[package]]
 name = "cryptography"
 version = "46.0.3"
 source = { registry = "https://pypi.org/simple" }
@@ -769,6 +784,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/a1/d4/1fc4078c65507b51b96ca8f8c3ba19e6a61c8253c72794544580a7b6c24d/packaging-25.0.tar.gz", hash = "sha256:d443872c98d677bf60f6a1f2f8c1cb748e8fe762d2bf9d3148b5599295b0fc4f", size = 165727, upload-time = "2025-04-19T11:48:59.673Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/20/12/38679034af332785aac8774540895e234f4d07f7545804097de4b666afd8/packaging-25.0-py3-none-any.whl", hash = "sha256:29572ef2b1f17581046b3a2227d5c611fb25ec70ca1ba8554b24b0e69331a484", size = 66469, upload-time = "2025-04-19T11:48:57.875Z" },
+]
+
+[[package]]
+name = "platformdirs"
+version = "4.5.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/cf/86/0248f086a84f01b37aaec0fa567b397df1a119f73c16f6c7a9aac73ea309/platformdirs-4.5.1.tar.gz", hash = "sha256:61d5cdcc6065745cdd94f0f878977f8de9437be93de97c1c12f853c9c0cdcbda", size = 21715, upload-time = "2025-12-05T13:52:58.638Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/cb/28/3bfe2fa5a7b9c46fe7e13c97bda14c895fb10fa2ebf1d0abb90e0cea7ee1/platformdirs-4.5.1-py3-none-any.whl", hash = "sha256:d03afa3963c806a9bed9d5125c8f4cb2fdaf74a55ab60e5d59b3fde758104d31", size = 18731, upload-time = "2025-12-05T13:52:56.823Z" },
 ]
 
 [[package]]
