@@ -66,11 +66,7 @@
         {% endfor %}
     {% else %}
         <div class="col-12">
-            <div class="alert alert-info">
-                <h4>No players registered yet</h4>
-                <p>Be the first to register as a player!</p>
-                <a href="{{ url_for('auth.register', type='player') }}" class="btn btn-primary">Register Player</a>
-            </div>
+            <p>No players found.</p>
         </div>
     {% endif %}
 </div>
