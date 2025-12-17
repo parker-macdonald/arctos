@@ -1,8 +1,8 @@
-name: Deploy to prod
+name: Deploy dev server
 
 on:
   push:
-    branches: [ main ]
+    branches: [ dev ]
 
 jobs:
   deploy:
@@ -12,7 +12,7 @@ jobs:
     - name: deplot via ssh pull
       uses: appleboy/ssh-action@v1.0.3
       with:
-        host: ${{ secrets.PROD_SERVER_HOST }}
-        username: ${{ secrets.PROD_SERVER_USER }}
+        host: ${{ secrets.DEV_SERVER_HOST}}
+        username: ${{ secrets.DEV_SERVER_USER }}
         key: ${{ secrets.BUILD_SERVER_SSH_KEY }}
         script: ~/arctos/update.sh
