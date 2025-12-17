@@ -701,7 +701,8 @@ def tournament_setup(tournament_url):
     ).filter_by(event=tournament_url).order_by(Match.nominal_start_time).all()
     fields = Field.query.filter_by(event=tournament_url).all()
     tags = Tag.query.filter_by(event=tournament_url).all()
-    team_registrations = TeamRegistration.query.filter_by(event=tournament_url).all()
+    # Only confirmed teams should be eligible for tag-to-team conversion.
+    team_registrations = TeamRegistration.query.filter_by(event=tournament_url, status="CONFIRMED").all()
     
     # Detect conflicts across all matches
     conflicts = detect_match_conflicts(tournament_url)
