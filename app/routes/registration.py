@@ -6,7 +6,7 @@ from flask_login import login_required, current_user
 from datetime import datetime
 from models import (
     Tournament, TeamRegistration, PlayerRegistration, Team, Player, TO,
-    TeamInvitation, db
+    db
 )
 from app.utils.decorators import require_tournament_organizer
 from app.services.registration_service import RegistrationService
@@ -264,11 +264,6 @@ def deregister_any_team(tournament_url):
             team=team_id
         ).update({'status': 'CANCELLED'})
         
-        TeamInvitation.query.filter_by(
-            event=tournament_url,
-            team=team_id
-        ).update({'status': 'DECLINED'})
-        
         db.session.commit()
         flash('Team successfully deregistered', 'success')
     else:
@@ -307,16 +302,7 @@ def deregister_any_player(tournament_url):
     
     if player_registration:
         player_registration.status = 'CANCELLED'
-        
-        if player_registration.team:
-            invitation = TeamInvitation.query.filter_by(
-                event=tournament_url,
-                team=player_registration.team,
-                player=player_id
-            ).first()
-            if invitation:
-                invitation.status = 'DECLINED'
-        
+
         db.session.commit()
         flash('Player successfully deregistered', 'success')
     else:
@@ -478,42 +464,11 @@ def update_player_registration(tournament_url):
     
     # If team changed, require re-approval
     if old_team_id != new_team_id:
-        # Decline old invitation if exists
-        if old_team_id:
-            old_invitation = TeamInvitation.query.filter_by(
-                event=tournament_url,
-                team=old_team_id,
-                player=current_user.id
-            ).first()
-            if old_invitation:
-                old_invitation.status = 'DECLINED'
-        
         # Update team
         player_registration.team = new_team_id
         
-        # If joining a new team, create or reactivate invitation and set status to pending
+        # If joining a new team, set status to pending team approval
         if new_team_id:
-            # Check if invitation already exists (might be from a previous request)
-            existing_invitation = TeamInvitation.query.filter_by(
-                event=tournament_url,
-                team=new_team_id,
-                player=current_user.id
-            ).first()
-            
-            if existing_invitation:
-                # Reactivate the invitation if it was declined
-                if existing_invitation.status == 'DECLINED':
-                    existing_invitation.status = 'PENDING'
-            else:
-                # Create new invitation
-                invitation = TeamInvitation(
-                    event=tournament_url,
-                    team=new_team_id,
-                    player=current_user.id,
-                    status='PENDING'
-                )
-                db.session.add(invitation)
-            
             player_registration.status = 'PENDING_TEAM_APPROVAL'
             flash('Team changed. Your new team must approve your request.', 'warning')
         else:
@@ -531,7 +486,7 @@ def update_player_registration(tournament_url):
 @bp.route('/<tournament_url>/invitations')
 @login_required
 def tournament_invitations(tournament_url):
-    """Team invitation management page."""
+    """Team roster management page (pending player registrations + roster)."""
     if current_user.__class__.__name__ != 'Team':
         flash('Only teams can view invitations', 'error')
         return redirect(f'/{tournament_url}')
@@ -548,24 +503,19 @@ def tournament_invitations(tournament_url):
         flash('You are not registered for this tournament', 'error')
         return redirect(f'/{tournament_url}')
     
-    invitations = TeamInvitation.query.filter_by(
+    pending_regs = PlayerRegistration.query.filter_by(
         event=tournament_url,
         team=current_user.id,
-        status='PENDING'
+        status='PENDING_TEAM_APPROVAL'
     ).all()
     
-    invitations_with_players = []
-    for inv in invitations:
-        player = Player.query.get(inv.player)
-        player_reg = PlayerRegistration.query.filter_by(
-            event=tournament_url,
-            player=inv.player
-        ).first()
+    pending_with_players = []
+    for reg in pending_regs:
+        player = Player.query.get(reg.player)
         if player:
-            invitations_with_players.append({
-                'invitation': inv,
+            pending_with_players.append({
+                'registration': reg,
                 'player': player,
-                'player_registration': player_reg
             })
     
     # Calculate current team size (confirmed players on this team)
@@ -593,7 +543,7 @@ def tournament_invitations(tournament_url):
     return render_template('tournament_invitations.html',
                          tournament=tournament,
                          team_registration=team_registration,
-                         invitations=invitations_with_players,
+                         invitations=pending_with_players,
                          current_team_size=current_team_size,
                          team_roster=team_roster)
 
@@ -601,31 +551,21 @@ def tournament_invitations(tournament_url):
 @bp.route('/<tournament_url>/invitation/<int:invitation_id>/accept', methods=['POST'])
 @login_required
 def accept_invitation(tournament_url, invitation_id):
-    """Accept a team invitation."""
+    """Accept a pending player registration (legacy URL kept for compatibility)."""
     if current_user.__class__.__name__ != 'Team':
         flash('Only teams can accept invitations', 'error')
         return redirect(f'/{tournament_url}/invitations')
     
-    invitation = TeamInvitation.query.filter_by(
+    player_registration = PlayerRegistration.query.filter_by(
         id=invitation_id,
-        team=current_user.id,
         event=tournament_url,
-        status='PENDING'
+        team=current_user.id,
+        status='PENDING_TEAM_APPROVAL'
     ).first_or_404()
     
-    player_registration = PlayerRegistration.query.filter_by(
-        event=tournament_url,
-        player=invitation.player,
-        team=current_user.id
-    ).first()
-    
-    if player_registration:
-        player_registration.status = 'CONFIRMED'
-        invitation.status = 'ACCEPTED'
-        db.session.commit()
-        flash('Invitation accepted! Player is now on your team.', 'success')
-    else:
-        flash('Player registration not found', 'error')
+    player_registration.status = 'CONFIRMED'
+    db.session.commit()
+    flash('Player approved! They are now on your team.', 'success')
     
     return redirect(f'/{tournament_url}/invitations')
 
@@ -633,29 +573,20 @@ def accept_invitation(tournament_url, invitation_id):
 @bp.route('/<tournament_url>/invitation/<int:invitation_id>/decline', methods=['POST'])
 @login_required
 def decline_invitation(tournament_url, invitation_id):
-    """Decline a team invitation."""
+    """Decline a pending player registration (legacy URL kept for compatibility)."""
     if current_user.__class__.__name__ != 'Team':
         flash('Only teams can decline invitations', 'error')
         return redirect(f'/{tournament_url}/invitations')
     
-    invitation = TeamInvitation.query.filter_by(
+    player_registration = PlayerRegistration.query.filter_by(
         id=invitation_id,
-        team=current_user.id,
         event=tournament_url,
-        status='PENDING'
+        team=current_user.id,
+        status='PENDING_TEAM_APPROVAL'
     ).first_or_404()
     
-    invitation.status = 'DECLINED'
-    player_registration = PlayerRegistration.query.filter_by(
-        event=tournament_url,
-        player=invitation.player,
-        team=current_user.id
-    ).first()
-    
-    if player_registration:
-        player_registration.status = 'REJECTED'
-    
+    player_registration.status = 'REJECTED'
     db.session.commit()
-    flash('Invitation declined', 'info')
+    flash('Player request declined', 'info')
     return redirect(f'/{tournament_url}/invitations')
 

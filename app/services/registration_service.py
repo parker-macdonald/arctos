@@ -97,30 +97,35 @@ class RegistrationService:
         jersey_number: str = "",
         jersey_name: str = "",
     ) -> Result["PlayerRegistration", ArctosError]:
-        from models import PlayerRegistration, TeamInvitation, db
+        from models import PlayerRegistration, db
 
         tournament = RegistrationService._get_tournament(tournament_url).Q()
         RegistrationService._require_registration_open_for_register(tournament).Q()
 
-        existing_reg = (
-            PlayerRegistration.query.filter_by(event=tournament_url, player=player_id)
-            .filter(PlayerRegistration.status.in_(["PENDING_TEAM_APPROVAL", "CONFIRMED"]))
-            .first()
-        )
-        if existing_reg:
-            return Err(ValidationError("You are already registered for this tournament"))
+        existing_reg = PlayerRegistration.query.filter_by(event=tournament_url, player=player_id).first()
 
         team_id = (team_id or "").strip() or None
         status = "CONFIRMED" if not team_id else "PENDING_TEAM_APPROVAL"
 
-        player_registration = PlayerRegistration(
-            event=tournament_url,
-            player=player_id,
-            team=team_id,
-            jersey_number=jersey_number or "",
-            jersey_name=jersey_name or "",
-            status=status,
-        )
+        # Enforce exactly one PlayerRegistration row per (event, player).
+        # If a player was previously rejected/cancelled, allow resubmission by updating that row.
+        if existing_reg:
+            if existing_reg.status not in ("REJECTED", "CANCELLED"):
+                return Err(ValidationError("You already have a registration for this tournament"))
+            player_registration = existing_reg
+            player_registration.team = team_id
+            player_registration.jersey_number = jersey_number or ""
+            player_registration.jersey_name = jersey_name or ""
+            player_registration.status = status
+        else:
+            player_registration = PlayerRegistration(
+                event=tournament_url,
+                player=player_id,
+                team=team_id,
+                jersey_number=jersey_number or "",
+                jersey_name=jersey_name or "",
+                status=status,
+            )
 
         # Auto-mark as paid if registration fee is zero
         if not tournament.player_reg_fee or tournament.player_reg_fee == 0:
@@ -130,17 +135,13 @@ class RegistrationService:
 
         db.session.add(player_registration)
 
-        if team_id:
-            invitation = TeamInvitation(event=tournament_url, team=team_id, player=player_id)
-            db.session.add(invitation)
-
         db.session.commit()
         return Ok(player_registration)
 
     @staticmethod
     @allow_Q
     def deregister_team(tournament_url: str, team_id: str) -> Result[None, ArctosError]:
-        from models import Tournament, TeamRegistration, PlayerRegistration, TeamInvitation, db
+        from models import Tournament, TeamRegistration, PlayerRegistration, db
 
         tournament = RegistrationService._get_tournament(tournament_url).Q()
         RegistrationService._require_registration_open_for_deregister(tournament).Q()
@@ -156,9 +157,6 @@ class RegistrationService:
         PlayerRegistration.query.filter_by(event=tournament_url, team=team_id).update(
             {"status": "CANCELLED"}
         )
-        TeamInvitation.query.filter_by(event=tournament_url, team=team_id).update(
-            {"status": "DECLINED"}
-        )
 
         db.session.commit()
         return Ok(None)
@@ -166,7 +164,7 @@ class RegistrationService:
     @staticmethod
     @allow_Q
     def deregister_player(tournament_url: str, player_id: str) -> Result[None, ArctosError]:
-        from models import Tournament, PlayerRegistration, TeamInvitation, db
+        from models import Tournament, PlayerRegistration, db
 
         tournament = RegistrationService._get_tournament(tournament_url).Q()
         RegistrationService._require_registration_open_for_deregister(tournament).Q()
@@ -178,13 +176,6 @@ class RegistrationService:
             return Err(ValidationError("You are not registered for this tournament"))
 
         player_registration.status = "CANCELLED"
-
-        if player_registration.team:
-            invitation = TeamInvitation.query.filter_by(
-                event=tournament_url, team=player_registration.team, player=player_id
-            ).first()
-            if invitation:
-                invitation.status = "DECLINED"
 
         db.session.commit()
         return Ok(None)

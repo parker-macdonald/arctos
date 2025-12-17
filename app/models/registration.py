@@ -43,14 +43,3 @@ class PlayerRegistration(db.Model):
     payment_notes = db.Column(db.Text)
 
 
-class TeamInvitation(db.Model):
-    __tablename__ = "team_invitations"
-
-    id = db.Column(db.Integer, primary_key=True)
-    event = db.Column(db.String(100), db.ForeignKey("tournaments.url"), nullable=False)
-    team = db.Column(db.String(50), db.ForeignKey("teams.id"), nullable=False)
-    player = db.Column(db.String(50), db.ForeignKey("players.id"), nullable=False)
-    status = db.Column(db.String(20), default="PENDING")  # PENDING, ACCEPTED, DECLINED
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-
-

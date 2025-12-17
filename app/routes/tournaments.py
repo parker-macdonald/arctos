@@ -1982,7 +1982,7 @@ def delete_tournament(tournament_url):
     # Import all necessary models
     from models import (
         Point, MatchNote, TeamRecord, PlayerRecord, Match,
-        HeadRef, TeamInvitation, PlayerRegistration, TeamRegistration,
+        HeadRef, PlayerRegistration, TeamRegistration,
         Field, Tag, SideComp, SideCompResult
     )
     
@@ -2035,25 +2035,22 @@ def delete_tournament(tournament_url):
     # 9. Delete HeadRef (depends on Tournament)
     HeadRef.query.filter_by(event=tournament_url).delete(synchronize_session=False)
     
-    # 10. Delete TeamInvitation (depends on Tournament)
-    TeamInvitation.query.filter_by(event=tournament_url).delete(synchronize_session=False)
-    
-    # 11. Delete PlayerRegistration (depends on Tournament)
+    # 10. Delete PlayerRegistration (depends on Tournament)
     PlayerRegistration.query.filter_by(event=tournament_url).delete(synchronize_session=False)
     
-    # 12. Delete TeamRegistration (depends on Tournament)
+    # 11. Delete TeamRegistration (depends on Tournament)
     TeamRegistration.query.filter_by(event=tournament_url).delete(synchronize_session=False)
     
-    # 13. Delete Field (depends on Tournament)
+    # 12. Delete Field (depends on Tournament)
     Field.query.filter_by(event=tournament_url).delete(synchronize_session=False)
     
-    # 14. Delete Tag (depends on Tournament)
+    # 13. Delete Tag (depends on Tournament)
     Tag.query.filter_by(event=tournament_url).delete(synchronize_session=False)
     
-    # 15. Delete TO (depends on Tournament)
+    # 14. Delete TO (depends on Tournament)
     TO.query.filter_by(event=tournament_url).delete(synchronize_session=False)
     
-    # 16. Delete Tournament (last)
+    # 15. Delete Tournament (last)
     db.session.delete(tournament)
     
     db.session.commit()

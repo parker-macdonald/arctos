@@ -185,11 +185,9 @@ def delete_team_account(team_id):
         flash('You can only delete your own team account', 'error')
         return redirect('/teams/' + team_id)
     
-    from models import TeamInvitation
     team = Team.query.get_or_404(team_id)
     
     PlayerRegistration.query.filter_by(team=team_id).delete()
-    TeamInvitation.query.filter_by(team=team_id).delete()
     
     db.session.delete(team)
     db.session.commit()

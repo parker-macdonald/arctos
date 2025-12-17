@@ -62,6 +62,16 @@ def test_player_register_and_deregister_flow(client, tournament, player):
     assert reg.paid is True
     assert (reg.paid_at is None) or isinstance(reg.paid_at, datetime)
 
+    # Registering again should NOT create a second registration row.
+    resp_dup = client.post(
+        f"/{tournament_url}/register-player",
+        data={"jersey_name": "Alice2", "jersey_number": "8"},
+        follow_redirects=False,
+    )
+    assert resp_dup.status_code in (301, 302, 303, 307, 308)
+    regs = PlayerRegistration.query.filter_by(event=tournament_url, player=player_id).all()
+    assert len(regs) == 1
+
     resp2 = client.post(f"/{tournament_url}/deregister-player", follow_redirects=False)
     assert resp2.status_code in (301, 302, 303, 307, 308)
 
