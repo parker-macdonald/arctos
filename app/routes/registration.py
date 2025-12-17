@@ -8,6 +8,11 @@ from models import (
     Tournament, TeamRegistration, PlayerRegistration, Team, Player, TO,
     TeamInvitation, db
 )
+from app.utils.decorators import require_tournament_organizer
+from app.services.registration_service import RegistrationService
+from app.utils.user_helpers import is_player, is_team
+from app.error_values import Ok, Err
+from app.utils.result_helpers import public_error_message
 
 bp = Blueprint('registration', __name__)
 
@@ -16,222 +21,91 @@ bp = Blueprint('registration', __name__)
 @login_required
 def register_team_for_tournament(tournament_url):
     """Register a team for a tournament."""
-    if current_user.__class__.__name__ != 'Team':
+    if not is_team(current_user):
         flash('Only teams can register for tournaments', 'error')
         return redirect(f'/{tournament_url}/register')
-    
-    tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
-    
-    if not tournament.registration_open:
-        flash('Registration is not open for this tournament', 'error')
-        return redirect(f'/{tournament_url}/register')
-    
-    existing_reg = TeamRegistration.query.filter_by(
-        event=tournament_url,
-        team=current_user.id,
-        status='CONFIRMED'
-    ).first()
-    
-    if existing_reg:
-        flash('Your team is already registered for this tournament', 'warning')
-        return redirect(f'/{tournament_url}/register')
-    
-    if tournament.n_max_teams:
-        current_team_count = TeamRegistration.query.filter_by(
-            event=tournament_url,
-            status='CONFIRMED'
-        ).count()
-        
-        if current_team_count >= tournament.n_max_teams:
-            flash(f'Maximum number of teams ({tournament.n_max_teams}) already registered', 'error')
-            return redirect(f'/{tournament_url}/register')
-    
-    # Validate pseudonym doesn't contain "::"
-    pseudonym = request.form['pseudonym']
-    if '::' in pseudonym:
-        flash('Team pseudonyms cannot contain "::"', 'error')
-        return redirect(f'/{tournament_url}/register')
-    
-    team_registration = TeamRegistration(
-        event=tournament_url,
-        team=current_user.id,
-        pseudonym=pseudonym
+
+    res = RegistrationService.register_team(
+        tournament_url, current_user.id, request.form.get("pseudonym", "")
     )
-    
-    # Auto-mark as paid if registration fee is zero
-    if not tournament.team_reg_fee or tournament.team_reg_fee == 0:
-        team_registration.paid = True
-        team_registration.amount_paid = 0.0
-        team_registration.paid_at = datetime.utcnow()
-    
-    db.session.add(team_registration)
-    db.session.commit()
-    
-    flash('Team registration successful!', 'success')
-    return redirect(f'/{tournament_url}')
+    match res:
+        case Ok(_):
+            flash('Team registration successful!', 'success')
+            return redirect(f'/{tournament_url}')
+        case Err(err):
+            flash(public_error_message(err), 'error')
+            return redirect(f'/{tournament_url}/register')
 
 
 @bp.route('/<tournament_url>/register-player', methods=['POST'])
 @login_required
 def register_player_for_tournament(tournament_url):
     """Register a player for a tournament."""
-    if current_user.__class__.__name__ != 'Player':
+    if not is_player(current_user):
         flash('Only players can register for tournaments', 'error')
         return redirect(f'/{tournament_url}/register')
-    
-    tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
-    
-    if not tournament.registration_open:
-        flash('Registration is not open for this tournament', 'error')
-        return redirect(f'/{tournament_url}/register')
-    
-    existing_reg = PlayerRegistration.query.filter_by(
-        event=tournament_url,
-        player=current_user.id
-    ).filter(
-        PlayerRegistration.status.in_(['PENDING_TEAM_APPROVAL', 'CONFIRMED'])
-    ).first()
-    
-    if existing_reg:
-        flash('You are already registered for this tournament', 'warning')
-        return redirect(f'/{tournament_url}/register')
-    
-    team_id = request.form.get('team', '') or None
-    
-    status = 'CONFIRMED' if not team_id else 'PENDING_TEAM_APPROVAL'
-    
-    player_registration = PlayerRegistration(
-        event=tournament_url,
-        player=current_user.id,
-        team=team_id,
-        jersey_number=request.form.get('jersey_number', ''),
-        jersey_name=request.form.get('jersey_name', ''),
-        status=status
+
+    team_id = request.form.get("team", "") or None
+    res = RegistrationService.register_player(
+        tournament_url,
+        current_user.id,
+        team_id,
+        jersey_number=request.form.get("jersey_number", ""),
+        jersey_name=request.form.get("jersey_name", ""),
     )
-    
-    # Auto-mark as paid if registration fee is zero
-    if not tournament.player_reg_fee or tournament.player_reg_fee == 0:
-        player_registration.paid = True
-        player_registration.amount_paid = 0.0
-        player_registration.paid_at = datetime.utcnow()
-    
-    db.session.add(player_registration)
-    
-    if team_id:
-        invitation = TeamInvitation(
-            event=tournament_url,
-            team=team_id,
-            player=current_user.id
-        )
-        db.session.add(invitation)
-    
-    db.session.commit()
-    
-    if team_id:
-        flash('Registration submitted! The team will need to approve your request.', 'success')
-    else:
-        flash('Player registration successful! You are now registered for the tournament.', 'success')
-    
-    return redirect(f'/{tournament_url}')
+    match res:
+        case Ok(_):
+            if team_id:
+                flash('Registration submitted! The team will need to approve your request.', 'success')
+            else:
+                flash('Player registration successful! You are now registered for the tournament.', 'success')
+            return redirect(f'/{tournament_url}')
+        case Err(err):
+            flash(public_error_message(err), 'error')
+            return redirect(f'/{tournament_url}/register')
 
 
 @bp.route('/<tournament_url>/deregister-team', methods=['POST'])
 @login_required
 def deregister_team_from_tournament(tournament_url):
     """Deregister a team from a tournament."""
-    if current_user.__class__.__name__ != 'Team':
+    if not is_team(current_user):
         flash('Only teams can deregister from tournaments', 'error')
         return redirect(f'/{tournament_url}')
-    
-    tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
-    
-    if not tournament.registration_open:
-        flash('Registration changes are locked. You can no longer deregister.', 'error')
-        return redirect(f'/{tournament_url}')
-    
-    team_registration = TeamRegistration.query.filter_by(
-        event=tournament_url,
-        team=current_user.id,
-        status='CONFIRMED'
-    ).first()
-    
-    if not team_registration:
-        flash('You are not registered for this tournament', 'error')
-        return redirect(f'/{tournament_url}')
-    
-    team_registration.status = 'CANCELLED'
-    
-    PlayerRegistration.query.filter_by(
-        event=tournament_url,
-        team=current_user.id
-    ).update({'status': 'CANCELLED'})
-    
-    TeamInvitation.query.filter_by(
-        event=tournament_url,
-        team=current_user.id
-    ).update({'status': 'DECLINED'})
-    
-    db.session.commit()
-    flash('Team successfully deregistered from tournament', 'success')
-    return redirect(f'/{tournament_url}')
+
+    res = RegistrationService.deregister_team(tournament_url, current_user.id)
+    match res:
+        case Ok(_):
+            flash('Team successfully deregistered from tournament', 'success')
+            return redirect(f'/{tournament_url}')
+        case Err(err):
+            flash(public_error_message(err), 'error')
+            return redirect(f'/{tournament_url}')
 
 
 @bp.route('/<tournament_url>/deregister-player', methods=['POST'])
 @login_required
 def deregister_player_from_tournament(tournament_url):
     """Deregister a player from a tournament."""
-    if current_user.__class__.__name__ != 'Player':
+    if not is_player(current_user):
         flash('Only players can deregister from tournaments', 'error')
         return redirect(f'/{tournament_url}')
-    
-    tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
-    
-    if not tournament.registration_open:
-        flash('Registration changes are locked. You can no longer deregister.', 'error')
-        return redirect(f'/{tournament_url}')
-    
-    player_registration = PlayerRegistration.query.filter_by(
-        event=tournament_url,
-        player=current_user.id
-    ).filter(
-        PlayerRegistration.status.in_(['PENDING_TEAM_APPROVAL', 'CONFIRMED'])
-    ).first()
-    
-    if not player_registration:
-        flash('You are not registered for this tournament', 'error')
-        return redirect(f'/{tournament_url}')
-    
-    player_registration.status = 'CANCELLED'
-    
-    if player_registration.team:
-        invitation = TeamInvitation.query.filter_by(
-            event=tournament_url,
-            team=player_registration.team,
-            player=current_user.id
-        ).first()
-        if invitation:
-            invitation.status = 'DECLINED'
-    
-    db.session.commit()
-    flash('Player successfully deregistered from tournament', 'success')
-    return redirect(f'/{tournament_url}')
+
+    res = RegistrationService.deregister_player(tournament_url, current_user.id)
+    match res:
+        case Ok(_):
+            flash('Player successfully deregistered from tournament', 'success')
+            return redirect(f'/{tournament_url}')
+        case Err(err):
+            flash(public_error_message(err), 'error')
+            return redirect(f'/{tournament_url}')
 
 
 @bp.route('/<tournament_url>/manage')
-@login_required
+@require_tournament_organizer()
 def tournament_manage(tournament_url):
     """Tournament registration management page."""
     tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
-    
-    is_to = TO.query.filter_by(
-        user_id=current_user.id, 
-        user_type=current_user.__class__.__name__.lower(),
-        event=tournament_url
-    ).first()
-    
-    if not is_to:
-        flash('Only tournament organizers can access this page', 'error')
-        return redirect(f'/{tournament_url}')
     
     search_query = (request.args.get('search') or '').strip()
     search_type = (request.args.get('type') or 'both').lower()

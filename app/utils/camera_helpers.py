@@ -6,6 +6,11 @@ import os
 import requests
 from datetime import datetime, timezone
 import json
+import hmac
+import hashlib
+import base64
+
+from flask import current_app, jsonify, request
 
 
 def extract_video_id(camera_url):
@@ -130,6 +135,52 @@ def calculate_stream_timestamp(point_stamp, stream_start_time):
     """
     if not point_stamp or not stream_start_time:
         return None
+
+
+# -----------------------------
+# Camera access key helpers
+# -----------------------------
+
+
+def generate_camera_key(tournament_url: str, field_name: str) -> str:
+    """Generate a URL-safe HMAC key for accessing a field camera endpoint."""
+    secret = current_app.config.get("SECRET_KEY")
+    if not secret:
+        secret = "dev-key"
+    message = f"{tournament_url}:{field_name}".encode("utf-8")
+    digest = hmac.new(secret.encode("utf-8"), message, hashlib.sha256).digest()
+    return base64.urlsafe_b64encode(digest).decode("utf-8").rstrip("=")
+
+
+def validate_camera_key(tournament_url: str, field_name: str, provided_key: str) -> bool:
+    expected_key = generate_camera_key(tournament_url, field_name)
+    return hmac.compare_digest(expected_key, (provided_key or "").strip())
+
+
+def get_camera_key_from_request() -> str | None:
+    """Extract camera access key from request (query params, JSON body, or form data)."""
+    key = (request.args.get("key") or "").strip()
+    if key:
+        return key
+    if request.is_json and request.json:
+        key = (request.json.get("key") or "").strip()
+        if key:
+            return key
+    key = (request.form.get("key") or "").strip()
+    if key:
+        return key
+    return None
+
+
+def require_camera_key(tournament_url: str, field_name: str):
+    """
+    Validate camera access key from request.
+    Returns (is_valid, error_response_tuple)
+    """
+    access_key = get_camera_key_from_request()
+    if not access_key or not validate_camera_key(tournament_url, field_name, access_key):
+        return (False, (jsonify({"error": "Invalid or missing access key"}), 403))
+    return (True, None)
     
     try:
         # Parse point timestamp

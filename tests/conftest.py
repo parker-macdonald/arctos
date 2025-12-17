@@ -81,7 +81,7 @@ def tournament(test_db):
             published=True,
             schedule_published=True,
             registration_open=True,
-            head_refs='test_ref1,test_ref2'
+            head_refs_allowed_list='test_ref1,test_ref2'
         )
         db.session.add(tourn)
         db.session.commit()
@@ -154,20 +154,28 @@ def head_ref_player(test_db, tournament):
         return player
 
 
-def create_match(tournament_url, name, field, nominal_start_time, dynamic=True, 
-                 team1_initial=None, team2_initial=None, nominal_length=60):
+def create_match(
+    tournament_url,
+    name,
+    field,
+    nominal_start_time,
+    dynamic=True,
+    team1_initial=None,
+    team2_initial=None,
+    nominal_length=60,
+):
     """Helper function to create a match."""
     match = Match(
         name=name,
         event=tournament_url,
         field=field,
         nominal_start_time=nominal_start_time,
-        dynamic=dynamic,
+        schedule_type='DYNAMIC' if dynamic else 'STATIC',
         team1_initial=team1_initial,
         team2_initial=team2_initial,
         nominal_length=nominal_length,
         status='NOT_STARTED',
-        type='SETS'
+        set_type='SETS'
     )
     db.session.add(match)
     db.session.flush()

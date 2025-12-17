@@ -1,7 +1,9 @@
 """
 Utility functions for resolving match dependencies.
 """
-import json
+
+from __future__ import annotations
+
 from models import Match, db
 
 
@@ -9,13 +11,10 @@ def apply_match_dependencies(tournament_url: str, completed_match: Match) -> Non
     """Replace placeholders like 'MatchName winner/loser' in other matches' initial fields
     with explicit team ids in non-initial fields (team1/team2/refs)."""
     # Determine winner/loser team ids
-    winner_key = completed_match.match_winner  # 'TEAM1' or 'TEAM2'
-
-    if winner_key not in ('TEAM1', 'TEAM2'):
+    winner_team_id = completed_match.winner_team_id
+    loser_team_id = completed_match.loser_team_id
+    if not winner_team_id and not loser_team_id:
         return
-
-    winner_team_id = completed_match.team1 if winner_key == 'TEAM1' else completed_match.team2
-    loser_team_id = completed_match.team2 if winner_key == 'TEAM1' else completed_match.team1
 
     # If either missing, nothing to substitute
     if not winner_team_id or not loser_team_id:

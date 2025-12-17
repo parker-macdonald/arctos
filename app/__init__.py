@@ -137,6 +137,9 @@ def create_app(config=None):
     # Initialize websocket handlers
     
     # Error handlers
+    from app.error_handlers import register_error_handlers
+    register_error_handlers(app)
+
     @app.errorhandler(413)
     def too_large(e):
         from flask import flash, redirect
