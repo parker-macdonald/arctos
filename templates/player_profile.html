@@ -206,18 +206,6 @@
     </div>
 
     <div class="col-md-4">
-        <div class="card">
-            <div class="card-header">
-                <h5 class="mb-0">Quick Stats</h5>
-            </div>
-            <div class="card-body">
-                <p><strong>Tournaments:</strong> {{ registrations|length }}</p>
-                <p><strong>Active Injuries:</strong> {{ injuries|selectattr('active')|list|length }}</p>
-            </div>
-        </div>
-
-        
-
         {% if current_user.is_authenticated and current_user.id == player.id %}
         <div class="card mt-3">
             <div class="card-header">
