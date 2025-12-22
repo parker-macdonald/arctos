@@ -407,8 +407,18 @@ def tournament_bracket(tournament_url):
             is_tag = False
             match_name = None
             
+            # Check if it's a tag reference first: tag::TAG_NAME
+            if team_ref.lower().startswith('tag::'):
+                tag_name = team_ref[5:].strip()
+                if tag_name:
+                    tag = Tag.query.filter_by(event=tournament_url, name=tag_name).first()
+                    if tag:
+                        team_info = {
+                            'display_text': f'tag::{tag_name}',
+                        }
+                        is_tag = True
             # Check if it's a match reference (match_name::winner or match_name::loser)
-            if '::' in team_ref:
+            elif '::' in team_ref:
                 parts = team_ref.split('::', 1)
                 match_name = parts[0].strip()
                 ref_type = parts[1].strip() if len(parts) > 1 else ''
@@ -467,11 +477,11 @@ def tournament_bracket(tournament_url):
                         'display_text': team_reg.pseudonym
                     }
                 else:
-                    # Check if it's a tag
+                    # Backwards-compat: legacy plain tag name without 'tag::' prefix
                     tag = Tag.query.filter_by(event=tournament_url, name=team_ref).first()
                     if tag:
                         team_info = {
-                            'display_text': team_ref
+                            'display_text': f'tag::{tag.name}'
                         }
                         is_tag = True
             
@@ -708,6 +718,80 @@ def tournament_setup(tournament_url):
     conflicts = detect_match_conflicts(tournament_url)
     
     return render_template('tournament_setup.html', tournament=tournament, matches=matches, fields=fields, tags=tags, team_registrations=team_registrations, conflicts=conflicts)
+
+
+@bp.route('/<tournament_url>/export-schedule')
+@require_tournament_organizer("You must be a tournament organizer to export schedules")
+def export_schedule(tournament_url):
+    """Export schedule (tags, fields, matches) as TOML file download."""
+    from app.services.schedule_import_export_service import ScheduleImportExportService
+    from app.error_values import Ok, Err
+    from flask import send_file
+    import io
+
+    res = ScheduleImportExportService.export_schedule(tournament_url)
+    
+    match res:
+        case Ok(toml_content):
+            # Create in-memory file
+            file_obj = io.BytesIO(toml_content.encode('utf-8'))
+            filename = f"{tournament_url}_schedule_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.toml"
+            return send_file(
+                file_obj,
+                mimetype='application/toml',
+                as_attachment=True,
+                download_name=filename
+            )
+        case Err(err):
+            from app.utils.responses import json_error
+            from app.utils.result_helpers import public_error_message
+            return json_error(public_error_message(err), status_code=err.status_code if hasattr(err, 'status_code') else 400)
+
+
+@bp.route('/<tournament_url>/import-schedule', methods=['POST'])
+@require_tournament_organizer("You must be a tournament organizer to import schedules")
+def import_schedule(tournament_url):
+    """Import schedule from uploaded TOML file."""
+    from app.services.schedule_import_export_service import ScheduleImportExportService
+    from app.utils.result_helpers import json_from_result
+
+    # Validate file upload
+    if 'schedule_file' not in request.files:
+        return jsonify({'success': False, 'error': 'No file uploaded'}), 400
+    
+    file = request.files['schedule_file']
+    if file.filename == '':
+        return jsonify({'success': False, 'error': 'No file selected'}), 400
+    
+    if not file.filename.endswith('.toml'):
+        return jsonify({'success': False, 'error': 'File must be a .toml file'}), 400
+
+    # Read file content
+    try:
+        toml_content = file.read().decode('utf-8')
+    except UnicodeDecodeError:
+        return jsonify({'success': False, 'error': 'File must be valid UTF-8 text'}), 400
+
+    # Check for dry-run parameter
+    dry_run = request.form.get('dry_run', 'false').lower() == 'true'
+
+    # Import schedule
+    res = ScheduleImportExportService.import_schedule(tournament_url, toml_content, dry_run=dry_run)
+    
+    def result_to_payload(import_result):
+        """Convert ImportResult to JSON payload."""
+        return {
+            'tags_created': import_result.tags_created,
+            'tags_updated': import_result.tags_updated,
+            'fields_created': import_result.fields_created,
+            'fields_updated': import_result.fields_updated,
+            'matches_created': import_result.matches_created,
+            'matches_updated': import_result.matches_updated,
+            'errors': import_result.errors,
+            'dry_run': dry_run,
+        }
+    
+    return json_from_result(res, ok_to_payload=result_to_payload)
 
 
 @bp.route('/<tournament_url>/register')
@@ -1169,6 +1253,16 @@ def add_match(tournament_url):
         flash('Match names cannot contain "::"', 'error')
         return redirect(f'/{tournament_url}/setup')
     
+    # Get stones_per_set for STONES matches (with fallback to deprecated nstonesperset for backward compatibility)
+    stones_per_set_value = None
+    if set_type == 'STONES':
+        stones_per_set_str = request.form.get('stones_per_set') or request.form.get('nstonesperset')
+        if stones_per_set_str:
+            try:
+                stones_per_set_value = int(stones_per_set_str)
+            except (ValueError, TypeError):
+                stones_per_set_value = None
+    
     match = Match(
         name=match_name,
         event=tournament_url,
@@ -1182,7 +1276,8 @@ def add_match(tournament_url):
         ribbon=ribbon,
         nsets=int(request.form.get('nsets', 3)) if schedule_type not in ('BREAK', 'JOIN') else None,
         nominal_length=nominal_length,
-        refs_initial=refs_initial
+        refs_initial=refs_initial,
+        stones_per_set=stones_per_set_value
     )
     
     db.session.add(match)
@@ -1602,6 +1697,21 @@ def update_match(tournament_url):
     else:
         match.nsets = None
     
+    # Update stones_per_set for STONES matches (with fallback to deprecated nstonesperset for backward compatibility)
+    if set_type == 'STONES':
+        stones_per_set_str = request.form.get('stones_per_set') or request.form.get('nstonesperset')
+        if stones_per_set_str:
+            try:
+                match.stones_per_set = int(stones_per_set_str)
+            except (ValueError, TypeError):
+                pass  # Keep existing value if invalid
+        # If not provided and match doesn't have stones_per_set, try to migrate from nstonesperset
+        elif match.nstonesperset and not match.stones_per_set:
+            match.stones_per_set = match.nstonesperset
+    else:
+        # Clear stones_per_set for non-STONES matches
+        match.stones_per_set = None
+    
     # JOIN has zero length, BREAK can have length
     if schedule_type == 'JOIN':
         match.nominal_length = 0
@@ -1666,13 +1776,15 @@ def update_tags(tournament_url):
     # Get all tags for this tournament
     tags = Tag.query.filter_by(event=tournament_url).all()
     
-    # Build mapping of tag names to team IDs
+    # Build mapping of tag references to team IDs
     tag_to_team = {}
     for tag in tags:
         form_key = f'tag_{tag.id}'
         team_id = request.form.get(form_key, '').strip()
         if team_id:
-            tag_to_team[tag.name] = team_id
+            # Use the new explicit tag reference form: tag::TAG_NAME
+            tag_ref = f"tag::{tag.name}"
+            tag_to_team[tag_ref] = team_id
     
     if not tag_to_team:
         flash('No tag conversions selected', 'error')
@@ -1685,7 +1797,7 @@ def update_tags(tournament_url):
     for match in matches:
         changed = False
         
-        # Update team1_initial
+        # Update team1_initial (only explicit tag references: tag::TAG_NAME)
         if match.team1_initial:
             initial = match.team1_initial.strip()
             if initial in tag_to_team:
@@ -1695,7 +1807,7 @@ def update_tags(tournament_url):
                     match.team1 = tag_to_team[initial]
                 changed = True
         
-        # Update team2_initial
+        # Update team2_initial (only explicit tag references: tag::TAG_NAME)
         if match.team2_initial:
             initial = match.team2_initial.strip()
             if initial in tag_to_team:
@@ -1705,7 +1817,7 @@ def update_tags(tournament_url):
                     match.team2 = tag_to_team[initial]
                 changed = True
         
-        # Update refs_initial (comma-separated)
+        # Update refs_initial (comma-separated; only explicit tag references)
         if match.refs_initial:
             refs_list = [r.strip() for r in match.refs_initial.split(',') if r.strip()]
             updated_refs = []
@@ -1740,10 +1852,17 @@ def update_tags(tournament_url):
                 teams = bracket.get('teams', [])
                 for team_entry in teams:
                     team_ref = team_entry.get('team', '').strip()
+                    # Bracket entries may contain explicit tag references (tag::NAME) or
+                    # legacy plain tag names; support both forms when applying updates.
                     if team_ref in tag_to_team:
-                        # Replace tag name with team ID
                         team_entry['team'] = tag_to_team[team_ref]
                         bracket_updated = True
+                    elif team_ref.lower().startswith('tag::'):
+                        legacy_name = team_ref[5:].strip()
+                        legacy_ref = f"tag::{legacy_name}"
+                        if legacy_ref in tag_to_team:
+                            team_entry['team'] = tag_to_team[legacy_ref]
+                            bracket_updated = True
             
             if bracket_updated:
                 # Regenerate TOML
@@ -1914,7 +2033,7 @@ def tournament_autocomplete(tournament_url):
                 'id': reg.team
             })
     
-    # Tags for this tournament (by name)
+    # Tags for this tournament (by name, surfaced as tag::TAG_NAME values)
     tags = Tag.query.filter_by(event=tournament_url).all() if 'Tag' in globals() or True else []
     try:
         tags = Tag.query.filter_by(event=tournament_url).all()
@@ -1923,10 +2042,11 @@ def tournament_autocomplete(tournament_url):
     for t in tags:
         name = (t.name or '').strip()
         if not query or query in name.lower():
+            tag_ref = f"tag::{name}"
             suggestions.append({
                 'type': 'tag',
-                'value': name,
-                'label': name,
+                'value': tag_ref,
+                'label': tag_ref,
                 'id': t.id
             })
 

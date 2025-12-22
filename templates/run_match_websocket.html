@@ -334,7 +334,7 @@
                                     <div class="d-flex justify-content-center align-items-center">
                                         <input type="number" class="form-control-plaintext text-center display-4 m-0 p-0" id="stones-remaining" 
                                                style="width: 6ch; line-height: 1;" 
-                                               value="{{ match.stones_remaining if match.stones_remaining else match.nstonesperset or 100 }}" 
+                                               value="{{ match.stones_remaining if match.stones_remaining else (match.stones_per_set or match.nstonesperset or 100) }}" 
                                                onchange="updateStonesRemaining(this.value)">
                                     </div>
                                 </div>

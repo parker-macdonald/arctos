@@ -31,7 +31,7 @@ class Match(db.Model):
     set_type = db.Column(db.String(20), default="SETS")  # SETS, STONES (only for non-BREAK/JOIN matches)
     ribbon = db.Column(db.Boolean, default=False)  # True if this is a ribbon game (not counted in results)
     nsets = db.Column(db.Integer)
-    nstonesperset = db.Column(db.Integer)
+    nstonesperset = db.Column(db.Integer)  # DEPRECATED: Use stones_per_set instead. Kept for backward compatibility.
     status = db.Column(db.String(20), default="NOT_STARTED")  # NOT_STARTED, IN_PROGRESS, COMPLETED
     initial_notes = db.Column(db.Text)  # notes (initial match notes, distinct from MatchNote objects)
     team1_players = db.Column(db.Text)  # JSON array of player IDs
