@@ -11,7 +11,7 @@ from app.models.user import Player, Team
 from app.models.tournament import Tournament, TO, Field, Tag
 from app.models.registration import TeamRegistration, PlayerRegistration
 from app.models.match import Match, Point, MatchNote
-from app.models.records import Injury, HeadRef, TeamRecord, PlayerRecord
+from app.models.records import Injury, HeadRef
 from app.models.sidecomp import SideComp, SideCompResult
 
 __all__ = [
@@ -30,8 +30,6 @@ __all__ = [
     "MatchNote",
     "Injury",
     "HeadRef",
-    "TeamRecord",
-    "PlayerRecord",
     "SideComp",
     "SideCompResult",
 ]

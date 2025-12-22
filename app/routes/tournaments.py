@@ -1982,78 +1982,33 @@ def delete_tournament(tournament_url):
     
     # Import all necessary models
     from models import (
-        Point, MatchNote, TeamRecord, PlayerRecord, Match,
+        Point, MatchNote, Match,
         HeadRef, PlayerRegistration, TeamRegistration,
         Field, Tag, SideComp, SideCompResult
     )
     
     # Delete in order to respect foreign key constraints
     
-    # 1. Delete SideCompResult (depends on SideComp)
     side_comps = SideComp.query.filter_by(event=tournament_url).all()
     side_comp_ids = [sc.id for sc in side_comps]
     if side_comp_ids:
         SideCompResult.query.filter(SideCompResult.comp.in_(side_comp_ids)).delete(synchronize_session=False)
     
-    # 2. Delete SideComp (depends on Tournament)
     SideComp.query.filter_by(event=tournament_url).delete(synchronize_session=False)
     
-    # 3. Get all matches for this tournament
     matches = Match.query.filter_by(event=tournament_url).all()
     match_uuids = [m.uuid for m in matches]
-    
-    # 4. Delete Point (depends on Match)
-    if match_uuids:
+    if match_uuids: 
         Point.query.filter(Point.match.in_(match_uuids)).delete(synchronize_session=False)
-    
-    # 5. Delete MatchNote (depends on Match)
-    if match_uuids:
         MatchNote.query.filter(MatchNote.match.in_(match_uuids)).delete(synchronize_session=False)
-    
-    # 6. Delete TeamRecord (depends on Match and Tournament)
-    if match_uuids:
-        TeamRecord.query.filter(
-            TeamRecord.event == tournament_url
-        ).filter(
-            TeamRecord.match.in_(match_uuids)
-        ).delete(synchronize_session=False)
-    # Also delete TeamRecords that don't have a match
-    TeamRecord.query.filter_by(event=tournament_url, match=None).delete(synchronize_session=False)
-    
-    # 7. Delete PlayerRecord (depends on Match and Tournament)
-    if match_uuids:
-        PlayerRecord.query.filter(
-            PlayerRecord.event == tournament_url
-        ).filter(
-            PlayerRecord.match.in_(match_uuids)
-        ).delete(synchronize_session=False)
-    # Also delete PlayerRecords that don't have a match
-    PlayerRecord.query.filter_by(event=tournament_url, match=None).delete(synchronize_session=False)
-    
-    # 8. Delete Match (depends on Tournament)
     Match.query.filter_by(event=tournament_url).delete(synchronize_session=False)
-    
-    # 9. Delete HeadRef (depends on Tournament)
     HeadRef.query.filter_by(event=tournament_url).delete(synchronize_session=False)
-    
-    # 10. Delete PlayerRegistration (depends on Tournament)
     PlayerRegistration.query.filter_by(event=tournament_url).delete(synchronize_session=False)
-    
-    # 11. Delete TeamRegistration (depends on Tournament)
     TeamRegistration.query.filter_by(event=tournament_url).delete(synchronize_session=False)
-    
-    # 12. Delete Field (depends on Tournament)
     Field.query.filter_by(event=tournament_url).delete(synchronize_session=False)
-    
-    # 13. Delete Tag (depends on Tournament)
     Tag.query.filter_by(event=tournament_url).delete(synchronize_session=False)
-    
-    # 14. Delete TO (depends on Tournament)
     TO.query.filter_by(event=tournament_url).delete(synchronize_session=False)
-    
-    # 15. Delete Tournament (last)
     db.session.delete(tournament)
-    
     db.session.commit()
     
     flash(f'Tournament "{tournament.name}" has been permanently deleted.', 'success')
