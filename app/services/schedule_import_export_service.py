@@ -79,7 +79,6 @@ class ScheduleImportExportService:
             name = str(m.get("name", "")).strip()
             if name:
                 match_names.add(name)
-
         def _validate_initial_token(token: str, context: str) -> None:
             """
             Validate a single initial token.
@@ -109,7 +108,12 @@ class ScheduleImportExportService:
 
             base, sep, suffix = tok.partition("::")
             if not sep:
-                # Plain explicit team id (no special validation).
+                # Plain explicit team id
+                # probably should check that theres a team with this name
+                # registered for the tournament,
+                # but in normal match creation there's no such constraint
+                # so we'll fail silently for now :thumbsup_all: lmao
+                # (since maybe the team just hasn't registered yet)
                 return
 
             base = base.strip()
@@ -218,18 +222,17 @@ class ScheduleImportExportService:
     def import_schedule(
         tournament_url: str,
         toml_content: str,
-        *,
-        dry_run: bool = False,
     ) -> Result[ImportResult, ArctosError]:
         """
         Import schedule from TOML string.
         
         Handles both same-tournament (update) and different-tournament (create) scenarios.
+        All validation is performed before any database changes. If any error occurs during
+        import, the transaction is rolled back.
         
         Args:
             tournament_url: Target tournament URL
             toml_content: TOML schedule content
-            dry_run: If True, validate only without making changes
         
         Returns:
             Result containing ImportResult with counts and errors
@@ -259,50 +262,44 @@ class ScheduleImportExportService:
         matches_updated = 0
         errors: list[str] = []
         
-        # High-level semantic validation shared by dry-run and real import
+        # Perform all validation before making any database changes
+        # 1. High-level semantic validation
         semantic_errors = ScheduleImportExportService._validate_semantics(
             tags_data, fields_data, matches_data
         )
+        errors.extend(semantic_errors)
+        
+        # 2. Validate all tags
+        for tag_data in tags_data:
+            res = MatchScheduleSerializer.tag_from_dict(tag_data, tournament_url)
+            if isinstance(res, Err):
+                errors.append(f"Tag validation error: {res.value.message}")
+        
+        # 3. Validate all fields
+        for field_data in fields_data:
+            res = MatchScheduleSerializer.field_from_dict(field_data, tournament_url)
+            if isinstance(res, Err):
+                errors.append(f"Field validation error: {res.value.message}")
+        
+        # 4. Validate all matches
+        for match_data in matches_data:
+            res = MatchScheduleSerializer.match_from_dict(match_data, tournament_url)
+            if isinstance(res, Err):
+                errors.append(f"Match validation error: {res.value.message}")
+        
+        # If any validation errors, abort before making any changes
+        if errors:
+            error_count = len(errors)
+            if error_count == 1:
+                error_message = f"Validation failed: {errors[0]}"
+            else:
+                # Format multiple errors as a bulleted list
+                error_list = "\n".join(f"• {err}" for err in errors)
+                error_message = f"Validation failed with {error_count} errors:\n{error_list}"
+            return Err(ValidationError(error_message))
 
-        if dry_run:
-            # Validation only - check that data is structurally valid
-            for tag_data in tags_data:
-                res = MatchScheduleSerializer.tag_from_dict(tag_data, tournament_url)
-                if isinstance(res, Err):
-                    errors.append(f"Tag validation error: {res.value.message}")
-            
-            for field_data in fields_data:
-                res = MatchScheduleSerializer.field_from_dict(field_data, tournament_url)
-                if isinstance(res, Err):
-                    errors.append(f"Field validation error: {res.value.message}")
-            
-            for match_data in matches_data:
-                res = MatchScheduleSerializer.match_from_dict(match_data, tournament_url)
-                if isinstance(res, Err):
-                    errors.append(f"Match validation error: {res.value.message}")
-
-            # Add semantic validation errors
-            errors.extend(semantic_errors)
-
-            if errors:
-                return Err(ValidationError(f"Validation failed with {len(errors)} errors"))
-            
-            return Ok(ImportResult(
-                tags_created=0,
-                tags_updated=0,
-                fields_created=0,
-                fields_updated=0,
-                matches_created=0,
-                matches_updated=0,
-                errors=errors,
-            ))
-        # For real imports, abort early if semantic validation failed
-        if semantic_errors:
-            return Err(
-                ValidationError(f"Validation failed with {len(semantic_errors)} errors")
-            )
-
-        # Actual import
+        # All validation passed - proceed with import
+        # Wrap in transaction so any error rolls back all changes
         try:
             # Keep track of which objects are present in the uploaded file for this tournament.
             # Anything NOT in these sets will be deleted at the end of a successful import.
@@ -382,6 +379,8 @@ class ScheduleImportExportService:
             db.session.flush()  # Flush to get IDs for fields
             
             # Import matches - first pass: create/update without relationships
+            # Build match_name_to_uuid and match_name_field_to_uuid mappings as we go
+            match_name_field_to_uuid: dict[tuple[str, str], str] = {}
             for match_data in matches_data:
                 # Prepare match data with new UUID if different tournament
                 old_uuid = match_data.get("uuid", "")
@@ -390,10 +389,12 @@ class ScheduleImportExportService:
                     new_uuid = match_uuid_map.get(old_uuid, str(uuid.uuid4()))
                     match_data = {**match_data, "uuid": new_uuid}
                 
+                # First pass: create/update without relationships (match_name_to_uuid not yet complete)
                 match_res = MatchScheduleSerializer.match_from_dict(
                     match_data,
                     tournament_url,
-                    match_uuid_map=match_uuid_map if not is_same_tournament else None,
+                    match_name_to_uuid=None,  # Will resolve in second pass
+                    match_name_field_to_uuid=None,  # Will resolve in second pass
                 ).Q()
                 match_dict = match_res
                 
@@ -408,6 +409,10 @@ class ScheduleImportExportService:
                             if key not in ("uuid", "event", "previous_match", "next_match"):
                                 setattr(match, key, value)
                         match_name_to_uuid[match_name] = match.uuid
+                        # Also add to field-based mapping for duplicate resolution (use actual match field)
+                        match_field = match.field or ""
+                        if match_field:
+                            match_name_field_to_uuid[(match_name, match_field)] = match.uuid
                         kept_match_uuids.add(match.uuid)
                         matches_updated += 1
                     else:
@@ -415,7 +420,12 @@ class ScheduleImportExportService:
                         create_dict = {k: v for k, v in match_dict.items() if k not in ("previous_match", "next_match")}
                         match = Match(**create_dict)
                         db.session.add(match)
+                        db.session.flush()  # Flush to get the match object with field set
                         match_name_to_uuid[match_name] = match.uuid
+                        # Also add to field-based mapping for duplicate resolution (use actual match field)
+                        match_field = match.field or ""
+                        if match_field:
+                            match_name_field_to_uuid[(match_name, match_field)] = match.uuid
                         kept_match_uuids.add(match.uuid)
                         matches_created += 1
                 else:
@@ -423,18 +433,26 @@ class ScheduleImportExportService:
                     create_dict = {k: v for k, v in match_dict.items() if k not in ("previous_match", "next_match")}
                     match = Match(**create_dict)
                     db.session.add(match)
+                    db.session.flush()  # Flush to get the match object with field set
                     match_name_to_uuid[match_name] = match.uuid
+                    # Also add to field-based mapping for duplicate resolution (use actual match field)
+                    match_field = match.field or ""
+                    if match_field:
+                        match_name_field_to_uuid[(match_name, match_field)] = match.uuid
                     kept_match_uuids.add(match.uuid)
                     matches_created += 1
             
             db.session.flush()  # Flush to get UUIDs for matches
             
-            # Second pass: resolve relationships (previous_match/next_match)
+            # Second pass: resolve relationships (previous_match/next_match) using match names
+            # When duplicates exist, resolve to match on same field
             for match_data in matches_data:
                 old_uuid = match_data.get("uuid", "")
                 match_name = match_data.get("name", "")
+                match_field_from_data = str(match_data.get("field", "")).strip() or ""
                 
                 # Find the match we just created/updated
+                # Use field to disambiguate if duplicates exist
                 if is_same_tournament and old_uuid:
                     match = Match.query.filter_by(uuid=old_uuid, event=tournament_url).first()
                 else:
@@ -443,44 +461,47 @@ class ScheduleImportExportService:
                         new_uuid = match_uuid_map[old_uuid]
                         match = Match.query.filter_by(uuid=new_uuid, event=tournament_url).first()
                     else:
-                        match = Match.query.filter_by(name=match_name, event=tournament_url).first()
+                        # Try to find by name and field first (for duplicates)
+                        if match_field_from_data:
+                            match = Match.query.filter_by(
+                                name=match_name, 
+                                event=tournament_url,
+                                field=match_field_from_data
+                            ).first()
+                        else:
+                            match = None
+                        
+                        # Fall back to name-only if not found
+                        if not match:
+                            match = Match.query.filter_by(name=match_name, event=tournament_url).first()
                 
                 if not match:
                     continue
                 
-                # Resolve previous_match
-                if "previous_match" in match_data and match_data["previous_match"]:
-                    prev_old_uuid = str(match_data["previous_match"]).strip()
-                    if prev_old_uuid:
-                        if is_same_tournament:
-                            # Use UUID directly
-                            prev_match = Match.query.filter_by(uuid=prev_old_uuid, event=tournament_url).first()
-                            if prev_match:
-                                match.previous_match = prev_match.uuid
-                        else:
-                            # Map old UUID to new UUID
-                            if prev_old_uuid in match_uuid_map:
-                                new_prev_uuid = match_uuid_map[prev_old_uuid]
-                                prev_match = Match.query.filter_by(uuid=new_prev_uuid, event=tournament_url).first()
-                                if prev_match:
-                                    match.previous_match = prev_match.uuid
+                match_field = match.field or ""
                 
-                # Resolve next_match
+                # Helper to resolve match name to UUID, preferring same-field matches when duplicates exist
+                def resolve_match_name(ref_name: str, current_field: str) -> str | None:
+                    """Resolve match name to UUID, using field-based resolution if duplicates exist."""
+                    if not ref_name:
+                        return None
+                    
+                    # If we have field info and there's a match with this name on the same field, use it
+                    if current_field and (ref_name, current_field) in match_name_field_to_uuid:
+                        return match_name_field_to_uuid[(ref_name, current_field)]
+                    
+                    # Fall back to name-only mapping
+                    return match_name_to_uuid.get(ref_name)
+                
+                # Resolve previous_match by name (preferring same field)
+                if "previous_match" in match_data and match_data["previous_match"]:
+                    prev_match_name = str(match_data["previous_match"]).strip()
+                    match.previous_match = resolve_match_name(prev_match_name, match_field)
+                
+                # Resolve next_match by name (preferring same field)
                 if "next_match" in match_data and match_data["next_match"]:
-                    next_old_uuid = str(match_data["next_match"]).strip()
-                    if next_old_uuid:
-                        if is_same_tournament:
-                            # Use UUID directly
-                            next_match = Match.query.filter_by(uuid=next_old_uuid, event=tournament_url).first()
-                            if next_match:
-                                match.next_match = next_match.uuid
-                        else:
-                            # Map old UUID to new UUID
-                            if next_old_uuid in match_uuid_map:
-                                new_next_uuid = match_uuid_map[next_old_uuid]
-                                next_match = Match.query.filter_by(uuid=new_next_uuid, event=tournament_url).first()
-                                if next_match:
-                                    match.next_match = next_match.uuid
+                    next_match_name = str(match_data["next_match"]).strip()
+                    match.next_match = resolve_match_name(next_match_name, match_field)
 
             # Delete any tags, fields, or matches for this tournament that are
             # NOT present in the uploaded file. This makes the uploaded schedule

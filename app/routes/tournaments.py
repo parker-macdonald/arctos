@@ -26,6 +26,8 @@ from app.utils.camera_helpers import (
     get_camera_key_from_request,
     require_camera_key,
 )
+
+from app.domain.enums import ScheduleType, SetType
 # for finalizing recordings which calls ffmpeg
 # only one worker bc ffmpeg does its own parallelism 
 # so we only ever want to run one at a time 
@@ -772,11 +774,8 @@ def import_schedule(tournament_url):
     except UnicodeDecodeError:
         return jsonify({'success': False, 'error': 'File must be valid UTF-8 text'}), 400
 
-    # Check for dry-run parameter
-    dry_run = request.form.get('dry_run', 'false').lower() == 'true'
-
-    # Import schedule
-    res = ScheduleImportExportService.import_schedule(tournament_url, toml_content, dry_run=dry_run)
+    # Import schedule (all validation happens before any database changes)
+    res = ScheduleImportExportService.import_schedule(tournament_url, toml_content)
     
     def result_to_payload(import_result):
         """Convert ImportResult to JSON payload."""
@@ -788,7 +787,6 @@ def import_schedule(tournament_url):
             'matches_created': import_result.matches_created,
             'matches_updated': import_result.matches_updated,
             'errors': import_result.errors,
-            'dry_run': dry_run,
         }
     
     return json_from_result(res, ok_to_payload=result_to_payload)
@@ -1218,21 +1216,21 @@ def add_match(tournament_url):
     # Check if BREAK or JOIN is selected from the Match Type dropdown (renamed from 'dynamic')
     match_type_value = request.form.get('dynamic', '')
     
-    if match_type_value == 'BREAK':
-        schedule_type = 'BREAK'
-        set_type = 'SETS'  # Not used for BREAK, but set a default
+    if match_type_value == ScheduleType.BREAK:
+        schedule_type = ScheduleType.BREAK
+        set_type = SetType.SETS  # Not used for BREAK, but set a default
         nominal_length = int(request.form.get('length', 60))
-    elif match_type_value == 'JOIN':
-        schedule_type = 'JOIN'
-        set_type = 'SETS'  # Not used for JOIN, but set a default
+    elif match_type_value == ScheduleType.JOIN:
+        schedule_type = ScheduleType.JOIN
+        set_type = SetType.SETS  # Not used for JOIN, but set a default
         nominal_length = 0
     else:
-        schedule_type = 'DYNAMIC' if match_type_value == 'true' else 'STATIC'
-        set_type = request.form.get('match_type', 'SETS')
+        schedule_type = ScheduleType.DYNAMIC if match_type_value == 'true' else ScheduleType.STATIC
+        set_type = request.form.get('match_type', SetType.SETS)
         nominal_length = int(request.form.get('length', 60))
     
     # BREAK and JOIN matches don't have teams/refs
-    if schedule_type in ('BREAK', 'JOIN'):
+    if schedule_type in (ScheduleType.BREAK, ScheduleType.JOIN):
         team1_id = None
         team1_name = ''
         team2_id = None
@@ -1253,9 +1251,31 @@ def add_match(tournament_url):
         flash('Match names cannot contain "::"', 'error')
         return redirect(f'/{tournament_url}/setup')
     
+    # Validate match name uniqueness
+    # BREAK and JOIN matches can have duplicate names on different fields
+    # Other matches must have unique names within the tournament
+    match_field = request.form.get('field', '')
+    if schedule_type in (ScheduleType.BREAK, ScheduleType.JOIN):
+        # For BREAK/JOIN: check uniqueness by (name, event, field)
+        existing_match = Match.query.filter_by(
+            event=tournament_url, 
+            name=match_name, 
+            field=match_field,
+            schedule_type=schedule_type
+        ).first()
+        if existing_match:
+            flash(f'A {schedule_type} match with the name "{match_name}" already exists on field "{match_field}" in this tournament', 'error')
+            return redirect(f'/{tournament_url}/setup')
+    else:
+        # For other matches: check uniqueness by (name, event)
+        existing_match = Match.query.filter_by(event=tournament_url, name=match_name).first()
+        if existing_match:
+            flash(f'A match with the name "{match_name}" already exists in this tournament', 'error')
+            return redirect(f'/{tournament_url}/setup')
+    
     # Get stones_per_set for STONES matches (with fallback to deprecated nstonesperset for backward compatibility)
     stones_per_set_value = None
-    if set_type == 'STONES':
+    if set_type == SetType.STONES:
         stones_per_set_str = request.form.get('stones_per_set') or request.form.get('nstonesperset')
         if stones_per_set_str:
             try:
@@ -1274,7 +1294,7 @@ def add_match(tournament_url):
         schedule_type=schedule_type,
         set_type=set_type,
         ribbon=ribbon,
-        nsets=int(request.form.get('nsets', 3)) if schedule_type not in ('BREAK', 'JOIN') else None,
+        nsets=int(request.form.get('nsets', 3)) if schedule_type not in (ScheduleType.BREAK, ScheduleType.JOIN) else None,
         nominal_length=nominal_length,
         refs_initial=refs_initial,
         stones_per_set=stones_per_set_value
@@ -1285,7 +1305,7 @@ def add_match(tournament_url):
     
     # For dynamic matches, set previous_match from form and compute start time from it
     # For static matches, use the provided start_time
-    if schedule_type != 'STATIC':
+    if schedule_type != ScheduleType.STATIC:
         # Get previous_match from form
         prev_match_id = request.form.get('previous_match', '')
         if prev_match_id:
@@ -1652,18 +1672,18 @@ def update_match(tournament_url):
     # Check if BREAK or JOIN is selected from the Match Type dropdown (renamed from 'dynamic')
     match_type_value = request.form.get('dynamic', '')
     
-    if match_type_value == 'BREAK':
-        schedule_type = 'BREAK'
+    if match_type_value == ScheduleType.BREAK:
+        schedule_type = ScheduleType.BREAK
         set_type = match.set_type  # Keep existing set_type
-    elif match_type_value == 'JOIN':
-        schedule_type = 'JOIN'
+    elif match_type_value == ScheduleType.JOIN:
+        schedule_type = ScheduleType.JOIN
         set_type = match.set_type  # Keep existing set_type
     else:
-        schedule_type = 'DYNAMIC' if match_type_value == 'true' else 'STATIC'
+        schedule_type = ScheduleType.DYNAMIC if match_type_value == 'true' else ScheduleType.STATIC
         set_type = request.form.get('match_type', match.set_type)
     
     # BREAK and JOIN matches don't have teams/refs
-    if schedule_type in ('BREAK', 'JOIN'):
+    if schedule_type in (ScheduleType.BREAK, ScheduleType.JOIN):
         team1_id = None
         team1_name = ''
         team2_id = None
@@ -1681,6 +1701,30 @@ def update_match(tournament_url):
     if '::' in new_match_name:
         flash('Match names cannot contain "::"', 'error')
         return redirect(f'/{tournament_url}/setup')
+    
+    # Validate match name uniqueness (excluding current match)
+    # BREAK and JOIN matches can have duplicate names on different fields
+    # Other matches must have unique names within the tournament
+    new_match_field = request.form.get('field', match.field or '')
+    if new_match_name != match.name or new_match_field != (match.field or ''):
+        if schedule_type in (ScheduleType.BREAK, ScheduleType.JOIN):
+            # For BREAK/JOIN: check uniqueness by (name, event, field)
+            existing_match = Match.query.filter_by(
+                event=tournament_url,
+                name=new_match_name,
+                field=new_match_field,
+                schedule_type=schedule_type
+            ).first()
+            if existing_match and existing_match.uuid != match.uuid:
+                flash(f'A {schedule_type} match with the name "{new_match_name}" already exists on field "{new_match_field}" in this tournament', 'error')
+                return redirect(f'/{tournament_url}/setup')
+        else:
+            # For other matches: check uniqueness by (name, event)
+            existing_match = Match.query.filter_by(event=tournament_url, name=new_match_name).first()
+            if existing_match and existing_match.uuid != match.uuid:
+                flash(f'A match with the name "{new_match_name}" already exists in this tournament', 'error')
+                return redirect(f'/{tournament_url}/setup')
+    
     match.name = new_match_name
     match.field = request.form.get('field', '')
     match.team1 = team1_id
@@ -1692,13 +1736,13 @@ def update_match(tournament_url):
     match.ribbon = request.form.get('ribbon', '') == 'on'  # Checkbox value
     
     # BREAK and JOIN don't have nsets
-    if schedule_type not in ('BREAK', 'JOIN'):
+    if schedule_type not in (ScheduleType.BREAK, ScheduleType.JOIN):
         match.nsets = int(request.form.get('nsets', 3))
     else:
         match.nsets = None
     
     # Update stones_per_set for STONES matches (with fallback to deprecated nstonesperset for backward compatibility)
-    if set_type == 'STONES':
+    if set_type == SetType.STONES:
         stones_per_set_str = request.form.get('stones_per_set') or request.form.get('nstonesperset')
         if stones_per_set_str:
             try:
@@ -1713,9 +1757,9 @@ def update_match(tournament_url):
         match.stones_per_set = None
     
     # JOIN has zero length, BREAK can have length
-    if schedule_type == 'JOIN':
+    if schedule_type == ScheduleType.JOIN:
         match.nominal_length = 0
-    elif schedule_type == 'BREAK':
+    elif schedule_type == ScheduleType.BREAK:
         match.nominal_length = int(request.form.get('length', match.nominal_length or 60))
     else:
         match.nominal_length = int(request.form.get('length', match.nominal_length or 60))
@@ -1724,7 +1768,7 @@ def update_match(tournament_url):
     
     # For dynamic matches, set previous_match from form and compute start time from it
     # For static matches, ensure previous_match is cleared and use provided start_time
-    if schedule_type != 'STATIC':
+    if schedule_type != ScheduleType.STATIC:
         # Get previous_match from form
         prev_match_id = request.form.get('previous_match', '')
         if prev_match_id:
@@ -2053,7 +2097,7 @@ def tournament_autocomplete(tournament_url):
     # Matches in this tournament (by name)
     # Exclude BREAK and JOIN matches entirely
     matches = Match.query.filter_by(event=tournament_url).filter(
-        Match.schedule_type.notin_(['BREAK', 'JOIN'])
+        Match.schedule_type.notin_([ScheduleType.BREAK, ScheduleType.JOIN])
     ).all()
     for m in matches:
         name = (m.name or '').strip()

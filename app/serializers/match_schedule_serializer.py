@@ -53,9 +53,22 @@ class MatchScheduleSerializer:
             "ribbon": match.ribbon or False,
             "nsets": match.nsets,
             "stones_per_set": match.stones_per_set,
-            "previous_match": match.previous_match or "",
-            "next_match": match.next_match or "",
+            "previous_match": "",
+            "next_match": "",
         }
+        
+        # Convert UUIDs to match names for relationships
+        if match.previous_match:
+            from models import Match as MatchModel
+            prev_match = MatchModel.query.filter_by(uuid=match.previous_match, event=match.event).first()
+            if prev_match:
+                result["previous_match"] = prev_match.name
+        
+        if match.next_match:
+            from models import Match as MatchModel
+            next_match = MatchModel.query.filter_by(uuid=match.next_match, event=match.event).first()
+            if next_match:
+                result["next_match"] = next_match.name
         
         # Handle datetime
         if match.nominal_start_time:
@@ -117,7 +130,8 @@ class MatchScheduleSerializer:
         data: dict[str, Any],
         tournament_url: str,
         *,
-        match_uuid_map: dict[str, str] | None = None,
+        match_name_to_uuid: dict[str, str] | None = None,
+        match_name_field_to_uuid: dict[tuple[str, str], str] | None = None,
     ) -> Result[dict[str, Any], ValidationError]:
         """
         Convert TOML dict to Match creation data.
@@ -125,7 +139,8 @@ class MatchScheduleSerializer:
         Args:
             data: TOML match dict
             tournament_url: Target tournament URL
-            match_uuid_map: Optional mapping from old UUIDs to new UUIDs (for resolving previous_match/next_match)
+            match_name_to_uuid: Optional mapping from match names to UUIDs (for resolving previous_match/next_match)
+            match_name_field_to_uuid: Optional mapping from (name, field) tuples to UUIDs (for field-based resolution when duplicates exist)
         
         Returns:
             Result containing dict with match creation data
@@ -171,22 +186,82 @@ class MatchScheduleSerializer:
             else:
                 return Err(ValidationError(f"Invalid nominal_start_time type: {type(dt_value)}"))
         
-        # Resolve relationship references using UUID map
-        if match_uuid_map:
+        # Helper function to resolve match name to UUID
+        def resolve_match_name(match_name: str, current_field: str | None) -> str | None:
+            """Resolve a match name to UUID, using field-based resolution if duplicates exist."""
+            if not match_name:
+                return None
+            
+            # First try field-based resolution if mapping provided
+            if match_name_field_to_uuid and current_field:
+                key = (match_name, current_field)
+                if key in match_name_field_to_uuid:
+                    return match_name_field_to_uuid[key]
+            
+            # Fall back to name-only mapping
+            if match_name_to_uuid:
+                return match_name_to_uuid.get(match_name)
+            
+            return None
+        
+        # Resolve relationship references using match name mapping
+        # previous_match and next_match are now match names, not UUIDs
+        # When duplicates exist, resolve to match on same field
+        current_field = result["field"]
+        if match_name_to_uuid or match_name_field_to_uuid:
             if "previous_match" in data and data["previous_match"]:
-                old_uuid = str(data["previous_match"]).strip()
-                result["previous_match"] = match_uuid_map.get(old_uuid)
+                prev_match_name = str(data["previous_match"]).strip()
+                if prev_match_name:
+                    result["previous_match"] = resolve_match_name(prev_match_name, current_field)
             
             if "next_match" in data and data["next_match"]:
-                old_uuid = str(data["next_match"]).strip()
-                result["next_match"] = match_uuid_map.get(old_uuid)
+                next_match_name = str(data["next_match"]).strip()
+                if next_match_name:
+                    result["next_match"] = resolve_match_name(next_match_name, current_field)
         else:
-            # No mapping provided, use UUIDs directly (for same-tournament imports)
+            # No mapping provided - try to resolve by name from database
+            # This handles same-tournament imports where matches already exist
+            # If duplicates exist, prefer match on same field
+            from models import Match as MatchModel
             if "previous_match" in data and data["previous_match"]:
-                result["previous_match"] = str(data["previous_match"]).strip() or None
+                prev_match_name = str(data["previous_match"]).strip()
+                if prev_match_name:
+                    # Try to find by name and field first (for duplicates)
+                    if current_field:
+                        prev_match = MatchModel.query.filter_by(
+                            event=tournament_url, 
+                            name=prev_match_name,
+                            field=current_field
+                        ).first()
+                    else:
+                        prev_match = None
+                    
+                    # Fall back to name-only if not found
+                    if not prev_match:
+                        prev_match = MatchModel.query.filter_by(event=tournament_url, name=prev_match_name).first()
+                    
+                    if prev_match:
+                        result["previous_match"] = prev_match.uuid
             
             if "next_match" in data and data["next_match"]:
-                result["next_match"] = str(data["next_match"]).strip() or None
+                next_match_name = str(data["next_match"]).strip()
+                if next_match_name:
+                    # Try to find by name and field first (for duplicates)
+                    if current_field:
+                        next_match = MatchModel.query.filter_by(
+                            event=tournament_url,
+                            name=next_match_name,
+                            field=current_field
+                        ).first()
+                    else:
+                        next_match = None
+                    
+                    # Fall back to name-only if not found
+                    if not next_match:
+                        next_match = MatchModel.query.filter_by(event=tournament_url, name=next_match_name).first()
+                    
+                    if next_match:
+                        result["next_match"] = next_match.uuid
         
         # Include uuid if present (for same-tournament updates)
         if "uuid" in data and data["uuid"]:
