@@ -30,8 +30,6 @@ __all__ = [
     "MatchNote",
     "Injury",
     "HeadRef",
-    "TeamRecord",
-    "PlayerRecord",
     "SideComp",
     "SideCompResult",
 ]
