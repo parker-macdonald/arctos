@@ -54,26 +54,51 @@ def apply_match_dependencies(tournament_url: str, completed_match: Match) -> Non
                 m.team2 = loser_team_id
                 updated_any = True
 
-        # refs
+        # refs - merge match resolutions into existing refs at correct indices
         refs_initial_val = m.refs_initial or ''
         if refs_initial_val:
-            # Only populate refs if not already explicitly set or still contains placeholders
-            refs_current = (m.refs or '').strip()
-            refs_list = [r.strip() for r in refs_initial_val.split(',') if r.strip() != '']
-            resolved = []
+            # Split refs_initial preserving all positions (including empty strings between commas)
+            refs_initial_list = [r.strip() for r in refs_initial_val.split(',')]
+            
+            # Get current refs state (may be empty or partially populated with empty string placeholders)
+            refs_current_list = []
+            if m.refs:
+                refs_current_list = [r.strip() for r in m.refs.split(',')]
+            
+            # Ensure refs_current_list has same length as refs_initial_list
+            # If lengths don't match, rebuild from refs_initial (preserving explicit team IDs)
+            if len(refs_current_list) != len(refs_initial_list):
+                refs_current_list = [''] * len(refs_initial_list)
+                # Populate any explicit team IDs from refs_initial
+                for i, initial_ref in enumerate(refs_initial_list):
+                    if initial_ref and not initial_ref.lower().startswith('tag::') and '::winner' not in initial_ref.lower() and '::loser' not in initial_ref.lower():
+                        # Explicit team ID
+                        refs_current_list[i] = initial_ref
+            
+            # Merge match resolutions into existing refs at correct indices
             changed = False
-            for r in refs_list:
-                if normalize(r)==winner_placeholder and winner_team_id:
-                    resolved.append(winner_team_id)
-                    changed = True
-                elif normalize(r)==loser_placeholder and loser_team_id:
-                    resolved.append(loser_team_id)
-                    changed = True
-                else:
-                    resolved.append(r)
-            # If we changed anything or refs is empty, set refs to resolved string
-            if changed or not refs_current:
-                m.refs = ', '.join(resolved)
+            for i, initial_ref in enumerate(refs_initial_list):
+                if not initial_ref:
+                    continue
+                
+                # Check if this is a match reference that needs resolution
+                normalized_ref = normalize(initial_ref)
+                if normalized_ref == winner_placeholder and winner_team_id:
+                    # Only update if this position is empty (not already resolved)
+                    if i < len(refs_current_list) and not refs_current_list[i]:
+                        refs_current_list[i] = winner_team_id
+                        changed = True
+                elif normalized_ref == loser_placeholder and loser_team_id:
+                    # Only update if this position is empty (not already resolved)
+                    if i < len(refs_current_list) and not refs_current_list[i]:
+                        refs_current_list[i] = loser_team_id
+                        changed = True
+                # For tag references or explicit team IDs, preserve existing value
+                # (they should have been set by update_tags or are already correct)
+            
+            if changed:
+                # Join with commas, preserving empty strings as placeholders
+                m.refs = ', '.join(refs_current_list)
                 updated_any = True
 
     if updated_any:

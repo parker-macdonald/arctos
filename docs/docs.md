@@ -343,6 +343,10 @@ Join matches are like thread joins in multithreading: they are dynamically-sched
 
 Ribbon games are matches that are not counted in tournament results (or rather, are by default excluded). They are useful for exhibition matches, practice games, or matches that don't affect standings. When creating or editing a match, you can check the "Ribbon Game" checkbox to mark it as such.
 
+### Exporting and Importing Schedule Files
+
+On the match setup page, under Utilities, there are "Export Schedule" and "Import Schedule" buttons. 
+
 ---
 
 ## YouTube Livestream Integration

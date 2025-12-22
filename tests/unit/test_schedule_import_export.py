@@ -406,3 +406,58 @@ def test_import_resolves_duplicate_match_names_by_field(test_db, tournament):
     assert break2.previous_match == match2.uuid  # Break on Field 2 references Match 2
 
 
+@pytest.mark.unit
+def test_tags_with_spaces_work_correctly(test_db, tournament):
+    """Tags with spaces in their names should work correctly in export/import and references."""
+    tournament_url = tournament.url
+    
+    # Create a field
+    field = Field(event=tournament_url, name="Field 1", camera=None)
+    db.session.add(field)
+    
+    # Create a tag with spaces in the name
+    tag_with_spaces = Tag(event=tournament_url, name="Pool A Teams")
+    db.session.add(tag_with_spaces)
+    db.session.commit()
+    
+    # Create a match that references this tag
+    match = Match(
+        name="Test Match",
+        event=tournament_url,
+        field="Field 1",
+        schedule_type="STATIC",
+        set_type="SETS",
+        nominal_length=60,
+        team1_initial="tag::Pool A Teams",
+        refs_initial="tag::Pool A Teams",
+    )
+    db.session.add(match)
+    db.session.commit()
+    
+    # Export should include the tag and the reference
+    res = ScheduleImportExportService.export_schedule(tournament_url)
+    match res:
+        case Ok(toml_str):
+            # Tag should be exported
+            assert 'name = "Pool A Teams"' in toml_str
+            # Reference should be exported correctly
+            assert 'team1_initial = "tag::Pool A Teams"' in toml_str
+            assert 'refs_initial = "tag::Pool A Teams"' in toml_str
+        case Err(err):
+            raise AssertionError(f"Expected Ok(TOML), got Err({err})")
+    
+    # Import should work correctly
+    res = ScheduleImportExportService.import_schedule(tournament_url, toml_str)
+    match res:
+        case Ok(result):
+            assert result.matches_created >= 0 or result.matches_updated >= 0
+        case Err(err):
+            raise AssertionError(f"Expected Ok(ImportResult), got Err({err})")
+    
+    # Verify the imported match has the correct reference
+    imported_match = Match.query.filter_by(event=tournament_url, name="Test Match").first()
+    assert imported_match is not None
+    assert imported_match.team1_initial == "tag::Pool A Teams"
+    assert imported_match.refs_initial == "tag::Pool A Teams"
+
+

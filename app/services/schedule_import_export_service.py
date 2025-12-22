@@ -404,10 +404,69 @@ class ScheduleImportExportService:
                     # Same tournament: update by UUID
                     match = Match.query.filter_by(uuid=match_dict["uuid"], event=tournament_url).first()
                     if match:
+                        # Check if refs_initial changed - if so, clear refs (will be repopulated)
+                        old_refs_initial = match.refs_initial or ''
+                        new_refs_initial = match_dict.get("refs_initial") or ''
+                        refs_initial_changed = old_refs_initial != new_refs_initial
+                        
+                        # Check if team1_initial or team2_initial changed
+                        old_team1_initial = match.team1_initial or ''
+                        new_team1_initial = match_dict.get("team1_initial") or ''
+                        team1_initial_changed = old_team1_initial != new_team1_initial
+                        
+                        old_team2_initial = match.team2_initial or ''
+                        new_team2_initial = match_dict.get("team2_initial") or ''
+                        team2_initial_changed = old_team2_initial != new_team2_initial
+                        
                         # Update fields (excluding relationships which we'll handle in second pass)
                         for key, value in match_dict.items():
                             if key not in ("uuid", "event", "previous_match", "next_match"):
                                 setattr(match, key, value)
+                        
+                        # If _initial fields changed, clear corresponding resolved fields
+                        # (they will be repopulated by update_tags/apply_match_dependencies or explicit team IDs)
+                        if refs_initial_changed or team1_initial_changed or team2_initial_changed:
+                            # Helper to check if a value is an explicit team ID
+                            def is_explicit_team_id(val: str) -> bool:
+                                if not val or not val.strip():
+                                    return False
+                                val = val.strip()
+                                if val.lower().startswith('tag::'):
+                                    return False
+                                if '::winner' in val.lower() or '::loser' in val.lower():
+                                    return False
+                                return True
+                            
+                            # Handle team1
+                            if team1_initial_changed:
+                                if is_explicit_team_id(new_team1_initial):
+                                    match.team1 = new_team1_initial
+                                else:
+                                    match.team1 = None
+                            
+                            # Handle team2
+                            if team2_initial_changed:
+                                if is_explicit_team_id(new_team2_initial):
+                                    match.team2 = new_team2_initial
+                                else:
+                                    match.team2 = None
+                            
+                            # Handle refs
+                            if refs_initial_changed:
+                                if new_refs_initial:
+                                    refs_initial_list = [r.strip() for r in new_refs_initial.split(',')]
+                                    refs_list = [''] * len(refs_initial_list)
+                                    has_explicit_ids = False
+                                    for i, initial_ref in enumerate(refs_initial_list):
+                                        if initial_ref and is_explicit_team_id(initial_ref):
+                                            refs_list[i] = initial_ref
+                                            has_explicit_ids = True
+                                    if has_explicit_ids:
+                                        match.refs = ', '.join(refs_list)
+                                    else:
+                                        match.refs = None
+                                else:
+                                    match.refs = None
                         match_name_to_uuid[match_name] = match.uuid
                         # Also add to field-based mapping for duplicate resolution (use actual match field)
                         match_field = match.field or ""

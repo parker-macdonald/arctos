@@ -549,9 +549,18 @@ def start_match(tournament_url):
         return redirect(f'/{tournament_url}/schedule')
     
     # If refs_initial is specified, all refs must be resolved (available)
-    if match.refs_initial and not match.refs:
-        flash('Cannot start match - ref teams not yet available', 'error')
-        return redirect(f'/{tournament_url}/schedule')
+    # Check if refs exists and all positions are resolved (no empty string placeholders)
+    if match.refs_initial:
+        if not match.refs:
+            flash('Cannot start match - ref teams not yet available', 'error')
+            return redirect(f'/{tournament_url}/schedule')
+        # Check if all positions are resolved (no empty strings)
+        refs_list = [r.strip() for r in match.refs.split(',')]
+        refs_initial_list = [r.strip() for r in match.refs_initial.split(',')]
+        # Ensure lengths match and all positions are resolved
+        if len(refs_list) != len(refs_initial_list) or any(not r for r in refs_list):
+            flash('Cannot start match - ref teams not yet available', 'error')
+            return redirect(f'/{tournament_url}/schedule')
     
     # For dynamic matches, require dependencies to be completed (or marked ready)
     if match.schedule_type != 'STATIC':

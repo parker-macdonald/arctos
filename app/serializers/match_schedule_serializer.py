@@ -19,43 +19,47 @@ class MatchScheduleSerializer:
     
     @staticmethod
     def tag_to_dict(tag) -> dict[str, Any]:
-        """Convert Tag model to TOML dict."""
-        return {
-            "id": tag.id,
-            "name": tag.name,
-        }
+        """Convert Tag model to TOML dict, omitting empty values."""
+        result = {}
+        if tag.id is not None:
+            result["id"] = tag.id
+        if tag.name:
+            result["name"] = tag.name
+        return result
     
     @staticmethod
     def field_to_dict(field) -> dict[str, Any]:
-        """Convert Field model to TOML dict."""
-        return {
-            "id": field.id,
-            "name": field.name,
-            "camera": field.camera or "",
-        }
+        """Convert Field model to TOML dict, omitting empty values."""
+        result = {}
+        if field.id is not None:
+            result["id"] = field.id
+        if field.name:
+            result["name"] = field.name
+        if field.camera:
+            result["camera"] = field.camera
+        return result
     
     @staticmethod
     def match_to_dict(match) -> dict[str, Any]:
-        """Convert Match model to TOML dict."""
-        result = {
-            "uuid": match.uuid,
-            "name": match.name,
-            "team1": match.team1 or "",
-            "team2": match.team2 or "",
-            "team1_initial": match.team1_initial or "",
-            "team2_initial": match.team2_initial or "",
-            "refs": match.refs or "",
-            "refs_initial": match.refs_initial or "",
-            "field": match.field or "",
-            "nominal_length": match.nominal_length,
-            "schedule_type": match.schedule_type or "STATIC",
-            "set_type": match.set_type or "SETS",
-            "ribbon": match.ribbon or False,
-            "nsets": match.nsets,
-            "stones_per_set": match.stones_per_set,
-            "previous_match": "",
-            "next_match": "",
-        }
+        """Convert Match model to TOML dict, omitting empty values."""
+        result = {}
+        
+        # Always include uuid and name
+        if match.uuid:
+            result["uuid"] = match.uuid
+        if match.name:
+            result["name"] = match.name
+        
+        # Optional string fields - only include if non-empty
+        # Note: team1, team2, refs are NOT exported - they are derived from _initial fields
+        if match.team1_initial:
+            result["team1_initial"] = match.team1_initial
+        if match.team2_initial:
+            result["team2_initial"] = match.team2_initial
+        if match.refs_initial:
+            result["refs_initial"] = match.refs_initial
+        if match.field:
+            result["field"] = match.field
         
         # Convert UUIDs to match names for relationships
         if match.previous_match:
@@ -70,7 +74,25 @@ class MatchScheduleSerializer:
             if next_match:
                 result["next_match"] = next_match.name
         
-        # Handle datetime
+        # Numeric fields - include if not None
+        if match.nominal_length is not None:
+            result["nominal_length"] = match.nominal_length
+        if match.nsets is not None:
+            result["nsets"] = match.nsets
+        if match.stones_per_set is not None:
+            result["stones_per_set"] = match.stones_per_set
+        
+        # Enum fields - include if present (they're always valid values, not "empty")
+        if match.schedule_type:
+            result["schedule_type"] = match.schedule_type
+        if match.set_type:
+            result["set_type"] = match.set_type
+        
+        # Boolean - only include if True (False is default)
+        if match.ribbon:
+            result["ribbon"] = True
+        
+        # Datetime - only include if present
         if match.nominal_start_time:
             result["nominal_start_time"] = match.nominal_start_time
         
@@ -152,15 +174,57 @@ class MatchScheduleSerializer:
         if not name:
             return Err(ValidationError("Match name cannot be empty"))
         
+        # Helper to check if a value is an explicit team ID (not a tag or match reference)
+        def is_explicit_team_id(val: str) -> bool:
+            if not val or not val.strip():
+                return False
+            val = val.strip()
+            # Not a tag reference
+            if val.lower().startswith('tag::'):
+                return False
+            # Not a match reference (contains ::winner or ::loser)
+            if '::winner' in val.lower() or '::loser' in val.lower():
+                return False
+            # Must be an explicit team ID
+            return True
+        
+        # Get _initial field values
+        team1_initial = str(data.get("team1_initial", "")).strip() or None
+        team2_initial = str(data.get("team2_initial", "")).strip() or None
+        refs_initial = str(data.get("refs_initial", "")).strip() or None
+        
+        # Clear team1/team2/refs (they are derived from _initial fields)
+        # But populate explicit team IDs from _initial fields
+        team1 = None
+        if team1_initial and is_explicit_team_id(team1_initial):
+            team1 = team1_initial
+        
+        team2 = None
+        if team2_initial and is_explicit_team_id(team2_initial):
+            team2 = team2_initial
+        
+        # For refs, populate explicit team IDs maintaining index structure
+        refs = None
+        if refs_initial:
+            refs_initial_list = [r.strip() for r in refs_initial.split(',')]
+            refs_list = [''] * len(refs_initial_list)
+            has_explicit_ids = False
+            for i, initial_ref in enumerate(refs_initial_list):
+                if initial_ref and is_explicit_team_id(initial_ref):
+                    refs_list[i] = initial_ref
+                    has_explicit_ids = True
+            if has_explicit_ids:
+                refs = ', '.join(refs_list)
+        
         result = {
             "event": tournament_url,
             "name": name,
-            "team1": str(data.get("team1", "")).strip() or None,
-            "team2": str(data.get("team2", "")).strip() or None,
-            "team1_initial": str(data.get("team1_initial", "")).strip() or None,
-            "team2_initial": str(data.get("team2_initial", "")).strip() or None,
-            "refs": str(data.get("refs", "")).strip() or None,
-            "refs_initial": str(data.get("refs_initial", "")).strip() or None,
+            "team1": team1,
+            "team2": team2,
+            "team1_initial": team1_initial,
+            "team2_initial": team2_initial,
+            "refs": refs,
+            "refs_initial": refs_initial,
             "field": str(data.get("field", "")).strip() or None,
             "nominal_length": data.get("nominal_length"),
             "schedule_type": str(data.get("schedule_type", "STATIC")).strip() or "STATIC",

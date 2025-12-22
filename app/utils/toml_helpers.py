@@ -95,9 +95,9 @@ def write_toml_schedule(
         lines.append("# Tags")
         for tag in tags:
             lines.append("[[tags]]")
-            if "id" in tag:
+            if "id" in tag and tag["id"] is not None:
                 lines.append(f'id = {tag["id"]}')
-            if "name" in tag:
+            if "name" in tag and tag["name"]:
                 lines.append(f'name = "{_escape_toml_string(tag["name"])}"')
             lines.append("")
     
@@ -106,16 +106,12 @@ def write_toml_schedule(
         lines.append("# Fields")
         for field in fields:
             lines.append("[[fields]]")
-            if "id" in field:
+            if "id" in field and field["id"] is not None:
                 lines.append(f'id = {field["id"]}')
-            if "name" in field:
+            if "name" in field and field["name"]:
                 lines.append(f'name = "{_escape_toml_string(field["name"])}"')
-            if "camera" in field:
-                camera = field["camera"]
-                if camera:
-                    lines.append(f'camera = "{_escape_toml_string(camera)}"')
-                else:
-                    lines.append('camera = ""')
+            if "camera" in field and field["camera"]:
+                lines.append(f'camera = "{_escape_toml_string(field["camera"])}"')
             lines.append("")
     
     # Matches
@@ -132,14 +128,11 @@ def write_toml_schedule(
             if "name" in match:
                 lines.append(f'name = "{_escape_toml_string(match["name"])}"')
             
-            # Optional string fields
-            for field_name in ["team1", "team2", "team1_initial", "team2_initial", "refs", "refs_initial", "field"]:
-                if field_name in match:
-                    value = match[field_name]
-                    if value:
-                        lines.append(f'{field_name} = "{_escape_toml_string(str(value))}"')
-                    else:
-                        lines.append(f'{field_name} = ""')
+            # Optional string fields - only include if non-empty
+            # Note: team1, team2, refs are NOT exported - they are derived from _initial fields
+            for field_name in ["team1_initial", "team2_initial", "refs_initial", "field"]:
+                if field_name in match and match[field_name]:
+                    lines.append(f'{field_name} = "{_escape_toml_string(str(match[field_name]))}"')
             
             # Datetime
             if "nominal_start_time" in match and match["nominal_start_time"]:
@@ -155,19 +148,19 @@ def write_toml_schedule(
                 if field_name in match and match[field_name] is not None:
                     lines.append(f'{field_name} = {match[field_name]}')
             
-            # String enum fields
+            # String enum fields - only include if present
             for field_name in ["schedule_type", "set_type"]:
                 if field_name in match and match[field_name]:
                     lines.append(f'{field_name} = "{match[field_name]}"')
             
-            # Boolean
-            if "ribbon" in match:
-                lines.append(f'ribbon = {str(match["ribbon"]).lower()}')
+            # Boolean - only include if True (False is default)
+            if "ribbon" in match and match["ribbon"]:
+                lines.append('ribbon = true')
             
-            # Relationship references (UUIDs)
+            # Relationship references - only include if present
             for field_name in ["previous_match", "next_match"]:
                 if field_name in match and match[field_name]:
-                    lines.append(f'{field_name} = "{match[field_name]}"')
+                    lines.append(f'{field_name} = "{_escape_toml_string(match[field_name])}"')
             
             lines.append("")
     

@@ -1283,19 +1283,52 @@ def add_match(tournament_url):
             except (ValueError, TypeError):
                 stones_per_set_value = None
     
+    # Helper to check if a value is an explicit team ID (not a tag or match reference)
+    def is_explicit_team_id(val: str) -> bool:
+        if not val or not val.strip():
+            return False
+        val = val.strip()
+        # Not a tag reference
+        if val.lower().startswith('tag::'):
+            return False
+        # Not a match reference (contains ::winner or ::loser)
+        if '::winner' in val.lower() or '::loser' in val.lower():
+            return False
+        # Must be an explicit team ID
+        return True
+    
+    # For new matches, populate explicit team IDs from _initial fields
+    # Tag references will be resolved by update_tags, match references by apply_match_dependencies
+    final_team1 = team1_id if team1_id else (team1_name if is_explicit_team_id(team1_name) else None)
+    final_team2 = team2_id if team2_id else (team2_name if is_explicit_team_id(team2_name) else None)
+    
+    # For refs, populate explicit team IDs maintaining index structure
+    final_refs = None
+    if refs_initial:
+        refs_initial_list = [r.strip() for r in refs_initial.split(',')]
+        refs_list = [''] * len(refs_initial_list)
+        has_explicit_ids = False
+        for i, initial_ref in enumerate(refs_initial_list):
+            if initial_ref and is_explicit_team_id(initial_ref):
+                refs_list[i] = initial_ref
+                has_explicit_ids = True
+        if has_explicit_ids:
+            final_refs = ', '.join(refs_list)
+    
     match = Match(
         name=match_name,
         event=tournament_url,
         field=request.form.get('field', ''),
-        team1=team1_id,
+        team1=final_team1,
         team1_initial=team1_name,
-        team2=team2_id,
+        team2=final_team2,
         team2_initial=team2_name,
         schedule_type=schedule_type,
         set_type=set_type,
         ribbon=ribbon,
         nsets=int(request.form.get('nsets', 3)) if schedule_type not in (ScheduleType.BREAK, ScheduleType.JOIN) else None,
         nominal_length=nominal_length,
+        refs=final_refs,
         refs_initial=refs_initial,
         stones_per_set=stones_per_set_value
     )
@@ -1725,12 +1758,55 @@ def update_match(tournament_url):
                 flash(f'A match with the name "{new_match_name}" already exists in this tournament', 'error')
                 return redirect(f'/{tournament_url}/setup')
     
+    # Helper to check if a value is an explicit team ID (not a tag or match reference)
+    def is_explicit_team_id(val: str) -> bool:
+        if not val or not val.strip():
+            return False
+        val = val.strip()
+        # Not a tag reference
+        if val.lower().startswith('tag::'):
+            return False
+        # Not a match reference (contains ::winner or ::loser)
+        if '::winner' in val.lower() or '::loser' in val.lower():
+            return False
+        # Must be an explicit team ID
+        return True
+    
     match.name = new_match_name
     match.field = request.form.get('field', '')
-    match.team1 = team1_id
+    
+    # Handle team1_initial changes
+    old_team1_initial = match.team1_initial or ''
     match.team1_initial = team1_name
-    match.team2 = team2_id
+    if old_team1_initial != team1_name:
+        # Clear team1, but populate if explicit team ID
+        if team1_id:
+            match.team1 = team1_id
+        elif is_explicit_team_id(team1_name):
+            match.team1 = team1_name
+        else:
+            match.team1 = None
+    else:
+        # If team1_initial didn't change, only update team1 if we have an explicit team_id
+        if team1_id:
+            match.team1 = team1_id
+    
+    # Handle team2_initial changes
+    old_team2_initial = match.team2_initial or ''
     match.team2_initial = team2_name
+    if old_team2_initial != team2_name:
+        # Clear team2, but populate if explicit team ID
+        if team2_id:
+            match.team2 = team2_id
+        elif is_explicit_team_id(team2_name):
+            match.team2 = team2_name
+        else:
+            match.team2 = None
+    else:
+        # If team2_initial didn't change, only update team2 if we have an explicit team_id
+        if team2_id:
+            match.team2 = team2_id
+    
     match.schedule_type = schedule_type
     match.set_type = set_type
     match.ribbon = request.form.get('ribbon', '') == 'on'  # Checkbox value
@@ -1764,7 +1840,26 @@ def update_match(tournament_url):
     else:
         match.nominal_length = int(request.form.get('length', match.nominal_length or 60))
     
+    # If refs_initial changed, clear refs (it will be repopulated by update_tags/apply_match_dependencies)
+    old_refs_initial = match.refs_initial or ''
     match.refs_initial = refs_initial
+    if old_refs_initial != refs_initial:
+        # Clear refs, but populate any explicit team IDs from refs_initial
+        if refs_initial:
+            refs_initial_list = [r.strip() for r in refs_initial.split(',')]
+            refs_list = [''] * len(refs_initial_list)
+            has_explicit_ids = False
+            for i, initial_ref in enumerate(refs_initial_list):
+                if initial_ref and not initial_ref.lower().startswith('tag::') and '::winner' not in initial_ref.lower() and '::loser' not in initial_ref.lower():
+                    # Explicit team ID
+                    refs_list[i] = initial_ref
+                    has_explicit_ids = True
+            if has_explicit_ids:
+                match.refs = ', '.join(refs_list)
+            else:
+                match.refs = None
+        else:
+            match.refs = None
     
     # For dynamic matches, set previous_match from form and compute start time from it
     # For static matches, ensure previous_match is cleared and use provided start_time
@@ -1811,7 +1906,11 @@ def update_match(tournament_url):
 @bp.route('/<tournament_url>/update-tags', methods=['POST'])
 @login_required
 def update_tags(tournament_url):
-    """Update all matches by converting tag names to team IDs in team1_initial, team2_initial, and refs_initial."""
+    """Update all matches by converting tag::TAG_NAME references to team IDs in team1, team2, and refs fields.
+    
+    Note: _initial fields are never modified - they remain as the source of truth.
+    This function only updates the resolved team1/team2/refs fields.
+    """
     if is_not_TO(tournament_url):
         return redirect(f'/{tournament_url}')
     
@@ -1841,43 +1940,91 @@ def update_tags(tournament_url):
     for match in matches:
         changed = False
         
-        # Update team1_initial (only explicit tag references: tag::TAG_NAME)
+        # Helper to check if a value is a tag reference
+        def is_tag_ref(val: str) -> bool:
+            return val and val.strip().lower().startswith('tag::')
+        
+        # Helper to check if a value is an explicit team ID (not a tag or match reference)
+        def is_explicit_team_id(val: str) -> bool:
+            if not val or not val.strip():
+                return False
+            val = val.strip()
+            # Not a tag reference
+            if val.lower().startswith('tag::'):
+                return False
+            # Not a match reference (contains ::winner or ::loser)
+            if '::winner' in val.lower() or '::loser' in val.lower():
+                return False
+            # Must be an explicit team ID
+            return True
+        
+        # Update team1 based on team1_initial
         if match.team1_initial:
             initial = match.team1_initial.strip()
             if initial in tag_to_team:
-                match.team1_initial = tag_to_team[initial]
-                # Also set team1 if not already set
-                if not match.team1:
-                    match.team1 = tag_to_team[initial]
+                # Tag reference - update team1
+                match.team1 = tag_to_team[initial]
+                changed = True
+            elif is_explicit_team_id(initial):
+                # Explicit team ID - populate team1
+                match.team1 = initial
                 changed = True
         
-        # Update team2_initial (only explicit tag references: tag::TAG_NAME)
+        # Update team2 based on team2_initial
         if match.team2_initial:
             initial = match.team2_initial.strip()
             if initial in tag_to_team:
-                match.team2_initial = tag_to_team[initial]
-                # Also set team2 if not already set
-                if not match.team2:
-                    match.team2 = tag_to_team[initial]
+                # Tag reference - update team2
+                match.team2 = tag_to_team[initial]
+                changed = True
+            elif is_explicit_team_id(initial):
+                # Explicit team ID - populate team2
+                match.team2 = initial
                 changed = True
         
-        # Update refs_initial (comma-separated; only explicit tag references)
+        # Update refs based on refs_initial (maintain index structure)
         if match.refs_initial:
-            refs_list = [r.strip() for r in match.refs_initial.split(',') if r.strip()]
-            updated_refs = []
-            refs_changed = False
-            for ref in refs_list:
-                if ref in tag_to_team:
-                    updated_refs.append(tag_to_team[ref])
-                    refs_changed = True
-                else:
-                    updated_refs.append(ref)
+            # Split refs_initial preserving all positions (including empty strings between commas)
+            refs_initial_list = [r.strip() for r in match.refs_initial.split(',')]
             
-            if refs_changed:
-                match.refs_initial = ', '.join(updated_refs)
-                # Also update refs if not already set
-                if not match.refs:
-                    match.refs = ', '.join([r for r in updated_refs if r])
+            # Get current refs state (may be empty or partially populated)
+            refs_current_list = []
+            if match.refs:
+                refs_current_list = [r.strip() for r in match.refs.split(',')]
+            
+            # Ensure refs_current_list has same length as refs_initial_list
+            # If refs_initial changed length, clear and rebuild
+            if len(refs_current_list) != len(refs_initial_list):
+                refs_current_list = [''] * len(refs_initial_list)
+                changed = True
+            
+            # Build updated refs list maintaining index structure
+            refs_updated = False
+            for i, initial_ref in enumerate(refs_initial_list):
+                if not initial_ref:
+                    # Empty position - keep as empty string placeholder
+                    if i >= len(refs_current_list):
+                        refs_current_list.append('')
+                    continue
+                
+                if initial_ref in tag_to_team:
+                    # Tag reference - update this index
+                    if i >= len(refs_current_list):
+                        refs_current_list.append('')
+                    refs_current_list[i] = tag_to_team[initial_ref]
+                    refs_updated = True
+                elif is_explicit_team_id(initial_ref):
+                    # Explicit team ID - populate this index
+                    if i >= len(refs_current_list):
+                        refs_current_list.append('')
+                    refs_current_list[i] = initial_ref
+                    refs_updated = True
+                # If it's a match reference (::winner/::loser), leave as empty string
+                # It will be resolved by apply_match_dependencies
+            
+            if refs_updated or changed:
+                # Join with commas, preserving empty strings as placeholders
+                match.refs = ', '.join(refs_current_list)
                 changed = True
         
         if changed:
