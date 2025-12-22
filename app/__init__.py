@@ -29,10 +29,10 @@ def create_app(config=None):
 
     
     app = Flask(__name__, static_folder='../static', template_folder='../templates')
-    
+    config = config or dict()
     # Default configuration
     app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-key')
-    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///tournament.db'
+    app.config['SQLALCHEMY_DATABASE_URI'] = config.get('SQLALCHEMY_DATABASE_URI', 'sqlite:///tournament.db')
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
     app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 10MB max file size
     

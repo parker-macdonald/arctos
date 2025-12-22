@@ -255,7 +255,7 @@
                                                                             {% endif %}
                                                 
                                                 {% set refs_actual_highlight = '' %}
-                                                {% set refs_source = match.refs or '' %}
+                                                {% set refs_source = match|merge_refs %}
                                                 {% if refs_source %}
                                                     {% set refs_ns = namespace(values=[]) %}
                                                     {% set refs_list = refs_source.split(',') %}
@@ -263,12 +263,12 @@
                                                         {% set ref_trimmed = ref_item.strip() %}
                                                         {% if ref_trimmed and ref_trimmed != 'TBA' and not (ref_trimmed.endswith('::winner') or ref_trimmed.endswith('::loser') or ref_trimmed.endswith(' winner') or ref_trimmed.endswith(' loser')) %}
                                                             {% set _ = refs_ns.values.append(ref_trimmed.replace('::', ' ')) %}
-                                                                {% endif %}
-                                                            {% endfor %}
+                                                        {% endif %}
+                                                    {% endfor %}
                                                     {% if refs_ns.values %}
                                                         {% set refs_actual_highlight = refs_ns.values|join(', ') %}
-                                                        {% endif %}
-                                                        {% endif %}
+                                                    {% endif %}
+                                                {% endif %}
                                                 
                                                 <div class="schedule-match-block 
                                                     {% if match.schedule_type == 'BREAK' %}schedule-break{% endif %}
@@ -322,7 +322,7 @@
                                                                 {% endif %}
                                                             </div>
                                                             
-                                                            {% set refs_display = match.refs or match.refs_initial or '' %}
+                                                            {% set refs_display = match|merge_refs %}
                                                             {% if refs_display and refs_display != 'TBA' %}
                                                                 <div class="schedule-match-refs">
                                                                     <strong>refs:</strong> 
@@ -499,7 +499,7 @@
                                 {% endif %}
                                 
                                 {% set refs_actual_highlight = '' %}
-                                {% set refs_source = match.refs or '' %}
+                                {% set refs_source = match|merge_refs %}
                                 {% if refs_source %}
                                     {% set refs_ns = namespace(values=[]) %}
                                     {% set refs_list = refs_source.split(',') %}
@@ -583,7 +583,7 @@
                                         {% endif %}
                                     </td>
                                     <td>
-                                        {% set refs_display = match.refs or match.refs_initial or '' %}
+                                        {% set refs_display = match|merge_refs %}
                                         {% if refs_display and refs_display != 'TBA' %}
                                             {% set refs_list = refs_display.split(',') %}
                                             {% for ref in refs_list %}

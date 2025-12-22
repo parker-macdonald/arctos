@@ -165,3 +165,40 @@ def camera_url(tournament_url, field_name):
         # Fallback if there's an error
         return f"/{tournament_url}/camera?field={field_name}&key="
 
+
+@bp.app_template_filter('merge_refs')
+def merge_refs(match):
+    """
+    Merge refs and refs_initial at the item level.
+    
+    For each position, use the value from refs if it's non-empty,
+    otherwise use the value from refs_initial.
+    
+    Returns a comma-separated string of merged refs.
+    """
+    if not match:
+        return ''
+    
+    refs_str = match.refs or ''
+    refs_initial_str = match.refs_initial or ''
+    
+    # If refs_initial is empty, just return refs
+    if not refs_initial_str:
+        return refs_str
+    
+    # Split both lists
+    refs_list = [r.strip() for r in refs_str.split(',')] if refs_str else []
+    refs_initial_list = [r.strip() for r in refs_initial_str.split(',')] if refs_initial_str else []
+    
+    # Use refs_initial as the base (it defines the structure)
+    merged = []
+    for i, initial_ref in enumerate(refs_initial_list):
+        # If refs has a value at this position, use it; otherwise use refs_initial
+        if i < len(refs_list) and refs_list[i]:
+            merged.append(refs_list[i])
+        elif initial_ref:
+            merged.append(initial_ref)
+        # Skip empty positions
+    
+    return ', '.join(merged)
+

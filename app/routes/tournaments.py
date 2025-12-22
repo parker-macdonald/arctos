@@ -26,6 +26,8 @@ from app.utils.camera_helpers import (
     get_camera_key_from_request,
     require_camera_key,
 )
+
+from app.domain.enums import ScheduleType, SetType
 # for finalizing recordings which calls ffmpeg
 # only one worker bc ffmpeg does its own parallelism 
 # so we only ever want to run one at a time 
@@ -407,8 +409,18 @@ def tournament_bracket(tournament_url):
             is_tag = False
             match_name = None
             
+            # Check if it's a tag reference first: tag::TAG_NAME
+            if team_ref.lower().startswith('tag::'):
+                tag_name = team_ref[5:].strip()
+                if tag_name:
+                    tag = Tag.query.filter_by(event=tournament_url, name=tag_name).first()
+                    if tag:
+                        team_info = {
+                            'display_text': f'tag::{tag_name}',
+                        }
+                        is_tag = True
             # Check if it's a match reference (match_name::winner or match_name::loser)
-            if '::' in team_ref:
+            elif '::' in team_ref:
                 parts = team_ref.split('::', 1)
                 match_name = parts[0].strip()
                 ref_type = parts[1].strip() if len(parts) > 1 else ''
@@ -467,11 +479,11 @@ def tournament_bracket(tournament_url):
                         'display_text': team_reg.pseudonym
                     }
                 else:
-                    # Check if it's a tag
+                    # Backwards-compat: legacy plain tag name without 'tag::' prefix
                     tag = Tag.query.filter_by(event=tournament_url, name=team_ref).first()
                     if tag:
                         team_info = {
-                            'display_text': team_ref
+                            'display_text': f'tag::{tag.name}'
                         }
                         is_tag = True
             
@@ -708,6 +720,76 @@ def tournament_setup(tournament_url):
     conflicts = detect_match_conflicts(tournament_url)
     
     return render_template('tournament_setup.html', tournament=tournament, matches=matches, fields=fields, tags=tags, team_registrations=team_registrations, conflicts=conflicts)
+
+
+@bp.route('/<tournament_url>/export-schedule')
+@require_tournament_organizer("You must be a tournament organizer to export schedules")
+def export_schedule(tournament_url):
+    """Export schedule (tags, fields, matches) as TOML file download."""
+    from app.services.schedule_import_export_service import ScheduleImportExportService
+    from app.error_values import Ok, Err
+    from flask import send_file
+    import io
+
+    res = ScheduleImportExportService.export_schedule(tournament_url)
+    
+    match res:
+        case Ok(toml_content):
+            # Create in-memory file
+            file_obj = io.BytesIO(toml_content.encode('utf-8'))
+            filename = f"{tournament_url}_schedule_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.toml"
+            return send_file(
+                file_obj,
+                mimetype='application/toml',
+                as_attachment=True,
+                download_name=filename
+            )
+        case Err(err):
+            from app.utils.responses import json_error
+            from app.utils.result_helpers import public_error_message
+            return json_error(public_error_message(err), status_code=err.status_code if hasattr(err, 'status_code') else 400)
+
+
+@bp.route('/<tournament_url>/import-schedule', methods=['POST'])
+@require_tournament_organizer("You must be a tournament organizer to import schedules")
+def import_schedule(tournament_url):
+    """Import schedule from uploaded TOML file."""
+    from app.services.schedule_import_export_service import ScheduleImportExportService
+    from app.utils.result_helpers import json_from_result
+
+    # Validate file upload
+    if 'schedule_file' not in request.files:
+        return jsonify({'success': False, 'error': 'No file uploaded'}), 400
+    
+    file = request.files['schedule_file']
+    if file.filename == '':
+        return jsonify({'success': False, 'error': 'No file selected'}), 400
+    
+    if not file.filename.endswith('.toml'):
+        return jsonify({'success': False, 'error': 'File must be a .toml file'}), 400
+
+    # Read file content
+    try:
+        toml_content = file.read().decode('utf-8')
+    except UnicodeDecodeError:
+        return jsonify({'success': False, 'error': 'File must be valid UTF-8 text'}), 400
+
+    # Import schedule (all validation happens before any database changes)
+    res = ScheduleImportExportService.import_schedule(tournament_url, toml_content)
+    
+    def result_to_payload(import_result):
+        """Convert ImportResult to JSON payload."""
+        return {
+            'tags_created': import_result.tags_created,
+            'tags_updated': import_result.tags_updated,
+            'fields_created': import_result.fields_created,
+            'fields_updated': import_result.fields_updated,
+            'matches_created': import_result.matches_created,
+            'matches_updated': import_result.matches_updated,
+            'errors': import_result.errors,
+        }
+    
+    return json_from_result(res, ok_to_payload=result_to_payload)
 
 
 @bp.route('/<tournament_url>/register')
@@ -1134,21 +1216,21 @@ def add_match(tournament_url):
     # Check if BREAK or JOIN is selected from the Match Type dropdown (renamed from 'dynamic')
     match_type_value = request.form.get('dynamic', '')
     
-    if match_type_value == 'BREAK':
-        schedule_type = 'BREAK'
-        set_type = 'SETS'  # Not used for BREAK, but set a default
+    if match_type_value == ScheduleType.BREAK:
+        schedule_type = ScheduleType.BREAK
+        set_type = SetType.SETS  # Not used for BREAK, but set a default
         nominal_length = int(request.form.get('length', 60))
-    elif match_type_value == 'JOIN':
-        schedule_type = 'JOIN'
-        set_type = 'SETS'  # Not used for JOIN, but set a default
+    elif match_type_value == ScheduleType.JOIN:
+        schedule_type = ScheduleType.JOIN
+        set_type = SetType.SETS  # Not used for JOIN, but set a default
         nominal_length = 0
     else:
-        schedule_type = 'DYNAMIC' if match_type_value == 'true' else 'STATIC'
-        set_type = request.form.get('match_type', 'SETS')
+        schedule_type = ScheduleType.DYNAMIC if match_type_value == 'true' else ScheduleType.STATIC
+        set_type = request.form.get('match_type', SetType.SETS)
         nominal_length = int(request.form.get('length', 60))
     
     # BREAK and JOIN matches don't have teams/refs
-    if schedule_type in ('BREAK', 'JOIN'):
+    if schedule_type in (ScheduleType.BREAK, ScheduleType.JOIN):
         team1_id = None
         team1_name = ''
         team2_id = None
@@ -1169,20 +1251,86 @@ def add_match(tournament_url):
         flash('Match names cannot contain "::"', 'error')
         return redirect(f'/{tournament_url}/setup')
     
+    # Validate match name uniqueness
+    # BREAK and JOIN matches can have duplicate names on different fields
+    # Other matches must have unique names within the tournament
+    match_field = request.form.get('field', '')
+    if schedule_type in (ScheduleType.BREAK, ScheduleType.JOIN):
+        # For BREAK/JOIN: check uniqueness by (name, event, field)
+        existing_match = Match.query.filter_by(
+            event=tournament_url, 
+            name=match_name, 
+            field=match_field,
+            schedule_type=schedule_type
+        ).first()
+        if existing_match:
+            flash(f'A {schedule_type} match with the name "{match_name}" already exists on field "{match_field}" in this tournament', 'error')
+            return redirect(f'/{tournament_url}/setup')
+    else:
+        # For other matches: check uniqueness by (name, event)
+        existing_match = Match.query.filter_by(event=tournament_url, name=match_name).first()
+        if existing_match:
+            flash(f'A match with the name "{match_name}" already exists in this tournament', 'error')
+            return redirect(f'/{tournament_url}/setup')
+    
+    # Get stones_per_set for STONES matches (with fallback to deprecated nstonesperset for backward compatibility)
+    stones_per_set_value = None
+    if set_type == SetType.STONES:
+        stones_per_set_str = request.form.get('stones_per_set') or request.form.get('nstonesperset')
+        if stones_per_set_str:
+            try:
+                stones_per_set_value = int(stones_per_set_str)
+            except (ValueError, TypeError):
+                stones_per_set_value = None
+    
+    # Helper to check if a value is an explicit team ID (not a tag or match reference)
+    def is_explicit_team_id(val: str) -> bool:
+        if not val or not val.strip():
+            return False
+        val = val.strip()
+        # Not a tag reference
+        if val.lower().startswith('tag::'):
+            return False
+        # Not a match reference (contains ::winner or ::loser)
+        if '::winner' in val.lower() or '::loser' in val.lower():
+            return False
+        # Must be an explicit team ID
+        return True
+    
+    # For new matches, populate explicit team IDs from _initial fields
+    # Tag references will be resolved by update_tags, match references by apply_match_dependencies
+    final_team1 = team1_id if team1_id else (team1_name if is_explicit_team_id(team1_name) else None)
+    final_team2 = team2_id if team2_id else (team2_name if is_explicit_team_id(team2_name) else None)
+    
+    # For refs, populate explicit team IDs maintaining index structure
+    final_refs = None
+    if refs_initial:
+        refs_initial_list = [r.strip() for r in refs_initial.split(',')]
+        refs_list = [''] * len(refs_initial_list)
+        has_explicit_ids = False
+        for i, initial_ref in enumerate(refs_initial_list):
+            if initial_ref and is_explicit_team_id(initial_ref):
+                refs_list[i] = initial_ref
+                has_explicit_ids = True
+        if has_explicit_ids:
+            final_refs = ', '.join(refs_list)
+    
     match = Match(
         name=match_name,
         event=tournament_url,
         field=request.form.get('field', ''),
-        team1=team1_id,
+        team1=final_team1,
         team1_initial=team1_name,
-        team2=team2_id,
+        team2=final_team2,
         team2_initial=team2_name,
         schedule_type=schedule_type,
         set_type=set_type,
         ribbon=ribbon,
-        nsets=int(request.form.get('nsets', 3)) if schedule_type not in ('BREAK', 'JOIN') else None,
+        nsets=int(request.form.get('nsets', 3)) if schedule_type not in (ScheduleType.BREAK, ScheduleType.JOIN) else None,
         nominal_length=nominal_length,
-        refs_initial=refs_initial
+        refs=final_refs,
+        refs_initial=refs_initial,
+        stones_per_set=stones_per_set_value
     )
     
     db.session.add(match)
@@ -1190,7 +1338,7 @@ def add_match(tournament_url):
     
     # For dynamic matches, set previous_match from form and compute start time from it
     # For static matches, use the provided start_time
-    if schedule_type != 'STATIC':
+    if schedule_type != ScheduleType.STATIC:
         # Get previous_match from form
         prev_match_id = request.form.get('previous_match', '')
         if prev_match_id:
@@ -1557,18 +1705,18 @@ def update_match(tournament_url):
     # Check if BREAK or JOIN is selected from the Match Type dropdown (renamed from 'dynamic')
     match_type_value = request.form.get('dynamic', '')
     
-    if match_type_value == 'BREAK':
-        schedule_type = 'BREAK'
+    if match_type_value == ScheduleType.BREAK:
+        schedule_type = ScheduleType.BREAK
         set_type = match.set_type  # Keep existing set_type
-    elif match_type_value == 'JOIN':
-        schedule_type = 'JOIN'
+    elif match_type_value == ScheduleType.JOIN:
+        schedule_type = ScheduleType.JOIN
         set_type = match.set_type  # Keep existing set_type
     else:
-        schedule_type = 'DYNAMIC' if match_type_value == 'true' else 'STATIC'
+        schedule_type = ScheduleType.DYNAMIC if match_type_value == 'true' else ScheduleType.STATIC
         set_type = request.form.get('match_type', match.set_type)
     
     # BREAK and JOIN matches don't have teams/refs
-    if schedule_type in ('BREAK', 'JOIN'):
+    if schedule_type in (ScheduleType.BREAK, ScheduleType.JOIN):
         team1_id = None
         team1_name = ''
         team2_id = None
@@ -1586,35 +1734,136 @@ def update_match(tournament_url):
     if '::' in new_match_name:
         flash('Match names cannot contain "::"', 'error')
         return redirect(f'/{tournament_url}/setup')
+    
+    # Validate match name uniqueness (excluding current match)
+    # BREAK and JOIN matches can have duplicate names on different fields
+    # Other matches must have unique names within the tournament
+    new_match_field = request.form.get('field', match.field or '')
+    if new_match_name != match.name or new_match_field != (match.field or ''):
+        if schedule_type in (ScheduleType.BREAK, ScheduleType.JOIN):
+            # For BREAK/JOIN: check uniqueness by (name, event, field)
+            existing_match = Match.query.filter_by(
+                event=tournament_url,
+                name=new_match_name,
+                field=new_match_field,
+                schedule_type=schedule_type
+            ).first()
+            if existing_match and existing_match.uuid != match.uuid:
+                flash(f'A {schedule_type} match with the name "{new_match_name}" already exists on field "{new_match_field}" in this tournament', 'error')
+                return redirect(f'/{tournament_url}/setup')
+        else:
+            # For other matches: check uniqueness by (name, event)
+            existing_match = Match.query.filter_by(event=tournament_url, name=new_match_name).first()
+            if existing_match and existing_match.uuid != match.uuid:
+                flash(f'A match with the name "{new_match_name}" already exists in this tournament', 'error')
+                return redirect(f'/{tournament_url}/setup')
+    
+    # Helper to check if a value is an explicit team ID (not a tag or match reference)
+    def is_explicit_team_id(val: str) -> bool:
+        if not val or not val.strip():
+            return False
+        val = val.strip()
+        # Not a tag reference
+        if val.lower().startswith('tag::'):
+            return False
+        # Not a match reference (contains ::winner or ::loser)
+        if '::winner' in val.lower() or '::loser' in val.lower():
+            return False
+        # Must be an explicit team ID
+        return True
+    
     match.name = new_match_name
     match.field = request.form.get('field', '')
-    match.team1 = team1_id
+    
+    # Handle team1_initial changes
+    old_team1_initial = match.team1_initial or ''
     match.team1_initial = team1_name
-    match.team2 = team2_id
+    if old_team1_initial != team1_name:
+        # Clear team1, but populate if explicit team ID
+        if team1_id:
+            match.team1 = team1_id
+        elif is_explicit_team_id(team1_name):
+            match.team1 = team1_name
+        else:
+            match.team1 = None
+    else:
+        # If team1_initial didn't change, only update team1 if we have an explicit team_id
+        if team1_id:
+            match.team1 = team1_id
+    
+    # Handle team2_initial changes
+    old_team2_initial = match.team2_initial or ''
     match.team2_initial = team2_name
+    if old_team2_initial != team2_name:
+        # Clear team2, but populate if explicit team ID
+        if team2_id:
+            match.team2 = team2_id
+        elif is_explicit_team_id(team2_name):
+            match.team2 = team2_name
+        else:
+            match.team2 = None
+    else:
+        # If team2_initial didn't change, only update team2 if we have an explicit team_id
+        if team2_id:
+            match.team2 = team2_id
+    
     match.schedule_type = schedule_type
     match.set_type = set_type
     match.ribbon = request.form.get('ribbon', '') == 'on'  # Checkbox value
     
     # BREAK and JOIN don't have nsets
-    if schedule_type not in ('BREAK', 'JOIN'):
+    if schedule_type not in (ScheduleType.BREAK, ScheduleType.JOIN):
         match.nsets = int(request.form.get('nsets', 3))
     else:
         match.nsets = None
     
+    # Update stones_per_set for STONES matches (with fallback to deprecated nstonesperset for backward compatibility)
+    if set_type == SetType.STONES:
+        stones_per_set_str = request.form.get('stones_per_set') or request.form.get('nstonesperset')
+        if stones_per_set_str:
+            try:
+                match.stones_per_set = int(stones_per_set_str)
+            except (ValueError, TypeError):
+                pass  # Keep existing value if invalid
+        # If not provided and match doesn't have stones_per_set, try to migrate from nstonesperset
+        elif match.nstonesperset and not match.stones_per_set:
+            match.stones_per_set = match.nstonesperset
+    else:
+        # Clear stones_per_set for non-STONES matches
+        match.stones_per_set = None
+    
     # JOIN has zero length, BREAK can have length
-    if schedule_type == 'JOIN':
+    if schedule_type == ScheduleType.JOIN:
         match.nominal_length = 0
-    elif schedule_type == 'BREAK':
+    elif schedule_type == ScheduleType.BREAK:
         match.nominal_length = int(request.form.get('length', match.nominal_length or 60))
     else:
         match.nominal_length = int(request.form.get('length', match.nominal_length or 60))
     
+    # If refs_initial changed, clear refs (it will be repopulated by update_tags/apply_match_dependencies)
+    old_refs_initial = match.refs_initial or ''
     match.refs_initial = refs_initial
+    if old_refs_initial != refs_initial:
+        # Clear refs, but populate any explicit team IDs from refs_initial
+        if refs_initial:
+            refs_initial_list = [r.strip() for r in refs_initial.split(',')]
+            refs_list = [''] * len(refs_initial_list)
+            has_explicit_ids = False
+            for i, initial_ref in enumerate(refs_initial_list):
+                if initial_ref and not initial_ref.lower().startswith('tag::') and '::winner' not in initial_ref.lower() and '::loser' not in initial_ref.lower():
+                    # Explicit team ID
+                    refs_list[i] = initial_ref
+                    has_explicit_ids = True
+            if has_explicit_ids:
+                match.refs = ', '.join(refs_list)
+            else:
+                match.refs = None
+        else:
+            match.refs = None
     
     # For dynamic matches, set previous_match from form and compute start time from it
     # For static matches, ensure previous_match is cleared and use provided start_time
-    if schedule_type != 'STATIC':
+    if schedule_type != ScheduleType.STATIC:
         # Get previous_match from form
         prev_match_id = request.form.get('previous_match', '')
         if prev_match_id:
@@ -1657,7 +1906,11 @@ def update_match(tournament_url):
 @bp.route('/<tournament_url>/update-tags', methods=['POST'])
 @login_required
 def update_tags(tournament_url):
-    """Update all matches by converting tag names to team IDs in team1_initial, team2_initial, and refs_initial."""
+    """Update all matches by converting tag::TAG_NAME references to team IDs in team1, team2, and refs fields.
+    
+    Note: _initial fields are never modified - they remain as the source of truth.
+    This function only updates the resolved team1/team2/refs fields.
+    """
     if is_not_TO(tournament_url):
         return redirect(f'/{tournament_url}')
     
@@ -1666,13 +1919,15 @@ def update_tags(tournament_url):
     # Get all tags for this tournament
     tags = Tag.query.filter_by(event=tournament_url).all()
     
-    # Build mapping of tag names to team IDs
+    # Build mapping of tag references to team IDs
     tag_to_team = {}
     for tag in tags:
         form_key = f'tag_{tag.id}'
         team_id = request.form.get(form_key, '').strip()
         if team_id:
-            tag_to_team[tag.name] = team_id
+            # Use the new explicit tag reference form: tag::TAG_NAME
+            tag_ref = f"tag::{tag.name}"
+            tag_to_team[tag_ref] = team_id
     
     if not tag_to_team:
         flash('No tag conversions selected', 'error')
@@ -1685,43 +1940,91 @@ def update_tags(tournament_url):
     for match in matches:
         changed = False
         
-        # Update team1_initial
+        # Helper to check if a value is a tag reference
+        def is_tag_ref(val: str) -> bool:
+            return val and val.strip().lower().startswith('tag::')
+        
+        # Helper to check if a value is an explicit team ID (not a tag or match reference)
+        def is_explicit_team_id(val: str) -> bool:
+            if not val or not val.strip():
+                return False
+            val = val.strip()
+            # Not a tag reference
+            if val.lower().startswith('tag::'):
+                return False
+            # Not a match reference (contains ::winner or ::loser)
+            if '::winner' in val.lower() or '::loser' in val.lower():
+                return False
+            # Must be an explicit team ID
+            return True
+        
+        # Update team1 based on team1_initial
         if match.team1_initial:
             initial = match.team1_initial.strip()
             if initial in tag_to_team:
-                match.team1_initial = tag_to_team[initial]
-                # Also set team1 if not already set
-                if not match.team1:
-                    match.team1 = tag_to_team[initial]
+                # Tag reference - update team1
+                match.team1 = tag_to_team[initial]
+                changed = True
+            elif is_explicit_team_id(initial):
+                # Explicit team ID - populate team1
+                match.team1 = initial
                 changed = True
         
-        # Update team2_initial
+        # Update team2 based on team2_initial
         if match.team2_initial:
             initial = match.team2_initial.strip()
             if initial in tag_to_team:
-                match.team2_initial = tag_to_team[initial]
-                # Also set team2 if not already set
-                if not match.team2:
-                    match.team2 = tag_to_team[initial]
+                # Tag reference - update team2
+                match.team2 = tag_to_team[initial]
+                changed = True
+            elif is_explicit_team_id(initial):
+                # Explicit team ID - populate team2
+                match.team2 = initial
                 changed = True
         
-        # Update refs_initial (comma-separated)
+        # Update refs based on refs_initial (maintain index structure)
         if match.refs_initial:
-            refs_list = [r.strip() for r in match.refs_initial.split(',') if r.strip()]
-            updated_refs = []
-            refs_changed = False
-            for ref in refs_list:
-                if ref in tag_to_team:
-                    updated_refs.append(tag_to_team[ref])
-                    refs_changed = True
-                else:
-                    updated_refs.append(ref)
+            # Split refs_initial preserving all positions (including empty strings between commas)
+            refs_initial_list = [r.strip() for r in match.refs_initial.split(',')]
             
-            if refs_changed:
-                match.refs_initial = ', '.join(updated_refs)
-                # Also update refs if not already set
-                if not match.refs:
-                    match.refs = ', '.join([r for r in updated_refs if r])
+            # Get current refs state (may be empty or partially populated)
+            refs_current_list = []
+            if match.refs:
+                refs_current_list = [r.strip() for r in match.refs.split(',')]
+            
+            # Ensure refs_current_list has same length as refs_initial_list
+            # If refs_initial changed length, clear and rebuild
+            if len(refs_current_list) != len(refs_initial_list):
+                refs_current_list = [''] * len(refs_initial_list)
+                changed = True
+            
+            # Build updated refs list maintaining index structure
+            refs_updated = False
+            for i, initial_ref in enumerate(refs_initial_list):
+                if not initial_ref:
+                    # Empty position - keep as empty string placeholder
+                    if i >= len(refs_current_list):
+                        refs_current_list.append('')
+                    continue
+                
+                if initial_ref in tag_to_team:
+                    # Tag reference - update this index
+                    if i >= len(refs_current_list):
+                        refs_current_list.append('')
+                    refs_current_list[i] = tag_to_team[initial_ref]
+                    refs_updated = True
+                elif is_explicit_team_id(initial_ref):
+                    # Explicit team ID - populate this index
+                    if i >= len(refs_current_list):
+                        refs_current_list.append('')
+                    refs_current_list[i] = initial_ref
+                    refs_updated = True
+                # If it's a match reference (::winner/::loser), leave as empty string
+                # It will be resolved by apply_match_dependencies
+            
+            if refs_updated or changed:
+                # Join with commas, preserving empty strings as placeholders
+                match.refs = ', '.join(refs_current_list)
                 changed = True
         
         if changed:
@@ -1740,10 +2043,17 @@ def update_tags(tournament_url):
                 teams = bracket.get('teams', [])
                 for team_entry in teams:
                     team_ref = team_entry.get('team', '').strip()
+                    # Bracket entries may contain explicit tag references (tag::NAME) or
+                    # legacy plain tag names; support both forms when applying updates.
                     if team_ref in tag_to_team:
-                        # Replace tag name with team ID
                         team_entry['team'] = tag_to_team[team_ref]
                         bracket_updated = True
+                    elif team_ref.lower().startswith('tag::'):
+                        legacy_name = team_ref[5:].strip()
+                        legacy_ref = f"tag::{legacy_name}"
+                        if legacy_ref in tag_to_team:
+                            team_entry['team'] = tag_to_team[legacy_ref]
+                            bracket_updated = True
             
             if bracket_updated:
                 # Regenerate TOML
@@ -1914,7 +2224,7 @@ def tournament_autocomplete(tournament_url):
                 'id': reg.team
             })
     
-    # Tags for this tournament (by name)
+    # Tags for this tournament (by name, surfaced as tag::TAG_NAME values)
     tags = Tag.query.filter_by(event=tournament_url).all() if 'Tag' in globals() or True else []
     try:
         tags = Tag.query.filter_by(event=tournament_url).all()
@@ -1923,17 +2233,18 @@ def tournament_autocomplete(tournament_url):
     for t in tags:
         name = (t.name or '').strip()
         if not query or query in name.lower():
+            tag_ref = f"tag::{name}"
             suggestions.append({
                 'type': 'tag',
-                'value': name,
-                'label': name,
+                'value': tag_ref,
+                'label': tag_ref,
                 'id': t.id
             })
 
     # Matches in this tournament (by name)
     # Exclude BREAK and JOIN matches entirely
     matches = Match.query.filter_by(event=tournament_url).filter(
-        Match.schedule_type.notin_(['BREAK', 'JOIN'])
+        Match.schedule_type.notin_([ScheduleType.BREAK, ScheduleType.JOIN])
     ).all()
     for m in matches:
         name = (m.name or '').strip()

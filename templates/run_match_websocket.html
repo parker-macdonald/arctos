@@ -194,7 +194,7 @@
                 </div>
                 <div class="col-md-4">
                     <p class="mb-0"><strong>Refs:</strong> 
-                        {% set refs_string = match.refs or match.refs_initial %}
+                        {% set refs_string = match|merge_refs %}
                         {% if refs_string %}
                             {% for ref_trimmed in refs_string.split(',') %}
                                 {% set ref_trimmed = ref_trimmed.strip() %}
@@ -244,8 +244,8 @@
                 <div class="col-12">
                     <p class="small mb-0">
                         {{ match.team1_registration.pseudonym if match.team1_registration else match.team1 }} vs {{ match.team2_registration.pseudonym if match.team2_registration else match.team2 }}
-                        {% if match.refs or match.refs_initial %} | Refs: 
-                            {% set refs_string = match.refs or match.refs_initial %}
+                        {% set refs_string = match|merge_refs %}
+                        {% if refs_string %} | Refs: 
                             {% for ref_trimmed in refs_string.split(',') %}
                                 {% set ref_trimmed = ref_trimmed.strip() %}
                                 {% if ref_trimmed %}
@@ -334,7 +334,7 @@
                                     <div class="d-flex justify-content-center align-items-center">
                                         <input type="number" class="form-control-plaintext text-center display-4 m-0 p-0" id="stones-remaining" 
                                                style="width: 6ch; line-height: 1;" 
-                                               value="{{ match.stones_remaining if match.stones_remaining else match.nstonesperset or 100 }}" 
+                                               value="{{ match.stones_remaining if match.stones_remaining else (match.stones_per_set or match.nstonesperset or 100) }}" 
                                                onchange="updateStonesRemaining(this.value)">
                                     </div>
                                 </div>
