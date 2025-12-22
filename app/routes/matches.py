@@ -12,6 +12,12 @@ from app.filters import is_head_ref
 from app.utils.helpers import check_tournament_access, can_head_ref_match
 from app.utils.dependencies import apply_match_dependencies
 from app.utils.scheduling import recompute_all_match_times
+from app.serializers.match_note_serializer import MatchNoteSerializer
+from app.utils.player_helpers import get_player_display_from_registration
+from app.utils.responses import json_error, json_success
+from app.utils.datetime_helpers import to_iso_z
+from app.error_values import Ok, Err
+from app.utils.result_helpers import json_from_result, public_error_message
 
 
 bp = Blueprint('matches', __name__)
@@ -303,12 +309,18 @@ def match_page(tournament_url):
     
     points = Point.query.filter_by(match=match.uuid).order_by(Point.stamp).all()
     
-    is_head_ref_flag = can_head_ref_match(tournament_url, current_user.id, match=match) if current_user.is_authenticated and current_user.__class__.__name__ == 'Player' else False
+    from app.utils.user_helpers import is_player
+    is_head_ref_flag = (
+        can_head_ref_match(tournament_url, current_user.id, match=match)
+        if current_user.is_authenticated and is_player(current_user)
+        else False
+    )
     
     # Get match notes and point notes
     match_notes = []
     point_notes_map = {}
-    from models import MatchNote, PlayerRegistration, Player
+    from models import MatchNote
+    from app.utils.player_helpers import get_player_display_name
     
     # Get match-level notes (point_id is None) - only for head refs
     if is_head_ref_flag:
@@ -317,19 +329,7 @@ def match_page(tournament_url):
             player_name = None
             player_display = None
             if note.player_id:
-                player = Player.query.get(note.player_id)
-                if player:
-                    player_name = player.name
-                    reg = PlayerRegistration.query.filter_by(event=tournament_url, player=player.id).first()
-                    if reg:
-                        if getattr(reg, 'jersey_name', None) and getattr(reg, 'jersey_number', None):
-                            player_display = f"{reg.jersey_name} #{reg.jersey_number}"
-                        elif getattr(reg, 'jersey_name', None):
-                            player_display = reg.jersey_name
-                        elif getattr(reg, 'jersey_number', None):
-                            player_display = f"#{reg.jersey_number}"
-                    if not player_display:
-                        player_display = player.name
+                player_name, player_display = get_player_display_name(note.player_id, tournament_url)
             # Determine team_id if target is TEAM1 or TEAM2
             team_id = None
             if note.target=='team1':
@@ -366,39 +366,28 @@ def match_page(tournament_url):
                 # Team and player notes are only visible to head refs
                 if not is_head_ref_flag and n.target != 'match':
                     continue
+
+                player_name = None
+                player_display = None
+                if n.player_id:
+                    player_name, player_display = get_player_display_name(n.player_id, tournament_url)
+
+                # Determine team_id if target is TEAM1 or TEAM2
+                team_id = None
+                if n.target=='team1':
+                    team_id = match.team1
+                elif n.target=='team2':
+                    team_id = match.team2
                 
-                    player_name = None
-                    player_display = None
-                    if n.player_id:
-                        pl = Player.query.get(n.player_id)
-                        if pl:
-                            player_name = pl.name
-                            reg = PlayerRegistration.query.filter_by(event=tournament_url, player=pl.id).first()
-                            if reg:
-                                if getattr(reg, 'jersey_name', None) and getattr(reg, 'jersey_number', None):
-                                    player_display = f"{reg.jersey_name} #{reg.jersey_number}"
-                                elif getattr(reg, 'jersey_name', None):
-                                    player_display = reg.jersey_name
-                                elif getattr(reg, 'jersey_number', None):
-                                    player_display = f"#{reg.jersey_number}"
-                            if not player_display:
-                                player_display = pl.name
-                    # Determine team_id if target is TEAM1 or TEAM2
-                    team_id = None
-                    if n.target=='team1':
-                        team_id = match.team1
-                    elif n.target=='team2':
-                        team_id = match.team2
-                    
-                    point_notes_map.setdefault(n.point_id, []).append({
-                        'text': n.text,
-                        'target': n.target,
-                        'player_id': n.player_id,
-                        'player_name': player_name,
-                        'player_display': player_display,
-                        'team_id': team_id,
-                        'created_at': n.created_at.isoformat() if getattr(n, 'created_at', None) else None,
-                    })
+                point_notes_map.setdefault(n.point_id, []).append({
+                    'text': n.text,
+                    'target': n.target,
+                    'player_id': n.player_id,
+                    'player_name': player_name,
+                    'player_display': player_display,
+                    'team_id': team_id,
+                    'created_at': n.created_at.isoformat() if getattr(n, 'created_at', None) else None,
+                })
     
     # Compute end time for display
     computed_end_time = None
@@ -637,18 +626,18 @@ def get_selection_notes(tournament_url):
     player_ids_csv = request.args.get('player_ids', '')
 
     if not match_id or team_side not in ('team1', 'team2'):
-        return jsonify({'success': False, 'error': 'match_id and team required'})
+        return json_error('match_id and team required')
 
     match = Match.query.get(match_id)
     if not match or match.event != tournament_url:
-        return jsonify({'success': False, 'error': 'Match not found'})
+        return json_error('Match not found')
 
     if not can_head_ref_match(tournament_url, current_user.id, match=match):
-        return jsonify({'success': False, 'error': 'bruh ur not a head ref'})
+        return json_error('bruh ur not a head ref')
 
     team_id = match.team1 if team_side == 'team1' else match.team2
     if not team_id:
-        return jsonify({'success': True, 'notes': []})
+        return json_success({'notes': []})
 
     selected_player_ids = [pid.strip() for pid in player_ids_csv.split(',') if pid.strip()]
 
@@ -685,38 +674,17 @@ def get_selection_notes(tournament_url):
 
     notes_data = []
     for n in all_notes.values():
-        player_name = None
-        player_display = None
-        if n.player_id:
-            p = Player.query.get(n.player_id)
-            if p:
-                player_name = p.name
-                reg = PlayerRegistration.query.filter_by(event=tournament_url, player=p.id).first()
-                if reg:
-                    if getattr(reg, 'jersey_name', None) and getattr(reg, 'jersey_number', None):
-                        player_display = f"{reg.jersey_name} #{reg.jersey_number}"
-                    elif getattr(reg, 'jersey_name', None):
-                        player_display = reg.jersey_name
-                    elif getattr(reg, 'jersey_number', None):
-                        player_display = f"#{reg.jersey_number}"
-                if not player_display:
-                    player_display = p.name
         # Get match to determine team_id
         match_obj = Match.query.get(n.match) if n.match else None
-        team_id = None
-        if match_obj:
-            if n.target=='team1':
-                team_id = match_obj.team1
-            elif n.target=='team2':
-                team_id = match_obj.team2
-        
+        payload = MatchNoteSerializer.to_dict(n, tournament_url, match=match_obj)
+        # Keep response schema stable for this endpoint (subset only).
         notes_data.append({
-            'text': n.text,
-            'target': n.target,
-            'player_id': n.player_id,
-            'player_name': player_name,
-            'player_display': player_display,
-            'team_id': team_id,
+            'text': payload.get('text'),
+            'target': payload.get('target'),
+            'player_id': payload.get('player_id'),
+            'player_name': payload.get('player_name'),
+            'player_display': payload.get('player_display'),
+            'team_id': payload.get('team_id'),
         })
 
     try:
@@ -724,114 +692,36 @@ def get_selection_notes(tournament_url):
     except Exception:
         pass
 
-    return jsonify({'success': True, 'notes': notes_data})
+    return json_success({'notes': notes_data})
 
 
 @bp.route('/<tournament_url>/start-match', methods=['POST'])
 @login_required
 def start_match_post(tournament_url):
     """Handle match start form submission."""
-    match_id = request.form.get('match_id')
-    if not match_id:
-        flash('Match ID required', 'error')
-        return redirect(f'/{tournament_url}/schedule')
-    
-    match = Match.query.get(match_id)
-    if not match or match.event != tournament_url:
-        flash('Match not found', 'error')
-        return redirect(f'/{tournament_url}/schedule')
-    
-    if not can_head_ref_match(tournament_url, current_user.id, match=match):
-        flash('You are not authorized to start matches for this tournament', 'error')
-        return redirect(f'/{tournament_url}/schedule')
-    
-    if match.status != 'NOT_STARTED':
-        flash('This match has already been started or completed', 'error')
-        return redirect(f'/{tournament_url}/schedule')
-    
-    match.status = 'IN_PROGRESS'
-    # Use local server time (naive) for display consistency on localhost
-    confirmed_start = datetime.now()
-    match.confirmed_start_time = confirmed_start
-    
-    # Parse selected players from hidden inputs (comma-separated)
-    raw_team1 = (request.form.get('team1_players') or '').strip()
-    raw_team2 = (request.form.get('team2_players') or '').strip()
-    team1_players = [pid for pid in (raw_team1.split(',') if raw_team1 else []) if pid]
-    team2_players = [pid for pid in (raw_team2.split(',') if raw_team2 else []) if pid]
+    from app.services.match_service import MatchService
 
-    # Enforce that no player appears on both teams (should be prevented by UI, but check server-side too)
-    overlap = set(team1_players) & set(team2_players)
-    if overlap:
-        flash('A player cannot be selected for both teams', 'error')
-        return redirect(f'/{tournament_url}/start-match?id={match.uuid}')
+    match_id = request.form.get("match_id")
+    res = MatchService.start_match(
+        tournament_url,
+        match_id,
+        current_user,
+        team1_players_csv=request.form.get("team1_players", ""),
+        team2_players_csv=request.form.get("team2_players", ""),
+        match_notes=request.form.get("match_notes", ""),
+        stones_per_set=request.form.get("stones_per_set"),
+    )
 
-    # Enforce roster size if configured
-    tournament_obj = Tournament.query.get(tournament_url)
-    max_roster = getattr(tournament_obj, 'max_team_size_field', None)
-    try:
-        max_roster = int(max_roster) if max_roster is not None else None
-    except Exception:
-        max_roster = None
-    if max_roster and (len(team1_players) > max_roster or len(team2_players) > max_roster):
-        flash('Too many players selected for a team', 'error')
-        return redirect(f'/{tournament_url}/start-match?id={match.uuid}')
+    match res:
+        case Ok(match_obj):
+            flash("Match started successfully!", "success")
+            return redirect(f"/{tournament_url}/run-match?id={match_obj.uuid}")
+        case Err(err):
+            flash(public_error_message(err), "error")
+            if match_id:
+                return redirect(f"/{tournament_url}/start-match?id={match_id}")
+            return redirect(f"/{tournament_url}/schedule")
 
-    # Deduplicate preserving order
-    def dedup(seq):
-        seen = set()
-        out = []
-        for x in seq:
-            if x not in seen:
-                seen.add(x)
-                out.append(x)
-        return out
-    team1_players = dedup(team1_players)
-    team2_players = dedup(team2_players)
-
-    import json
-    match.initial_notes = request.form.get('match_notes', '')
-    match.team1_players = json.dumps(team1_players)
-    match.team2_players = json.dumps(team2_players)
-    match.started_by = current_user.id
-    match.started_at = datetime.utcnow()
-    
-    if match.set_type == 'STONES':
-        stones_per_set = request.form.get('stones_per_set')
-        if stones_per_set:
-            try:
-                stones_per_set = int(stones_per_set)
-            except ValueError:
-                flash('Invalid stones per set value', 'error')
-                return redirect(f'/{tournament_url}/start-match?id={match.uuid}')
-        else:
-            # Use match's nstonesperset value or default to 100
-            stones_per_set = match.nstonesperset or 100
-        match.stones_per_set = stones_per_set
-        match.stones_remaining = stones_per_set
-    
-    # Get camera stream start times for all cameras on this field
-    if match.field:
-        field_obj = Field.query.filter_by(event=tournament_url, name=match.field).first()
-        if field_obj and field_obj.camera:
-            from app.utils.camera_helpers import get_all_camera_stream_starts
-            stream_starts = get_all_camera_stream_starts(field_obj)
-            if stream_starts:
-                match.camera_stream_starts = json.dumps(stream_starts)
-    
-    db.session.commit()
-    
-    # Update predicted times first, then mark dependent matches as time finalized
-    try:
-        # First recompute all match times to update nominal_start_time for all matches
-        recompute_all_match_times(tournament_url)
-        # Then mark dependent matches as time finalized (this will update JOIN/BREAK times and propagate)
-        db.session.commit()
-    except Exception as e:
-        print(f"Error updating schedule and marking dependent matches time finalized: {e}")
-    
-    flash('Match started successfully!', 'success')
-    return redirect(f'/{tournament_url}/run-match?id={match.uuid}')
 
 
 @bp.route('/<tournament_url>/run-match')
@@ -896,13 +786,7 @@ def run_match(tournament_url):
     # Build match_players for player autocomplete in notes modal
     match_players = []
     for pr, player in team1_players + team2_players:
-        display = player.name
-        if getattr(pr, 'jersey_name', None) and getattr(pr, 'jersey_number', None):
-            display = f"{pr.jersey_name} #{pr.jersey_number}"
-        elif getattr(pr, 'jersey_name', None):
-            display = pr.jersey_name
-        elif getattr(pr, 'jersey_number', None):
-            display = f"#{pr.jersey_number}"
+        display = get_player_display_from_registration(player, pr)
         match_players.append({'player_id': player.id, 'name': player.name, 'display': display})
 
     return render_template('run_match_websocket.html',
@@ -965,38 +849,15 @@ def finalize_match(tournament_url):
                 MatchNote.point_id.in_(point_ids)
             ).order_by(MatchNote.created_at.asc()).all()
             for n in notes:
-                player_name = None
-                player_display = None
-                if n.player_id:
-                    pl = Player.query.get(n.player_id)
-                    if pl:
-                        player_name = pl.name
-                        reg = PlayerRegistration.query.filter_by(event=tournament_url, player=pl.id).first()
-                        if reg:
-                            if getattr(reg, 'jersey_name', None) and getattr(reg, 'jersey_number', None):
-                                player_display = f"{reg.jersey_name} #{reg.jersey_number}"
-                            elif getattr(reg, 'jersey_name', None):
-                                player_display = reg.jersey_name
-                            elif getattr(reg, 'jersey_number', None):
-                                player_display = f"#{reg.jersey_number}"
-                        if not player_display:
-                            player_display = pl.name
-
-                # Determine team_id if target is TEAM1 or TEAM2
-                team_id = None
-                if n.target=='team1':
-                    team_id = match.team1
-                elif n.target=='team2':
-                    team_id = match.team2
-                
+                payload = MatchNoteSerializer.to_dict(n, tournament_url, match=match)
                 point_notes_map.setdefault(n.point_id, []).append({
-                    'text': n.text,
-                    'target': n.target,
-                    'player_id': n.player_id,
-                    'player_name': player_name,
-                    'player_display': player_display,
-                    'team_id': team_id,
-                    'created_at': n.created_at.isoformat() if getattr(n, 'created_at', None) else None,
+                    'text': payload.get('text'),
+                    'target': payload.get('target'),
+                    'player_id': payload.get('player_id'),
+                    'player_name': payload.get('player_name'),
+                    'player_display': payload.get('player_display'),
+                    'team_id': payload.get('team_id'),
+                    'created_at': payload.get('created_at'),
                 })
     
     team1_score = sum(1 for p in points if p.winner == 'TEAM1' and not p.rerolled)
@@ -1110,30 +971,13 @@ def get_points(tournament_url):
     """Get points for a match."""
     match_id = request.args.get('match_id')
     if not match_id:
-        return jsonify({'success': False, 'error': 'Match ID required'})
-    
-    match = Match.query.get(match_id)
-    if not match or match.event != tournament_url:
-        return jsonify({'success': False, 'error': 'Match not found'})
-    
-    if not can_head_ref_match(tournament_url, current_user.id, match=match):
-        return jsonify({'success': False, 'error': 'Not authorized'})
-    
-    points = Point.query.filter_by(match=match_id).order_by(Point.stamp).all()
-    match = Match.query.get(match_id)
-    points_data = []
-    for p in points:
-        points_data.append({
-            'uuid': p.uuid,
-            'set_number': p.set_number,
-            'winner': p.winner,
-            'rerolled': p.rerolled,
-            'stamp': p.stamp.isoformat() if p.stamp else None,
-            'end_stamp': p.end_stamp.isoformat() if p.end_stamp else None,
-            'stones_at_start': p.stones_at_start if match and match.set_type == 'STONES' else None,
-        })
-    
-    return jsonify({'success': True, 'points': points_data})
+        return json_error('Match ID required')
+
+    from app.services.match_actions_service import MatchActionsService
+
+    res = MatchActionsService.get_points(tournament_url, current_user.id, match_id=match_id)
+    # Preserve historical behavior: errors return 200 for this endpoint.
+    return json_from_result(res, ok_to_payload=lambda d: d, err_status_code=200)
 
 
 @bp.route('/<tournament_url>/match-state')
@@ -1171,20 +1015,8 @@ def match_state(tournament_url):
         stamp_iso = None
         end_stamp_iso = None
         
-        if p.stamp:
-            # Convert naive UTC to timezone-aware UTC
-            if p.stamp.tzinfo is None:
-                stamp_dt = p.stamp.replace(tzinfo=timezone.utc)
-            else:
-                stamp_dt = p.stamp
-            stamp_iso = stamp_dt.isoformat().replace('+00:00', 'Z')
-        
-        if p.end_stamp:
-            if p.end_stamp.tzinfo is None:
-                end_stamp_dt = p.end_stamp.replace(tzinfo=timezone.utc)
-            else:
-                end_stamp_dt = p.end_stamp
-            end_stamp_iso = end_stamp_dt.isoformat().replace('+00:00', 'Z')
+        stamp_iso = to_iso_z(p.stamp).unwrap_or(None)
+        end_stamp_iso = to_iso_z(p.end_stamp).unwrap_or(None)
         
         points_data.append({
             'uuid': p.uuid,
@@ -1217,228 +1049,99 @@ def match_state(tournament_url):
 @login_required
 def add_point(tournament_url):
     """Add a new point to a match."""
-    match_id = request.json.get('match_id')
-    set_number = request.json.get('set_number', 1)
-    timestamp = request.json.get('timestamp')
-    stones_at_start = request.json.get('stones_at_start')  # Client-computed value
-    
-    if not match_id:
-        return jsonify({'success': False, 'error': 'Match ID required'}), 400
-    
-    match = Match.query.get(match_id)
-    if not match or match.event != tournament_url:
-        return jsonify({'success': False, 'error': 'Match not found'}), 404
-    
-    if not can_head_ref_match(tournament_url, current_user.id, match=match):
-        return jsonify({'success': False, 'error': 'Not authorized'}), 403
-    
-    new_point = Point(
-        match=match_id,
+    payload = request.json or {}
+    match_id = (payload.get('match_id') or "").strip()
+    set_number = payload.get('set_number', 1)
+    timestamp = payload.get('timestamp')
+    stones_at_start = payload.get('stones_at_start')  # Client-computed value
+
+    from app.services.match_actions_service import MatchActionsService
+
+    res = MatchActionsService.add_point(
+        tournament_url,
+        current_user.id,
+        match_id=match_id,
         set_number=set_number,
-        stamp=datetime.fromtimestamp(timestamp/1000, tz=timezone.utc)
+        timestamp_ms=timestamp,
+        stones_at_start=stones_at_start,
     )
-    
-    # For STONES matches, use client-computed stones_at_start value
-    # This ensures accuracy even if the request takes time to send
-    if match.set_type == 'STONES':
-        if stones_at_start is not None and isinstance(stones_at_start, int):
-            new_point.stones_at_start = stones_at_start
-        else:
-            # Fallback to server-side value if client didn't send it or it's invalid
-            print(f"Warning: Invalid stones_at_start from client ({stones_at_start}). Falling back to server value: {match.stones_remaining}")
-            new_point.stones_at_start = match.stones_remaining
-    
-    # Calculate and store camera stream timestamp if cameras are configured
-    if match.field:
-        field_obj = Field.query.filter_by(event=tournament_url, name=match.field).first()
-        if field_obj and field_obj.camera and match.camera_stream_starts:
-            from app.utils.camera_helpers import parse_camera_urls, calculate_stream_timestamp
-            try:
-                stream_starts = json.loads(match.camera_stream_starts)
-                camera_urls = parse_camera_urls(field_obj.camera)
-                
-                # Use primary camera (index 0) if available
-                # Note: JSON keys are strings, so use '0' not 0
-                if '0' in stream_starts and len(camera_urls) > 0:
-                    stream_timestamp = calculate_stream_timestamp(new_point.stamp, stream_starts['0'])
-                    if stream_timestamp is not None:
-                        new_point.camera_index = 0
-                        new_point.stream_timestamp = stream_timestamp
-            except (json.JSONDecodeError, KeyError, ValueError) as e:
-                print(f"Error calculating camera stream timestamp: {e}")
-    
-    db.session.add(new_point)
-    db.session.commit()
-    
-    # Ensure timestamps are timezone-aware UTC
-    # (timezone is already imported at top of file)
-    stamp_iso = None
-    end_stamp_iso = None
-    
-    if new_point.stamp:
-        if new_point.stamp.tzinfo is None:
-            stamp_dt = new_point.stamp.replace(tzinfo=timezone.utc)
-        else:
-            stamp_dt = new_point.stamp
-        stamp_iso = stamp_dt.isoformat().replace('+00:00', 'Z')
-    
-    if new_point.end_stamp:
-        if new_point.end_stamp.tzinfo is None:
-            end_stamp_dt = new_point.end_stamp.replace(tzinfo=timezone.utc)
-        else:
-            end_stamp_dt = new_point.end_stamp
-        end_stamp_iso = end_stamp_dt.isoformat().replace('+00:00', 'Z')
-    
-    return jsonify({
-        'success': True,
-        'point_id': new_point.uuid,
-        'set_number': new_point.set_number,
-        'stamp': stamp_iso,
-        'end_stamp': end_stamp_iso,
-        'stones_at_start': new_point.stones_at_start if match.set_type == 'STONES' else None
-    })
+    return json_from_result(res, ok_to_payload=lambda d: d)
 
 
 @bp.route('/<tournament_url>/match-actions/update-point', methods=['POST'])
 @login_required
 def update_point(tournament_url):
     """Update a point."""
-    point_id = request.json.get('point_id')
-    if not point_id:
-        return jsonify({'success': False, 'error': 'Point ID required'}), 400
-    
-    point = Point.query.get(point_id)
-    if not point:
-        return jsonify({'success': False, 'error': 'Point not found'}), 404
-    
-    match = Match.query.get(point.match)
-    if not match or match.event != tournament_url:
-        return jsonify({'success': False, 'error': 'Match not found'}), 404
-    
-    if not can_head_ref_match(tournament_url, current_user.id, match=match):
-        return jsonify({'success': False, 'error': 'Not authorized'}), 403
-    
-    data = request.json
-    if 'winner' in data:
-        point.winner = data['winner'] if data['winner'] != 'none' else None
-    if 'rerolled' in data:
-        point.rerolled = data['rerolled']
-    if 'notes' in data:
-        point.notes = data['notes']
-    if 'set_number' in data:
-        point.set_number = data['set_number']
-    if 'end_stamp' in data:
-        point.end_stamp = datetime.fromisoformat(data['end_stamp'].replace('Z', '+00:00'))
-    
-    db.session.commit()
-    
-    return jsonify({
-        'success': True,
-        'point_id': point_id,
-        'winner': point.winner,
-        'rerolled': point.rerolled,
-        'notes': point.notes,
-        'set_number': point.set_number,
-        'end_stamp': point.end_stamp.isoformat() if point.end_stamp else None,
-        'nstones': point.nstones
-    })
+    payload = request.json or {}
+    point_id = (payload.get('point_id') or "").strip()
+
+    from app.services.match_actions_service import MatchActionsService
+
+    res = MatchActionsService.update_point(
+        tournament_url,
+        current_user.id,
+        point_id=point_id,
+        data=payload,
+    )
+    return json_from_result(res, ok_to_payload=lambda d: d)
 
 
 @bp.route('/<tournament_url>/match-actions/delete-point', methods=['POST'])
 @login_required
 def delete_point_action(tournament_url):
     """Delete a point."""
-    point_id = request.json.get('point_id')
-    if not point_id:
-        return jsonify({'success': False, 'error': 'Point ID required'}), 400
-    
-    point = Point.query.get(point_id)
-    if not point:
-        return jsonify({'success': False, 'error': 'Point not found'}), 404
-    
-    match = Match.query.get(point.match)
-    if not match or match.event != tournament_url:
-        return jsonify({'success': False, 'error': 'Match not found'}), 404
-    
-    if not can_head_ref_match(tournament_url, current_user.id, match=match):
-        return jsonify({'success': False, 'error': 'Not authorized'}), 403
-    
-    match_id = point.match
-    db.session.delete(point)
-    db.session.commit()
-    
-    return jsonify({'success': True, 'point_id': point_id})
+    payload = request.json or {}
+    point_id = (payload.get('point_id') or "").strip()
+
+    from app.services.match_actions_service import MatchActionsService
+
+    res = MatchActionsService.delete_point(tournament_url, current_user.id, point_id=point_id)
+    return json_from_result(res, ok_to_payload=lambda d: d)
 
 
 @bp.route('/<tournament_url>/match-actions/update-stones', methods=['POST'])
 @login_required
 def update_stones(tournament_url):
     """Update stones remaining."""
-    match_id = request.json.get('match_id')
-    stones_remaining = request.json.get('stones_remaining')
-    
-    if not match_id or stones_remaining is None:
-        return jsonify({'success': False, 'error': 'Match ID and stones_remaining required'}), 400
-    
-    match = Match.query.get(match_id)
-    if not match or match.event != tournament_url:
-        return jsonify({'success': False, 'error': 'Match not found'}), 404
-    
-    if not can_head_ref_match(tournament_url, current_user.id, match=match):
-        return jsonify({'success': False, 'error': 'Not authorized'}), 403
-    
-    match.stones_remaining = stones_remaining
-    db.session.commit()
-    
-    return jsonify({'success': True, 'stones_remaining': stones_remaining})
+    payload = request.json or {}
+    match_id = (payload.get('match_id') or "").strip()
+    stones_remaining = payload.get('stones_remaining')
+
+    from app.services.match_actions_service import MatchActionsService
+
+    res = MatchActionsService.update_stones(
+        tournament_url, current_user.id, match_id=match_id, stones_remaining=stones_remaining
+    )
+    return json_from_result(res, ok_to_payload=lambda d: d)
 
 
 @bp.route('/<tournament_url>/match-actions/update-set', methods=['POST'])
 @login_required
 def update_set(tournament_url):
     """Update set number for a point."""
-    point_id = request.json.get('point_id')
-    set_number = request.json.get('set_number')
-    
-    if not point_id or set_number is None:
-        return jsonify({'success': False, 'error': 'Point ID and set_number required'}), 400
-    
-    point = Point.query.get(point_id)
-    if not point:
-        return jsonify({'success': False, 'error': 'Point not found'}), 404
-    
-    match = Match.query.get(point.match)
-    if not match or match.event != tournament_url:
-        return jsonify({'success': False, 'error': 'Match not found'}), 404
-    
-    if not can_head_ref_match(tournament_url, current_user.id, match=match):
-        return jsonify({'success': False, 'error': 'Not authorized'}), 403
-    
-    point.set_number = set_number
-    db.session.commit()
-    
-    return jsonify({'success': True, 'point_id': point_id, 'set_number': set_number})
+    payload = request.json or {}
+    point_id = (payload.get('point_id') or "").strip()
+    set_number = payload.get('set_number')
+
+    from app.services.match_actions_service import MatchActionsService
+
+    res = MatchActionsService.update_set(
+        tournament_url, current_user.id, point_id=point_id, set_number=set_number
+    )
+    return json_from_result(res, ok_to_payload=lambda d: d)
 
 
 @bp.route('/<tournament_url>/match-actions/complete-match', methods=['POST'])
 @login_required
 def complete_match(tournament_url):
     """Mark a match as completed."""
-    match_id = request.json.get('match_id')
-    if not match_id:
-        return jsonify({'success': False, 'error': 'Match ID required'}), 400
-    
-    match = Match.query.get(match_id)
-    if not match or match.event != tournament_url:
-        return jsonify({'success': False, 'error': 'Match not found'}), 404
-    
-    if not can_head_ref_match(tournament_url, current_user.id, match=match):
-        return jsonify({'success': False, 'error': 'Not authorized'}), 403
-    
-    match.status = 'COMPLETED'
-    db.session.commit()
-    
-    return jsonify({'success': True, 'match_id': match_id, 'status': 'COMPLETED'})
+    payload = request.json or {}
+    match_id = (payload.get('match_id') or "").strip()
+
+    from app.services.match_actions_service import MatchActionsService
+
+    res = MatchActionsService.complete_match(tournament_url, current_user.id, match_id=match_id)
+    return json_from_result(res, ok_to_payload=lambda d: d)
 
 
 @bp.route('/stones')

@@ -155,10 +155,8 @@ def camera_url(tournament_url, field_name):
         return ''
     
     try:
-        secret = current_app.config.get('SECRET_KEY', 'dev-key')
-        message = f"{tournament_url}:{field_name}".encode('utf-8')
-        key = hmac.new(secret.encode('utf-8'), message, hashlib.sha256).digest()
-        access_key = base64.urlsafe_b64encode(key).decode('utf-8').rstrip('=')
+        from app.utils.camera_helpers import generate_camera_key
+        access_key = generate_camera_key(tournament_url, field_name)
         
         # Generate the full URL
         base_url = url_for('tournaments.camera_page', tournament_url=tournament_url, field=field_name, key=access_key, _external=True)

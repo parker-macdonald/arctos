@@ -8,67 +8,30 @@ from flask_executor import Executor
 
 from datetime import datetime, timedelta, timezone
 import json
-import hmac
-import hashlib
-import base64
 from models import (
     Tournament, Match, Field, Tag, TeamRegistration, PlayerRegistration,
     Team, TO, db
 )
 from app.utils.helpers import check_tournament_access, resolve_team_name_to_id, validate_permission_key
 from app.utils.scheduling import compute_dynamic_match_nominal_start_time, validate_match_input, recompute_all_match_times, detect_match_conflicts
+from app.utils.decorators import require_tournament_organizer
 from app.filters import is_head_ref
 
 from os import path
 
 from app.utils.footage import finalize_recording_worker
+from app.utils.camera_helpers import (
+    generate_camera_key,
+    validate_camera_key,
+    get_camera_key_from_request,
+    require_camera_key,
+)
 # for finalizing recordings which calls ffmpeg
 # only one worker bc ffmpeg does its own parallelism 
 # so we only ever want to run one at a time 
 executor = Executor()
 
 bp = Blueprint('tournaments', __name__)
-
-def generate_camera_key(tournament_url, field_name):
-    """Generate a secure camera access key for a field."""
-    secret = current_app.config.get('SECRET_KEY')
-    message = f"{tournament_url}:{field_name}".encode('utf-8')
-    key = hmac.new(secret.encode('utf-8'), message, hashlib.sha256).digest()
-    # Return a URL-safe base64 encoded key
-    return base64.urlsafe_b64encode(key).decode('utf-8').rstrip('=')
-
-def validate_camera_key(tournament_url, field_name, provided_key):
-    """Validate a camera access key."""
-    expected_key = generate_camera_key(tournament_url, field_name)
-    # Use constant-time comparison to prevent timing attacks
-    return hmac.compare_digest(expected_key, provided_key)
-
-def get_camera_key_from_request():
-    """Extract camera access key from request (query params, JSON body, or form data)."""
-    # Try query parameters first
-    key = request.args.get('key', '').strip()
-    if key:
-        return key
-    
-    # Try JSON body
-    if request.is_json and request.json:
-        key = request.json.get('key', '').strip()
-        if key:
-            return key
-    
-    # Try form data
-    key = request.form.get('key', '').strip()
-    if key:
-        return key
-    
-    return None
-
-def require_camera_key(tournament_url, field_name):
-    """Validate camera access key from request. Returns (is_valid, error_response_tuple)."""
-    access_key = get_camera_key_from_request()
-    if not access_key or not validate_camera_key(tournament_url, field_name, access_key):
-        return (False, (jsonify({'error': 'Invalid or missing access key'}), 403))
-    return (True, None)
 
 def update_match_previous_link(match: Match, prev_match_id: str, tournament_url: str, is_new: bool = False) -> None:
     """
@@ -144,10 +107,14 @@ def update_match_previous_link(match: Match, prev_match_id: str, tournament_url:
             # This match's old next_match no longer has this match as its previous
             old_next_match.previous_match = None
 
-def is_not_TO(tournament_url, message='You are not a TO, fuck off!!1!!1'):
-    if not TO.query.filter_by(user_id=current_user.id,
-                              user_type=current_user.__class__.__name__.lower(),
-                              event=tournament_url).first():
+def is_not_TO(tournament_url, message='Only tournament organizers can access this page'):
+    """
+    Legacy helper retained for compatibility.
+
+    Prefer `@require_tournament_organizer()` going forward.
+    """
+    from app.services.permission_service import PermissionService
+    if not PermissionService.is_tournament_organizer(tournament_url, current_user):
         flash(message, 'error')
         return True
     return False
@@ -691,23 +658,10 @@ def update_bracket_setup(tournament_url):
 
 
 @bp.route('/<tournament_url>/settings')
-@login_required
+@require_tournament_organizer("You do not have permission to access tournament settings")
 def tournament_settings(tournament_url):
     """Tournament settings page."""
-    if is_not_TO(tournament_url):
-        return redirect(f'/{tournament_url}')
-    
     tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
-    
-    to_entry = TO.query.filter_by(
-        user_id=current_user.id,
-        user_type=current_user.__class__.__name__.lower(),
-        event=tournament_url
-    ).first()
-    
-    if not to_entry:
-        flash('You do not have permission to access tournament settings', 'error')
-        return redirect(f'/{tournament_url}')
     
     # Get all TOs for this tournament with their user info
     from models import Player, Team
@@ -747,7 +701,8 @@ def tournament_setup(tournament_url):
     ).filter_by(event=tournament_url).order_by(Match.nominal_start_time).all()
     fields = Field.query.filter_by(event=tournament_url).all()
     tags = Tag.query.filter_by(event=tournament_url).all()
-    team_registrations = TeamRegistration.query.filter_by(event=tournament_url).all()
+    # Only confirmed teams should be eligible for tag-to-team conversion.
+    team_registrations = TeamRegistration.query.filter_by(event=tournament_url, status="CONFIRMED").all()
     
     # Detect conflicts across all matches
     conflicts = detect_match_conflicts(tournament_url)
@@ -2028,7 +1983,7 @@ def delete_tournament(tournament_url):
     # Import all necessary models
     from models import (
         Point, MatchNote, TeamRecord, PlayerRecord, Match,
-        HeadRef, TeamInvitation, PlayerRegistration, TeamRegistration,
+        HeadRef, PlayerRegistration, TeamRegistration,
         Field, Tag, SideComp, SideCompResult
     )
     
@@ -2081,25 +2036,22 @@ def delete_tournament(tournament_url):
     # 9. Delete HeadRef (depends on Tournament)
     HeadRef.query.filter_by(event=tournament_url).delete(synchronize_session=False)
     
-    # 10. Delete TeamInvitation (depends on Tournament)
-    TeamInvitation.query.filter_by(event=tournament_url).delete(synchronize_session=False)
-    
-    # 11. Delete PlayerRegistration (depends on Tournament)
+    # 10. Delete PlayerRegistration (depends on Tournament)
     PlayerRegistration.query.filter_by(event=tournament_url).delete(synchronize_session=False)
     
-    # 12. Delete TeamRegistration (depends on Tournament)
+    # 11. Delete TeamRegistration (depends on Tournament)
     TeamRegistration.query.filter_by(event=tournament_url).delete(synchronize_session=False)
     
-    # 13. Delete Field (depends on Tournament)
+    # 12. Delete Field (depends on Tournament)
     Field.query.filter_by(event=tournament_url).delete(synchronize_session=False)
     
-    # 14. Delete Tag (depends on Tournament)
+    # 13. Delete Tag (depends on Tournament)
     Tag.query.filter_by(event=tournament_url).delete(synchronize_session=False)
     
-    # 15. Delete TO (depends on Tournament)
+    # 14. Delete TO (depends on Tournament)
     TO.query.filter_by(event=tournament_url).delete(synchronize_session=False)
     
-    # 16. Delete Tournament (last)
+    # 15. Delete Tournament (last)
     db.session.delete(tournament)
     
     db.session.commit()

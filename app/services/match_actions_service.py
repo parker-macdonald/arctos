@@ -1,0 +1,275 @@
+"""
+Service for match "action" endpoints (JSON).
+
+The route handlers should be thin: validate request shape, call into this service,
+then map Result -> JSON.
+"""
+
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING, Any
+
+from app.error_values import Err, Ok, Result, allow_Q, option
+from app.exceptions import ArctosError, NotFoundError, UnauthorizedError, ValidationError
+from app.utils.helpers import can_head_ref_match
+
+if TYPE_CHECKING:  # pragma: no cover
+    from models import Match, Point
+
+
+@dataclass(frozen=True)
+class MatchActionsService:
+    @staticmethod
+    @allow_Q
+    def _require_match(tournament_url: str, match_id: str) -> Result["Match", ArctosError]:
+        from models import Match
+
+        if not match_id:
+            return Err(ValidationError("Match ID required", status_code=400))
+        match = option(Match.query.get(match_id)).ok_or(NotFoundError("Match not found", status_code=404)).Q()
+        if match.event != tournament_url:
+            return Err(NotFoundError("Match not found", status_code=404))
+        return Ok(match)
+
+    @staticmethod
+    @allow_Q
+    def _require_point(point_id: str) -> Result["Point", ArctosError]:
+        from models import Point
+
+        if not point_id:
+            return Err(ValidationError("Point ID required", status_code=400))
+        point = option(Point.query.get(point_id)).ok_or(NotFoundError("Point not found", status_code=404)).Q()
+        return Ok(point)
+
+    @staticmethod
+    def _require_head_ref(tournament_url: str, user_id: str, *, match) -> Result[None, ArctosError]:
+        if not can_head_ref_match(tournament_url, user_id, match=match):
+            return Err(UnauthorizedError("Not authorized", status_code=403))
+        return Ok(None)
+
+    @staticmethod
+    @allow_Q
+    def get_points(tournament_url: str, user_id: str, *, match_id: str) -> Result[dict, ArctosError]:
+        from models import Point
+
+        match = MatchActionsService._require_match(tournament_url, match_id).Q()
+        # Keep legacy behavior: this endpoint historically returned 200 for errors,
+        # so the route can override status if desired.
+        MatchActionsService._require_head_ref(tournament_url, user_id, match=match).Q()
+
+        points = Point.query.filter_by(match=match_id).order_by(Point.stamp).all()
+        points_data: list[dict[str, Any]] = []
+        for p in points:
+            points_data.append(
+                {
+                    "uuid": p.uuid,
+                    "set_number": p.set_number,
+                    "winner": p.winner,
+                    "rerolled": p.rerolled,
+                    "stamp": p.stamp.isoformat() if p.stamp else None,
+                    "end_stamp": p.end_stamp.isoformat() if p.end_stamp else None,
+                    "stones_at_start": p.stones_at_start if match.set_type == "STONES" else None,
+                }
+            )
+        return Ok({"points": points_data})
+
+    @staticmethod
+    @allow_Q
+    def add_point(
+        tournament_url: str,
+        user_id: str,
+        *,
+        match_id: str,
+        set_number: int | str | None,
+        timestamp_ms: int | float | None,
+        stones_at_start: int | None,
+    ) -> Result[dict, ArctosError]:
+        from models import Field, Point, db
+        from app.utils.datetime_helpers import to_iso_z
+
+        match = MatchActionsService._require_match(tournament_url, match_id).Q()
+        MatchActionsService._require_head_ref(tournament_url, user_id, match=match).Q()
+
+        try:
+            set_number_i = int(set_number) if set_number is not None else 1
+        except (ValueError, TypeError):
+            return Err(ValidationError("set_number must be an integer", status_code=400))
+
+        if timestamp_ms is None:
+            return Err(ValidationError("timestamp required", status_code=400))
+        try:
+            timestamp_f = float(timestamp_ms)
+        except (ValueError, TypeError):
+            return Err(ValidationError("timestamp must be a number", status_code=400))
+
+        new_point = Point(
+            match=match_id,
+            set_number=set_number_i,
+            stamp=datetime.fromtimestamp(timestamp_f / 1000, tz=timezone.utc),
+        )
+
+        if match.set_type == "STONES":
+            if stones_at_start is not None and isinstance(stones_at_start, int):
+                new_point.stones_at_start = stones_at_start
+            else:
+                new_point.stones_at_start = match.stones_remaining
+
+        # Camera timestamp calculation (best-effort; preserves prior behavior).
+        if match.field:
+            field_obj = Field.query.filter_by(event=tournament_url, name=match.field).first()
+            if field_obj and field_obj.camera and match.camera_stream_starts:
+                from app.utils.camera_helpers import calculate_stream_timestamp, parse_camera_urls
+
+                try:
+                    stream_starts = json.loads(match.camera_stream_starts)
+                    camera_urls = parse_camera_urls(field_obj.camera)
+                    if "0" in stream_starts and len(camera_urls) > 0:
+                        stream_timestamp = calculate_stream_timestamp(new_point.stamp, stream_starts["0"])
+                        if stream_timestamp is not None:
+                            new_point.camera_index = 0
+                            new_point.stream_timestamp = stream_timestamp
+                except (json.JSONDecodeError, KeyError, ValueError):
+                    pass
+
+        db.session.add(new_point)
+        db.session.commit()
+
+        return Ok(
+            {
+                "point_id": new_point.uuid,
+                "set_number": new_point.set_number,
+                "stamp": to_iso_z(new_point.stamp).unwrap_or(None),
+                "end_stamp": to_iso_z(new_point.end_stamp).unwrap_or(None),
+                "stones_at_start": new_point.stones_at_start if match.set_type == "STONES" else None,
+            }
+        )
+
+    @staticmethod
+    @allow_Q
+    def update_point(
+        tournament_url: str,
+        user_id: str,
+        *,
+        point_id: str,
+        data: dict,
+    ) -> Result[dict, ArctosError]:
+        from models import Match, db
+
+        point = MatchActionsService._require_point(point_id).Q()
+        match = Match.query.get(point.match)
+        if not match or match.event != tournament_url:
+            return Err(NotFoundError("Match not found", status_code=404))
+
+        MatchActionsService._require_head_ref(tournament_url, user_id, match=match).Q()
+
+        if "winner" in data:
+            point.winner = data["winner"] if data["winner"] != "none" else None
+        if "rerolled" in data:
+            point.rerolled = data["rerolled"]
+        if "notes" in data:
+            point.notes = data["notes"]
+        if "set_number" in data:
+            point.set_number = data["set_number"]
+        if "end_stamp" in data:
+            point.end_stamp = datetime.fromisoformat(data["end_stamp"].replace("Z", "+00:00"))
+
+        db.session.commit()
+
+        return Ok(
+            {
+                "point_id": point_id,
+                "winner": point.winner,
+                "rerolled": point.rerolled,
+                "notes": point.notes,
+                "set_number": point.set_number,
+                "end_stamp": point.end_stamp.isoformat() if point.end_stamp else None,
+                "nstones": point.nstones,
+            }
+        )
+
+    @staticmethod
+    @allow_Q
+    def delete_point(tournament_url: str, user_id: str, *, point_id: str) -> Result[dict, ArctosError]:
+        from models import Match, db
+
+        point = MatchActionsService._require_point(point_id).Q()
+        match = Match.query.get(point.match)
+        if not match or match.event != tournament_url:
+            return Err(NotFoundError("Match not found", status_code=404))
+
+        MatchActionsService._require_head_ref(tournament_url, user_id, match=match).Q()
+
+        db.session.delete(point)
+        db.session.commit()
+        return Ok({"point_id": point_id})
+
+    @staticmethod
+    @allow_Q
+    def update_stones(
+        tournament_url: str,
+        user_id: str,
+        *,
+        match_id: str,
+        stones_remaining: int | str | None,
+    ) -> Result[dict, ArctosError]:
+        from models import db
+
+        if not match_id or stones_remaining is None:
+            return Err(ValidationError("Match ID and stones_remaining required", status_code=400))
+        try:
+            stones_remaining_i = int(stones_remaining)
+        except (ValueError, TypeError):
+            return Err(ValidationError("stones_remaining must be an integer", status_code=400))
+
+        match = MatchActionsService._require_match(tournament_url, match_id).Q()
+        MatchActionsService._require_head_ref(tournament_url, user_id, match=match).Q()
+
+        match.stones_remaining = stones_remaining_i
+        db.session.commit()
+        return Ok({"stones_remaining": stones_remaining_i})
+
+    @staticmethod
+    @allow_Q
+    def update_set(
+        tournament_url: str,
+        user_id: str,
+        *,
+        point_id: str,
+        set_number: int | str | None,
+    ) -> Result[dict, ArctosError]:
+        from models import Match, db
+
+        if not point_id or set_number is None:
+            return Err(ValidationError("Point ID and set_number required", status_code=400))
+        try:
+            set_number_i = int(set_number)
+        except (ValueError, TypeError):
+            return Err(ValidationError("set_number must be an integer", status_code=400))
+
+        point = MatchActionsService._require_point(point_id).Q()
+        match = Match.query.get(point.match)
+        if not match or match.event != tournament_url:
+            return Err(NotFoundError("Match not found", status_code=404))
+
+        MatchActionsService._require_head_ref(tournament_url, user_id, match=match).Q()
+
+        point.set_number = set_number_i
+        db.session.commit()
+        return Ok({"point_id": point_id, "set_number": set_number_i})
+
+    @staticmethod
+    @allow_Q
+    def complete_match(tournament_url: str, user_id: str, *, match_id: str) -> Result[dict, ArctosError]:
+        from models import db
+
+        match = MatchActionsService._require_match(tournament_url, match_id).Q()
+        MatchActionsService._require_head_ref(tournament_url, user_id, match=match).Q()
+
+        match.status = "COMPLETED"
+        db.session.commit()
+        return Ok({"match_id": match_id, "status": "COMPLETED"})
+
+

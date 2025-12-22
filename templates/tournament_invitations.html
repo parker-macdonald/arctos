@@ -19,7 +19,7 @@
     <div class="col-12">
         <div class="card">
             <div class="card-header">
-                <h5 class="mb-0">Pending Invitations</h5>
+                <h5 class="mb-0">Pending Player Requests</h5>
             </div>
             <div class="card-body">
                 {% if invitations %}
@@ -60,20 +60,20 @@
                                         </div>
                                     </td>
                                     <td>
-                                        {{ invitation.player_registration.jersey_name if invitation.player_registration and invitation.player_registration.jersey_name else 'N/A' }}
+                                        {{ invitation.registration.jersey_name if invitation.registration and invitation.registration.jersey_name else 'N/A' }}
                                     </td>
                                     <td>
-                                        {{ invitation.player_registration.jersey_number if invitation.player_registration and invitation.player_registration.jersey_number else 'N/A' }}
+                                        {{ invitation.registration.jersey_number if invitation.registration and invitation.registration.jersey_number else 'N/A' }}
                                     </td>
                                     <td>
                                         <div class="btn-group" role="group">
-                                            <form method="POST" action="/{{ tournament.url }}/invitation/{{ invitation.invitation.id }}/accept" style="display: inline;">
+                                            <form method="POST" action="/{{ tournament.url }}/invitation/{{ invitation.registration.id }}/accept" style="display: inline;">
                                                 <button type="submit" class="btn btn-success btn-sm" 
                                                         {% if tournament.max_team_size and current_team_size >= tournament.max_team_size %}disabled{% endif %}>
                                                     Accept
                                                 </button>
                                             </form>
-                                            <form method="POST" action="/{{ tournament.url }}/invitation/{{ invitation.invitation.id }}/decline" style="display: inline;">
+                                            <form method="POST" action="/{{ tournament.url }}/invitation/{{ invitation.registration.id }}/decline" style="display: inline;">
                                                 <button type="submit" class="btn btn-danger btn-sm">Decline</button>
                                             </form>
                                         </div>
@@ -84,7 +84,7 @@
                         </table>
                     </div>
                 {% else %}
-                    <p class="text-muted">No pending invitations.</p>
+                    <p class="text-muted">No pending requests.</p>
                 {% endif %}
             </div>
         </div>
