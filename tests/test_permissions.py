@@ -7,9 +7,7 @@ from tests.utils import login_as
 
 
 @pytest.mark.unit
-def test_permission_service_is_tournament_organizer_false_when_missing_to(test_db, tournament, player):
-    from tests.conftest import app
-
+def test_permission_service_is_tournament_organizer_false_when_missing_to(app, test_db, tournament, player):
     with app.app_context():
         t = db.session.merge(tournament)
         p = db.session.merge(player)
@@ -20,9 +18,7 @@ def test_permission_service_is_tournament_organizer_false_when_missing_to(test_d
 
 
 @pytest.mark.unit
-def test_permission_service_is_tournament_organizer_true_when_to_exists(test_db, tournament, player):
-    from tests.conftest import app
-
+def test_permission_service_is_tournament_organizer_true_when_to_exists(app, test_db, tournament, player):
     with app.app_context():
         t = db.session.merge(tournament)
         p = db.session.merge(player)
@@ -32,9 +28,7 @@ def test_permission_service_is_tournament_organizer_true_when_to_exists(test_db,
 
 
 @pytest.mark.unit
-def test_permission_service_can_view_unpublished_tournament_for_to(test_db, player):
-    from tests.conftest import app
-
+def test_permission_service_can_view_unpublished_tournament_for_to(app, test_db, player):
     with app.app_context():
         p = db.session.merge(player)
         t = Tournament(
@@ -52,10 +46,8 @@ def test_permission_service_can_view_unpublished_tournament_for_to(test_db, play
 
 
 @pytest.mark.integration
-def test_tournament_manage_requires_to(client, tournament, player, test_db):
+def test_tournament_manage_requires_to(app, client, tournament, player, test_db):
     # Not a TO -> redirect
-    from tests.conftest import app
-
     with app.app_context():
         t = db.session.merge(tournament)
         p = db.session.merge(player)
@@ -66,9 +58,7 @@ def test_tournament_manage_requires_to(client, tournament, player, test_db):
 
 
 @pytest.mark.integration
-def test_tournament_manage_allows_to(client, tournament, player, test_db):
-    from tests.conftest import app
-
+def test_tournament_manage_allows_to(app, client, tournament, player, test_db):
     with app.app_context():
         t = db.session.merge(tournament)
         p = db.session.merge(player)

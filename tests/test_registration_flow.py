@@ -6,9 +6,7 @@ from datetime import datetime
 
 
 @pytest.mark.integration
-def test_team_register_and_deregister_flow(client, tournament, team):
-    from tests.conftest import app
-
+def test_team_register_and_deregister_flow(app, client, tournament, team):
     with app.app_context():
         t = db.session.merge(tournament)
         tm = db.session.merge(team)
@@ -37,9 +35,7 @@ def test_team_register_and_deregister_flow(client, tournament, team):
 
 
 @pytest.mark.integration
-def test_player_register_and_deregister_flow(client, tournament, player):
-    from tests.conftest import app
-
+def test_player_register_and_deregister_flow(app, client, tournament, player):
     with app.app_context():
         t = db.session.merge(tournament)
         p = db.session.merge(player)

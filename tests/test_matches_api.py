@@ -5,9 +5,7 @@ from tests.utils import login_as
 
 
 @pytest.mark.integration
-def test_update_set_missing_fields_returns_400(client, tournament, head_ref_player):
-    from tests.conftest import app
-
+def test_update_set_missing_fields_returns_400(app, client, tournament, head_ref_player):
     with app.app_context():
         t = db.session.merge(tournament)
         ref = db.session.merge(head_ref_player)
@@ -21,9 +19,7 @@ def test_update_set_missing_fields_returns_400(client, tournament, head_ref_play
 
 
 @pytest.mark.integration
-def test_get_points_requires_match_id(client, tournament, head_ref_player):
-    from tests.conftest import app
-
+def test_get_points_requires_match_id(app, client, tournament, head_ref_player):
     with app.app_context():
         t = db.session.merge(tournament)
         ref = db.session.merge(head_ref_player)

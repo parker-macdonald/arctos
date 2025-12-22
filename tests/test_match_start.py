@@ -7,9 +7,7 @@ from tests.utils import login_as
 
 
 @pytest.mark.integration
-def test_start_match_post_starts_match(client, tournament, head_ref_player):
-    from tests.conftest import app
-
+def test_start_match_post_starts_match(app, client, tournament, head_ref_player):
     with app.app_context():
         t = db.session.merge(tournament)
         ref = db.session.merge(head_ref_player)
@@ -50,9 +48,7 @@ def test_start_match_post_starts_match(client, tournament, head_ref_player):
 
 
 @pytest.mark.integration
-def test_start_match_post_rejects_overlap(client, tournament, head_ref_player):
-    from tests.conftest import app
-
+def test_start_match_post_rejects_overlap(app, client, tournament, head_ref_player):
     with app.app_context():
         t = db.session.merge(tournament)
         ref = db.session.merge(head_ref_player)

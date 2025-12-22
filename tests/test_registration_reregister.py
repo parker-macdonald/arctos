@@ -5,13 +5,11 @@ from tests.utils import login_as
 
 
 @pytest.mark.integration
-def test_player_can_reregister_after_rejected_without_creating_duplicate_row(client, tournament, player, team):
+def test_player_can_reregister_after_rejected_without_creating_duplicate_row(app, client, tournament, player, team):
     """
     A rejected registration should be represented on the PlayerRegistration row.
     Re-registering should update that row (no duplicates) and set status back to pending/confirmed.
     """
-    from tests.conftest import app
-
     with app.app_context():
         t = db.session.merge(tournament)
         p = db.session.merge(player)

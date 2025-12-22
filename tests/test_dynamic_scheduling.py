@@ -32,10 +32,8 @@ def _aware_utc(d: datetime) -> datetime:
 
 class TestDynamicScheduling:
     @pytest.mark.unit
-    def test_basic_dynamic_scheduling(self, test_db, tournament):
+    def test_basic_dynamic_scheduling(self, app, test_db, tournament):
         """Completing a match pulls forward subsequent dynamic matches on the same field."""
-        from tests.conftest import app
-
         tournament_url = tournament.url
         with app.app_context():
             base_time = datetime.now(timezone.utc)
@@ -92,10 +90,8 @@ class TestDynamicScheduling:
             assert abs((_aware_utc(match3.nominal_start_time) - expected_match3).total_seconds()) < 2
     
     @pytest.mark.unit
-    def test_static_match_boundary(self, test_db, tournament):
+    def test_static_match_boundary(self, app, test_db, tournament):
         """Dynamic scheduling stops at the next STATIC match (boundary)."""
-        from tests.conftest import app
-
         tournament_url = tournament.url
         with app.app_context():
             base_time = datetime.now(timezone.utc)
@@ -164,10 +160,8 @@ class TestDynamicScheduling:
             assert abs((_aware_utc(after_boundary.nominal_start_time) - (base_time + timedelta(hours=6))).total_seconds()) < 2
     
     @pytest.mark.unit
-    def test_dependency_constraint_same_field(self, test_db, tournament):
+    def test_dependency_constraint_same_field(self, app, test_db, tournament):
         """A later match in the chain cannot be pulled earlier than its dependency completion time."""
-        from tests.conftest import app
-
         tournament_url = tournament.url
         with app.app_context():
             base_time = datetime.now(timezone.utc)
@@ -237,10 +231,8 @@ class TestDynamicScheduling:
             assert _aware_utc(constrained.nominal_start_time) >= _aware_utc(dep.completed_time)
     
     @pytest.mark.unit
-    def test_dependency_on_different_field_does_not_constrain(self, test_db, tournament):
+    def test_dependency_on_different_field_does_not_constrain(self, app, test_db, tournament):
         """Non-JOIN dependencies on other fields do not constrain field-local pull-forward logic."""
-        from tests.conftest import app
-
         tournament_url = tournament.url
         with app.app_context():
             base_time = datetime.now(timezone.utc)
@@ -288,10 +280,8 @@ class TestDynamicScheduling:
             assert _aware_utc(other_field_match.nominal_start_time) == original
     
     @pytest.mark.unit
-    def test_multiple_dependencies_latest_wins(self, test_db, tournament):
+    def test_multiple_dependencies_latest_wins(self, app, test_db, tournament):
         """If a match references multiple completed dependencies, the latest completion time wins."""
-        from tests.conftest import app
-
         tournament_url = tournament.url
         with app.app_context():
             base_time = datetime.now(timezone.utc)
@@ -364,10 +354,8 @@ class TestDynamicScheduling:
             assert _aware_utc(target.nominal_start_time) >= _aware_utc(dep2.completed_time)
     
     @pytest.mark.unit
-    def test_no_subsequent_matches(self, test_db, tournament):
+    def test_no_subsequent_matches(self, app, test_db, tournament):
         """Completing the last match on a field should not error."""
-        from tests.conftest import app
-
         tournament_url = tournament.url
         with app.app_context():
             base_time = datetime.now(timezone.utc)
@@ -389,10 +377,8 @@ class TestDynamicScheduling:
             update_dynamic_schedule_after_completion(tournament_url, match1)
     
     @pytest.mark.unit
-    def test_match_without_field(self, test_db, tournament):
+    def test_match_without_field(self, app, test_db, tournament):
         """Matches without a field return early without errors."""
-        from tests.conftest import app
-
         tournament_url = tournament.url
         with app.app_context():
             base_time = datetime.now(timezone.utc)
@@ -413,10 +399,8 @@ class TestDynamicScheduling:
             update_dynamic_schedule_after_completion(tournament_url, match1)
     
     @pytest.mark.unit
-    def test_unresolved_dependency_preserves_time(self, test_db, tournament):
+    def test_unresolved_dependency_preserves_time(self, app, test_db, tournament):
         """If a dependency exists but has no completion timestamp, do not pull earlier than existing time."""
-        from tests.conftest import app
-
         tournament_url = tournament.url
         with app.app_context():
             base_time = datetime.now(timezone.utc)
