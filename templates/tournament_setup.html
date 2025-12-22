@@ -113,12 +113,13 @@
                                     <td>
                                         {% if match.schedule_type in ('BREAK', 'JOIN') %}
                                             -
-                                        {% elif match.refs %}
-                                            {{ match.refs }}
-                                        {% elif match.refs_initial %}
-                                            {{ match.refs_initial }}
                                         {% else %}
-                                            -
+                                            {% set refs_display = match|merge_refs %}
+                                            {% if refs_display %}
+                                                {{ refs_display }}
+                                            {% else %}
+                                                -
+                                            {% endif %}
                                         {% endif %}
                                     </td>
                                     <td>

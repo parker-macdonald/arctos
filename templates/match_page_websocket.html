@@ -109,36 +109,9 @@ window.MathJax = {
                         <div class="d-flex align-items-center mb-2">
                             <strong class="me-2">Refs:</strong>
                             <span>
-                                {% if match.refs %}
-                                    {% for ref_trimmed in match.refs.split(',') %}
-                                        {% set ref_trimmed = ref_trimmed.strip() %}
-                                        {% if ref_trimmed %}
-                                            {% if ref_trimmed.endswith('::winner') or ref_trimmed.endswith('::loser') or ref_trimmed.endswith(' winner') or ref_trimmed.endswith(' loser') %}
-                                                {% if '::' in ref_trimmed %}
-                                                    {% set match_ref = ref_trimmed.split('::')[0] %}
-                                                    {% set display_text = ref_trimmed.replace('::', ' ') %}
-                                                {% else %}
-                                                {% set match_ref = ref_trimmed.rsplit(' ', 1)[0] %}
-                                                    {% set display_text = ref_trimmed %}
-                                                {% endif %}
-                                                <a href="/{{ tournament.url }}/match?name={{ match_ref }}" class="text-decoration-none">{{ display_text }}</a>{% if not loop.last %}, {% endif %}
-                                            {% else %}
-                                                {% set team_registration = ref_trimmed | team_registration_for_tournament(tournament.url) %}
-                                                {% if team_registration %}
-                                                    <a href="/teams/{{ ref_trimmed }}" class="text-decoration-none">{{ team_registration.pseudonym }}</a>{% if not loop.last %}, {% endif %}
-                                                {% else %}
-                                                    {% set team_by_pseudonym = ref_trimmed | team_by_pseudonym_for_tournament(tournament.url) %}
-                                                    {% if team_by_pseudonym %}
-                                                        <a href="/teams/{{ team_by_pseudonym.team }}" class="text-decoration-none">{{ team_by_pseudonym.pseudonym }}</a>{% if not loop.last %}, {% endif %}
-                                                    {% else %}
-                                                        {{ ref_trimmed }}{% if not loop.last %}, {% endif %}
-                                                    {% endif %}
-                                                {% endif %}
-                                            {% endif %}
-                                        {% endif %}
-                                    {% endfor %}
-                                {% else %}
-                                    {% for ref_trimmed in match.refs_initial.split(',') %}
+                                {% set refs_string = match|merge_refs %}
+                                {% if refs_string %}
+                                    {% for ref_trimmed in refs_string.split(',') %}
                                         {% set ref_trimmed = ref_trimmed.strip() %}
                                         {% if ref_trimmed %}
                                             {% if ref_trimmed.endswith('::winner') or ref_trimmed.endswith('::loser') or ref_trimmed.endswith(' winner') or ref_trimmed.endswith(' loser') %}
