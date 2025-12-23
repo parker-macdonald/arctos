@@ -2,7 +2,9 @@
 
 Centralized online results and event management for Jugger.  
 
-Or, *what the fog site always wanted to be*
+Or, *what the fog site always wanted to be*  
+
+see [CONTRIBUTING](CONTRIBUTING.md) for how to get involved.
 
 ## Running the App
 
@@ -25,7 +27,6 @@ YOUTUBE_API_KEY=your_youtube_api_key \
 GOOGLE_CLIENT_SECRET=your_google_client_secret \
 GOOGLE_CLIENT_ID=your_google_client_id \
 SECRET_KEY=your_app_secret_key \
-SILLY_USERS="reid:you:whoevers_username_you_want:colon_separated" \
 	uv run gunicorn \
         --workers=5 \
         --bind 0.0.0.0:8080 \
