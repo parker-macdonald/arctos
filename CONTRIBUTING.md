@@ -12,10 +12,23 @@ Im not going to write much here; there's no reason Arctos needs to be different 
 
 If you want to make your own version, fork it and go ahead. do whatever you like.
 
-If you'd like changes merged back into the main version, please:
-1. Work on a problem/feature described in a github issue. If there is no issue, make one using the Project template, and fill out everything in depth.
-2. write some tests for your code to show that it works (the current test suite is insufficient; don't use it as a reference)
-3. write a PR describing everything you changed and any potential high level system impacts. make sure there are no merge conflicts.
+If you'd like changes merged back into the main version, the process works like this (assuming the staging system/dev server/dev branch stuff is all set up):
+0. a bug report or feature request issue is created
+1. a Project issue is created, tagging one or more bug/feature request isses, describing a solution
+2. a branch is created to work on the project. 
+    - branch names should follow the pattern `category/name`.  categories are `feat` (feature), `bugfix`, or `refactor`.
+    - branch off the latest `dev` (the staging branch)
+3. implementation!!
+    - write tests! (the current test suite is insufficient; don't use it as a reference for rigor)
+4. PR to `dev` submitted
+    - describes everything that changed and any potential high level system impacts
+    - describes any migration changes needed!!
+    - make sure there are no merge conflicts before submitting. i dont care if you merge or rebase.
+    - all tests must pass before the PR is merged
+5. maintainer approves PR and changes go live to dev server
+6. final testing on dev server to ensure everything works (mostly important for changes requiring nonzero migration effort)
+7. `dev` is PR'd regularly to `main`. (frequency tbd; likely as needed based on how many new features are in dev, when they're needed, when downtime is acceptable if needed, etc.)
+    - PR lists features included and describes in detail the migration process if one is needed.
 
 Please do note that **this code is not pretty right now**. If you see something and think "why the hell is this the way it is?", you're not crazy, it's just bad code. Please rewrite if you feel so inclined. In general, this codebase has a worrying shortage of:
 - tests
