@@ -1,11 +1,22 @@
+# various python shenanigans
 .vscode
 .mypy_cache
+.pytest_cache
 __pycache__
+
+# db and state
 instance/*
 static/uploads/*
+# has keys
 run
+# uv env dir
 .venv
-.pytest_cache
+
+# key files for tls certs
 *.csr
 *.key
 *.crt
+
+# emacs files (backups and autosaves)
+*~
+\#*
