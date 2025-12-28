@@ -11,7 +11,9 @@ class TeamRegistration(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     event = db.Column(db.String(100), db.ForeignKey("tournaments.url"), nullable=False)
     team = db.Column(db.String(50), db.ForeignKey("teams.id"), nullable=False)
-    pseudonym = db.Column(db.String(100), nullable=False)  # Team name for this tournament
+    pseudonym = db.Column(
+        db.String(100), nullable=False
+    )  # Team name for this tournament
     status = db.Column(db.String(20), default="CONFIRMED")  # CONFIRMED, CANCELLED
     registered_at = db.Column(db.DateTime, default=datetime.utcnow)
     # Payment fields
@@ -29,10 +31,14 @@ class PlayerRegistration(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     event = db.Column(db.String(100), db.ForeignKey("tournaments.url"), nullable=False)
     player = db.Column(db.String(50), db.ForeignKey("players.id"), nullable=False)
-    team = db.Column(db.String(50), db.ForeignKey("teams.id"), nullable=True)  # null for unattached
+    team = db.Column(
+        db.String(50), db.ForeignKey("teams.id"), nullable=True
+    )  # null for unattached
     jersey_number = db.Column(db.String(10))
     jersey_name = db.Column(db.String(100))  # Player name for this tournament
-    status = db.Column(db.String(20), default="PENDING_TEAM_APPROVAL")  # PENDING_TEAM_APPROVAL, CONFIRMED, REJECTED
+    status = db.Column(
+        db.String(20), default="PENDING_TEAM_APPROVAL"
+    )  # PENDING_TEAM_APPROVAL, CONFIRMED, REJECTED
     registered_at = db.Column(db.DateTime, default=datetime.utcnow)
     # Payment fields
     paid = db.Column(db.Boolean, default=False)
@@ -41,5 +47,3 @@ class PlayerRegistration(db.Model):
     payment_method = db.Column(db.String(50))
     payment_reference = db.Column(db.String(100))
     payment_notes = db.Column(db.Text)
-
-

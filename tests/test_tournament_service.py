@@ -44,9 +44,15 @@ def test_homepage_context_team_counts_grouped_query(test_db):
     db.session.add(t)
     db.session.add_all(
         [
-            TeamRegistration(event=t_url, team="t1", pseudonym="T1", status="CONFIRMED"),
-            TeamRegistration(event=t_url, team="t2", pseudonym="T2", status="CONFIRMED"),
-            TeamRegistration(event=t_url, team="t3", pseudonym="T3", status="CANCELLED"),
+            TeamRegistration(
+                event=t_url, team="t1", pseudonym="T1", status="CONFIRMED"
+            ),
+            TeamRegistration(
+                event=t_url, team="t2", pseudonym="T2", status="CONFIRMED"
+            ),
+            TeamRegistration(
+                event=t_url, team="t3", pseudonym="T3", status="CANCELLED"
+            ),
         ]
     )
     db.session.commit()
@@ -74,5 +80,3 @@ def test_homepage_context_includes_unpublished_for_to(test_db, player):
     ctx = TournamentService.get_homepage_context(user=p)
     urls = {t.url for t in ctx["tournaments"]}
     assert priv_url in urls
-
-

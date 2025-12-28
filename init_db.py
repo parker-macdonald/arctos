@@ -9,12 +9,13 @@ import uuid
 
 # Create Flask app
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'your-secret-key-here'
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///tournament.db'
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config["SECRET_KEY"] = "your-secret-key-here"
+app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///tournament.db"
+app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
 # Import models and initialize database
 from models import db, init_db
+
 db.init_app(app)
 init_db(db)
 

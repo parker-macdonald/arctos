@@ -5,7 +5,9 @@ from tests.utils import login_as
 
 
 @pytest.mark.integration
-def test_update_set_missing_fields_returns_400(app, client, tournament, head_ref_player):
+def test_update_set_missing_fields_returns_400(
+    app, client, tournament, head_ref_player
+):
     with app.app_context():
         t = db.session.merge(tournament)
         ref = db.session.merge(head_ref_player)
@@ -30,5 +32,3 @@ def test_get_points_requires_match_id(app, client, tournament, head_ref_player):
     data = resp.get_json()
     assert data["success"] is False
     assert data["error"] == "Match ID required"
-
-

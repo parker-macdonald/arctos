@@ -23,5 +23,3 @@ class HeadRef(db.Model):
     player = db.Column(db.String(50), db.ForeignKey("players.id"), nullable=False)
     event = db.Column(db.String(100), db.ForeignKey("tournaments.url"), nullable=False)
     expdate = db.Column(db.DateTime)
-
-

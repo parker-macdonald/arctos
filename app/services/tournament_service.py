@@ -33,7 +33,9 @@ class TournamentService:
         if user is not None and getattr(user, "is_authenticated", False):
             match PermissionService.user_type(user):
                 case Some(user_type):
-                    to_entries = TO.query.filter_by(user_id=user.id, user_type=user_type).all()
+                    to_entries = TO.query.filter_by(
+                        user_id=user.id, user_type=user_type
+                    ).all()
                     to_tournament_urls = [entry.event for entry in to_entries]
                 case _:
                     pass
@@ -53,7 +55,9 @@ class TournamentService:
         team_counts: Dict[str, int] = {t.url: 0 for t in tournaments}
         if tournaments:
             counts = (
-                db.session.query(TeamRegistration.event, func.count(TeamRegistration.id))
+                db.session.query(
+                    TeamRegistration.event, func.count(TeamRegistration.id)
+                )
                 .filter(TeamRegistration.status == "CONFIRMED")
                 .filter(TeamRegistration.event.in_([t.url for t in tournaments]))
                 .group_by(TeamRegistration.event)
@@ -66,7 +70,9 @@ class TournamentService:
         if user is not None and getattr(user, "is_authenticated", False):
             for t in tournaments:
                 if is_team(user):
-                    reg = TeamRegistration.query.filter_by(event=t.url, team=user.id).first()
+                    reg = TeamRegistration.query.filter_by(
+                        event=t.url, team=user.id
+                    ).first()
                     if reg:
                         user_reg_status[t.url] = {
                             "type": "team",
@@ -75,7 +81,9 @@ class TournamentService:
                             "amount_paid": reg.amount_paid or 0.0,
                         }
                 elif is_player(user):
-                    reg = PlayerRegistration.query.filter_by(event=t.url, player=user.id).first()
+                    reg = PlayerRegistration.query.filter_by(
+                        event=t.url, player=user.id
+                    ).first()
                     if reg:
                         user_reg_status[t.url] = {
                             "type": "player",
@@ -90,5 +98,3 @@ class TournamentService:
             "team_counts": team_counts,
             "user_reg_status": user_reg_status,
         }
-
-

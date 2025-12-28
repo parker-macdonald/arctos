@@ -27,13 +27,25 @@ class Match(db.Model):
     confirmed_start_time = db.Column(db.DateTime)
     completed_time = db.Column(db.DateTime)
     nominal_length = db.Column(db.Integer)  # minutes
-    schedule_type = db.Column(db.String(20), default="STATIC")  # STATIC, DYNAMIC, BREAK, JOIN
-    set_type = db.Column(db.String(20), default="SETS")  # SETS, STONES (only for non-BREAK/JOIN matches)
-    ribbon = db.Column(db.Boolean, default=False)  # True if this is a ribbon game (not counted in results)
+    schedule_type = db.Column(
+        db.String(20), default="STATIC"
+    )  # STATIC, DYNAMIC, BREAK, JOIN
+    set_type = db.Column(
+        db.String(20), default="SETS"
+    )  # SETS, STONES (only for non-BREAK/JOIN matches)
+    ribbon = db.Column(
+        db.Boolean, default=False
+    )  # True if this is a ribbon game (not counted in results)
     nsets = db.Column(db.Integer)
-    nstonesperset = db.Column(db.Integer)  # DEPRECATED: Use stones_per_set instead. Kept for backward compatibility.
-    status = db.Column(db.String(20), default="NOT_STARTED")  # NOT_STARTED, IN_PROGRESS, COMPLETED
-    initial_notes = db.Column(db.Text)  # notes (initial match notes, distinct from MatchNote objects)
+    nstonesperset = db.Column(
+        db.Integer
+    )  # DEPRECATED: Use stones_per_set instead. Kept for backward compatibility.
+    status = db.Column(
+        db.String(20), default="NOT_STARTED"
+    )  # NOT_STARTED, IN_PROGRESS, COMPLETED
+    initial_notes = db.Column(
+        db.Text
+    )  # notes (initial match notes, distinct from MatchNote objects)
     team1_players = db.Column(db.Text)  # JSON array of player IDs
     team2_players = db.Column(db.Text)  # JSON array of player IDs
     started_by = db.Column(db.String(50))  # user ID who started the match
@@ -48,17 +60,31 @@ class Match(db.Model):
     finalized_at = db.Column(db.DateTime)  # when match was finalized
     ready_to_start = db.Column(db.Boolean, default=False)  # flag for dynamic scheduling
     ready_to_start_at = db.Column(db.DateTime)  # when ready_to_start was set
-    camera_stream_starts = db.Column(db.Text)  # JSON object mapping camera_index to stream start time (ISO format)
-    time_finalized = db.Column(db.Boolean, default=False)  # True when start time is finalized (all dependencies started)
-    previous_match = db.Column(db.String(36), db.ForeignKey("matches.uuid"), nullable=True)
+    camera_stream_starts = db.Column(
+        db.Text
+    )  # JSON object mapping camera_index to stream start time (ISO format)
+    time_finalized = db.Column(
+        db.Boolean, default=False
+    )  # True when start time is finalized (all dependencies started)
+    previous_match = db.Column(
+        db.String(36), db.ForeignKey("matches.uuid"), nullable=True
+    )
     next_match = db.Column(db.String(36), db.ForeignKey("matches.uuid"), nullable=True)
 
     # Relationships
     previous_match_obj = db.relationship(
-        "Match", foreign_keys=[previous_match], remote_side=[uuid], post_update=True, backref="previous_of"
+        "Match",
+        foreign_keys=[previous_match],
+        remote_side=[uuid],
+        post_update=True,
+        backref="previous_of",
     )
     next_match_obj = db.relationship(
-        "Match", foreign_keys=[next_match], remote_side=[uuid], post_update=True, backref="next_of"
+        "Match",
+        foreign_keys=[next_match],
+        remote_side=[uuid],
+        post_update=True,
+        backref="next_of",
     )
     team1_registration = db.relationship(
         "TeamRegistration",
@@ -129,11 +155,15 @@ class Point(db.Model):
     stamp = db.Column(db.DateTime, default=datetime.utcnow)
     end_stamp = db.Column(db.DateTime)
     footage = db.Column(db.String(500))
-    camera_index = db.Column(db.Integer)  # Index of camera in field's camera array (0-based)
+    camera_index = db.Column(
+        db.Integer
+    )  # Index of camera in field's camera array (0-based)
     stream_timestamp = db.Column(db.Float)  # Timestamp in seconds from stream start
     length = db.Column(db.Interval)
     nstones = db.Column(db.Integer)
-    stones_at_start = db.Column(db.Integer)  # Stones remaining when this point started (for STONES matches)
+    stones_at_start = db.Column(
+        db.Integer
+    )  # Stones remaining when this point started (for STONES matches)
     rerollreason = db.Column(db.Text)
     set_number = db.Column(db.Integer, default=1)
     notes = db.Column(db.Text)
@@ -158,5 +188,3 @@ class MatchNote(db.Model):
     creator = db.relationship("Player", foreign_keys=[created_by])
     player = db.relationship("Player", foreign_keys=[player_id])
     point_obj = db.relationship("Point", foreign_keys=[point_id], backref="point_notes")
-
-

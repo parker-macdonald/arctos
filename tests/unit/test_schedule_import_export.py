@@ -131,7 +131,9 @@ def test_import_schedule_rejects_invalid_match_reference(test_db, tournament):
     res = ScheduleImportExportService.import_schedule(tournament_url, toml_content)
     match res:
         case Ok(_):
-            raise AssertionError("Expected Err(ValidationError) for invalid match reference")
+            raise AssertionError(
+                "Expected Err(ValidationError) for invalid match reference"
+            )
         case Err(err):
             from app.exceptions import ValidationError
 
@@ -139,7 +141,9 @@ def test_import_schedule_rejects_invalid_match_reference(test_db, tournament):
 
 
 @pytest.mark.unit
-def test_import_schedule_replaces_existing_objects_and_deletes_missing(test_db, tournament):
+def test_import_schedule_replaces_existing_objects_and_deletes_missing(
+    test_db, tournament
+):
     """
     Real import should:
     - create new tags/fields/matches present in TOML,
@@ -188,7 +192,9 @@ def test_import_schedule_replaces_existing_objects_and_deletes_missing(test_db, 
             "set_type": keep_match.set_type,
         }
     ]
-    toml_str = write_toml_schedule(event=tournament_url, tags=tags, fields=fields, matches=matches)
+    toml_str = write_toml_schedule(
+        event=tournament_url, tags=tags, fields=fields, matches=matches
+    )
 
     res = ScheduleImportExportService.import_schedule(tournament_url, toml_str)
     match res:
@@ -214,16 +220,18 @@ def test_import_schedule_replaces_existing_objects_and_deletes_missing(test_db, 
 
 
 @pytest.mark.unit
-def test_break_join_matches_can_have_duplicate_names_on_different_fields(test_db, tournament, app):
+def test_break_join_matches_can_have_duplicate_names_on_different_fields(
+    test_db, tournament, app
+):
     """BREAK and JOIN matches can have the same name on different fields."""
     tournament_url = tournament.url
-    
+
     # Create two fields
     field1 = Field(event=tournament_url, name="Field 1", camera=None)
     field2 = Field(event=tournament_url, name="Field 2", camera=None)
     db.session.add_all([field1, field2])
     db.session.commit()
-    
+
     # Create two BREAK matches with the same name on different fields
     break1 = Match(
         name="Lunch Break",
@@ -241,12 +249,14 @@ def test_break_join_matches_can_have_duplicate_names_on_different_fields(test_db
     )
     db.session.add_all([break1, break2])
     db.session.commit()
-    
+
     # Both should exist
-    breaks = Match.query.filter_by(event=tournament_url, name="Lunch Break", schedule_type="BREAK").all()
+    breaks = Match.query.filter_by(
+        event=tournament_url, name="Lunch Break", schedule_type="BREAK"
+    ).all()
     assert len(breaks) == 2
     assert {b.field for b in breaks} == {"Field 1", "Field 2"}
-    
+
     # Create two JOIN matches with the same name on different fields
     join1 = Match(
         name="Morning End",
@@ -264,9 +274,11 @@ def test_break_join_matches_can_have_duplicate_names_on_different_fields(test_db
     )
     db.session.add_all([join1, join2])
     db.session.commit()
-    
+
     # Both should exist
-    joins = Match.query.filter_by(event=tournament_url, name="Morning End", schedule_type="JOIN").all()
+    joins = Match.query.filter_by(
+        event=tournament_url, name="Morning End", schedule_type="JOIN"
+    ).all()
     assert len(joins) == 2
     assert {j.field for j in joins} == {"Field 1", "Field 2"}
 
@@ -275,13 +287,13 @@ def test_break_join_matches_can_have_duplicate_names_on_different_fields(test_db
 def test_regular_matches_cannot_have_duplicate_names(test_db, tournament, app):
     """Regular matches (STATIC/DYNAMIC) must have unique names within tournament."""
     tournament_url = tournament.url
-    
+
     # Create a field
     field1 = Field(event=tournament_url, name="Field 1", camera=None)
     field2 = Field(event=tournament_url, name="Field 2", camera=None)
     db.session.add_all([field1, field2])
     db.session.commit()
-    
+
     # Create a STATIC match
     match1 = Match(
         name="Match A",
@@ -293,12 +305,12 @@ def test_regular_matches_cannot_have_duplicate_names(test_db, tournament, app):
     )
     db.session.add(match1)
     db.session.commit()
-    
+
     # Try to create another STATIC match with the same name (even on different field) - should fail
     from app.routes.tournaments import add_match
     from flask import Flask
     from flask_login import current_user
-    
+
     # We can't easily test the route directly, but we can test the uniqueness constraint
     # by trying to create a duplicate match directly
     match2 = Match(
@@ -311,10 +323,12 @@ def test_regular_matches_cannot_have_duplicate_names(test_db, tournament, app):
     )
     db.session.add(match2)
     db.session.commit()
-    
+
     # Both exist in DB (no DB constraint), but the route validation should prevent this
     # Let's verify that regular matches with same name exist (they do, but route should prevent creation)
-    matches = Match.query.filter_by(event=tournament_url, name="Match A", schedule_type="STATIC").all()
+    matches = Match.query.filter_by(
+        event=tournament_url, name="Match A", schedule_type="STATIC"
+    ).all()
     # Note: This test verifies the DB allows it, but the route validation should prevent it
     # We'll test the route validation separately if needed
 
@@ -323,13 +337,13 @@ def test_regular_matches_cannot_have_duplicate_names(test_db, tournament, app):
 def test_import_resolves_duplicate_match_names_by_field(test_db, tournament):
     """When importing matches with duplicate names, previous_match/next_match should resolve to match on same field."""
     tournament_url = tournament.url
-    
+
     # Create fields
     field1 = Field(event=tournament_url, name="Field 1", camera=None)
     field2 = Field(event=tournament_url, name="Field 2", camera=None)
     db.session.add_all([field1, field2])
     db.session.commit()
-    
+
     # Create TOML with duplicate BREAK match names on different fields
     # Each break should reference the previous match on its own field
     toml_content = textwrap.dedent(
@@ -371,36 +385,36 @@ def test_import_resolves_duplicate_match_names_by_field(test_db, tournament):
         previous_match = "Match 2"
         """
     ).strip()
-    
+
     res = ScheduleImportExportService.import_schedule(tournament_url, toml_content)
     match res:
         case Ok(result):
             assert result.matches_created == 4
         case Err(err):
             raise AssertionError(f"Expected Ok(ImportResult), got Err({err})")
-    
+
     # Verify matches were created
     matches = Match.query.filter_by(event=tournament_url).all()
     assert len(matches) == 4
-    
+
     # Find the two "Lunch Break" matches
     breaks = [m for m in matches if m.name == "Lunch Break"]
     assert len(breaks) == 2
-    
+
     # Verify each break's previous_match points to the match on its own field
     break1 = next((b for b in breaks if b.field == "Field 1"), None)
     break2 = next((b for b in breaks if b.field == "Field 2"), None)
-    
+
     assert break1 is not None
     assert break2 is not None
-    
+
     # Get the previous matches
     match1 = next((m for m in matches if m.name == "Match 1"), None)
     match2 = next((m for m in matches if m.name == "Match 2"), None)
-    
+
     assert match1 is not None
     assert match2 is not None
-    
+
     # Verify field-based resolution
     assert break1.previous_match == match1.uuid  # Break on Field 1 references Match 1
     assert break2.previous_match == match2.uuid  # Break on Field 2 references Match 2
@@ -410,16 +424,16 @@ def test_import_resolves_duplicate_match_names_by_field(test_db, tournament):
 def test_tags_with_spaces_work_correctly(test_db, tournament):
     """Tags with spaces in their names should work correctly in export/import and references."""
     tournament_url = tournament.url
-    
+
     # Create a field
     field = Field(event=tournament_url, name="Field 1", camera=None)
     db.session.add(field)
-    
+
     # Create a tag with spaces in the name
     tag_with_spaces = Tag(event=tournament_url, name="Pool A Teams")
     db.session.add(tag_with_spaces)
     db.session.commit()
-    
+
     # Create a match that references this tag
     match = Match(
         name="Test Match",
@@ -433,7 +447,7 @@ def test_tags_with_spaces_work_correctly(test_db, tournament):
     )
     db.session.add(match)
     db.session.commit()
-    
+
     # Export should include the tag and the reference
     res = ScheduleImportExportService.export_schedule(tournament_url)
     match res:
@@ -445,7 +459,7 @@ def test_tags_with_spaces_work_correctly(test_db, tournament):
             assert 'refs_initial = "tag::Pool A Teams"' in toml_str
         case Err(err):
             raise AssertionError(f"Expected Ok(TOML), got Err({err})")
-    
+
     # Import should work correctly
     res = ScheduleImportExportService.import_schedule(tournament_url, toml_str)
     match res:
@@ -453,11 +467,11 @@ def test_tags_with_spaces_work_correctly(test_db, tournament):
             assert result.matches_created >= 0 or result.matches_updated >= 0
         case Err(err):
             raise AssertionError(f"Expected Ok(ImportResult), got Err({err})")
-    
+
     # Verify the imported match has the correct reference
-    imported_match = Match.query.filter_by(event=tournament_url, name="Test Match").first()
+    imported_match = Match.query.filter_by(
+        event=tournament_url, name="Test Match"
+    ).first()
     assert imported_match is not None
     assert imported_match.team1_initial == "tag::Pool A Teams"
     assert imported_match.refs_initial == "tag::Pool A Teams"
-
-

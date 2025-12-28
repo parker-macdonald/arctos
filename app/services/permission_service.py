@@ -41,7 +41,9 @@ class PermissionService:
         from models import TO
 
         return (
-            TO.query.filter_by(user_id=user.id, user_type=user_type, event=tournament_url).first()
+            TO.query.filter_by(
+                user_id=user.id, user_type=user_type, event=tournament_url
+            ).first()
             is not None
         )
 
@@ -65,5 +67,3 @@ class PermissionService:
         from app.utils.helpers import can_head_ref_match as _can_head_ref_match
 
         return _can_head_ref_match(tournament_url, user.id, match=match)
-
-

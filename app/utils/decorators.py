@@ -12,7 +12,9 @@ from flask_login import current_user, login_required
 from app.services.permission_service import PermissionService
 
 
-def require_tournament_organizer(message: str = "Only tournament organizers can access this page"):
+def require_tournament_organizer(
+    message: str = "Only tournament organizers can access this page",
+):
     """
     Require current user to be a TO for the given tournament.
 
@@ -28,7 +30,9 @@ def require_tournament_organizer(message: str = "Only tournament organizers can 
             if tournament_url is None and args:
                 tournament_url = args[0]
 
-            if not PermissionService.is_tournament_organizer(tournament_url, current_user):
+            if not PermissionService.is_tournament_organizer(
+                tournament_url, current_user
+            ):
                 flash(message, "error")
                 return redirect(request.referrer or f"/{tournament_url}")
 
@@ -37,5 +41,3 @@ def require_tournament_organizer(message: str = "Only tournament organizers can 
         return wrapper
 
     return decorator
-
-

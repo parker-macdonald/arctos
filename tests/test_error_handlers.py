@@ -32,4 +32,3 @@ def test_arctos_error_handler_redirects_for_html_paths():
     resp = client.get("/test-error", follow_redirects=False)
     # Redirect to / (or referrer). Flask redirect status.
     assert resp.status_code in (301, 302, 303, 307, 308)
-

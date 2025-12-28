@@ -7,7 +7,9 @@ from tests.utils import login_as
 
 
 @pytest.mark.unit
-def test_permission_service_is_tournament_organizer_false_when_missing_to(app, test_db, tournament, player):
+def test_permission_service_is_tournament_organizer_false_when_missing_to(
+    app, test_db, tournament, player
+):
     with app.app_context():
         t = db.session.merge(tournament)
         p = db.session.merge(player)
@@ -18,7 +20,9 @@ def test_permission_service_is_tournament_organizer_false_when_missing_to(app, t
 
 
 @pytest.mark.unit
-def test_permission_service_is_tournament_organizer_true_when_to_exists(app, test_db, tournament, player):
+def test_permission_service_is_tournament_organizer_true_when_to_exists(
+    app, test_db, tournament, player
+):
     with app.app_context():
         t = db.session.merge(tournament)
         p = db.session.merge(player)
@@ -28,7 +32,9 @@ def test_permission_service_is_tournament_organizer_true_when_to_exists(app, tes
 
 
 @pytest.mark.unit
-def test_permission_service_can_view_unpublished_tournament_for_to(app, test_db, player):
+def test_permission_service_can_view_unpublished_tournament_for_to(
+    app, test_db, player
+):
     with app.app_context():
         p = db.session.merge(player)
         t = Tournament(
@@ -69,4 +75,3 @@ def test_tournament_manage_allows_to(app, client, tournament, player, test_db):
 
     resp = client.get(f"/{tournament_url}/manage")
     assert resp.status_code == 200
-

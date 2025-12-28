@@ -27,9 +27,9 @@ def register_error_handlers(app: Flask) -> None:
         is_api_path = request.path.startswith("/api")
         if request.is_json or is_api_path or prefers_json:
             # Keep prior behavior: many endpoints historically returned 200 even on errors.
-            return json_error(e.message if e.public else "Request failed", status_code=200)
+            return json_error(
+                e.message if e.public else "Request failed", status_code=200
+            )
 
         flash(e.message if e.public else "Request failed", "error")
         return redirect(request.referrer or "/")
-
-

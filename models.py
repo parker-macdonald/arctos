@@ -8,4 +8,3 @@ Historically Arctos used a top-level `models.py`. Model definitions now live in
 """
 
 from app.models import *  # noqa: F403
-
