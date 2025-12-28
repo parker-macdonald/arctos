@@ -23,7 +23,9 @@ E = TypeVar("E")
 def json_from_result(
     res: Result[T, E],
     *,
-    ok_to_payload: Callable[[T], dict] = lambda v: v if isinstance(v, dict) else {"value": v},
+    ok_to_payload: Callable[[T], dict] = lambda v: (
+        v if isinstance(v, dict) else {"value": v}
+    ),
     ok_status_code: int = 200,
     err_status_code: int | None = None,
 ):
@@ -46,5 +48,3 @@ def json_from_result(
             elif isinstance(err, ArctosError):
                 status = err.status_code
             return json_error(public_error_message(err), status_code=status)
-
-

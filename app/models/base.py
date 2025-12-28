@@ -15,5 +15,3 @@ def init_db(database: SQLAlchemy) -> None:
     existing calls remain valid.
     """
     _ = database
-
-

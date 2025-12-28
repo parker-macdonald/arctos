@@ -41,5 +41,3 @@ def test_option_ok_or_else_is_lazy():
 def test_option_helper():
     assert option(None).is_null()
     assert option(5).unwrap() == 5
-
-

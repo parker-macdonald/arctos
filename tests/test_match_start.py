@@ -81,5 +81,3 @@ def test_start_match_post_rejects_overlap(app, client, tournament, head_ref_play
 
     m2 = Match.query.get(match_id)
     assert m2.status == "NOT_STARTED"
-
-

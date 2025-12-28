@@ -38,5 +38,3 @@ def to_iso_z(dt: datetime | None) -> Option[str]:
             return Some(d.isoformat().replace("+00:00", "Z"))
         case _:
             return Null()
-
-

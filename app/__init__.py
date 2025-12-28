@@ -15,11 +15,12 @@ login_manager = LoginManager()
 # Override url_for to handle subpath deployment
 from flask import url_for as _url_for
 
+
 def url_for(endpoint, **values):
     """Custom url_for that handles subpath deployment"""
     url = _url_for(endpoint, **values)
-    if 'SCRIPT_NAME' in os.environ and not url.startswith(os.environ['SCRIPT_NAME']):
-        url = os.environ['SCRIPT_NAME'] + url
+    if "SCRIPT_NAME" in os.environ and not url.startswith(os.environ["SCRIPT_NAME"]):
+        url = os.environ["SCRIPT_NAME"] + url
     return url
 
 
@@ -27,46 +28,48 @@ def create_app(config=None):
     """Application factory."""
     global db, socketio
 
-    
-    app = Flask(__name__, static_folder='../static', template_folder='../templates')
+    app = Flask(__name__, static_folder="../static", template_folder="../templates")
     config = config or dict()
     # Default configuration
-    app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-key')
-    app.config['SQLALCHEMY_DATABASE_URI'] = config.get('SQLALCHEMY_DATABASE_URI', 'sqlite:///tournament.db')
-    app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-    app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 10MB max file size
-    
+    app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev-key")
+    app.config["SQLALCHEMY_DATABASE_URI"] = config.get(
+        "SQLALCHEMY_DATABASE_URI", "sqlite:///tournament.db"
+    )
+    app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+    app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024  # 10MB max file size
+
     # Google OAuth configuration
-    app.config['GOOGLE_CLIENT_ID'] = os.environ.get('GOOGLE_CLIENT_ID', '')
-    app.config['GOOGLE_CLIENT_SECRET'] = os.environ.get('GOOGLE_CLIENT_SECRET', '')
-    
+    app.config["GOOGLE_CLIENT_ID"] = os.environ.get("GOOGLE_CLIENT_ID", "")
+    app.config["GOOGLE_CLIENT_SECRET"] = os.environ.get("GOOGLE_CLIENT_SECRET", "")
+
     # Handle subpath deployment
-    if 'SCRIPT_NAME' in os.environ:
-        app.config['APPLICATION_ROOT'] = os.environ['SCRIPT_NAME']
-    
+    if "SCRIPT_NAME" in os.environ:
+        app.config["APPLICATION_ROOT"] = os.environ["SCRIPT_NAME"]
+
     # Override with custom config if provided
     if config:
         app.config.update(config)
-    
+
     # Initialize OAuth and Executor (after config is finalized)
     from app.routes.auth import oauth
+
     oauth.init_app(app)
     from app.routes.tournaments import executor
+
     executor.init_app(app)
     # Register Google OAuth client
-    if app.config.get('GOOGLE_CLIENT_ID') and app.config.get('GOOGLE_CLIENT_SECRET'):
+    if app.config.get("GOOGLE_CLIENT_ID") and app.config.get("GOOGLE_CLIENT_SECRET"):
         oauth.register(
-            name='google',
-            client_id=app.config['GOOGLE_CLIENT_ID'],
-            client_secret=app.config['GOOGLE_CLIENT_SECRET'],
-            server_metadata_url='https://accounts.google.com/.well-known/openid-configuration',
-            client_kwargs={
-                'scope': 'openid email profile'
-            }
+            name="google",
+            client_id=app.config["GOOGLE_CLIENT_ID"],
+            client_secret=app.config["GOOGLE_CLIENT_SECRET"],
+            server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
+            client_kwargs={"scope": "openid email profile"},
         )
-    
+
     # Initialize database
     from models import db as db_instance, init_db
+
     db = db_instance
     db.init_app(app)
     init_db(db)
@@ -77,23 +80,24 @@ def create_app(config=None):
     except Exception:
         # If creation fails, continue; errors will surface when accessed
         pass
-    
+
     # Initialize SocketIO
     socketio = SocketIO(app, cors_allowed_origins="*")
-    
+
     # Initialize login manager
     login_manager.init_app(app)
-    login_manager.login_view = 'auth.login'
-    
+    login_manager.login_view = "auth.login"
+
     @login_manager.user_loader
     def load_user(user_id):
         from models import Player, Team
+
         # Try to load as player first, then team
         user = Player.query.get(user_id)
         if user:
             return user
         return Team.query.get(user_id)
-    
+
     # Register blueprints
     from app.routes.main import bp as main_bp
     from app.routes.auth import bp as auth_bp
@@ -103,7 +107,7 @@ def create_app(config=None):
     from app.routes.matches import bp as matches_bp
     from app.routes.notes import bp as notes_bp
     from app.routes.registration import bp as registration_bp
-    
+
     app.register_blueprint(main_bp)
     app.register_blueprint(auth_bp)
     app.register_blueprint(players_bp)
@@ -112,44 +116,49 @@ def create_app(config=None):
     app.register_blueprint(matches_bp)
     app.register_blueprint(notes_bp)
     app.register_blueprint(registration_bp)
-    
+
     # Register template filters
     from app import filters
+
     app.register_blueprint(filters.bp)
-    
+
     # Make custom url_for available in templates
     @app.context_processor
     def inject_url_for():
         return dict(url_for=url_for)
-    
+
     # Add cache headers to static file responses (especially images)
     @app.after_request
     def add_cache_headers(response):
         from flask import request
+
         # Check if this is a static file request
-        if response.status_code == 200 and request.endpoint == 'static':
+        if response.status_code == 200 and request.endpoint == "static":
             # Cache images and other static assets for 1 hour
-            if request.path.startswith('/static/uploads/') or request.path.startswith('/static/'):
+            if request.path.startswith("/static/uploads/") or request.path.startswith(
+                "/static/"
+            ):
                 response.cache_control.max_age = 3600
                 response.cache_control.public = True
         return response
-    
+
     # Initialize websocket handlers
-    
+
     # Error handlers
     from app.error_handlers import register_error_handlers
+
     register_error_handlers(app)
 
     @app.errorhandler(413)
     def too_large(e):
         from flask import flash, redirect
-        flash('File too large. Maximum size is 10MB.', 'error')
-        return redirect(url_for('main.index'))
-    
+
+        flash("File too large. Maximum size is 10MB.", "error")
+        return redirect(url_for("main.index"))
+
     return app
 
 
 def get_socketio():
     """Get the socketio instance."""
     return socketio
-

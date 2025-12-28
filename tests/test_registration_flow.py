@@ -50,7 +50,9 @@ def test_player_register_and_deregister_flow(app, client, tournament, player):
     )
     assert resp.status_code in (301, 302, 303, 307, 308)
 
-    reg = PlayerRegistration.query.filter_by(event=tournament_url, player=player_id).first()
+    reg = PlayerRegistration.query.filter_by(
+        event=tournament_url, player=player_id
+    ).first()
     assert reg is not None
     assert reg.status == "CONFIRMED"
     assert reg.jersey_name == "Alice"
@@ -65,14 +67,16 @@ def test_player_register_and_deregister_flow(app, client, tournament, player):
         follow_redirects=False,
     )
     assert resp_dup.status_code in (301, 302, 303, 307, 308)
-    regs = PlayerRegistration.query.filter_by(event=tournament_url, player=player_id).all()
+    regs = PlayerRegistration.query.filter_by(
+        event=tournament_url, player=player_id
+    ).all()
     assert len(regs) == 1
 
     resp2 = client.post(f"/{tournament_url}/deregister-player", follow_redirects=False)
     assert resp2.status_code in (301, 302, 303, 307, 308)
 
-    reg2 = PlayerRegistration.query.filter_by(event=tournament_url, player=player_id).first()
+    reg2 = PlayerRegistration.query.filter_by(
+        event=tournament_url, player=player_id
+    ).first()
     assert reg2 is not None
     assert reg2.status == "CANCELLED"
-
-

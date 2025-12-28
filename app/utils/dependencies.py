@@ -22,7 +22,7 @@ def apply_match_dependencies(tournament_url: str, completed_match: Match) -> Non
 
     # Build robust placeholder variants (case-insensitive, flexible separators)
     def normalize(s: str) -> str:
-        return ' '.join((s or '').strip().split())
+        return " ".join((s or "").strip().split())
 
     base_name = completed_match.name
     winner_placeholder = f"{base_name}::winner"
@@ -37,50 +37,55 @@ def apply_match_dependencies(tournament_url: str, completed_match: Match) -> Non
         # team1
         if not m.team1 and m.team1_initial:
             initial = m.team1_initial.strip()
-            if normalize(initial)==winner_placeholder and winner_team_id:
+            if normalize(initial) == winner_placeholder and winner_team_id:
                 m.team1 = winner_team_id
                 updated_any = True
-            elif normalize(initial)==loser_placeholder and loser_team_id:
+            elif normalize(initial) == loser_placeholder and loser_team_id:
                 m.team1 = loser_team_id
                 updated_any = True
 
         # team2
         if not m.team2 and m.team2_initial:
             initial = m.team2_initial.strip()
-            if normalize(initial)==winner_placeholder and winner_team_id:
+            if normalize(initial) == winner_placeholder and winner_team_id:
                 m.team2 = winner_team_id
                 updated_any = True
-            elif normalize(initial)==loser_placeholder and loser_team_id:
+            elif normalize(initial) == loser_placeholder and loser_team_id:
                 m.team2 = loser_team_id
                 updated_any = True
 
         # refs - merge match resolutions into existing refs at correct indices
-        refs_initial_val = m.refs_initial or ''
+        refs_initial_val = m.refs_initial or ""
         if refs_initial_val:
             # Split refs_initial preserving all positions (including empty strings between commas)
-            refs_initial_list = [r.strip() for r in refs_initial_val.split(',')]
-            
+            refs_initial_list = [r.strip() for r in refs_initial_val.split(",")]
+
             # Get current refs state (may be empty or partially populated with empty string placeholders)
             refs_current_list = []
             if m.refs:
-                refs_current_list = [r.strip() for r in m.refs.split(',')]
-            
+                refs_current_list = [r.strip() for r in m.refs.split(",")]
+
             # Ensure refs_current_list has same length as refs_initial_list
             # If lengths don't match, rebuild from refs_initial (preserving explicit team IDs)
             if len(refs_current_list) != len(refs_initial_list):
-                refs_current_list = [''] * len(refs_initial_list)
+                refs_current_list = [""] * len(refs_initial_list)
                 # Populate any explicit team IDs from refs_initial
                 for i, initial_ref in enumerate(refs_initial_list):
-                    if initial_ref and not initial_ref.lower().startswith('tag::') and '::winner' not in initial_ref.lower() and '::loser' not in initial_ref.lower():
+                    if (
+                        initial_ref
+                        and not initial_ref.lower().startswith("tag::")
+                        and "::winner" not in initial_ref.lower()
+                        and "::loser" not in initial_ref.lower()
+                    ):
                         # Explicit team ID
                         refs_current_list[i] = initial_ref
-            
+
             # Merge match resolutions into existing refs at correct indices
             changed = False
             for i, initial_ref in enumerate(refs_initial_list):
                 if not initial_ref:
                     continue
-                
+
                 # Check if this is a match reference that needs resolution
                 normalized_ref = normalize(initial_ref)
                 if normalized_ref == winner_placeholder and winner_team_id:
@@ -95,12 +100,11 @@ def apply_match_dependencies(tournament_url: str, completed_match: Match) -> Non
                         changed = True
                 # For tag references or explicit team IDs, preserve existing value
                 # (they should have been set by update_tags or are already correct)
-            
+
             if changed:
                 # Join with commas, preserving empty strings as placeholders
-                m.refs = ', '.join(refs_current_list)
+                m.refs = ", ".join(refs_current_list)
                 updated_any = True
 
     if updated_any:
         db.session.commit()
-

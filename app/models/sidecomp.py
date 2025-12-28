@@ -22,5 +22,3 @@ class SideCompResult(db.Model):
     player = db.Column(db.String(50), db.ForeignKey("players.id"), nullable=False)
     scanner_id = db.Column(db.Integer)
     stamp = db.Column(db.DateTime, default=datetime.utcnow)
-
-

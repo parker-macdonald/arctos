@@ -24,5 +24,3 @@ def is_team(user) -> bool:
     from models import Team
 
     return isinstance(user, Team)
-
-

@@ -56,5 +56,3 @@ class SetType(StrEnum):
 class WinnerSide(StrEnum):
     TEAM1 = "TEAM1"
     TEAM2 = "TEAM2"
-
-

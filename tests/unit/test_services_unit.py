@@ -30,7 +30,9 @@ def test_registration_service_register_team_closed_raises(test_db, team):
 
 
 @pytest.mark.unit
-def test_match_service_overlap_raises_without_mutating_match(test_db, tournament, head_ref_player):
+def test_match_service_overlap_raises_without_mutating_match(
+    test_db, tournament, head_ref_player
+):
     tournament_url = tournament.url
     ref = db.session.merge(head_ref_player)
     m = Match(
@@ -61,4 +63,3 @@ def test_match_service_overlap_raises_without_mutating_match(test_db, tournament
     # Ensure not mutated
     m2 = Match.query.get(m.uuid)
     assert m2.status == "NOT_STARTED"
-

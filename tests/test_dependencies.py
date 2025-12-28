@@ -5,7 +5,9 @@ from models import Match, db
 
 
 @pytest.mark.unit
-def test_apply_match_dependencies_substitutes_winner_loser_and_refs(test_db, tournament):
+def test_apply_match_dependencies_substitutes_winner_loser_and_refs(
+    test_db, tournament
+):
     tournament_url = tournament.url
     with db.session.begin():
         completed = Match(
@@ -69,4 +71,3 @@ def test_apply_match_dependencies_noop_when_no_winner(test_db, tournament):
     dep = Match.query.filter_by(event=tournament_url, name="Match B").first()
     assert dep is not None
     assert dep.team1 is None
-

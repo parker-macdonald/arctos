@@ -35,4 +35,3 @@ def test_match_note_serializer_includes_team_id_for_team_targets(test_db, tourna
     assert data["team_id"] == "team_1"
     assert data["player_id"] == "p1"
     assert data["text"] == "note"
-

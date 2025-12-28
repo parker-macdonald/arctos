@@ -26,9 +26,15 @@ class Tournament(db.Model):
     registration_open = db.Column(db.Boolean, default=False)
     about = db.Column(db.Text)
     terms_link = db.Column(db.String(500))
-    head_refs_allowed_list = db.Column(db.Text)  # comma-separated list of allowed usernames
-    head_refs_allow_reffing_teams = db.Column(db.Boolean, default=False)  # allow reffing teams and their members
-    head_refs_allow_anyone = db.Column(db.Boolean, default=False)  # allow anyone registered
+    head_refs_allowed_list = db.Column(
+        db.Text
+    )  # comma-separated list of allowed usernames
+    head_refs_allow_reffing_teams = db.Column(
+        db.Boolean, default=False
+    )  # allow reffing teams and their members
+    head_refs_allow_anyone = db.Column(
+        db.Boolean, default=False
+    )  # allow anyone registered
     bracket = db.Column(db.Text)  # TOML string defining bracket visualizations
 
 
@@ -47,7 +53,9 @@ class Field(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     event = db.Column(db.String(100), db.ForeignKey("tournaments.url"), nullable=False)
     name = db.Column(db.String(100), nullable=False)
-    camera = db.Column(db.Text)  # JSON array of camera URLs (or single URL for backward compatibility)
+    camera = db.Column(
+        db.Text
+    )  # JSON array of camera URLs (or single URL for backward compatibility)
 
 
 class Tag(db.Model):
@@ -56,5 +64,3 @@ class Tag(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     event = db.Column(db.String(100), db.ForeignKey("tournaments.url"), nullable=False)
     name = db.Column(db.String(50), nullable=False)
-
-

@@ -33,20 +33,32 @@ class RegistrationService:
         return option(tournament).ok_or(TournamentNotFoundError(tournament_url))
 
     @staticmethod
-    def _require_registration_open_for_register(tournament) -> Result[None, ArctosError]:
+    def _require_registration_open_for_register(
+        tournament,
+    ) -> Result[None, ArctosError]:
         if not getattr(tournament, "registration_open", False):
-            return Err(RegistrationClosedError("Registration is not open for this tournament"))
+            return Err(
+                RegistrationClosedError("Registration is not open for this tournament")
+            )
         return Ok(None)
 
     @staticmethod
-    def _require_registration_open_for_deregister(tournament) -> Result[None, ArctosError]:
+    def _require_registration_open_for_deregister(
+        tournament,
+    ) -> Result[None, ArctosError]:
         if not getattr(tournament, "registration_open", False):
-            return Err(ValidationError("Registration changes are locked. You can no longer deregister."))
+            return Err(
+                ValidationError(
+                    "Registration changes are locked. You can no longer deregister."
+                )
+            )
         return Ok(None)
 
     @staticmethod
     @allow_Q
-    def register_team(tournament_url: str, team_id: str, pseudonym: str) -> Result["TeamRegistration", ArctosError]:
+    def register_team(
+        tournament_url: str, team_id: str, pseudonym: str
+    ) -> Result["TeamRegistration", ArctosError]:
         from models import TeamRegistration, db
 
         tournament = RegistrationService._get_tournament(tournament_url).Q()
@@ -62,7 +74,9 @@ class RegistrationService:
             event=tournament_url, team=team_id, status="CONFIRMED"
         ).first()
         if existing_reg:
-            return Err(ValidationError("Your team is already registered for this tournament"))
+            return Err(
+                ValidationError("Your team is already registered for this tournament")
+            )
 
         if tournament.n_max_teams:
             current_team_count = TeamRegistration.query.filter_by(
@@ -71,11 +85,13 @@ class RegistrationService:
             if current_team_count >= tournament.n_max_teams:
                 return Err(
                     ValidationError(
-                    f"Maximum number of teams ({tournament.n_max_teams}) already registered"
-                )
+                        f"Maximum number of teams ({tournament.n_max_teams}) already registered"
+                    )
                 )
 
-        team_registration = TeamRegistration(event=tournament_url, team=team_id, pseudonym=pseudonym)
+        team_registration = TeamRegistration(
+            event=tournament_url, team=team_id, pseudonym=pseudonym
+        )
 
         # Auto-mark as paid if registration fee is zero
         if not tournament.team_reg_fee or tournament.team_reg_fee == 0:
@@ -102,7 +118,9 @@ class RegistrationService:
         tournament = RegistrationService._get_tournament(tournament_url).Q()
         RegistrationService._require_registration_open_for_register(tournament).Q()
 
-        existing_reg = PlayerRegistration.query.filter_by(event=tournament_url, player=player_id).first()
+        existing_reg = PlayerRegistration.query.filter_by(
+            event=tournament_url, player=player_id
+        ).first()
 
         team_id = (team_id or "").strip() or None
         status = "CONFIRMED" if not team_id else "PENDING_TEAM_APPROVAL"
@@ -111,7 +129,11 @@ class RegistrationService:
         # If a player was previously rejected/cancelled, allow resubmission by updating that row.
         if existing_reg:
             if existing_reg.status not in ("REJECTED", "CANCELLED"):
-                return Err(ValidationError("You already have a registration for this tournament"))
+                return Err(
+                    ValidationError(
+                        "You already have a registration for this tournament"
+                    )
+                )
             player_registration = existing_reg
             player_registration.team = team_id
             player_registration.jersey_number = jersey_number or ""
@@ -163,15 +185,21 @@ class RegistrationService:
 
     @staticmethod
     @allow_Q
-    def deregister_player(tournament_url: str, player_id: str) -> Result[None, ArctosError]:
+    def deregister_player(
+        tournament_url: str, player_id: str
+    ) -> Result[None, ArctosError]:
         from models import Tournament, PlayerRegistration, db
 
         tournament = RegistrationService._get_tournament(tournament_url).Q()
         RegistrationService._require_registration_open_for_deregister(tournament).Q()
 
-        player_registration = PlayerRegistration.query.filter_by(
-            event=tournament_url, player=player_id
-        ).filter(PlayerRegistration.status.in_(["PENDING_TEAM_APPROVAL", "CONFIRMED"])).first()
+        player_registration = (
+            PlayerRegistration.query.filter_by(event=tournament_url, player=player_id)
+            .filter(
+                PlayerRegistration.status.in_(["PENDING_TEAM_APPROVAL", "CONFIRMED"])
+            )
+            .first()
+        )
         if not player_registration:
             return Err(ValidationError("You are not registered for this tournament"))
 
@@ -179,5 +207,3 @@ class RegistrationService:
 
         db.session.commit()
         return Ok(None)
-
-
