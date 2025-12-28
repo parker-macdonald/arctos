@@ -25,6 +25,7 @@ If you'd like changes merged back into the main version, the process works like 
     - describes any migration changes needed!!
     - make sure there are no merge conflicts before submitting. i dont care if you merge or rebase.
     - all tests must pass before the PR is merged
+    - **important:** all code must beformatted with black (run `uv run black .` in the root directory) before it gets merged.
 5. maintainer approves PR and changes go live to dev server
 6. final testing on dev server to ensure everything works (mostly important for changes requiring nonzero migration effort)
 7. `dev` is PR'd regularly to `main`. (frequency tbd; likely as needed based on how many new features are in dev, when they're needed, when downtime is acceptable if needed, etc.)
