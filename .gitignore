@@ -19,4 +19,4 @@ run
 
 # emacs files (backups and autosaves)
 *~
-\#*
+*\#*
