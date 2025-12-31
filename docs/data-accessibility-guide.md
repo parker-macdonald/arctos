@@ -7,6 +7,7 @@ This document details when and how data that you explicitly enter is accessible 
 ## Never published, in any way:
 
 Arctos will never publish any of this information to anyone:
+
  - email address
  - phone number, if entered
  - password/oauth secret info
@@ -25,7 +26,7 @@ Arctos will never publish any of this information to anyone:
  - visible to target forever on their profile
  - may be shown in aggregate statistics, but timestamp will be rounded to the day, the author will not be shown, and the target will not be shown (other than the type  - team or player)
 
-!!! important "Future Changes"
+!!! warning "Future Changes"
     the promises about ref note privacy may change in the future, but a) users will be notified of any such changes, and b) they will not apply retrospectively (ie, these rules will always apply to notes written under these rules)
 
 ## Encryption/sysadmin disclaimer

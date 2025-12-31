@@ -2,13 +2,13 @@
 
 Updated: Dec 28, 2025
 
-This policy describes generally speaking what we do with data we generically collect from you. For more information on specifically when and where information you enter is accessible to others, see the [data accessibility guide](https://events.californiajugger.org/data-accessibility-guide/).
+This policy describes generally speaking what we do with data we generically collect from you. For more information on specifically when and where information you enter is accessible to others, see the [data accessibility guide](/data-accessibility-guide).
 
 ## The short version
-- We collect your information only with your consent
-- We only collect the minimum amount of personal information that is necessary to fulfill the purpose of your interaction with us
-- We do not sell data to to third parties.
-- We only use your data as described in this policy.
+ - We collect your information only with your consent
+ - We only collect the minimum amount of personal information that is necessary to fulfill the purpose of your interaction with us
+ - We do not sell data to to third parties.
+ - We only use your data as described in this policy.
 
 Read on for more technical details.
 

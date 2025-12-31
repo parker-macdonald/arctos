@@ -183,9 +183,19 @@ def data_accessibility_guide():
     import os
     from pathlib import Path
 
-    
     p = Path(__file__).parent.parent.parent / "docs" / "data-accessibility-guide.md"
     with open(p, "r", encoding="utf-8") as f:
         md_content = f.read()
     return render_template("markdown.html", markdown_content=md_content, title="Data Accessibility Guide")
 
+
+@bp.route("/thanks")
+def thanks():
+    """credits page"""
+    import os
+    from pathlib import Path
+
+    p = Path(__file__).parent.parent.parent / "docs" / "thanks.md"
+    with open(p, "r", encoding="utf-8") as f:
+        md_content = f.read()
+    return render_template("markdown.html", markdown_content=md_content, title="Credits")
