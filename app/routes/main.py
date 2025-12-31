@@ -164,7 +164,10 @@ def docs():
     docs_path = Path(__file__).parent.parent.parent / "docs" / "docs.md"
     with open(docs_path, "r", encoding="utf-8") as f:
         markdown_content = f.read()
-    return render_template("markdown.html", markdown_content=markdown_content, title="User Docs")
+    return render_template(
+        "markdown.html", markdown_content=markdown_content, title="User Docs"
+    )
+
 
 @bp.route("/privacy-policy")
 def privacy_policy():
@@ -175,7 +178,10 @@ def privacy_policy():
     p = Path(__file__).parent.parent.parent / "docs" / "privacy-policy.md"
     with open(p, "r", encoding="utf-8") as f:
         md_content = f.read()
-    return render_template("markdown.html", markdown_content=md_content, title="Privacy Policy")
+    return render_template(
+        "markdown.html", markdown_content=md_content, title="Privacy Policy"
+    )
+
 
 @bp.route("/data-accessibility-guide")
 def data_accessibility_guide():
@@ -186,7 +192,9 @@ def data_accessibility_guide():
     p = Path(__file__).parent.parent.parent / "docs" / "data-accessibility-guide.md"
     with open(p, "r", encoding="utf-8") as f:
         md_content = f.read()
-    return render_template("markdown.html", markdown_content=md_content, title="Data Accessibility Guide")
+    return render_template(
+        "markdown.html", markdown_content=md_content, title="Data Accessibility Guide"
+    )
 
 
 @bp.route("/thanks")
@@ -198,4 +206,6 @@ def thanks():
     p = Path(__file__).parent.parent.parent / "docs" / "thanks.md"
     with open(p, "r", encoding="utf-8") as f:
         md_content = f.read()
-    return render_template("markdown.html", markdown_content=md_content, title="Credits")
+    return render_template(
+        "markdown.html", markdown_content=md_content, title="Credits"
+    )
