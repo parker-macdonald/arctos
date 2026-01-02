@@ -1,11 +1,17 @@
 # Arctos Privacy Policy
 
-Updated: Dec 28, 2025
+Updated: Dec 31, 2025
 
 This policy describes generally speaking what we do with data we
 generically collect from you. For more information on specifically
 when and where information you enter is accessible to others, see the
 [data accessibility guide](/data-accessibility-guide).
+
+Throughout this policy, "We" refers to the Arctos application (also
+referred to as "Arctos"), defined as all websites, applications, or
+services which display this privacy policy, as well as its
+administrator (anyone with login access of any form to a server
+running any Arctos websites, applications, or services).
 
 ## The short version
 
@@ -31,35 +37,39 @@ monitor and protect the security of the website.
 
 ### Information from users with accounts
 
-If you use google sign in to Arctos, we are given access to your
-email, but not your password or any other personal information. We do
-not share or sell your email. If you do not use Google to sign in, we
-are only given information you explicitly enter-- your username,
-display name, etc. We do not have access to your password.
+If you use Google to sign in to Arctos, we are given access to your
+email address, but not your password or any other personal
+information. We do not share or sell your email address to third
+parties. If you do not use Google to sign in, we are only given
+information you explicitly enter-- your username, display name,
+etc. We do not have access to your password.
 
 We use your display name and username to personalize your experience
 with Arctos and to identify you across devices and sessions.
 
 ### What information Arctos does not collect
 
-We do not intentionally collect sensitive personal information, such
-as social security numbers, genetic data, health information, or
-religious information. If you're a child under the age of 13, you may
+We do not intentionally collect any sensitive personal information,
+such as social security numbers, genetic data, health information, or
+religious information.  
+
+If you're a child under the age of 13, you may
 not have an account on Arctos. Arctos does not knowingly collect
 information from or direct any of our content specifically to children
-under 13. If we learn or have reason to suspect that you are a user
-who is under the age of 13, we will have to close your account.
+under 13. If we learn or have sufficient reason to suspect that you
+are a user who is under the age of 13, we will have to close your
+account.
 
 ### How we share the information we collect
 
-We **do not** share, sell, rent, or trade any User Personal
-Information with third parties.
+We **do not** share, sell, rent, or trade any user personal
+information with third parties.
 
 ## Our use of cookies and tracking
 
 Arctos uses cookies to make interactions with our service easy and
 meaningful. We use cookies (and similar technologies, like HTML5
-localStorage) to keep you logged in and remember your preferences.
+`localStorage`) to keep you logged in and remember your preferences.
 
 A cookie is a small piece of text that our web server stores on your
 computer or mobile device, which your browser sends to us when you
@@ -71,6 +81,12 @@ performance or functionality. By using our website, you agree that we
 can place these types of cookies on your computer or device. If you
 disable your browser or device’s ability to accept cookies, you will
 not be able to log in or use Arctos's services.
+
+## Changes to Our Privacy Policy
+
+Arctos may periodically revise this Privacy Policy. If there are
+material changes to the statement, we will provide at least 30 days
+prior notice by updating our website.
 
 ## License
 
