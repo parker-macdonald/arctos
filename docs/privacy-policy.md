@@ -1,6 +1,6 @@
 # Arctos Privacy Policy
 
-Updated: Dec 31, 2025
+Updated: Jan 1, 2026
 
 This policy describes generally speaking what we do with data we
 generically collect from you. For more information on specifically
@@ -10,8 +10,9 @@ when and where information you enter is accessible to others, see the
 Throughout this policy, "We" refers to the Arctos application (also
 referred to as "Arctos"), defined as all websites, applications, or
 services which display this privacy policy, as well as its
-administrator (anyone with login access of any form to a server
-running any Arctos websites, applications, or services).
+administrators (anyone with login access to the responsible user
+accounts on any server running any Arctos websites, applications, or
+services).
 
 ## The short version
 
@@ -82,9 +83,9 @@ can place these types of cookies on your computer or device. If you
 disable your browser or device’s ability to accept cookies, you will
 not be able to log in or use Arctos's services.
 
-## Changes to Our Privacy Policy
+## Changes to our privacy policy
 
-Arctos may periodically revise this Privacy Policy. If there are
+Arctos may periodically revise this privacy policy. If there are
 material changes to the statement, we will provide at least 30 days
 prior notice by updating our website.
 
@@ -99,4 +100,4 @@ freely under the terms of the Creative Commons license.
 ## Contact
 
 Please contact me at reid[at]xz[dot]ax if you have questions regarding
-our Privacy Policy.
+our privacy policy.
