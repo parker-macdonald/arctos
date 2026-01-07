@@ -70,21 +70,33 @@ create a bunch of fake teams on the official site. What can i do?**
      permanent. This is to ensure links to your profile anywhere will
      always work (unless you delete your aaccount).
 
+**How is my data used? What can and can't other people see?**
+
+   - The Arctos [privacy policy](/privacy-policy) describes how we use
+     all data in more legally relevant terms. The [data accessibility
+     guide](/data-accessibility-guide) is a more approachable and
+     practical guide to when and how data you enter into Arctos gets
+     publicized.
+
+**I think something is wrong with Arctos. How do I report this?**
+
+   - You can create an issue on
+     [github](https://github.com/reid23/arctos/issues) using the *Bug
+     Report* template. This is the fastest way to get eyes on the
+     problem.
+
+
 ## Ownership (is Arctos a CAJA project?)
 
 The short answer: No.
 
 The long answer: Arctos is *not* under the jurisdiction of CAJA, the
-NJA, or any other organization[^1] - I consider it a personal project
-(and I plan to release it as open source so it can be your personal
-project too). This does mean that you have to trust me to continue to
-support this project and be a good maintainer, and find and train
-other good maintainers to fill my place if/when I leave. I appreciate
-your trust and acknowledge that this is entirely a leap of faith.
-
-[^1]: Arctos is hosted on a subdomain of the CAJA site because it was
-    free, jugger related, boosts the CAJA site SEO metrics, and lets
-    me be a proud Californian.
+NJA, or any other Jugger organization[^1]. As an open-source project,
+it is controlled entirely by its maintainers. This does mean that you
+have to trust me to continue to support this project and be a good
+maintainer, and find and train other good maintainers to fill my place
+if/when I leave. I appreciate your trust and acknowledge that this is
+entirely a leap of faith.
 
 I have decided to do this because I don't want to give these
 organizations control over who can use Arctos - it should be available
@@ -98,6 +110,11 @@ I think there's precedent for this in other sports (see athletic.net,
 swimcloud.com, thebluealliance.com, askfred.net,
 rttimingsolutions.com, etc); the organization + logistics people are
 often different from the regulatory & political bodies.
+
+[^1]: Arctos is hosted on a subdomain of the CAJA site because it was
+    free, jugger related, boosts the CAJA site SEO metrics, and lets
+    me be a proud Californian.
+
 
 ## What Arctos *is* and what it is *not*
 
@@ -163,16 +180,21 @@ With the above goals in mind, Arctos has been designed to be:
 
 ## Bugs, Feature Requests, and Contributing
 
-This project will soon (once I clean it up a little) be released on
-GitHub under fairly permissive open source terms, at which point
-anyone (including *you!*) will be able to develop and submit new
-features and bugfixes.
+Arctos is an open-source project, hosted on
+[github](https://github.com/reid23/arctos) and licensed with
+GPLv3. Anyone can view the source code and propose their own changes
+by forking the repository, commiting changes, and opening a pull
+request. If you are interested in contributing, please see see the
+[contributing guide](https://github.com/reid23/arctos/CONTRIBUTING.md)
+for more information.
 
-For the time being, if you find a bug or want a feature, please let me
-(discord: @readdie; email: reid \[at\] xz \[dot\] ax) know! I'll try
-to fix bugs as fast as I can. I can't promise a ton of time put into
-feature requests, but the more detailed of a spec and more pressing a
-reason for the feature, the more i can justify putting time into it.
+If you have feature requests or bug reports, please submit [an Issue
+on github](https://github.com/reid23/arctos/issues) using the
+appropriate template (it'll prompt you to select a template when you
+create an issue). As I have limited bandwidth and no funding for this
+project, I can't guarantee that i'll be able to act on these in a
+timely manner (especially feature requests), but creating an issue is
+the fastest way to get a maintainer to see your bug/request.
 
 ---
 
@@ -180,7 +202,7 @@ reason for the feature, the more i can justify putting time into it.
 
 Here's, briefly, how it works.
 
-#### BEFORE THE TOURNAMENT:
+#### BEFORE THE TOURNAMENT
 
   1. TOs create a tournament, with:
      - basic configuration: max team size, max team counts, number of
@@ -220,7 +242,7 @@ Here's, briefly, how it works.
      - TOs may deregister players and/or teams as they see fit
 
 
-#### ON THE DAY OF:
+#### ON THE DAY OF
 
   1. TOs optionally set up phones to record the matches (different
      from live stream integration). These phones will automatically
@@ -284,8 +306,12 @@ stones at precisely the same time, no matter what. No more massive
 audio cables or worrying about synchronizing the stones manually! Just
 play from two separate devices and it'll be in sync.
 
-!!! warning
-    Unfortunately the speed of sound is finite. If you're running into problems where things aren't quite synced, try putting the devices in question right next to each other and see if the issue persists. Unfortunately there's nothing I can do about this issue :\(
+!!! warning 
+    Unfortunately the speed of sound is finite. If you're
+    running into problems where things aren't quite synced, try
+    putting the devices in question right next to each other and see
+    if the issue persists. Unfortunately there's nothing I can do
+    about this issue :\(
 
 
 
@@ -604,7 +630,7 @@ creates a live scoreboard overlay for your stream.
 
 To set it up:
 
-1. In OBS, add a new **Browser Source**
+  1. In OBS, add a new **Browser Source**
   2. Set the URL to: `https://events.californiajugger.org/api/scoreboard?tournament=TOURNAMENT_URL&field=FIELD_NAME`
    - Replace `TOURNAMENT_URL` with your tournament's URL
    - Replace `FIELD_NAME` with the name of the field you're streaming
@@ -612,7 +638,7 @@ To set it up:
 The scoreboard displays:
 
   - Team names and profile photos
-- Current score by set
+  - Current score by set
   - For stones matches: the stones remaining countdown with a progress bar
   - When no match is active: the previous and next match's teams (with
     winner listed for the previous match).
@@ -623,8 +649,13 @@ real-time using the same synchronization system as the match pages.
 
 ## Recording Matches
 
-!!! Warning
-    This feature is **still in development**. I cannot guarantee any level of functionality. Please test thoroughly before using. May only work with a specific set of browsers and/or a specific set of hardware and OS version for the recording phone. Video may be choppy if the phone is low on battery or not sufficiently powerful.
+!!! warning 
+    This feature is **still in development**. I cannot
+    guarantee any level of functionality. Please test thoroughly
+    before using. May only work with a specific set of browsers and/or
+    a specific set of hardware and OS version for the recording
+    phone. Video may be choppy if the phone is low on battery or not
+    sufficiently powerful.
 
 Live streaming matches can be very difficult in terms of bandwidth,
 not to mention that the best cameras that are easily accessible are
@@ -670,3 +701,4 @@ diagram showing how to do it](/static/run_match_pipeline.png). it's a
 bit large to display here well, but if you click the link, you can
 zoom in however much you want.
 
+![](/static/run_match_pipeline.png)
