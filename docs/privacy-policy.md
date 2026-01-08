@@ -1,6 +1,6 @@
 # Arctos Privacy Policy
 
-Updated: Jan 1, 2026
+Updated: Jan 8, 2026
 
 This policy describes generally speaking what we do with data we
 generically collect from you. For more information on specifically
@@ -12,7 +12,10 @@ referred to as "Arctos"), defined as all websites, applications, or
 services which display this privacy policy, as well as its
 administrators (anyone with login access to the responsible user
 accounts on any server running any Arctos websites, applications, or
-services).
+services).[^1]
+
+[^1]: The server is physically secure too; it is a Hetzner dedicated
+    server in Finland, not a PC in someone's basement.
 
 ## The short version
 
