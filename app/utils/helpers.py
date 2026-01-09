@@ -126,7 +126,7 @@ def check_tournament_access(tournament_url):
     return True, tournament
 
 
-def generate_permission_key(url_slug, secret_key=None):
+def generate_permission_key(url_slug: str, secret_key=None):
     """
     Generate a permission key for a specific URL slug.
 
@@ -140,16 +140,13 @@ def generate_permission_key(url_slug, secret_key=None):
     if secret_key is None:
         secret_key = current_app.config.get("SECRET_KEY", "default-secret-key")
 
-    # Normalize the URL slug (lowercase, strip whitespace)
-    normalized_slug = url_slug.lower().strip()
-
-    # Generate HMAC-SHA256 hash
-    hmac_obj = hmac.new(
-        secret_key.encode("utf-8"), normalized_slug.encode("utf-8"), hashlib.sha256
-    )
-
-    # Return first 16 characters of hex digest for easier sharing
-    return hmac_obj.hexdigest()[:16]
+    # only use first 16 chars bc otherwise its annoying
+    # if you need to type it out without copy-pasting
+    return hmac.new(
+        secret_key.encode("utf-8"),
+        url_slug.lower().strip().encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()[:16]
 
 
 def validate_permission_key(url_slug, provided_key, secret_key=None):
