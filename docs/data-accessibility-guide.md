@@ -2,25 +2,27 @@
 
 Updated: Jan 8, 2026
 
-This document details when and how data that you explicitly enter is accessible to others.
+This document details when and how data that you explicitly enter is
+accessible to others.
 
-## Never published, in any way:
+## Never published, in any way
 
-Arctos will never publish any of this information to anyone:
-
- - email address
- - phone number, if entered
- - password/oauth secret info
+Arctos will never publish, to anyone, your email address, phone number
+(if entered), password/oauth secret info.
 
 ## Injuries
+ 
+ If injuries are set to Public, they are visible to everyone.  If they
+ are set to Private, then if they are not healed, they are shown to
+ refs when they start a match you are participating in.
+ 
+ In either case, injury (description, date, and status) may be
+ published anonymously. This could be in the form of statistics or
+ even a full release of information, but no identifying information
+ (anything that could tie the injury to your account) will ever be
+ published.
 
- - if public, all data published
- - if private:
-     - if not healed, shown to refs when they start a match
-     - Description, date, and status may be shown, but will be
-       anonymized (not tied to you in any way)
-
-## Ref Notes (on players or teams):
+## Ref Notes (on players or teams)
  - visible forever on target's profile to all explicitly listed head
    refs and TOs for the tournament at which they were logged
  - visible during tournament on target's profile to all head refs for
@@ -44,8 +46,8 @@ Arctos will never publish any of this information to anyone:
 ## Encryption/sysadmin disclaimer
 
 All of this being said, none of the data dealt with by Arctos is
-actually encrypted - as described in the second paragraph of the
-privacy policy, anyone with server access could view private
-information (though authentication data is actually secure). The
-server itself is very secure, but you do have to trust the sysadmins
-to not leak information (to be clear, they will not).
+actually encrypted for server side operations - as described in the
+second paragraph of the privacy policy, anyone with server access
+could view private information (though authentication data is actually
+secure). The server itself is very secure, but you do have to trust
+the sysadmins to not leak information (to be clear, they will not).
