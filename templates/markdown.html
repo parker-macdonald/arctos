@@ -1,7 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}User Docs{% endblock %}
-
+{% block title %}{{ title }}{% endblock %}
 {% block content %}
 <style>
 th, td {
@@ -14,5 +13,7 @@ table {
     border-width: 1px;
 }
 </style>
-{{ markdown_content | markdown }}
+<div class="container col-8">
+  {{ markdown_content | markdown }}
+</div>
 {% endblock %}

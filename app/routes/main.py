@@ -5,6 +5,9 @@ Main routes (homepage, etc.)
 from flask import Blueprint, render_template, url_for, Response
 from flask_login import current_user
 from app.services.tournament_service import TournamentService
+import os
+from pathlib import Path
+from flask import request
 
 bp = Blueprint("main", __name__)
 
@@ -19,7 +22,6 @@ def index():
 @bp.route("/teams")
 def teams():
     """List all teams."""
-    from flask import request
     from models import Team
 
     search = request.args.get("search", "")
@@ -35,7 +37,6 @@ def teams():
 @bp.route("/players")
 def players():
     """List all players."""
-    from flask import request
     from models import Player
 
     search = request.args.get("search", "")
@@ -77,7 +78,6 @@ def about():
 @bp.route("/sitemap.xml")
 def sitemap():
     """Generate XML sitemap for search engines."""
-    from flask import request
 
     # Get base URL from request
     base_url = request.url_root.rstrip("/")
@@ -140,8 +140,6 @@ def sitemap():
 @bp.route("/robots.txt")
 def robots():
     """Generate robots.txt file pointing to sitemap."""
-    from flask import request
-
     base_url = request.url_root.rstrip("/")
     sitemap_url = base_url + url_for("main.sitemap")
 
@@ -157,11 +155,64 @@ Sitemap: {sitemap_url}
 @bp.route("/docs")
 def docs():
     """User documentation page."""
-    import os
-    from pathlib import Path
-
-    # Read the markdown file
-    docs_path = Path(__file__).parent.parent.parent / "docs" / "docs.md"
-    with open(docs_path, "r", encoding="utf-8") as f:
+    p = Path(__file__).parent.parent.parent / "docs" / "docs.md"
+    with open(p, "r", encoding="utf-8") as f:
         markdown_content = f.read()
-    return render_template("docs.html", markdown_content=markdown_content)
+    return render_template(
+        "markdown.html", markdown_content=markdown_content, title="User Docs"
+    )
+
+
+@bp.route("/privacy-policy")
+def privacy_policy():
+    """privacy policy page (just render markdown)"""
+    p = Path(__file__).parent.parent.parent / "docs" / "privacy-policy.md"
+    with open(p, "r", encoding="utf-8") as f:
+        md_content = f.read()
+    return render_template(
+        "markdown.html", markdown_content=md_content, title="Privacy Policy"
+    )
+
+
+@bp.route("/data-accessibility-guide")
+def data_accessibility_guide():
+    """data accessibility guide page (just render markdown)"""
+    p = Path(__file__).parent.parent.parent / "docs" / "data-accessibility-guide.md"
+    with open(p, "r", encoding="utf-8") as f:
+        md_content = f.read()
+    return render_template(
+        "markdown.html", markdown_content=md_content, title="Data Accessibility Guide"
+    )
+
+
+@bp.route("/thanks")
+def thanks():
+    """credits page"""
+    p = Path(__file__).parent.parent.parent / "docs" / "thanks.md"
+    with open(p, "r", encoding="utf-8") as f:
+        md_content = f.read()
+    return render_template(
+        "markdown.html", markdown_content=md_content, title="Credits"
+    )
+
+
+@bp.route("/license")
+def license():
+    """license page"""
+    p = Path(__file__).parent.parent.parent / "docs" / "license.md"
+    with open(p, "r", encoding="utf-8") as f:
+        md_content = f.read()
+    return render_template(
+        "markdown.html", markdown_content=md_content, title="License"
+    )
+
+
+@bp.route("/terms")
+def terms_and_conditions():
+    """nasty legal page"""
+    p = Path(__file__).parent.parent.parent / "docs" / "terms.md"
+    with open(p, "r", encoding="utf-8") as f:
+        md_content = f.read()
+    return render_template(
+        "markdown.html", markdown_content=md_content, title="Terms and Conditions"
+    )
