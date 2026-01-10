@@ -205,3 +205,14 @@ def license():
     return render_template(
         "markdown.html", markdown_content=md_content, title="License"
     )
+
+
+@bp.route("/terms")
+def terms_and_conditions():
+    """nasty legal page"""
+    p = Path(__file__).parent.parent.parent / "docs" / "terms.md"
+    with open(p, "r", encoding="utf-8") as f:
+        md_content = f.read()
+    return render_template(
+        "markdown.html", markdown_content=md_content, title="Terms and Conditions"
+    )

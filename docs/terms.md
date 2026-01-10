@@ -21,7 +21,7 @@ accounts on any server running any of the Services.
 
 By using the Services, you acknowledge that you have read and are
 legally bound by these Terms, which expressly incorporate by reference
-Arctos’s [Privacy Policy](/privacy). If you do not agree to these
+Arctos’s [Privacy Policy](/privacy-policy). If you do not agree to these
 Terms, please do not use the Services. We reserve the right to modify
 or amend these Terms from time to time without prior notice. Your
 continued use of the Services following the posting of changes to
