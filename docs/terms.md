@@ -1,6 +1,6 @@
 # Terms of Service
 
-Updated: Jan 9, 2026
+Updated: Jan 10, 2026
 
 Thank you for using Arctos! We're happy to have you here. Please read
 this Terms of Service agreement carefully before accessing or using
@@ -148,7 +148,13 @@ retaliate against such Access.
 
 ## D. Copyright Infringement and DMCA Policy
 
-If you believe that content on our website violates your copyright or are a copyright owner and you believe that content on Arctos violates your rights, please contact us by emailing reid[at]xz[dot]ax and including "DMCA Request" in the subject line. There may be legal consequences for sending a false or frrivolous takedown notice. Before sending a takedown request, you must consider legal uses such as fair use and licensed uses.
+If you believe that content on our website violates your copyright or
+are a copyright owner and you believe that content on Arctos violates
+your rights, please contact us by emailing reid[at]xz[dot]ax and
+including "DMCA Request" in the subject line. There may be legal
+consequences for sending a false or frrivolous takedown notice. Before
+sending a takedown request, you must consider legal uses such as fair
+use and licensed uses.
 
 We will terminate the Accounts of repeat infringers of this policy.
 
@@ -169,14 +175,7 @@ users' personal information.
 Arctos may offer subscription-based access to our API for those users
 who require high-throughput access.
 
-
-## F. Subject to Change
-
-Arctos may periodically revise these Terms. If there are material
-changes to the Terms, we will provide at least 30 days prior notice by
-updating our website.
-
-## G. Severability
+## F. Severability
 
 If any of these Terms is determined to be invalid, void or
 unenforceable for any reason, then the unenforceable provision will be
@@ -185,7 +184,7 @@ of the provision to the fullest extent permitted by applicable law or
 deleted if amendment is not possible, and the remaining Terms will be
 enforceable to the fullest extent permitted by law.
 
-## H. No Waiver
+## G. No Waiver
 
 Arctos's failure to enforce these Terms in every instance in which
 they might apply is not a waiver of any of Arctos’s rights, and we
@@ -193,7 +192,7 @@ reserve the right to take all legal steps available to enforce these
 Terms. Termination will result in cancellation of all rights of access
 and use of Services.
 
-## I. License
+## H. License
 
 These Terms as well as the attached [Privacy Policy](/privacy-policy)
 are adapted from [GitHub's Privacy
@@ -202,7 +201,7 @@ and are licensed under the [Creative Commons Attribution
 license](https://creativecommons.org/licenses/by/4.0/). You may use them
 freely under the terms of the Creative Commons license.
 
-## J. Contact
+## I. Contact
 
 Please contact us by email at reid[at]xz[dot]ax if you have any
 questions regarding these Terms.
