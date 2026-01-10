@@ -1,21 +1,14 @@
 # Arctos Privacy Policy
 
-Updated: Jan 8, 2026
+Updated: Jan 9, 2026
 
 This policy describes generally speaking what we do with data we
 generically collect from you. For more information on specifically
 when and where information you enter is accessible to others, see the
 [data accessibility guide](/data-accessibility-guide).
 
-Throughout this policy, "We" refers to the Arctos application (also
-referred to as "Arctos"), defined as all websites, applications, or
-services which display this privacy policy, as well as its
-administrators (anyone with login access to the responsible user
-accounts on any server running any Arctos websites, applications, or
-services).[^1]
-
-[^1]: The server is physically secure too; it is a Hetzner dedicated
-    server in Finland, not a PC in someone's basement.
+Definitions from the [Arctos Terms of Service](/terms) are explicitly
+incorporated by reference into this policy.
 
 ## The short version
 
@@ -86,21 +79,7 @@ can place these types of cookies on your computer or device. If you
 disable your browser or device’s ability to accept cookies, you will
 not be able to log in or use Arctos's services.
 
-## Changes to our privacy policy
-
-Arctos may periodically revise this privacy policy. If there are
-material changes to the statement, we will provide at least 30 days
-prior notice by updating our website.
-
-## License
-
-This Privacy Policy is adapted from [GitHub's Privacy
-Statement](https://help.github.com/articles/github-privacy-statement/)
-and is licensed under the [Creative Commons Attribution
-license](https://creativecommons.org/licenses/by/4.0/). You may use it
-freely under the terms of the Creative Commons license.
-
 ## Contact
 
-Please contact me at reid[at]xz[dot]ax if you have questions regarding
-our privacy policy.
+Please contact us by email at reid[at]xz[dot]ax if you have any
+questions regarding our privacy policy.
