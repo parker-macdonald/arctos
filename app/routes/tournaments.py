@@ -2494,8 +2494,12 @@ def tournament_autocomplete(tournament_url):
 
     suggestions = []
 
+    from app.domain.enums import RegistrationStatus
+
     # Teams registered in this tournament
-    team_regs = TeamRegistration.query.filter_by(event=tournament_url).all()
+    team_regs = TeamRegistration.query.filter_by(
+        event=tournament_url, status=RegistrationStatus.CONFIRMED
+    ).all()
     for reg in team_regs:
         pseudonym = (reg.pseudonym or "").strip()
         if not query or query in pseudonym.lower():
