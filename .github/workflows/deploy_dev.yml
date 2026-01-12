@@ -15,5 +15,5 @@ jobs:
         host: ${{ secrets.DEV_SERVER_HOST}}
         username: ${{ secrets.DEV_SERVER_USER }}
         key: ${{ secrets.DEV_SERVER_SSH_KEY }}
-	port: ${{ secrets.DEV_SERVER_SSH_PORT }}
+        port: ${{ secrets.DEV_SERVER_SSH_PORT }}
         script: ~/arctos/update.sh
