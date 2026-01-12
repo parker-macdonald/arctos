@@ -1166,9 +1166,8 @@ def finalize_match_post(tournament_url):
             "match_id": match_id,
             "status": "COMPLETED",
             "winner": match_winner,
-            "finalized_at": (
-                match.completed_time.isoformat() if match.completed_time else None
-            ),
+            # Emit completion time as UTC ISO string with 'Z' when available
+            "finalized_at": to_iso_z(match.completed_time).unwrap_or(None),
         },
         room=f"match_{match_id}",
     )

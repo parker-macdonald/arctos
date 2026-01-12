@@ -2087,9 +2087,10 @@ document.addEventListener('DOMContentLoaded', function() {
     checkForInProgressPoint();
     setInterval(checkForInProgressPoint, 1000);
 
-    // Start time elapsed timer using confirmed_start_time (local) if present, else fallback cleanly
-    const startRaw = '{{ match.confirmed_start_time.strftime('%Y-%m-%dT%H:%M:%S') if match.confirmed_start_time else (match.nominal_start_time.strftime('%Y-%m-%dT%H:%M:%S') if match.nominal_start_time else '') }}';
-    // Parse as local time (no implicit UTC conversion)
+    // Start time elapsed timer using confirmed_start_time in UTC (with 'Z') if present, else fallback cleanly.
+    // Using utc_iso ensures the timestamp is explicit UTC and safe across client timezones.
+    const startRaw = '{{ match.confirmed_start_time|utc_iso or (match.nominal_start_time|utc_iso if match.nominal_start_time else "") }}';
+    // Parse as Date (will interpret the 'Z' as UTC)
     const normStart = (function(s){
         if (!s) return null;
         const d = new Date(s);
