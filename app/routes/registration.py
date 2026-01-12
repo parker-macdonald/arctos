@@ -4,7 +4,7 @@ Tournament registration management routes.
 
 from flask import Blueprint, render_template, request, redirect, flash
 from flask_login import login_required, current_user
-from datetime import datetime
+from datetime import datetime, timezone
 from models import (
     Tournament,
     TeamRegistration,
@@ -213,7 +213,7 @@ def mark_team_paid(tournament_url):
     reg.payment_method = payment_method
     reg.payment_reference = payment_reference
     reg.payment_notes = payment_notes
-    reg.paid_at = datetime.utcnow() if paid else None
+    reg.paid_at = datetime.now(timezone.utc).replace(tzinfo=None) if paid else None
     db.session.commit()
     flash("Team payment updated", "success")
     return redirect(f"/{tournament_url}/manage")
@@ -248,7 +248,7 @@ def mark_player_paid(tournament_url):
     reg.payment_method = payment_method
     reg.payment_reference = payment_reference
     reg.payment_notes = payment_notes
-    reg.paid_at = datetime.utcnow() if paid else None
+    reg.paid_at = datetime.now(timezone.utc).replace(tzinfo=None) if paid else None
     db.session.commit()
     flash("Player payment updated", "success")
     return redirect(f"/{tournament_url}/manage")

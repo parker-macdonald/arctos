@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app.models.base import db
+from app.domain.enums import RegistrationStatus
 
 
 class TeamRegistration(db.Model):
@@ -14,8 +15,8 @@ class TeamRegistration(db.Model):
     pseudonym = db.Column(
         db.String(100), nullable=False
     )  # Team name for this tournament
-    status = db.Column(db.String(20), default="CONFIRMED")  # CONFIRMED, CANCELLED
-    registered_at = db.Column(db.DateTime, default=datetime.utcnow)
+    status = db.Column(db.String(20), default=RegistrationStatus.CONFIRMED)  # CONFIRMED, CANCELLED
+    registered_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
     # Payment fields
     paid = db.Column(db.Boolean, default=False)
     amount_paid = db.Column(db.Float, default=0.0)
@@ -37,9 +38,9 @@ class PlayerRegistration(db.Model):
     jersey_number = db.Column(db.String(10))
     jersey_name = db.Column(db.String(100))  # Player name for this tournament
     status = db.Column(
-        db.String(20), default="PENDING_TEAM_APPROVAL"
+        db.String(20), default=RegistrationStatus.PENDING_TEAM_APPROVAL
     )  # PENDING_TEAM_APPROVAL, CONFIRMED, REJECTED
-    registered_at = db.Column(db.DateTime, default=datetime.utcnow)
+    registered_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
     # Payment fields
     paid = db.Column(db.Boolean, default=False)
     amount_paid = db.Column(db.Float, default=0.0)

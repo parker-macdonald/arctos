@@ -337,7 +337,7 @@ def recompute_all_match_times(tournament_url: str) -> None:
             # Mark as ready to start and set timestamp if not already present
             match.ready_to_start = True
             if not match.ready_to_start_at:
-                match.ready_to_start_at = datetime.now()
+                match.ready_to_start_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
     db.session.commit()
 

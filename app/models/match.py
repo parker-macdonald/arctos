@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import foreign
 
@@ -134,7 +134,7 @@ class Match(db.Model):
 
     def finalize(self) -> None:
         self.time_finalized = True
-        self.finalized_at = datetime.now()
+        self.finalized_at = datetime.now(timezone.utc).replace(tzinfo=None)
         if self.schedule_type in ("JOIN", "BREAK"):
             self.confirmed_start_time = self.nominal_start_time
             self.status = "COMPLETED"
@@ -152,7 +152,7 @@ class Point(db.Model):
     match = db.Column(db.String(36), db.ForeignKey("matches.uuid"), nullable=False)
     winner = db.Column(db.String(10))  # TEAM1, TEAM2
     rerolled = db.Column(db.Boolean, default=False)
-    stamp = db.Column(db.DateTime, default=datetime.utcnow)
+    stamp = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
     end_stamp = db.Column(db.DateTime)
     footage = db.Column(db.String(500))
     camera_index = db.Column(
@@ -177,7 +177,7 @@ class MatchNote(db.Model):
     text = db.Column(db.Text, nullable=False)
     target = db.Column(db.String(50))  # 'TEAM1', 'TEAM2', 'MATCH', or player name
     created_by = db.Column(db.String(50), db.ForeignKey("players.id"), nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
     # Optional link to a specific player
     player_id = db.Column(db.String(50), db.ForeignKey("players.id"))
     # Optional link to a specific point

@@ -184,6 +184,7 @@
     document.addEventListener('DOMContentLoaded', function() {
         const utcTimestamps = document.querySelectorAll('.utc-timestamp');
         utcTimestamps.forEach(function(span) {
+            console.log('here!');
             const utcIso = span.getAttribute('data-utc');
             const formatStr = span.getAttribute('data-format') || '%Y-%m-%d %H:%M';
             if (utcIso) {
@@ -206,6 +207,27 @@
                     }
                 } catch (e) {
                     console.error('Error converting UTC timestamp:', e);
+                }
+            }
+        });
+        
+        // Convert UTC datetime strings to local datetime-local format
+        const utcDatetimeInputs = document.querySelectorAll('input[type="datetime-local"][data-utc]');
+        utcDatetimeInputs.forEach(function(input) {
+            console.log('here2!');
+            const utcIso = input.getAttribute('data-utc');
+            if (utcIso) {
+                try {
+                    const utcDate = new Date(utcIso);
+                    // Convert to local time and format for datetime-local input (YYYY-MM-DDTHH:MM)
+                    const year = utcDate.getFullYear();
+                    const month = String(utcDate.getMonth() + 1).padStart(2, '0');
+                    const day = String(utcDate.getDate()).padStart(2, '0');
+                    const hours = String(utcDate.getHours()).padStart(2, '0');
+                    const minutes = String(utcDate.getMinutes()).padStart(2, '0');
+                    input.value = `${year}-${month}-${day}T${hours}:${minutes}`;
+                } catch (e) {
+                    console.error('Error converting UTC datetime for input:', e);
                 }
             }
         });

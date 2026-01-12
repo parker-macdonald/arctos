@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Iterable, List, Optional
 
 from app.error_values import Err, Ok, Result, allow_Q
@@ -97,14 +97,14 @@ class MatchService:
 
         # Mutations start here (after validation)
         match.status = "IN_PROGRESS"
-        # Use local server time (naive) for display consistency on localhost
-        match.confirmed_start_time = datetime.now()
+        # Use UTC time (stored as naive in DB, treated as UTC)
+        match.confirmed_start_time = datetime.now(timezone.utc).replace(tzinfo=None)
 
         match.initial_notes = match_notes or ""
         match.team1_players = json.dumps(team1_players)
         match.team2_players = json.dumps(team2_players)
         match.started_by = user.id
-        match.started_at = datetime.utcnow()
+        match.started_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
         if match.set_type == "STONES":
             if stones_per_set:
