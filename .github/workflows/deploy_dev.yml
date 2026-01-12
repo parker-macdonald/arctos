@@ -9,10 +9,11 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:     
-    - name: deplot via ssh pull
+    - name: deploy via ssh pull
       uses: appleboy/ssh-action@v1.0.3
       with:
         host: ${{ secrets.DEV_SERVER_HOST}}
         username: ${{ secrets.DEV_SERVER_USER }}
-        key: ${{ secrets.BUILD_SERVER_SSH_KEY }}
+        key: ${{ secrets.DEV_SERVER_SSH_KEY }}
+	port: ${{ secrets.DEV_SERVER_SSH_PORT }}
         script: ~/arctos/update.sh
