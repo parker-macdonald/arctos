@@ -60,9 +60,9 @@
                                     <td>
                                         {% if match.nominal_start_time %}
                                         {% if match.confirmed_start_time %}
-                                            {{ match.confirmed_start_time.strftime('%Y-%m-%d %H:%M') }}
+                                            {{ match.confirmed_start_time|localtime('%Y-%m-%d %H:%M')|safe }}
                                         {% elif match.nominal_start_time %}
-                                            {{ match.nominal_start_time.strftime('%Y-%m-%d %H:%M') }}
+                                            {{ match.nominal_start_time|localtime('%Y-%m-%d %H:%M')|safe }}
                                         {% else %}
                                             TBA
                                         {% endif %}
@@ -171,7 +171,7 @@
                 <h5 class="mb-0">Add New Match</h5>
             </div>
             <div class="card-body">
-                <form method="POST" action="/{{ tournament.url }}/add-match">
+                <form method="POST" action="/{{ tournament.url }}/add-match" id="add-match-form">
                     <div class="row">
                         <div class="col-md-6">
                             <div class="mb-3">
@@ -1000,6 +1000,24 @@
 
 // Handle dynamic/static scheduling toggle
 document.addEventListener('DOMContentLoaded', function() {
+    // Convert datetime-local to UTC before form submission
+    const addMatchForm = document.getElementById('add-match-form');
+    if (addMatchForm) {
+        const startTimeInput = document.getElementById('start_time');
+        addMatchForm.addEventListener('submit', function(e) {
+            if (startTimeInput && startTimeInput.value) {
+                // Parse the datetime-local value (in user's local timezone)
+                const localDate = new Date(startTimeInput.value);
+                // Convert to UTC ISO format and store in hidden field
+                const hiddenInput = document.createElement('input');
+                hiddenInput.type = 'hidden';
+                hiddenInput.name = 'start_time_utc';
+                hiddenInput.value = localDate.toISOString();
+                addMatchForm.appendChild(hiddenInput);
+            }
+        });
+    }
+    
     const dynamicSelect = document.getElementById('dynamic');
     const startTimeContainer = document.getElementById('start_time_container');
     const previousMatchContainer = document.getElementById('previous_match_container');

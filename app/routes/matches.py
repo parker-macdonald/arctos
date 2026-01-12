@@ -1121,12 +1121,12 @@ def finalize_match_post(tournament_url):
         flash("Please select a match winner", "error")
         return redirect(f"/{tournament_url}/finalize-match?id={match_id}")
 
-    # Record completion time on the match using local server time (naive)
-    match.completed_time = datetime.now()
+    # Record completion time on the match using UTC
+    match.completed_time = datetime.now(timezone.utc).replace(tzinfo=None)
     match.finalized_by = current_user.id
     match.final_notes = request.form.get("final_notes", "")
     match.match_winner = match_winner
-    match.finalized_at = datetime.now()
+    match.finalized_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
     # Refresh camera stream start times when match ends (in case streams started late)
     if match.field:

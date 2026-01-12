@@ -193,7 +193,7 @@ def create_tournament():
         return redirect("/new-tournament")
 
     tournament = Tournament(
-        url=url, name=name, start_date=datetime.utcnow(), end_date=None
+        url=url, name=name, start_date=datetime.now(timezone.utc).replace(tzinfo=None), end_date=None
     )
 
     db.session.add(tournament)
@@ -648,7 +648,7 @@ def update_bracket_setup(tournament_url):
                             current_app.root_path, "../static", "uploads", "brackets"
                         )
                         os.makedirs(upload_dir, exist_ok=True)
-                        filename = f"bracket_{tournament_url}_{bracket_idx}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.{file.filename.split('.')[-1]}"
+                        filename = f"bracket_{tournament_url}_{bracket_idx}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.{file.filename.split('.')[-1]}"
                         file_path = os.path.join(upload_dir, filename)
                         file.save(file_path)
                         bracket_images[bracket_idx] = f"uploads/brackets/{filename}"
@@ -1553,10 +1553,23 @@ def add_match(tournament_url):
         )
     else:
         # Static matches can have manual start time
-        if request.form.get("start_time"):
-            match.nominal_start_time = datetime.strptime(
-                request.form["start_time"], "%Y-%m-%dT%H:%M"
-            )
+        # Prefer UTC ISO format from client conversion, fallback to datetime-local (assumed server-local)
+        if request.form.get("start_time_utc"):
+            # Client sent UTC ISO string
+            from app.utils.datetime_helpers import to_aware_utc
+            utc_str = request.form["start_time_utc"]
+            try:
+                dt = datetime.fromisoformat(utc_str.replace("Z", "+00:00"))
+                match.nominal_start_time = dt.replace(tzinfo=None)  # Store as naive UTC
+            except (ValueError, AttributeError):
+                # Fallback to old format
+                if request.form.get("start_time"):
+                    from app.utils.datetime_helpers import parse_datetime_local_to_utc
+                    match.nominal_start_time = parse_datetime_local_to_utc(request.form["start_time"])
+        elif request.form.get("start_time"):
+            # Old format: datetime-local (assumed server-local), convert to UTC
+            from app.utils.datetime_helpers import parse_datetime_local_to_utc
+            match.nominal_start_time = parse_datetime_local_to_utc(request.form["start_time"])
 
     # Validate inputs and constraints (after start time is computed)
     ok, err = validate_match_input(match, tournament_url)
@@ -2137,10 +2150,24 @@ def update_match(tournament_url):
     else:
         # Static matches can have manual start time
         match.previous_match = None
-        if request.form.get("start_time"):
-            match.nominal_start_time = datetime.strptime(
-                request.form["start_time"], "%Y-%m-%dT%H:%M"
-            )
+        # Prefer UTC ISO format from client conversion, fallback to datetime-local (assumed server-local)
+        if request.form.get("start_time_utc"):
+            # Client sent UTC ISO string
+            utc_str = request.form["start_time_utc"]
+            try:
+                dt = datetime.fromisoformat(utc_str.replace("Z", "+00:00"))
+                match.nominal_start_time = dt.replace(tzinfo=None)  # Store as naive UTC
+            except (ValueError, AttributeError):
+                # Fallback to old format
+                if request.form.get("start_time"):
+                    from app.utils.datetime_helpers import parse_datetime_local_to_utc
+                    match.nominal_start_time = parse_datetime_local_to_utc(request.form["start_time"])
+                else:
+                    match.nominal_start_time = None
+        elif request.form.get("start_time"):
+            # Old format: datetime-local (assumed server-local), convert to UTC
+            from app.utils.datetime_helpers import parse_datetime_local_to_utc
+            match.nominal_start_time = parse_datetime_local_to_utc(request.form["start_time"])
         else:
             match.nominal_start_time = None
 
