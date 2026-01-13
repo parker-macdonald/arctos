@@ -15,8 +15,12 @@ class TeamRegistration(db.Model):
     pseudonym = db.Column(
         db.String(100), nullable=False
     )  # Team name for this tournament
-    status = db.Column(db.String(20), default=RegistrationStatus.CONFIRMED)  # CONFIRMED, CANCELLED
-    registered_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+    status = db.Column(
+        db.String(20), default=RegistrationStatus.CONFIRMED
+    )  # CONFIRMED, CANCELLED
+    registered_at = db.Column(
+        db.DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None)
+    )
     # Payment fields
     paid = db.Column(db.Boolean, default=False)
     amount_paid = db.Column(db.Float, default=0.0)
@@ -40,7 +44,9 @@ class PlayerRegistration(db.Model):
     status = db.Column(
         db.String(20), default=RegistrationStatus.PENDING_TEAM_APPROVAL
     )  # PENDING_TEAM_APPROVAL, CONFIRMED, REJECTED
-    registered_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+    registered_at = db.Column(
+        db.DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None)
+    )
     # Payment fields
     paid = db.Column(db.Boolean, default=False)
     amount_paid = db.Column(db.Float, default=0.0)

@@ -153,7 +153,9 @@ class RegistrationService:
         if not tournament.player_reg_fee or tournament.player_reg_fee == 0:
             player_registration.paid = True
             player_registration.amount_paid = 0.0
-            player_registration.paid_at = datetime.now(timezone.utc).replace(tzinfo=None)
+            player_registration.paid_at = datetime.now(timezone.utc).replace(
+                tzinfo=None
+            )
 
         db.session.add(player_registration)
 

@@ -152,7 +152,9 @@ class Point(db.Model):
     match = db.Column(db.String(36), db.ForeignKey("matches.uuid"), nullable=False)
     winner = db.Column(db.String(10))  # TEAM1, TEAM2
     rerolled = db.Column(db.Boolean, default=False)
-    stamp = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+    stamp = db.Column(
+        db.DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None)
+    )
     end_stamp = db.Column(db.DateTime)
     footage = db.Column(db.String(500))
     camera_index = db.Column(
@@ -177,7 +179,9 @@ class MatchNote(db.Model):
     text = db.Column(db.Text, nullable=False)
     target = db.Column(db.String(50))  # 'TEAM1', 'TEAM2', 'MATCH', or player name
     created_by = db.Column(db.String(50), db.ForeignKey("players.id"), nullable=False)
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+    created_at = db.Column(
+        db.DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None)
+    )
     # Optional link to a specific player
     player_id = db.Column(db.String(50), db.ForeignKey("players.id"))
     # Optional link to a specific point

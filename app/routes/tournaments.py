@@ -52,7 +52,7 @@ from app.utils.camera_helpers import (
     require_camera_key,
 )
 
-from app.domain.enums import ScheduleType, SetType
+from app.domain.enums import ScheduleType, SetType, MatchStatus
 
 # for finalizing recordings which calls ffmpeg
 # only one worker bc ffmpeg does its own parallelism
@@ -193,7 +193,10 @@ def create_tournament():
         return redirect("/new-tournament")
 
     tournament = Tournament(
-        url=url, name=name, start_date=datetime.now(timezone.utc).replace(tzinfo=None), end_date=None
+        url=url,
+        name=name,
+        start_date=datetime.now(timezone.utc).replace(tzinfo=None),
+        end_date=None,
     )
 
     db.session.add(tournament)
@@ -1557,6 +1560,7 @@ def add_match(tournament_url):
         if request.form.get("start_time_utc"):
             # Client sent UTC ISO string
             from app.utils.datetime_helpers import to_aware_utc
+
             utc_str = request.form["start_time_utc"]
             try:
                 dt = datetime.fromisoformat(utc_str.replace("Z", "+00:00"))
@@ -1565,11 +1569,17 @@ def add_match(tournament_url):
                 # Fallback to old format
                 if request.form.get("start_time"):
                     from app.utils.datetime_helpers import parse_datetime_local_to_utc
-                    match.nominal_start_time = parse_datetime_local_to_utc(request.form["start_time"])
+
+                    match.nominal_start_time = parse_datetime_local_to_utc(
+                        request.form["start_time"]
+                    )
         elif request.form.get("start_time"):
             # Old format: datetime-local (assumed server-local), convert to UTC
             from app.utils.datetime_helpers import parse_datetime_local_to_utc
-            match.nominal_start_time = parse_datetime_local_to_utc(request.form["start_time"])
+
+            match.nominal_start_time = parse_datetime_local_to_utc(
+                request.form["start_time"]
+            )
 
     # Validate inputs and constraints (after start time is computed)
     ok, err = validate_match_input(match, tournament_url)
@@ -2161,13 +2171,19 @@ def update_match(tournament_url):
                 # Fallback to old format
                 if request.form.get("start_time"):
                     from app.utils.datetime_helpers import parse_datetime_local_to_utc
-                    match.nominal_start_time = parse_datetime_local_to_utc(request.form["start_time"])
+
+                    match.nominal_start_time = parse_datetime_local_to_utc(
+                        request.form["start_time"]
+                    )
                 else:
                     match.nominal_start_time = None
         elif request.form.get("start_time"):
             # Old format: datetime-local (assumed server-local), convert to UTC
             from app.utils.datetime_helpers import parse_datetime_local_to_utc
-            match.nominal_start_time = parse_datetime_local_to_utc(request.form["start_time"])
+
+            match.nominal_start_time = parse_datetime_local_to_utc(
+                request.form["start_time"]
+            )
         else:
             match.nominal_start_time = None
 
@@ -2466,9 +2482,6 @@ def push_back_matches(tournament_url):
 
     try:
         minutes = int(request.form.get("minutes", 0))
-        if minutes <= 0:
-            flash("Please specify a positive number of minutes", "error")
-            return redirect(f"/{tournament_url}/setup")
     except (ValueError, TypeError):
         flash("Invalid number of minutes", "error")
         return redirect(f"/{tournament_url}/setup")
@@ -2476,7 +2489,7 @@ def push_back_matches(tournament_url):
     # Get all non-started matches (status != 'IN_PROGRESS' and status != 'COMPLETED')
     non_started_matches = (
         Match.query.filter_by(event=tournament_url)
-        .filter(~Match.status.in_(["IN_PROGRESS", "COMPLETED"]))
+        .filter(~Match.status.in_([MatchStatus.IN_PROGRESS, MatchStatus.COMPLETED]))
         .all()
     )
 
