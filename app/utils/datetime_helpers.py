@@ -43,7 +43,7 @@ def to_iso_z(dt: datetime | None) -> Option[str]:
 def parse_datetime_local_to_utc(dt_string: str) -> datetime:
     """
     Parse a datetime-local input string (YYYY-MM-DDTHH:MM) and convert to UTC.
-    
+
     Assumes the input represents a time in the server's local timezone.
     Returns a naive datetime representing UTC time (for storage in DB).
     """
@@ -51,6 +51,7 @@ def parse_datetime_local_to_utc(dt_string: str) -> datetime:
     naive_dt = datetime.strptime(dt_string, "%Y-%m-%dT%H:%M")
     # Get server's local timezone
     import time
+
     local_tz_offset = time.timezone if (time.daylight == 0) else time.altzone
     local_tz = timezone(timedelta(seconds=-local_tz_offset))
     # Make it timezone-aware in server's local timezone

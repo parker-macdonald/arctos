@@ -512,7 +512,7 @@
                     </form>
                     <form method="POST" action="/{{ tournament.url }}/push-back-matches" class="d-inline">
                         <div class="input-group input-group-sm" style="width: auto;">
-                            <input type="number" name="minutes" class="form-control" placeholder="Minutes" min="1" required style="width: 100px;">
+                            <input type="number" name="minutes" class="form-control" placeholder="Minutes" required style="width: 100px;">
                             <button type="submit" class="btn btn-outline-warning btn-sm" onclick="return confirm('Are you sure you want to push back all non-started matches? This will affect even matches with finalized start times.')">
                                 Push Back All Non-Started Matches
                             </button>
