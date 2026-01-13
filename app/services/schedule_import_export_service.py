@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from app.error_values import Err, Ok, Result, allow_Q, option
@@ -210,7 +210,7 @@ class ScheduleImportExportService:
         # Generate TOML
         metadata = {
             "exported_from": tournament_url,
-            "export_date": datetime.now().isoformat(),
+            "export_date": datetime.now(timezone.utc).isoformat(),
             "tags_count": len(tag_dicts),
             "fields_count": len(field_dicts),
             "matches_count": len(match_dicts),

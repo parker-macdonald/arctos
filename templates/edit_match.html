@@ -23,7 +23,7 @@
                 <h5 class="mb-0">Match Details</h5>
             </div>
             <div class="card-body">
-                <form method="POST" action="/{{ tournament.url }}/update-match">
+                <form method="POST" action="/{{ tournament.url }}/update-match" id="edit-match-form">
                     <input type="hidden" name="match_id" value="{{ match.uuid }}">
                     
                     <div class="row">
@@ -79,7 +79,7 @@
                             <div class="mb-3" id="start_time_container" {% if match.schedule_type != 'STATIC' %}style="display: none;"{% endif %}>
                                 <label for="start_time" class="form-label">Start Time</label>
                                 <input type="datetime-local" class="form-control" id="start_time" name="start_time"
-                                       value="{{ match.nominal_start_time.strftime('%Y-%m-%dT%H:%M') if match.nominal_start_time and match.schedule_type == 'STATIC' else '' }}">
+                                       {% if match.nominal_start_time and match.schedule_type == 'STATIC' %}data-utc="{{ match.nominal_start_time|utc_iso }}"{% endif %}>
                                 <div class="form-text">Only applies to static matches</div>
                             </div>
                             <div class="mb-3" id="previous_match_container" {% if match.schedule_type == 'STATIC' %}style="display: none;"{% endif %}>
@@ -561,11 +561,25 @@ document.addEventListener('DOMContentLoaded', function() {
             previousMatchContainer.style.display = 'none';
             previousMatchSelect.value = ''; // Clear previous match selection
             dynamicHelp.textContent = 'Static matches require a manual start time and are automatically sequenced by time.';
-            // Restore original value if it exists and match was static
-            {% if match.nominal_start_time and match.schedule_type == 'STATIC' %}
-            startTimeInput.value = '{{ match.nominal_start_time.strftime('%Y-%m-%dT%H:%M') }}';
-            {% endif %}
+            // Value will be set by base.html script from data-utc attribute
         }
+    }
+    
+    // Convert datetime-local to UTC before form submission
+    const editMatchForm = document.getElementById('edit-match-form');
+    if (editMatchForm && startTimeInput) {
+        editMatchForm.addEventListener('submit', function(e) {
+            if (startTimeInput.value) {
+                // Parse the datetime-local value (in user's local timezone)
+                const localDate = new Date(startTimeInput.value);
+                // Convert to UTC ISO format and store in hidden field
+                const hiddenInput = document.createElement('input');
+                hiddenInput.type = 'hidden';
+                hiddenInput.name = 'start_time_utc';
+                hiddenInput.value = localDate.toISOString();
+                editMatchForm.appendChild(hiddenInput);
+            }
+        });
     }
     
     // Update previous match options when field changes

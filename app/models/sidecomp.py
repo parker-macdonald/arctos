@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app.models.base import db
 
@@ -21,4 +21,6 @@ class SideCompResult(db.Model):
     comp = db.Column(db.Integer, db.ForeignKey("sidecomps.id"), nullable=False)
     player = db.Column(db.String(50), db.ForeignKey("players.id"), nullable=False)
     scanner_id = db.Column(db.Integer)
-    stamp = db.Column(db.DateTime, default=datetime.utcnow)
+    stamp = db.Column(
+        db.DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None)
+    )

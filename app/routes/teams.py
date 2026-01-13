@@ -12,7 +12,7 @@ from flask import (
     url_for,
 )
 from flask_login import login_required, current_user, logout_user
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import or_
 import os
 from models import (
@@ -201,7 +201,7 @@ def upload_team_photo(team_id):
         try:
             upload_dir = os.path.join(current_app.root_path, "../static", "uploads")
             os.makedirs(upload_dir, exist_ok=True)
-            filename = f"team_{team_id}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.{file.filename.split('.')[-1]}"
+            filename = f"team_{team_id}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.{file.filename.split('.')[-1]}"
             file_path = os.path.join(upload_dir, filename)
             file.save(file_path)
 

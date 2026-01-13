@@ -8,7 +8,7 @@ de-registering teams/players for a tournament.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Optional
 
 from app.error_values import Err, Ok, Result, allow_Q, option
@@ -97,7 +97,7 @@ class RegistrationService:
         if not tournament.team_reg_fee or tournament.team_reg_fee == 0:
             team_registration.paid = True
             team_registration.amount_paid = 0.0
-            team_registration.paid_at = datetime.utcnow()
+            team_registration.paid_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
         db.session.add(team_registration)
         db.session.commit()
@@ -153,7 +153,9 @@ class RegistrationService:
         if not tournament.player_reg_fee or tournament.player_reg_fee == 0:
             player_registration.paid = True
             player_registration.amount_paid = 0.0
-            player_registration.paid_at = datetime.utcnow()
+            player_registration.paid_at = datetime.now(timezone.utc).replace(
+                tzinfo=None
+            )
 
         db.session.add(player_registration)
 

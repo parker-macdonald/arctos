@@ -228,7 +228,7 @@
                 {% if match.nominal_length %}
                 <p><strong>Length:</strong> {{ match.nominal_length }} minutes</p>
                 {% endif %}
-                <p><strong>Started:</strong> {{ match.confirmed_start_time.strftime('%Y-%m-%d %H:%M') if match.confirmed_start_time else 'N/A' }}</p>
+                <p><strong>Started:</strong> {% if match.confirmed_start_time %}{{ match.confirmed_start_time|localtime('%Y-%m-%d %H:%M')|safe }}{% else %}N/A{% endif %}</p>
             </div>
         </div>
         

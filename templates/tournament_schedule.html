@@ -112,8 +112,10 @@
                             {% endfor %}
                         </datalist>
                     </div>
-                    </div>
-            
+            </div>
+	    <p style="font-size: 12px">
+		all match times are in <i>your current local timezone</i>
+	    </p>
             <div class="schedule-timeline-container" id="schedule-timeline">
                 <div class="schedule-timeline-header">
                     <div class="schedule-time-column">
@@ -156,11 +158,10 @@
                                     {% else %}
                                         {% set marker_offset_percent = 0 %}
                                     {% endif %}
-                                    {% set marker_time_display = marker_time_utc.replace(tzinfo=None) %}
                                     <div class="schedule-time-marker" 
                                          style="top: {{ marker_offset_percent }}%;"
                                          data-time="{{ marker_time_utc|utc_iso }}">
-                                        {{ marker_time_display.strftime('%H:%M') }}
+                                        {{ marker_time_utc|localtime('%H:%M')|safe }}
                                     </div>
                                 {% endif %}
                             {% endfor %}
@@ -428,7 +429,7 @@
                                  data-join-name="{{ join_name }}"
                                  data-first-field="{{ first_field_index }}"
                                  data-last-field="{{ last_field_index }}">
-                                <div class="schedule-join-label">join: {{ join_name }} @ {{ join_start_utc.replace(tzinfo=None).strftime('%H:%M') }}</div>
+                                <div class="schedule-join-label">join: {{ join_name }} @ {{ join_start_utc|localtime('%H:%M')|safe }}</div>
                             </div>
                         {% endif %}
                     {% endif %}
@@ -525,7 +526,7 @@
                                     data-refs="{{ refs_actual_highlight }}">
                                     <td>
                                         {% if match_time %}
-                                            {{ match_time.strftime('%Y-%m-%d %H:%M') }}
+                                            {{ match_time|localtime('%Y-%m-%d %H:%M')|safe }}
                                         {% else %}
                                             TBA
                                         {% endif %}

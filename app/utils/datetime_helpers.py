@@ -4,7 +4,7 @@ Datetime helper utilities.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from app.error_values import Null, Option, Some
 
@@ -38,3 +38,24 @@ def to_iso_z(dt: datetime | None) -> Option[str]:
             return Some(d.isoformat().replace("+00:00", "Z"))
         case _:
             return Null()
+
+
+def parse_datetime_local_to_utc(dt_string: str) -> datetime:
+    """
+    Parse a datetime-local input string (YYYY-MM-DDTHH:MM) and convert to UTC.
+
+    Assumes the input represents a time in the server's local timezone.
+    Returns a naive datetime representing UTC time (for storage in DB).
+    """
+    # Parse as naive datetime (assumed to be server-local)
+    naive_dt = datetime.strptime(dt_string, "%Y-%m-%dT%H:%M")
+    # Get server's local timezone
+    import time
+
+    local_tz_offset = time.timezone if (time.daylight == 0) else time.altzone
+    local_tz = timezone(timedelta(seconds=-local_tz_offset))
+    # Make it timezone-aware in server's local timezone
+    local_dt = naive_dt.replace(tzinfo=local_tz)
+    # Convert to UTC and strip timezone info for storage
+    utc_dt = local_dt.astimezone(timezone.utc)
+    return utc_dt.replace(tzinfo=None)
