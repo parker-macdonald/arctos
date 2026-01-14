@@ -25,10 +25,14 @@ window.MathJax = {
     <div class="row">
         <div class="col-12">
             <h1>Stones Player</h1>
-            <p>This is a stones player that plays globally synchronized stones: all devices on this page will (eventually) play stones at the same time. <br>Important Notes:
+            <p>This is a stones player that plays globally synchronized stones: all devices on this page will (eventually) play stones at the same time.
+		<br><br>
+		<b>Important Notes:</b>
                 <ul>
                     <li>The speed of sound is about 343m/s, which is fast, but not infinitely fast (~110ms to cross the 40m field). If the stones sound out of sync, try standing equidistant from all speakers (or bringing the speakers together) to evaluate whether it's actually out of sync or if it's the speed of sound delay.</li>
-                    <li>If things are not syncing properly or something strange is happening, try clicking the "reset kalman filter" button. This needs to happen when I reboot the server, which happens often during development.</li>
+                    <li>It should only take a few (3 to 5) stones to sync. If things are not syncing properly or something strange is happening, try clicking the "reset kalman filter" button on all devices. You may need to do this several times; try to do it on all devices at rougly the same time.</li>
+		    <li>Bluetooth often introduces a delay of up to a quarter second (which may be different between devices). Try using a wired connection if the latency difference between two Bluetooth devices is too much.</li>
+		    <li>When changing the audio device, sometimes the first [up to] five stones will be out of sync while the pre-scheduled audio buffer clears.</li>
                     <li>(If you're using custom audio files) if you want the stones to sync well with the ref page, make sure your audio files don't have much dead space at the start. They should start the stone immediately.</li>
                 </ul>
             </p>
