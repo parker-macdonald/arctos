@@ -2,7 +2,7 @@
 
 or, "i type forever and still don't produce something that feels complete"
 
-## Table of Contents
+## Table of Contents {#table-of-contents}
 
 Just Me Yapping
 
@@ -49,7 +49,7 @@ For Head Refs
 
 ---
 
-## FAQ
+## FAQ {#faq}
 
 **I want to test this out for my tournament, but I don't want to
 create a bunch of fake teams on the official site. What can i do?**
@@ -86,7 +86,7 @@ create a bunch of fake teams on the official site. What can i do?**
      problem.
 
 
-## Ownership (is Arctos a CAJA project?)
+## Ownership (is Arctos a CAJA project?) {#ownership-is-arctos-a-caja-project}
 
 The short answer: No.
 
@@ -116,7 +116,7 @@ often different from the regulatory & political bodies.
     me be a proud Californian.
 
 
-## What Arctos *is* and what it is *not*
+## What Arctos *is* and what it is *not* {#what-arctos-is-and-what-it-is-not}
 
 Arctos is a tool for Jugger events that aims to:
 
@@ -152,7 +152,7 @@ schedule, but you should be developing these externally - Arctos is
 meant to run tournaments, not do in-depth bracket analysis or solve
 massive mixed integer nonlinear programs to schedule your matches.
 
-## Design Philosophy
+## Design Philosophy {#design-philosophy}
 
 With the above goals in mind, Arctos has been designed to be:
 
@@ -178,7 +178,7 @@ With the above goals in mind, Arctos has been designed to be:
   tournaments you should try to register for; I don't even need your
   email. I don't need to know how old, tall, heavy, or gender you are.
 
-## Bugs, Feature Requests, and Contributing
+## Bugs, Feature Requests, and Contributing {#bugs-feature-requests-and-contributing}
 
 Arctos is an open-source project, hosted on
 [github](https://github.com/reid23/arctos) and licensed with
@@ -198,11 +198,11 @@ the fastest way to get a maintainer to see your bug/request.
 
 ---
 
-## Functionality Overview
+## Functionality Overview {#functionality-overview}
 
 Here's, briefly, how it works.
 
-#### BEFORE THE TOURNAMENT
+#### BEFORE THE TOURNAMENT {#before-the-tournament}
 
   1. TOs create a tournament, with:
      - basic configuration: max team size, max team counts, number of
@@ -242,7 +242,7 @@ Here's, briefly, how it works.
      - TOs may deregister players and/or teams as they see fit
 
 
-#### ON THE DAY OF
+#### ON THE DAY OF {#on-the-day-of}
 
   1. TOs optionally set up phones to record the matches (different
      from live stream integration). These phones will automatically
@@ -287,7 +287,7 @@ Here's, briefly, how it works.
      match. The schedule updates based on the results and timestamp.
 
 
-## Stones
+## Stones {#stones}
 
 A central feature of Arctos is the stones player. It plays stones in
 sync with the server's system clock, on every even multiple of 1500
@@ -315,7 +315,7 @@ play from two separate devices and it'll be in sync.
 
 
 
-## Account Types
+## Account Types {#account-types}
 
 There are two account types: team and player. Either of these can be
 TOs; just create a tournament.
@@ -330,7 +330,7 @@ is permanent, and your profile is meant to be the thing that ties you
 to you between tournaments. This is why you can change your jersey
 name and jersey number for each tournament.
 
-## Ref Notes
+## Ref Notes {#ref-notes}
 
 Ref notes were created primarily for head refs to track
 penalties/warnings/cautions and the points they pertain to. However,
@@ -401,7 +401,7 @@ contact agreements, ring of fire, etc.
 
 ---
 
-## Phone Number
+## Phone Number {#phone-number}
 
 This is just to say that while there is a box for players to enter
 their phone numbers, it doesn't currently do anything. Eventually,
@@ -409,7 +409,7 @@ there will be an option for opt-in match/schedule notifications, but I
 have not implemented this yet.
 
 
-## Logging Injuries
+## Logging Injuries {#logging-injuries}
 
 When you log injuries on your profile, all it does is add a little bit
 of text under your name on refs' screens when they start matches, so
@@ -419,9 +419,9 @@ to *everyone*; private notes are shown only to you and head refs.
 
 ---
 
-## Tournament Settings
+## Tournament Settings {#tournament-settings}
 
-### Basic Information
+### Basic Information {#basic-information}
 
 This is pretty self explanatory so I only have a few notes:
 
@@ -433,7 +433,7 @@ This is pretty self explanatory so I only have a few notes:
   - The max team size on field and roster are actually enforced; don't
     just choose random numbers.
 
-### Head Ref Options
+### Head Ref Options {#head-ref-options}
 
 As it says on the form:
 
@@ -448,7 +448,7 @@ ref teams to head ref, or just allow all registered players to head
 ref. The union of all selected options is used, and the players
 explicitly listed need not be registered to head ref.
 
-### Visibility and Access Control
+### Visibility and Access Control {#visibility-and-access-control}
 
 TOs can set the publication status of the tournament as a whole and
 the schedule (along with the bracket) independently. Registration is a
@@ -459,7 +459,7 @@ You can add other TOs by entering their exact username. Only TOs can
 mark people as paid and deregister others. Be aware that all TOs can
 add and remove other TOs!
 
-## Match Schedule Setup
+## Match Schedule Setup {#match-schedule-setup}
 
 All matches have (among other things) the following information:
 
@@ -468,7 +468,7 @@ All matches have (among other things) the following information:
 - previous match (if one exists)
 - next match (if one exists)
 
-### Tags and References: Specifying Teams
+### Tags and References: Specifying Teams {#tags-and-references-specifying-teams}
 
 Each match as two teams playing in it as well as any number of teams
 assigned to ref. Let's take a breif aside on how to specify teams. You
@@ -476,7 +476,8 @@ have three options:
 
   1. explicit team name: just type their name (autocomplete will help
      you). They must be registered in the tournament.
-  2. tag: after adding a tag in the sidebar, you can enter it as a team
+  2. tag: after adding a tag in the sidebar, you can use it as a team
+     by entering `tag::[the name you entered]`.
   3. reference: if there's another match called `M1`, you can enter
      `M1::winner` or `M1::loser`, and Arctos will update these when
      the results of `M1` become available.
@@ -498,7 +499,7 @@ tell you how you should do rankings, so you can just do it however
 you'd like.
 
 
-### Static Scheduling
+### Static Scheduling {#static-scheduling}
 
 In the *static scheduling* paradigm (implemented by the `static` match
 type), all match start times must be set concretely before the event
@@ -514,7 +515,7 @@ idle time before every match starts (see: Fog of War 2025). To fix
 this, we introduce the *dynamic scheduling*, implemented by the
 `dynamic` match type.
 
-### Dynamic Matches
+### Dynamic Matches {#dynamic-scheduling}
 
 Dynamic matches do not have a nominal start time (that you, the TO,
 can set, at least). Instead, their nominal start time is computed
@@ -546,7 +547,7 @@ of time, so it's reasonable to expect them to be on time.
 !!! note
     Matches without dependencies (like the first match of the day) must be static.
 
-### Breaks
+### Breaks {#breaks}
 
 Break matches represent dynamically scheduled breaks in the
 tournament. They just reserve time (ie, for a lunch break) on a field
@@ -555,7 +556,7 @@ in a way that can be pulled forward if matches finish early.
 If you want a non-dynamic break, just use static matches before and
 after the break, and leave the break empty.
 
-### Joins
+### Joins {#joins}
 
 Join matches are like thread joins in multithreading: they are
 dynamically-scheduled zero-length entries in the schedule that follow
@@ -567,7 +568,7 @@ matches afterwards. This would ensure that all teams have at least the
 length of the break overlapping in their lunches (unless they choose
 to start afternoon games early).
 
-### Ribbon Games
+### Ribbon Games {#ribbon-games}
 
 Ribbon games are matches that are not counted in tournament results
 (or rather, are by default excluded). They are useful for exhibition
@@ -575,7 +576,7 @@ matches, practice games, or matches that don't affect standings. When
 creating or editing a match, you can check the "Ribbon Game" checkbox
 to mark it as such.
 
-### Exporting and Importing Schedule Files
+### Exporting and Importing Schedule Files {#exporting-and-importing-schedule-files}
 
 On the match setup page, under Utilities, there are "Export Schedule"
 and "Import Schedule" buttons. These allow you to export .toml files
@@ -604,7 +605,7 @@ teams.
 
 ---
 
-## YouTube Livestream Integration
+## YouTube Livestream Integration {#youtube-livestream-integration}
 
 If you plan on live streaming the matches to youtube, Arctos can be
 configured to recognize this. If you do this, it will:
@@ -622,7 +623,7 @@ Setup:
    2. Click **Share** → **Embed**
    3. Copy the link inside the `src="..."` attribute of the embed code
 
-## OBS Scoreboard Integration
+## OBS Scoreboard Integration {#obs-scoreboard-integration}
 
 Arctos provides a public scoreboard endpoint that can be embedded in
 OBS or your streaming software of choice as a browser source. This
@@ -647,7 +648,7 @@ The scoreboard automatically polls for updates and refreshes when
 match state changes. For stones matches, the countdown updates in
 real-time using the same synchronization system as the match pages.
 
-## Recording Matches
+## Recording Matches {#recording-matches}
 
 !!! warning 
     This feature is **still in development**. I cannot
@@ -683,7 +684,7 @@ recording page.
 
 ---
 
-## Running Games
+## Running Games {#running-games}
 
 Running games is mostly self explanatory. If there's no option for you
 to start a match that you think you should be able to start, check
