@@ -262,7 +262,17 @@
                                                     {% for ref_item in refs_list %}
                                                         {% set ref_trimmed = ref_item.strip() %}
                                                         {% if ref_trimmed and ref_trimmed != 'TBA' and not (ref_trimmed.endswith('::winner') or ref_trimmed.endswith('::loser') or ref_trimmed.endswith(' winner') or ref_trimmed.endswith(' loser')) %}
-                                                            {% set _ = refs_ns.values.append(ref_trimmed.replace('::', ' ')) %}
+                                                            {% set ref_registration = ref_trimmed|team_registration_for_tournament(tournament.url) %}
+                                                            {% if ref_registration %}
+                                                                {% set _ = refs_ns.values.append(ref_registration.pseudonym) %}
+                                                            {% else %}
+                                                                {% set ref_by_pseudonym = ref_trimmed|team_by_pseudonym_for_tournament(tournament.url) %}
+                                                                {% if ref_by_pseudonym %}
+                                                                    {% set _ = refs_ns.values.append(ref_by_pseudonym.pseudonym) %}
+                                                                {% else %}
+                                                                    {% set _ = refs_ns.values.append(ref_trimmed.replace('::', ' ')) %}
+                                                                {% endif %}
+                                                            {% endif %}
                                                         {% endif %}
                                                     {% endfor %}
                                                     {% if refs_ns.values %}
@@ -506,7 +516,17 @@
                                     {% for ref_item in refs_list %}
                                         {% set ref_trimmed = ref_item.strip() %}
                                         {% if ref_trimmed and ref_trimmed != 'TBA' and not (ref_trimmed.endswith('::winner') or ref_trimmed.endswith('::loser') or ref_trimmed.endswith(' winner') or ref_trimmed.endswith(' loser')) %}
-                                            {% set _ = refs_ns.values.append(ref_trimmed.replace('::', ' ')) %}
+                                            {% set ref_registration = ref_trimmed|team_registration_for_tournament(tournament.url) %}
+                                            {% if ref_registration %}
+                                                {% set _ = refs_ns.values.append(ref_registration.pseudonym) %}
+                                            {% else %}
+                                                {% set ref_by_pseudonym = ref_trimmed|team_by_pseudonym_for_tournament(tournament.url) %}
+                                                {% if ref_by_pseudonym %}
+                                                    {% set _ = refs_ns.values.append(ref_by_pseudonym.pseudonym) %}
+                                                {% else %}
+                                                    {% set _ = refs_ns.values.append(ref_trimmed.replace('::', ' ')) %}
+                                                {% endif %}
+                                            {% endif %}
                                         {% endif %}
                                     {% endfor %}
                                     {% if refs_ns.values %}
