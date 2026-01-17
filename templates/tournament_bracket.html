@@ -19,7 +19,7 @@
             </div>
             <div class="card-body">
                 <div class="position-relative" style="display: inline-block;">
-                    <img src="{{ url_for('static', filename=bracket.image) }}" alt="{{ bracket.name }}" class="img-fluid" style="max-width: 100%; height: auto;">
+                    <img src="{{ url_for('static', filename=bracket.image) }}" alt="{{ bracket.name }}" class="img-fluid" style="max-width: none; height: none;">
                     
                     {% for team_entry in bracket.teams %}
                         {% if team_entry.team_info %}
