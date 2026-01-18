@@ -188,6 +188,7 @@
         <div class="col-md-12">
             <h2>Run Match: {{ match.name }}</h2>
             <!-- Desktop: Multi-column layout -->
+	    <p>note: although there's a delay when clicking start/end point, the stone count is done correctly (it's computed from when you first click it)</p>
             <div class="row d-none d-md-flex">
                 <div class="col-md-4">
                     <p class="mb-0"><strong>Teams:</strong> {{ match.team1_registration.pseudonym if match.team1_registration else match.team1 }} vs {{ match.team2_registration.pseudonym if match.team2_registration else match.team2 }}</p>
