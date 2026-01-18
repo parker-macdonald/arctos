@@ -1004,6 +1004,40 @@
             // Update join lines on load and resize
             updateJoinLines();
             window.addEventListener('resize', updateJoinLines);
+            
+            // Scroll timeline to 60 minutes before current time
+            function scrollToSixtyMinutesBefore() {
+                const timeMarkers = timeline.querySelectorAll('.schedule-time-marker');
+                if (timeMarkers.length < 2) return;
+                
+                const firstMarker = timeMarkers[0];
+                const lastMarker = timeMarkers[timeMarkers.length - 1];
+                const firstTime = new Date(firstMarker.getAttribute('data-time'));
+                const lastTime = new Date(lastMarker.getAttribute('data-time'));
+                
+                const now = new Date();
+                const targetTime = new Date(now.getTime() - 60 * 60 * 1000); // 60 minutes before now
+                
+                // Clamp target time to the timeline range
+                const clampedTime = targetTime < firstTime ? firstTime : (targetTime > lastTime ? lastTime : targetTime);
+                
+                // Calculate position percentage
+                const timeRange = lastTime - firstTime;
+                if (timeRange <= 0) return;
+                
+                const elapsed = clampedTime - firstTime;
+                const percent = (elapsed / timeRange) * 100;
+                
+                // Calculate scroll position within the timeline container
+                const timelineBodyHeight = timelineBody.offsetHeight;
+                const scrollPosition = (timelineBodyHeight * percent / 100) - (timeline.clientHeight * 0.2); // Position target at 20% from top of viewport
+                
+                // Scroll the timeline container (not the window)
+                timeline.scrollTop = Math.max(0, scrollPosition);
+            }
+            
+            // Store reference for use in view toggle and initial load
+            window.scrollToSixtyMinutesBefore = scrollToSixtyMinutesBefore;
         })();
         
         // View toggle and filter functionality
@@ -1044,6 +1078,12 @@
                 if (viewSchedule.checked) {
                     scheduleView.style.display = 'block';
                     tableView.style.display = 'none';
+                    // Scroll to 60 minutes before current time when switching to schedule view
+                    setTimeout(() => {
+                        if (window.scrollToSixtyMinutesBefore) {
+                            window.scrollToSixtyMinutesBefore();
+                        }
+                    }, 100);
                 } else {
                     scheduleView.style.display = 'none';
                     tableView.style.display = 'block';
