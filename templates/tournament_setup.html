@@ -17,155 +17,6 @@
 
 <div class="row">
     <div class="col-md-8">
-        <div class="card">
-            <div class="card-header">
-                <h5 class="mb-0">Match Schedule</h5>
-            </div>
-            <div class="card-body">
-                {% if matches %}
-                    <div class="table-responsive">
-                        <table class="table table-striped">
-                            <thead>
-                                <tr>
-                            <th>Match</th>
-                            <th>Date/Time</th>
-                            <th>Runtime</th>
-                            <th>Field</th>
-                            <th>Previous</th>
-                            <th>Next</th>
-                            <th>Team 1</th>
-                            <th>Team 2</th>
-                            <th>Refs</th>
-                            <th>Type</th>
-                            <th>Status</th>
-                            <th>Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {% for match in matches %}
-                                {% set match_conflicts = conflicts.get(match.uuid, []) if conflicts else [] %}
-                                <tr {% if match_conflicts %}class="table-danger"{% endif %}>
-                                    <td>
-                                        {{ match.name }}
-                                        {% if match_conflicts %}
-                                        <span class="badge bg-danger ms-2" 
-                                              title="{{ match_conflicts|join('; ') }}"
-                                              data-bs-toggle="tooltip" 
-                                              data-bs-placement="right"
-                                              style="cursor: help;">
-                                            ⚠️
-                                        </span>
-                                        {% endif %}
-                                    </td>
-                                    <td>
-                                        {% if match.nominal_start_time %}
-                                        {% if match.confirmed_start_time %}
-                                            {{ match.confirmed_start_time|localtime('%Y-%m-%d %H:%M')|safe }}
-                                        {% elif match.nominal_start_time %}
-                                            {{ match.nominal_start_time|localtime('%Y-%m-%d %H:%M')|safe }}
-                                        {% else %}
-                                            TBA
-                                        {% endif %}
-                                        {% else %}
-                                            TBA
-                                        {% endif %}
-                                    </td>
-                                    <td>
-                                        {% if match.nominal_length %}
-                                            {{ match.nominal_length }} min
-                                        {% else %}
-                                            -
-                                        {% endif %}
-                                    </td>
-                                    <td>{{ match.field or 'TBA' }}</td>
-                                    <td>
-                                        {% if match.previous_match_obj %}
-                                            {{ match.previous_match_obj.name }}
-                                        {% else %}
-                                            -
-                                        {% endif %}
-                                    </td>
-                                    <td>
-                                        {% if match.next_match_obj %}
-                                            {{ match.next_match_obj.name }}
-                                        {% else %}
-                                            -
-                                        {% endif %}
-                                    </td>
-                                    <td>
-                                        {% if match.schedule_type in ('BREAK', 'JOIN') %}
-                                            -
-                                        {% elif match.team1 %}
-                                            {{ match.team1 }}
-                                        {% else %}
-                                            {{ match.team1_initial or 'TBA' }}
-                                        {% endif %}
-                                    </td>
-                                    <td>
-                                        {% if match.schedule_type in ('BREAK', 'JOIN') %}
-                                            -
-                                        {% elif match.team2 %}
-                                            {{ match.team2 }}
-                                        {% else %}
-                                            {{ match.team2_initial or 'TBA' }}
-                                        {% endif %}
-                                    </td>
-                                    <td>
-                                        {% if match.schedule_type in ('BREAK', 'JOIN') %}
-                                            -
-                                        {% else %}
-                                            {% set refs_display = match|merge_refs %}
-                                            {% if refs_display %}
-                                                {{ refs_display }}
-                                            {% else %}
-                                                -
-                                            {% endif %}
-                                        {% endif %}
-                                    </td>
-                                    <td>
-                                        {% if match.schedule_type == 'BREAK' %}
-                                            <span class="badge bg-warning">Break</span>
-                                        {% elif match.schedule_type == 'JOIN' %}
-                                            <span class="badge bg-primary">Join</span>
-                                        {% elif match.schedule_type == 'DYNAMIC' %}
-                                            <span class="badge bg-info">Dynamic</span>
-                                        {% else %}
-                                            <span class="badge bg-secondary">Static</span>
-                                        {% endif %}
-                                    </td>
-                                    <td>
-                                        <span class="badge 
-                                            {% if match.status == 'NOT_STARTED' %}bg-secondary
-                                            {% elif match.status == 'IN_PROGRESS' %}bg-warning
-                                            {% elif match.status == 'COMPLETED' %}bg-success
-                                            {% endif %}">
-                                            {{ match.status.replace('_', ' ').title() }}
-                                        </span>
-                                        {% if match.time_finalized %}
-                                            <span class="badge bg-primary ms-1" title="Time finalized - match start time is locked">Time Finalized</span>
-                                        {% endif %}
-                                        {% if match.ready_to_start %}
-                                                <span class="badge bg-success ms-1" title="Ready to start - all dependencies completed">Ready to Start</span>
-                                        {% endif %}
-                                    </td>
-                                    <td>
-                                        <a href="/{{ tournament.url }}/match?id={{ match.uuid }}" class="btn btn-sm btn-outline-primary">View</a>
-                                        <a href="/{{ tournament.url }}/edit-match?id={{ match.uuid }}" class="btn btn-sm btn-outline-secondary">Edit</a>
-                                    </td>
-                                </tr>
-                                {% endfor %}
-                            </tbody>
-                        </table>
-                    </div>
-                {% else %}
-                    <div class="alert alert-info">
-                        <h4>No matches scheduled yet</h4>
-                        <p>Create your first match to get started.</p>
-                    </div>
-                {% endif %}
-            </div>
-        </div>
-
         <div class="card mt-3">
             <div class="card-header">
                 <h5 class="mb-0">Add New Match</h5>
@@ -315,6 +166,154 @@
                         <button type="submit" class="btn btn-primary">Add Match</button>
                     </div>
                 </form>
+            </div>
+        </div>
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Match Schedule</h5>
+            </div>
+            <div class="card-body">
+                {% if matches %}
+                    <div class="table-responsive">
+                        <table class="table table-striped">
+                            <thead>
+                                <tr>
+                            <th>Match</th>
+                            <th>Date/Time</th>
+                            <th>Runtime</th>
+                            <th>Field</th>
+                            <th>Previous</th>
+                            <th>Next</th>
+                            <th>Team 1</th>
+                            <th>Team 2</th>
+                            <th>Refs</th>
+                            <th>Type</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for match in matches %}
+                                {% set match_conflicts = conflicts.get(match.uuid, []) if conflicts else [] %}
+                                <tr {% if match_conflicts %}class="table-danger"{% endif %}>
+                                    <td>
+                                        {{ match.name }}
+                                        {% if match_conflicts %}
+                                        <span class="badge bg-danger ms-2" 
+                                              title="{{ match_conflicts|join('; ') }}"
+                                              data-bs-toggle="tooltip" 
+                                              data-bs-placement="right"
+                                              style="cursor: help;">
+                                            ⚠️
+                                        </span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if match.nominal_start_time %}
+                                        {% if match.confirmed_start_time %}
+                                            {{ match.confirmed_start_time|localtime('%Y-%m-%d %H:%M')|safe }}
+                                        {% elif match.nominal_start_time %}
+                                            {{ match.nominal_start_time|localtime('%Y-%m-%d %H:%M')|safe }}
+                                        {% else %}
+                                            TBA
+                                        {% endif %}
+                                        {% else %}
+                                            TBA
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if match.nominal_length %}
+                                            {{ match.nominal_length }} min
+                                        {% else %}
+                                            -
+                                        {% endif %}
+                                    </td>
+                                    <td>{{ match.field or 'TBA' }}</td>
+                                    <td>
+                                        {% if match.previous_match_obj %}
+                                            {{ match.previous_match_obj.name }}
+                                        {% else %}
+                                            -
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if match.next_match_obj %}
+                                            {{ match.next_match_obj.name }}
+                                        {% else %}
+                                            -
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if match.schedule_type in ('BREAK', 'JOIN') %}
+                                            -
+                                        {% elif match.team1 %}
+                                            {{ match.team1 }}
+                                        {% else %}
+                                            {{ match.team1_initial or 'TBA' }}
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if match.schedule_type in ('BREAK', 'JOIN') %}
+                                            -
+                                        {% elif match.team2 %}
+                                            {{ match.team2 }}
+                                        {% else %}
+                                            {{ match.team2_initial or 'TBA' }}
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if match.schedule_type in ('BREAK', 'JOIN') %}
+                                            -
+                                        {% else %}
+                                            {% set refs_display = match|merge_refs %}
+                                            {% if refs_display %}
+                                                {{ refs_display }}
+                                            {% else %}
+                                                -
+                                            {% endif %}
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if match.schedule_type == 'BREAK' %}
+                                            <span class="badge bg-warning">Break</span>
+                                        {% elif match.schedule_type == 'JOIN' %}
+                                            <span class="badge bg-primary">Join</span>
+                                        {% elif match.schedule_type == 'DYNAMIC' %}
+                                            <span class="badge bg-info">Dynamic</span>
+                                        {% else %}
+                                            <span class="badge bg-secondary">Static</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        <span class="badge 
+                                            {% if match.status == 'NOT_STARTED' %}bg-secondary
+                                            {% elif match.status == 'IN_PROGRESS' %}bg-warning
+                                            {% elif match.status == 'COMPLETED' %}bg-success
+                                            {% endif %}">
+                                            {{ match.status.replace('_', ' ').title() }}
+                                        </span>
+                                        {% if match.time_finalized %}
+                                            <span class="badge bg-primary ms-1" title="Time finalized - match start time is locked">Time Finalized</span>
+                                        {% endif %}
+                                        {% if match.ready_to_start %}
+                                                <span class="badge bg-success ms-1" title="Ready to start - all dependencies completed">Ready to Start</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        <a href="/{{ tournament.url }}/match?id={{ match.uuid }}" class="btn btn-sm btn-outline-primary">View</a>
+                                        <a href="/{{ tournament.url }}/edit-match?id={{ match.uuid }}" class="btn btn-sm btn-outline-secondary">Edit</a>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                {% else %}
+                    <div class="alert alert-info">
+                        <h4>No matches scheduled yet</h4>
+                        <p>Create your first match to get started.</p>
+                    </div>
+                {% endif %}
             </div>
         </div>
     </div>

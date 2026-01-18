@@ -220,6 +220,16 @@ window.MathJax = {
                     </div>
                 </div>
                 {% endif %}
+                
+                {% if is_to %}
+                <div class="row mt-3">
+                    <div class="col-12">
+                        <div class="d-flex gap-2">
+                            <a href="/{{ tournament.url }}/edit-match?id={{ match.uuid }}" class="btn btn-primary">Edit Match</a>
+                        </div>
+                    </div>
+                </div>
+                {% endif %}
             </div>
         </div>
         
