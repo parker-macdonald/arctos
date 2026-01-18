@@ -422,10 +422,17 @@ def match_page(tournament_url):
     points = Point.query.filter_by(match=match.uuid).order_by(Point.stamp).all()
 
     from app.utils.user_helpers import is_player
+    from app.services.permission_service import PermissionService
 
     is_head_ref_flag = (
         can_head_ref_match(tournament_url, current_user.id, match=match)
         if current_user.is_authenticated and is_player(current_user)
+        else False
+    )
+
+    is_to = (
+        PermissionService.is_tournament_organizer(tournament_url, current_user)
+        if current_user.is_authenticated
         else False
     )
 
@@ -686,6 +693,7 @@ def match_page(tournament_url):
         match=match,
         points=points,
         is_head_ref=is_head_ref_flag,
+        is_to=is_to,
         computed_end_time=computed_end_time,
         actual_end_time=actual_end_time,
         match_notes=match_notes,

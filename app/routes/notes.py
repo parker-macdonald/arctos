@@ -255,6 +255,7 @@ def delete_point_note(tournament_url):
         return json_error("Match not found")
 
     from app.utils.helpers import can_head_ref_match
+
     if not can_head_ref_match(tournament_url, current_user.id, note.match):
         return json_error("Not authorized")
 
