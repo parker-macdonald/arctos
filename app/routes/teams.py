@@ -25,7 +25,7 @@ from models import (
     Point,
     db,
 )
-from app.utils.helpers import is_head_ref_any, can_head_ref_match
+from app.utils.helpers import can_head_ref_match
 
 bp = Blueprint("teams", __name__)
 
@@ -135,8 +135,6 @@ def team_profile(team_id):
         except Exception:
             team_notes = []
 
-    # Check if user is head ref for any tournament (for template display purposes)
-    is_head_ref_flag = is_head_ref_any(team_id)
     return render_template(
         "team_profile.html",
         team=team,
@@ -145,7 +143,6 @@ def team_profile(team_id):
         tournaments=tournaments,
         tournament_players=tournament_players,
         team_notes=team_notes,
-        is_head_ref=is_head_ref_flag,
     )
 
 

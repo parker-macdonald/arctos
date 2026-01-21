@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import foreign
 
-from app.domain.enums import WinnerSide, parse_enum
+from app.domain.enums import WinnerSide, MatchStatus, ScheduleType, WinnerSide, SetType, parse_enum, MatchNoteTarget
 from app.models.base import db
 from app.error_values import Some
 
@@ -28,10 +28,10 @@ class Match(db.Model):
     completed_time = db.Column(db.DateTime)
     nominal_length = db.Column(db.Integer)  # minutes
     schedule_type = db.Column(
-        db.String(20), default="STATIC"
+        db.Enum(ScheduleType), default=ScheduleType.STATIC
     )  # STATIC, DYNAMIC, BREAK, JOIN
     set_type = db.Column(
-        db.String(20), default="SETS"
+        db.Enum(SetType), default=SetType.SETS
     )  # SETS, STONES (only for non-BREAK/JOIN matches)
     ribbon = db.Column(
         db.Boolean, default=False
@@ -41,7 +41,7 @@ class Match(db.Model):
         db.Integer
     )  # DEPRECATED: Use stones_per_set instead. Kept for backward compatibility.
     status = db.Column(
-        db.String(20), default="NOT_STARTED"
+        db.Enum(MatchStatus), default=MatchStatus.NOT_STARTED
     )  # NOT_STARTED, IN_PROGRESS, COMPLETED
     initial_notes = db.Column(
         db.Text
@@ -54,7 +54,7 @@ class Match(db.Model):
     stones_remaining = db.Column(db.Integer)  # for STONES matches
     finalized_by = db.Column(db.String(50))  # user ID who finalized the match
     final_notes = db.Column(db.Text)  # final notes
-    match_winner = db.Column(db.String(10))  # 'TEAM1' or 'TEAM2'
+    match_winner = db.Column(db.Enum(WinnerSide))  # 'TEAM1' or 'TEAM2'
     team1_signature = db.Column(db.Text)  # signature data
     team2_signature = db.Column(db.Text)  # signature data
     finalized_at = db.Column(db.DateTime)  # when match was finalized
@@ -177,7 +177,7 @@ class MatchNote(db.Model):
     uuid = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     match = db.Column(db.String(36), db.ForeignKey("matches.uuid"), nullable=False)
     text = db.Column(db.Text, nullable=False)
-    target = db.Column(db.String(50))  # 'TEAM1', 'TEAM2', 'MATCH', or player name
+    target = db.Column(db.Enum(MatchNoteTarget))
     created_by = db.Column(db.String(50), db.ForeignKey("players.id"), nullable=False)
     created_at = db.Column(
         db.DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None)
