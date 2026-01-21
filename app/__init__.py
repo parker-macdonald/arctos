@@ -4,12 +4,10 @@ Tournament site Flask application factory.
 
 from flask import Flask
 from flask_login import LoginManager
-from flask_socketio import SocketIO
 import os
 
 # Initialize extensions (will be initialized in create_app)
 db = None
-socketio = None
 login_manager = LoginManager()
 
 # Override url_for to handle subpath deployment
@@ -26,7 +24,7 @@ def url_for(endpoint, **values):
 
 def create_app(config=None):
     """Application factory."""
-    global db, socketio
+    global db
 
     app = Flask(__name__, static_folder="../static", template_folder="../templates")
     config = config or dict()
@@ -80,9 +78,6 @@ def create_app(config=None):
     except Exception:
         # If creation fails, continue; errors will surface when accessed
         pass
-
-    # Initialize SocketIO
-    socketio = SocketIO(app, cors_allowed_origins="*")
 
     # Initialize login manager
     login_manager.init_app(app)
@@ -142,7 +137,6 @@ def create_app(config=None):
                 response.cache_control.public = True
         return response
 
-    # Initialize websocket handlers
 
     # Error handlers
     from app.error_handlers import register_error_handlers
@@ -157,8 +151,3 @@ def create_app(config=None):
         return redirect(url_for("main.index"))
 
     return app
-
-
-def get_socketio():
-    """Get the socketio instance."""
-    return socketio

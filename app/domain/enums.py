@@ -27,11 +27,21 @@ def parse_enum(enum_cls: type[TEnum], value: object) -> Option[TEnum]:
     except Exception:
         return Null()
 
+class MatchNoteTarget(StrEnum):
+    TEAM1 = "team1"
+    TEAM2 = "team2"
+    MATCH = "match"
+    PLAYER = "player"
 
 class RegistrationStatus(StrEnum):
     PENDING_TEAM_APPROVAL = "PENDING_TEAM_APPROVAL"
     CONFIRMED = "CONFIRMED"
     REJECTED = "REJECTED"
+    CANCELLED = "CANCELLED"
+
+
+class TeamRegistrationStatus(StrEnum):
+    CONFIRMED = "CONFIRMED"
     CANCELLED = "CANCELLED"
 
 
