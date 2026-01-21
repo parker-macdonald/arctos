@@ -83,26 +83,6 @@ def add_note(tournament_url):
     db.session.add(note)
     db.session.commit()
 
-    payload = MatchNoteSerializer.to_dict(note, tournament_url, match=match)
-
-    from app import get_socketio
-
-    socketio = get_socketio()
-    socketio.emit(
-        "note_added",
-        {
-            "note_id": note.uuid,
-            "text": note.text,
-            "target": note.target,
-            "created_by": note.created_by,
-            "created_at": payload.get("created_at"),
-            "player_id": note.player_id,
-            "player_name": payload.get("player_name"),
-            "player_display": payload.get("player_display"),
-        },
-        room=f"match_{match_id}",
-    )
-
     return json_success({"note_id": note.uuid})
 
 
@@ -212,27 +192,6 @@ def add_point_note(tournament_url):
     )
     db.session.add(note)
     db.session.commit()
-
-    payload = MatchNoteSerializer.to_dict(note, tournament_url, match=match)
-
-    from app import get_socketio
-
-    socketio = get_socketio()
-    socketio.emit(
-        "note_added",
-        {
-            "note_id": note.uuid,
-            "text": note.text,
-            "target": note.target,
-            "created_by": note.created_by,
-            "created_at": payload.get("created_at"),
-            "player_id": note.player_id,
-            "player_name": payload.get("player_name"),
-            "player_display": payload.get("player_display"),
-            "point_id": point_id,
-        },
-        room=f"match_{match_id}",
-    )
 
     return json_success({"note_id": note.uuid})
 

@@ -13,7 +13,6 @@ dependencies = [
     "flask==3.1.2",
     "flask-executor>=1.0.0",
     "flask-login==0.6.3",
-    "flask-socketio==5.5.1",
     "flask-sqlalchemy==3.1.1",
     "flask-wtf==1.2.2",
     "gunicorn>=23.0.0",

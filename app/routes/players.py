@@ -7,7 +7,7 @@ from flask_login import login_required, current_user, logout_user
 from datetime import datetime
 import os
 from models import Player, PlayerRegistration, Injury, MatchNote, Match, Point, db
-from app.utils.helpers import is_head_ref_any, can_head_ref_match
+from app.utils.helpers import can_head_ref_match
 
 bp = Blueprint("players", __name__)
 
@@ -88,14 +88,12 @@ def player_profile(player_id):
             )
 
     # Check if user is head ref for any tournament (for template display purposes)
-    is_head_ref_flag = is_head_ref_any(player_id)
     return render_template(
         "player_profile.html",
         player=player,
         registrations=registrations,
         injuries=injuries,
         player_notes=player_note_rows,
-        is_head_ref=is_head_ref_flag,
     )
 
 

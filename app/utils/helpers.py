@@ -26,15 +26,6 @@ def can_head_ref_match(tournament_url: str, player_id: str, match=None) -> bool:
     if not tournament:
         return False
 
-    # If allow anyone is enabled, check if player is registered
-    if tournament.head_refs_allow_anyone:
-        player_reg = PlayerRegistration.query.filter_by(
-            event=tournament_url,
-            player=player_id,
-            status="CONFIRMED",
-        ).first()
-        return player_reg is not None
-
     # Check explicit allowed list
     if tournament.head_refs_allowed_list:
         allowed_list = [
@@ -44,6 +35,15 @@ def can_head_ref_match(tournament_url: str, player_id: str, match=None) -> bool:
         ]
         if player_id in allowed_list:
             return True
+
+    # If allow anyone is enabled, check if player is registered
+    if tournament.head_refs_allow_anyone:
+        player_reg = PlayerRegistration.query.filter_by(
+            event=tournament_url,
+            player=player_id,
+            status="CONFIRMED",
+        ).first()
+        return player_reg is not None
 
     # Check reffing teams (requires match context)
     if tournament.head_refs_allow_reffing_teams and match:
@@ -60,20 +60,6 @@ def can_head_ref_match(tournament_url: str, player_id: str, match=None) -> bool:
                 if player_reg:
                     return True
 
-    return False
-
-
-def is_head_ref_any(viewed_player_id: str) -> bool:
-    """Check if the current user is a head ref in any tournament."""
-    if not current_user.is_authenticated:
-        return False
-    try:
-        tournaments = Tournament.query.all()
-        for t in tournaments:
-            if can_head_ref_match(t.url, current_user.id):
-                return True
-    except Exception:
-        return False
     return False
 
 
