@@ -204,25 +204,46 @@ class MatchScheduleSerializer:
         refs_initial = str(data.get("refs_initial", "")).strip() or None
 
         # Clear team1/team2/refs (they are derived from _initial fields)
-        # But populate explicit team IDs from _initial fields
+        # But populate explicit team IDs and resolved tag references from _initial fields
+        from app.utils.helpers import resolve_tag_to_team
+        
         team1 = None
-        if team1_initial and is_explicit_team_id(team1_initial):
-            team1 = team1_initial
+        if team1_initial:
+            if is_explicit_team_id(team1_initial):
+                team1 = team1_initial
+            else:
+                # Try to resolve as tag reference
+                resolved_team = resolve_tag_to_team(team1_initial, tournament_url)
+                if resolved_team:
+                    team1 = resolved_team
 
         team2 = None
-        if team2_initial and is_explicit_team_id(team2_initial):
-            team2 = team2_initial
+        if team2_initial:
+            if is_explicit_team_id(team2_initial):
+                team2 = team2_initial
+            else:
+                # Try to resolve as tag reference
+                resolved_team = resolve_tag_to_team(team2_initial, tournament_url)
+                if resolved_team:
+                    team2 = resolved_team
 
-        # For refs, populate explicit team IDs maintaining index structure
+        # For refs, populate explicit team IDs and resolved tag references maintaining index structure
         refs = None
         if refs_initial:
             refs_initial_list = [r.strip() for r in refs_initial.split(",")]
             refs_list = [""] * len(refs_initial_list)
             has_explicit_ids = False
             for i, initial_ref in enumerate(refs_initial_list):
-                if initial_ref and is_explicit_team_id(initial_ref):
-                    refs_list[i] = initial_ref
-                    has_explicit_ids = True
+                if initial_ref:
+                    if is_explicit_team_id(initial_ref):
+                        refs_list[i] = initial_ref
+                        has_explicit_ids = True
+                    else:
+                        # Try to resolve as tag reference
+                        resolved_team = resolve_tag_to_team(initial_ref, tournament_url)
+                        if resolved_team:
+                            refs_list[i] = resolved_team
+                            has_explicit_ids = True
             if has_explicit_ids:
                 refs = ", ".join(refs_list)
 

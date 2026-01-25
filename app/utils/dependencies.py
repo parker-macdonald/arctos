@@ -5,6 +5,7 @@ Utility functions for resolving match dependencies.
 from __future__ import annotations
 
 from models import Match, db
+from app.utils.helpers import resolve_tag_to_team
 
 
 def apply_match_dependencies(tournament_url: str, completed_match: Match) -> None:
@@ -66,19 +67,24 @@ def apply_match_dependencies(tournament_url: str, completed_match: Match) -> Non
                 refs_current_list = [r.strip() for r in m.refs.split(",")]
 
             # Ensure refs_current_list has same length as refs_initial_list
-            # If lengths don't match, rebuild from refs_initial (preserving explicit team IDs)
+            # If lengths don't match, rebuild from refs_initial (preserving explicit team IDs and resolved tag references)
             if len(refs_current_list) != len(refs_initial_list):
                 refs_current_list = [""] * len(refs_initial_list)
-                # Populate any explicit team IDs from refs_initial
+                # Populate any explicit team IDs and resolved tag references from refs_initial
                 for i, initial_ref in enumerate(refs_initial_list):
-                    if (
-                        initial_ref
-                        and not initial_ref.lower().startswith("tag::")
-                        and "::winner" not in initial_ref.lower()
-                        and "::loser" not in initial_ref.lower()
-                    ):
-                        # Explicit team ID
-                        refs_current_list[i] = initial_ref
+                    if initial_ref:
+                        if (
+                            not initial_ref.lower().startswith("tag::")
+                            and "::winner" not in initial_ref.lower()
+                            and "::loser" not in initial_ref.lower()
+                        ):
+                            # Explicit team ID
+                            refs_current_list[i] = initial_ref
+                        else:
+                            # Try to resolve as tag reference
+                            resolved_team = resolve_tag_to_team(initial_ref, tournament_url)
+                            if resolved_team:
+                                refs_current_list[i] = resolved_team
 
             # Merge match resolutions into existing refs at correct indices
             changed = False

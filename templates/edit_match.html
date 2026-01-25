@@ -167,6 +167,24 @@
                         </div>
                     </div>
 
+                    <div class="row">
+                        <div class="col-md-12">
+                            <div class="mb-3">
+                                <label for="skip_condition" class="form-label">Skip Condition (DSL)</label>
+                                <input type="text" class="form-control" id="skip_condition" name="skip_condition" 
+                                       value="{{ match.skip_condition or '' }}"
+                                       placeholder="e.g., (== 0 (losses [TeamName]))">
+                                <div class="form-text">
+                                    Optional DSL expression that evaluates to a boolean. If true, this match will be skipped.
+                                    <a href="#" class="text-decoration-none" data-bs-toggle="modal" data-bs-target="#dslHelpModal">
+                                        <small>(DSL syntax help)</small>
+                                    </a>
+                                </div>
+                                <div id="skip_condition_feedback" class="mt-2" style="display: none;"></div>
+                            </div>
+                        </div>
+                    </div>
+
                     <div class="d-grid gap-2">
                         <button type="submit" class="btn btn-primary">Update Match</button>
                         <a href="/{{ tournament.url }}/setup" class="btn btn-outline-secondary">Cancel</a>
@@ -442,6 +460,65 @@ document.getElementById('match_type').addEventListener('change', function() {
     }
 });
 
+// DSL validation for skip_condition field
+const skipConditionInput = document.getElementById('skip_condition');
+const skipConditionFeedback = document.getElementById('skip_condition_feedback');
+let dslValidationTimer;
+
+if (skipConditionInput && skipConditionFeedback) {
+    skipConditionInput.addEventListener('input', function() {
+        const expression = this.value.trim();
+        const tournamentUrl = '{{ tournament.url }}';
+        
+        // Clear previous timer
+        clearTimeout(dslValidationTimer);
+        
+        // Hide feedback if empty
+        if (!expression) {
+            skipConditionFeedback.style.display = 'none';
+            skipConditionInput.classList.remove('is-invalid', 'is-valid');
+            return;
+        }
+        
+        // Debounce validation
+        dslValidationTimer = setTimeout(() => {
+            fetch(`/${tournamentUrl}/api/validate-dsl`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ expression: expression }),
+                credentials: 'same-origin'
+            })
+            .then(response => response.json())
+            .then(data => {
+                skipConditionFeedback.style.display = 'block';
+                
+                if (data.valid) {
+                    skipConditionInput.classList.remove('is-invalid');
+                    skipConditionInput.classList.add('is-valid');
+                    
+                    let message = '<small class="text-success">✓ Valid expression';
+                    if (data.simplified !== null && data.simplified !== expression) {
+                        message += ` (simplified: ${data.simplified})`;
+                    }
+                    message += '</small>';
+                    skipConditionFeedback.innerHTML = message;
+                } else {
+                    skipConditionInput.classList.remove('is-valid');
+                    skipConditionInput.classList.add('is-invalid');
+                    skipConditionFeedback.innerHTML = `<small class="text-danger">✗ ${data.error || 'Invalid expression'}</small>`;
+                }
+            })
+            .catch(error => {
+                skipConditionInput.classList.remove('is-valid');
+                skipConditionInput.classList.add('is-invalid');
+                skipConditionFeedback.innerHTML = `<small class="text-danger">✗ Error validating expression: ${error.message}</small>`;
+            });
+        }, 500); // 500ms debounce
+    });
+}
+
 // Initialize stones field visibility on page load
 document.addEventListener('DOMContentLoaded', function() {
     const matchType = document.getElementById('match_type');
@@ -641,4 +718,57 @@ document.addEventListener('DOMContentLoaded', function() {
     dynamicSelect.addEventListener('change', updateMatchTypeVisibility);
 });
 </script>
+
+<!-- DSL Help Modal -->
+<div class="modal fade" id="dslHelpModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">DSL Syntax Help</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p>The skip condition uses a Lisp-like DSL (Domain Specific Language) to express boolean conditions.</p>
+                
+                <h6>Basic Operations</h6>
+                <ul>
+                    <li><code>(== A B)</code> - Equality comparison</li>
+                    <li><code>(> A B)</code>, <code>(< A B)</code>, <code>(>= A B)</code>, <code>(<= A B)</code> - Numeric comparisons</li>
+                    <li><code>(and A B)</code>, <code>(or A B)</code> - Logical operations</li>
+                </ul>
+                
+                <h6>Team Operations</h6>
+                <ul>
+                    <li><code>(wins [TeamName])</code> - Number of wins for a team</li>
+                    <li><code>(losses [TeamName])</code> - Number of losses for a team</li>
+                    <li><code>(points-won [TeamName])</code> - Total points won by a team</li>
+                    <li><code>(points-lost [TeamName])</code> - Total points lost by a team</li>
+                    <li><code>(points-won [TeamName] {MatchName})</code> - Points won in a specific match</li>
+                    <li><code>(points-lost [TeamName] {MatchName})</code> - Points lost in a specific match</li>
+                </ul>
+                
+                <h6>Match Operations</h6>
+                <ul>
+                    <li><code>(winner {MatchName})</code> - Winner team of a match (returns team or NIL)</li>
+                    <li><code>(loser {MatchName})</code> - Loser team of a match (returns team or NIL)</li>
+                </ul>
+                
+                <h6>Examples</h6>
+                <ul>
+                    <li><code>(== 0 (losses [TeamName]))</code> - Skip if team has no losses</li>
+                    <li><code>(> (wins [TeamA]) (wins [TeamB]))</code> - Skip if TeamA has more wins than TeamB</li>
+                    <li><code>(== (winner {Match1}) [TeamName])</code> - Skip if TeamName won Match1</li>
+                </ul>
+                
+                <p class="text-muted small mt-3">
+                    <strong>Note:</strong> The expression must eventually evaluate to a boolean (true/false), but it doesn't need to simplify to a boolean immediately. 
+                    The system will evaluate it when needed to determine if the match should be skipped.
+                </p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
 {% endblock %}
