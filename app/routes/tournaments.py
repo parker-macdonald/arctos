@@ -31,6 +31,7 @@ from models import (
 from app.utils.helpers import (
     check_tournament_access,
     resolve_team_name_to_id,
+    resolve_tag_to_team,
     validate_permission_key,
 )
 from app.utils.scheduling import (
@@ -481,7 +482,26 @@ def tournament_bracket(tournament_url):
                     tag = Tag.query.filter_by(
                         event=tournament_url, name=tag_name
                     ).first()
-                    if tag:
+                    if tag and tag.team:
+                        # Tag has a team assigned - resolve it
+                        team_reg = TeamRegistration.query.filter_by(
+                            event=tournament_url, team=tag.team, status="CONFIRMED"
+                        ).first()
+                        if team_reg:
+                            team = Team.query.get(tag.team)
+                            team_info = {
+                                "id": tag.team,
+                                "pseudonym": team_reg.pseudonym,
+                                "profile_photo": team.profile_photo if team else None,
+                                "display_text": team_reg.pseudonym,
+                            }
+                        else:
+                            team_info = {
+                                "display_text": f"tag::{tag_name}",
+                            }
+                            is_tag = True
+                    elif tag:
+                        # Tag exists but no team assigned
                         team_info = {
                             "display_text": f"tag::{tag_name}",
                         }
@@ -552,7 +572,24 @@ def tournament_bracket(tournament_url):
                     tag = Tag.query.filter_by(
                         event=tournament_url, name=team_ref
                     ).first()
-                    if tag:
+                    if tag and tag.team:
+                        # Tag has a team assigned - resolve it
+                        team_reg = TeamRegistration.query.filter_by(
+                            event=tournament_url, team=tag.team, status="CONFIRMED"
+                        ).first()
+                        if team_reg:
+                            team = Team.query.get(tag.team)
+                            team_info = {
+                                "id": tag.team,
+                                "pseudonym": team_reg.pseudonym,
+                                "profile_photo": team.profile_photo if team else None,
+                                "display_text": team_reg.pseudonym,
+                            }
+                        else:
+                            team_info = {"display_text": f"tag::{tag.name}"}
+                            is_tag = True
+                    elif tag:
+                        # Tag exists but no team assigned
                         team_info = {"display_text": f"tag::{tag.name}"}
                         is_tag = True
 
@@ -1489,31 +1526,53 @@ def add_match(tournament_url):
         return True
 
     # For new matches, populate explicit team IDs from _initial fields
-    # Tag references will be resolved by update_tags, match references by apply_match_dependencies
-    final_team1 = (
-        team1_id
-        if team1_id
-        else (team1_name if is_explicit_team_id(team1_name) else None)
-    )
-    final_team2 = (
-        team2_id
-        if team2_id
-        else (team2_name if is_explicit_team_id(team2_name) else None)
-    )
+    # Tag references are resolved by querying the Tag table, match references by apply_match_dependencies
+    final_team1 = None
+    if team1_id:
+        final_team1 = team1_id
+    elif team1_name:
+        if is_explicit_team_id(team1_name):
+            final_team1 = team1_name
+        else:
+            # Try to resolve as tag reference
+            resolved_team = resolve_tag_to_team(team1_name, tournament_url)
+            if resolved_team:
+                final_team1 = resolved_team
+    
+    final_team2 = None
+    if team2_id:
+        final_team2 = team2_id
+    elif team2_name:
+        if is_explicit_team_id(team2_name):
+            final_team2 = team2_name
+        else:
+            # Try to resolve as tag reference
+            resolved_team = resolve_tag_to_team(team2_name, tournament_url)
+            if resolved_team:
+                final_team2 = resolved_team
 
-    # For refs, populate explicit team IDs maintaining index structure
+    # For refs, populate explicit team IDs and resolve tag references maintaining index structure
     final_refs = None
     if refs_initial:
         refs_initial_list = [r.strip() for r in refs_initial.split(",")]
         refs_list = [""] * len(refs_initial_list)
         has_explicit_ids = False
         for i, initial_ref in enumerate(refs_initial_list):
-            if initial_ref and is_explicit_team_id(initial_ref):
-                refs_list[i] = initial_ref
-                has_explicit_ids = True
+            if initial_ref:
+                if is_explicit_team_id(initial_ref):
+                    refs_list[i] = initial_ref
+                    has_explicit_ids = True
+                else:
+                    # Try to resolve as tag reference
+                    resolved_team = resolve_tag_to_team(initial_ref, tournament_url)
+                    if resolved_team:
+                        refs_list[i] = resolved_team
+                        has_explicit_ids = True
         if has_explicit_ids:
             final_refs = ", ".join(refs_list)
 
+    skip_condition = request.form.get("skip_condition", "").strip() or None
+    
     match = Match(
         name=match_name,
         event=tournament_url,
@@ -1534,6 +1593,7 @@ def add_match(tournament_url):
         refs=final_refs,
         refs_initial=refs_initial,
         stones_per_set=stones_per_set_value,
+        skip_condition=skip_condition,
     )
 
     db.session.add(match)
@@ -2041,33 +2101,47 @@ def update_match(tournament_url):
     old_team1_initial = match.team1_initial or ""
     match.team1_initial = team1_name
     if old_team1_initial != team1_name:
-        # Clear team1, but populate if explicit team ID
+        # Clear team1, but populate if explicit team ID or resolved tag
         if team1_id:
             match.team1 = team1_id
         elif is_explicit_team_id(team1_name):
             match.team1 = team1_name
         else:
-            match.team1 = None
+            # Try to resolve as tag reference
+            resolved_team = resolve_tag_to_team(team1_name, tournament_url)
+            match.team1 = resolved_team if resolved_team else None
     else:
-        # If team1_initial didn't change, only update team1 if we have an explicit team_id
+        # If team1_initial didn't change, only update team1 if we have an explicit team_id or can resolve tag
         if team1_id:
             match.team1 = team1_id
+        elif not match.team1 and team1_name:
+            # Try to resolve tag if team1 is not set
+            resolved_team = resolve_tag_to_team(team1_name, tournament_url)
+            if resolved_team:
+                match.team1 = resolved_team
 
     # Handle team2_initial changes
     old_team2_initial = match.team2_initial or ""
     match.team2_initial = team2_name
     if old_team2_initial != team2_name:
-        # Clear team2, but populate if explicit team ID
+        # Clear team2, but populate if explicit team ID or resolved tag
         if team2_id:
             match.team2 = team2_id
         elif is_explicit_team_id(team2_name):
             match.team2 = team2_name
         else:
-            match.team2 = None
+            # Try to resolve as tag reference
+            resolved_team = resolve_tag_to_team(team2_name, tournament_url)
+            match.team2 = resolved_team if resolved_team else None
     else:
-        # If team2_initial didn't change, only update team2 if we have an explicit team_id
+        # If team2_initial didn't change, only update team2 if we have an explicit team_id or can resolve tag
         if team2_id:
             match.team2 = team2_id
+        elif not match.team2 and team2_name:
+            # Try to resolve tag if team2 is not set
+            resolved_team = resolve_tag_to_team(team2_name, tournament_url)
+            if resolved_team:
+                match.team2 = resolved_team
 
     match.schedule_type = schedule_type
     match.set_type = set_type
@@ -2108,25 +2182,31 @@ def update_match(tournament_url):
             request.form.get("length", match.nominal_length or 60)
         )
 
-    # If refs_initial changed, clear refs (it will be repopulated by update_tags/apply_match_dependencies)
+    # Update skip_condition
+    skip_condition = request.form.get("skip_condition", "").strip() or None
+    match.skip_condition = skip_condition
+    
+    # If refs_initial changed, clear refs and repopulate with explicit team IDs and resolved tag references
     old_refs_initial = match.refs_initial or ""
     match.refs_initial = refs_initial
     if old_refs_initial != refs_initial:
-        # Clear refs, but populate any explicit team IDs from refs_initial
+        # Clear refs, but populate any explicit team IDs and resolved tag references from refs_initial
         if refs_initial:
             refs_initial_list = [r.strip() for r in refs_initial.split(",")]
             refs_list = [""] * len(refs_initial_list)
             has_explicit_ids = False
             for i, initial_ref in enumerate(refs_initial_list):
-                if (
-                    initial_ref
-                    and not initial_ref.lower().startswith("tag::")
-                    and "::winner" not in initial_ref.lower()
-                    and "::loser" not in initial_ref.lower()
-                ):
-                    # Explicit team ID
-                    refs_list[i] = initial_ref
-                    has_explicit_ids = True
+                if initial_ref:
+                    if is_explicit_team_id(initial_ref):
+                        # Explicit team ID
+                        refs_list[i] = initial_ref
+                        has_explicit_ids = True
+                    else:
+                        # Try to resolve as tag reference
+                        resolved_team = resolve_tag_to_team(initial_ref, tournament_url)
+                        if resolved_team:
+                            refs_list[i] = resolved_team
+                            has_explicit_ids = True
             if has_explicit_ids:
                 match.refs = ", ".join(refs_list)
             else:
@@ -2206,10 +2286,8 @@ def update_match(tournament_url):
 @bp.route("/<tournament_url>/update-tags", methods=["POST"])
 @login_required
 def update_tags(tournament_url):
-    """Update all matches by converting tag::TAG_NAME references to team IDs in team1, team2, and refs fields.
-
-    Note: _initial fields are never modified - they remain as the source of truth.
-    This function only updates the resolved team1/team2/refs fields.
+    """Update tag team assignments. This updates the team column in the Tag table.
+    All tag resolution will query the Tag table directly.
     """
     if is_not_TO(tournament_url):
         return redirect(f"/{tournament_url}")
@@ -2219,208 +2297,24 @@ def update_tags(tournament_url):
     # Get all tags for this tournament
     tags = Tag.query.filter_by(event=tournament_url).all()
 
-    # Build mapping of tag references to team IDs
-    tag_to_team = {}
+    # Update team column for each tag
+    updated_count = 0
     for tag in tags:
         form_key = f"tag_{tag.id}"
         team_id = request.form.get(form_key, "").strip()
         if team_id:
-            # Use the new explicit tag reference form: tag::TAG_NAME
-            tag_ref = f"tag::{tag.name}"
-            tag_to_team[tag_ref] = team_id
+            tag.team = team_id
+            updated_count += 1
+        else:
+            # Clear team if no selection
+            tag.team = None
 
-    if not tag_to_team:
+    if updated_count == 0:
         flash("No tag conversions selected", "error")
         return redirect(f"/{tournament_url}/setup")
 
-    # Get all matches for this tournament
-    matches = Match.query.filter_by(event=tournament_url).all()
-    updated_count = 0
-
-    for match in matches:
-        changed = False
-
-        # Helper to check if a value is a tag reference
-        def is_tag_ref(val: str) -> bool:
-            return val and val.strip().lower().startswith("tag::")
-
-        # Helper to check if a value is an explicit team ID (not a tag or match reference)
-        def is_explicit_team_id(val: str) -> bool:
-            if not val or not val.strip():
-                return False
-            val = val.strip()
-            # Not a tag reference
-            if val.lower().startswith("tag::"):
-                return False
-            # Not a match reference (contains ::winner or ::loser)
-            if "::winner" in val.lower() or "::loser" in val.lower():
-                return False
-            # Must be an explicit team ID
-            return True
-
-        # Update team1 based on team1_initial
-        if match.team1_initial:
-            initial = match.team1_initial.strip()
-            if initial in tag_to_team:
-                # Tag reference - update team1
-                match.team1 = tag_to_team[initial]
-                changed = True
-            elif is_explicit_team_id(initial):
-                # Explicit team ID - populate team1
-                match.team1 = initial
-                changed = True
-
-        # Update team2 based on team2_initial
-        if match.team2_initial:
-            initial = match.team2_initial.strip()
-            if initial in tag_to_team:
-                # Tag reference - update team2
-                match.team2 = tag_to_team[initial]
-                changed = True
-            elif is_explicit_team_id(initial):
-                # Explicit team ID - populate team2
-                match.team2 = initial
-                changed = True
-
-        # Update refs based on refs_initial (maintain index structure)
-        if match.refs_initial:
-            # Split refs_initial preserving all positions (including empty strings between commas)
-            refs_initial_list = [r.strip() for r in match.refs_initial.split(",")]
-
-            # Get current refs state (may be empty or partially populated)
-            refs_current_list = []
-            if match.refs:
-                refs_current_list = [r.strip() for r in match.refs.split(",")]
-
-            # Ensure refs_current_list has same length as refs_initial_list
-            # If refs_initial changed length, clear and rebuild
-            if len(refs_current_list) != len(refs_initial_list):
-                refs_current_list = [""] * len(refs_initial_list)
-                changed = True
-
-            # Build updated refs list maintaining index structure
-            refs_updated = False
-            for i, initial_ref in enumerate(refs_initial_list):
-                if not initial_ref:
-                    # Empty position - keep as empty string placeholder
-                    if i >= len(refs_current_list):
-                        refs_current_list.append("")
-                    continue
-
-                if initial_ref in tag_to_team:
-                    # Tag reference - update this index
-                    if i >= len(refs_current_list):
-                        refs_current_list.append("")
-                    refs_current_list[i] = tag_to_team[initial_ref]
-                    refs_updated = True
-                elif is_explicit_team_id(initial_ref):
-                    # Explicit team ID - populate this index
-                    if i >= len(refs_current_list):
-                        refs_current_list.append("")
-                    refs_current_list[i] = initial_ref
-                    refs_updated = True
-                # If it's a match reference (::winner/::loser), leave as empty string
-                # It will be resolved by apply_match_dependencies
-
-            if refs_updated or changed:
-                # Join with commas, preserving empty strings as placeholders
-                match.refs = ", ".join(refs_current_list)
-                changed = True
-
-        if changed:
-            updated_count += 1
-
-    # Update brackets if tournament has bracket data
-    tournament = Tournament.query.filter_by(url=tournament_url).first()
-    bracket_updated = False
-    if tournament and tournament.bracket and tag_to_team:
-        try:
-            import tomli
-
-            bracket_data = tomli.loads(tournament.bracket)
-            brackets = bracket_data.get("brackets", [])
-
-            for bracket in brackets:
-                teams = bracket.get("teams", [])
-                for team_entry in teams:
-                    team_ref = team_entry.get("team", "").strip()
-                    # Bracket entries may contain explicit tag references (tag::NAME) or
-                    # legacy plain tag names; support both forms when applying updates.
-                    if team_ref in tag_to_team:
-                        team_entry["team"] = tag_to_team[team_ref]
-                        bracket_updated = True
-                    elif team_ref.lower().startswith("tag::"):
-                        legacy_name = team_ref[5:].strip()
-                        legacy_ref = f"tag::{legacy_name}"
-                        if legacy_ref in tag_to_team:
-                            team_entry["team"] = tag_to_team[legacy_ref]
-                            bracket_updated = True
-
-            if bracket_updated:
-                # Regenerate TOML
-                def escape_toml_string(s):
-                    """Escape special characters in TOML strings."""
-                    s = str(s)
-                    s = s.replace("\\", "\\\\")
-                    s = s.replace('"', '\\"')
-                    s = s.replace("\n", "\\n")
-                    s = s.replace("\t", "\\t")
-                    return s
-
-                toml_lines = []
-                for bracket in brackets:
-                    toml_lines.append("[[brackets]]")
-                    toml_lines.append(f'name = "{escape_toml_string(bracket["name"])}"')
-                    toml_lines.append(
-                        f'image = "{escape_toml_string(bracket["image"])}"'
-                    )
-                    toml_lines.append("")
-                    for team in bracket.get("teams", []):
-                        toml_lines.append("[[brackets.teams]]")
-                        toml_lines.append(
-                            f'team = "{escape_toml_string(team["team"])}"'
-                        )
-                        toml_lines.append(f'x = {team["x"]}')
-                        toml_lines.append(f'y = {team["y"]}')
-                        toml_lines.append(
-                            f'halign = "{escape_toml_string(team["halign"])}"'
-                        )
-                        toml_lines.append(
-                            f'valign = "{escape_toml_string(team["valign"])}"'
-                        )
-                        toml_lines.append(f'size = {team["size"]}')
-                        toml_lines.append("")
-                tournament.bracket = "\n".join(toml_lines)
-        except Exception as e:
-            print(f"Error updating brackets after tag update: {e}")
-
     db.session.commit()
-
-    # Recompute all match times after tag updates (may affect dependencies)
-    if updated_count > 0:
-        try:
-            recompute_all_match_times(tournament_url)
-            db.session.commit()
-        except Exception as e:
-            print(f"Error recomputing match times after tag update: {e}")
-
-    # Build success message
-    messages = []
-    if updated_count > 0:
-        messages.append(
-            f"Successfully updated {updated_count} match(es) with tag conversions"
-        )
-    if bracket_updated:
-        messages.append("Bracket(s) updated with tag conversions")
-
-    if messages:
-        flash("; ".join(messages), "success")
-    else:
-        flash(
-            "No matches or brackets were updated. No matches or brackets contain the selected tags.",
-            "info",
-        )
-
+    flash(f"Successfully updated {updated_count} tag(s)", "success")
     return redirect(f"/{tournament_url}/setup")
 
 
@@ -2609,6 +2503,59 @@ def tournament_autocomplete(tournament_url):
         return jsonify(suggestions)
     else:
         return jsonify(suggestions[:50])
+
+
+@bp.route("/<tournament_url>/api/validate-dsl", methods=["POST"])
+def validate_dsl(tournament_url):
+    """Validate and simplify a DSL expression.
+    Returns JSON with: valid (bool), simplified (str or None), error (str or None)
+    """
+    from flask import jsonify
+    from app.utils.parser import get_parser, DSLValidationError
+    
+    data = request.get_json()
+    expression = data.get("expression", "").strip()
+    
+    if not expression:
+        return jsonify({
+            "valid": True,
+            "simplified": None,
+            "error": None
+        })
+    
+    try:
+        parser = get_parser(tournament_url)
+        tree = parser.parse(expression)
+        # The transformer automatically simplifies the expression
+        # tree is already the simplified result
+        simplified = tree
+        
+        # Convert to string representation if it's not a simple type
+        if isinstance(simplified, (int, bool, type(None))):
+            simplified_str = str(simplified)
+        elif isinstance(simplified, list):
+            # It's still a list (not fully simplified), convert to readable format
+            simplified_str = str(simplified)
+        else:
+            simplified_str = str(simplified)
+        
+        return jsonify({
+            "valid": True,
+            "simplified": simplified_str if simplified_str != expression else None,
+            "error": None
+        })
+    except DSLValidationError as e:
+        return jsonify({
+            "valid": False,
+            "simplified": None,
+            "error": str(e)
+        })
+    except Exception as e:
+        return jsonify({
+            "valid": False,
+            "simplified": None,
+            "error": f"Parse error: {str(e)}"
+        })
 
 
 @bp.route("/<tournament_url>/delete", methods=["POST"])

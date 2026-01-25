@@ -70,6 +70,7 @@ class Match(db.Model):
         db.String(36), db.ForeignKey("matches.uuid"), nullable=True
     )
     next_match = db.Column(db.String(36), db.ForeignKey("matches.uuid"), nullable=True)
+    skip_condition = db.Column(db.Text)  # DSL expression that determines if match should be skipped
 
     # Relationships
     previous_match_obj = db.relationship(
