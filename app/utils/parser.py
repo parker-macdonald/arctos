@@ -1116,8 +1116,8 @@ class Simplifier:
         self._validate_arg_count(head, args, 2)
         lst, func = args
 
-        # Check if either argument is a preserved expression
-        if self._is_preserved_expression(lst) or self._is_preserved_expression(func):
+        # Check if list is a preserved expression (func is Lambda, not a list, so don't check it)
+        if self._is_preserved_expression(lst):
             return [head, lst, func]
         if not isinstance(lst, list):
             raise DSLValidationError(
@@ -1139,8 +1139,8 @@ class Simplifier:
         self._validate_arg_count(head, args, 2)
         lst, func = args
 
-        # Check if either argument is a preserved expression
-        if self._is_preserved_expression(lst) or self._is_preserved_expression(func):
+        # Check if list is a preserved expression (func is Lambda, not a list, so don't check it)
+        if self._is_preserved_expression(lst):
             return [head, lst, func]
         if not isinstance(lst, list):
             raise DSLValidationError(
@@ -1165,9 +1165,15 @@ class Simplifier:
         self._validate_arg_count(head, args, 2)
         lst, func = args
 
-        # Check if either argument is a preserved expression
-        if self._is_preserved_expression(lst) or self._is_preserved_expression(func):
+        # Check if list is a preserved expression (func is Lambda, not a list, so don't check it)
+        # Only preserve if it's actually a preserved expression (starts with function name string)
+        if isinstance(lst, list) and self._is_preserved_expression(lst):
             return [head, lst, func]
+        # Also preserve if list contains symbolic values
+        if isinstance(lst, list):
+            for item in lst:
+                if isinstance(item, (SymbolicTeam, SymbolicMatch)):
+                    return [head, lst, func]
         if not isinstance(lst, list):
             raise DSLValidationError(
                 f"Argument 1 must be a LIST, got {type(lst).__name__}"
@@ -1197,8 +1203,8 @@ class Simplifier:
         self._validate_arg_count(head, args, 2)
         lst, func = args
 
-        # Check if either argument is a preserved expression
-        if self._is_preserved_expression(lst) or self._is_preserved_expression(func):
+        # Check if list is a preserved expression (func is Lambda, not a list, so don't check it)
+        if self._is_preserved_expression(lst):
             return [head, lst, func]
         if not isinstance(lst, list):
             raise DSLValidationError(

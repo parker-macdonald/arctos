@@ -29,7 +29,8 @@ TEAM: "[" /[^\]]+/ "]"
 MATCH: "{" /[^}]+/ "}"
 
 // Identifier for function names, variables, etc.
-IDENTIFIER: /[a-zA-Z_\-+*\/=><!&][a-zA-Z0-9_\-+*\/=><!&]*/
+// Note: Must come after INT to avoid matching negative numbers
+IDENTIFIER: /[a-zA-Z_+*\/=><!&][a-zA-Z0-9_\-+*\/=><!&]*/ | /[a-zA-Z_]/
 
 // Whitespace handling
 %import common.WS
