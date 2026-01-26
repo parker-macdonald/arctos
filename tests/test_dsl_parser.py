@@ -1,6 +1,6 @@
 """
 Comprehensive tests for the DSL parser used in skip-condition expressions.
-Tests all language features including arithmetic, logical operations, 
+Tests all language features including arithmetic, logical operations,
 team/match operations, lambdas, and list operations.
 """
 
@@ -16,7 +16,7 @@ from models import Match, Team, Point, Tag, db
 def tournament_with_data(app, test_db, tournament):
     """Create a tournament with teams, matches, and points for testing."""
     tournament_url = tournament.url
-    
+
     with app.app_context():
         # Create teams
         team1 = Team(id="team1", name="Team One", pw_hash="hash1")
@@ -24,7 +24,7 @@ def tournament_with_data(app, test_db, tournament):
         team3 = Team(id="team3", name="Team Three", pw_hash="hash3")
         db.session.add_all([team1, team2, team3])
         db.session.flush()
-        
+
         # Create matches
         match1 = Match(
             name="Match1",
@@ -63,7 +63,7 @@ def tournament_with_data(app, test_db, tournament):
         )
         db.session.add_all([match1, match2, match3])
         db.session.flush()
-        
+
         # Create points for match1 (team1 wins 3-1)
         points_match1 = [
             Point(match=match1.uuid, winner=WinnerSide.TEAM1, rerolled=False),
@@ -71,16 +71,16 @@ def tournament_with_data(app, test_db, tournament):
             Point(match=match1.uuid, winner=WinnerSide.TEAM1, rerolled=False),
             Point(match=match1.uuid, winner=WinnerSide.TEAM2, rerolled=False),
         ]
-        
+
         # Create points for match2 (team3 wins 2-0)
         points_match2 = [
             Point(match=match2.uuid, winner=WinnerSide.TEAM2, rerolled=False),
             Point(match=match2.uuid, winner=WinnerSide.TEAM2, rerolled=False),
         ]
-        
+
         db.session.add_all(points_match1 + points_match2)
         db.session.commit()
-        
+
         # Store names and UUIDs as strings to avoid DetachedInstanceError
         return {
             "tournament_url": tournament_url,
@@ -98,23 +98,23 @@ def tournament_with_data(app, test_db, tournament):
 
 class TestBasicOperations:
     """Test basic arithmetic and comparison operations."""
-    
+
     @pytest.mark.unit
     def test_arithmetic_operations(self, app, tournament):
         with app.app_context():
             parser = get_parser(tournament.url)
-            
+
             assert parser.parse("(+ 2 3)") == 5
             assert parser.parse("(- 10 4)") == 6
             assert parser.parse("(* 3 4)") == 12
             assert parser.parse("(/ 15 3)") == 5
             assert parser.parse("(/ 10 3)") == 3  # Integer division
-    
+
     @pytest.mark.unit
     def test_comparison_operations(self, app, tournament):
         with app.app_context():
             parser = get_parser(tournament.url)
-            
+
             assert parser.parse("(> 5 3)") is True
             assert parser.parse("(> 3 5)") is False
             assert parser.parse("(< 2 5)") is True
@@ -122,110 +122,110 @@ class TestBasicOperations:
             assert parser.parse("(<= 3 5)") is True
             assert parser.parse("(== 5 5)") is True
             assert parser.parse("(== 5 3)") is False
-    
+
     @pytest.mark.unit
     def test_logical_operations(self, app, tournament):
         with app.app_context():
             parser = get_parser(tournament.url)
-            
+
             assert parser.parse("(or true false)") is True
             assert parser.parse("(or false false)") is False
             assert parser.parse("(and true true)") is True
             assert parser.parse("(and true false)") is False
-    
+
     @pytest.mark.unit
     def test_division_by_zero(self, app, tournament):
         with app.app_context():
             parser = get_parser(tournament.url)
-            
+
             with pytest.raises(DSLValidationError, match="Division by zero"):
                 parser.parse("(/ 10 0)")
-    
+
     @pytest.mark.unit
     def test_boolean_literals(self, app, tournament):
         with app.app_context():
             parser = get_parser(tournament.url)
-            
+
             assert parser.parse("true") is True
             assert parser.parse("false") is False
-    
+
     @pytest.mark.unit
     def test_nil_literal(self, app, tournament):
         with app.app_context():
             parser = get_parser(tournament.url)
-            
+
             assert parser.parse("nil") is None
 
 
 class TestConditionalExpressions:
     """Test if expressions."""
-    
+
     @pytest.mark.unit
     def test_if_true_branch(self, app, tournament):
         with app.app_context():
             parser = get_parser(tournament.url)
-            
+
             assert parser.parse("(if true 10 20)") == 10
-    
+
     @pytest.mark.unit
     def test_if_false_branch(self, app, tournament):
         with app.app_context():
             parser = get_parser(tournament.url)
-            
+
             assert parser.parse("(if false 10 20)") == 20
-    
+
     @pytest.mark.unit
     def test_if_with_comparison(self, app, tournament):
         with app.app_context():
             parser = get_parser(tournament.url)
-            
+
             assert parser.parse("(if (> 5 3) 100 200)") == 100
             assert parser.parse("(if (< 5 3) 100 200)") == 200
 
 
 class TestTeamOperations:
     """Test team-related operations."""
-    
+
     @pytest.mark.unit
     def test_wins(self, app, tournament_with_data):
         with app.app_context():
             parser = get_parser(tournament_with_data["tournament_url"])
-            
+
             # team1 won match1
             assert parser.parse("(wins [team1])") == 1
             # team2 won 0 matches (lost match1, lost match2)
             assert parser.parse("(wins [team2])") == 0
             # team3 won match2
             assert parser.parse("(wins [team3])") == 1
-    
+
     @pytest.mark.unit
     def test_losses(self, app, tournament_with_data):
         with app.app_context():
             parser = get_parser(tournament_with_data["tournament_url"])
-            
+
             # team1 lost 0 matches
             assert parser.parse("(losses [team1])") == 0
             # team2 lost both matches
             assert parser.parse("(losses [team2])") == 2
             # team3 lost 0 matches
             assert parser.parse("(losses [team3])") == 0
-    
+
     @pytest.mark.unit
     def test_points_won(self, app, tournament_with_data):
         with app.app_context():
             parser = get_parser(tournament_with_data["tournament_url"])
             match1_name = tournament_with_data["match1_name"]
-            
+
             # team1 won 3 points in match1
             assert parser.parse(f"(points-won [team1] {{{match1_name}}})") == 3
             # team2 won 1 point in match1
             assert parser.parse(f"(points-lost [team1] {{{match1_name}}})") == 1
-    
+
     @pytest.mark.unit
     def test_points_won_total(self, app, tournament_with_data):
         with app.app_context():
             parser = get_parser(tournament_with_data["tournament_url"])
-            
+
             # team1 won 3 points total (all in match1)
             assert parser.parse("(points-won [team1])") == 3
             # team2 won 1 point total (in match1)
@@ -236,53 +236,59 @@ class TestTeamOperations:
 
 class TestMatchOperations:
     """Test match-related operations."""
-    
+
     @pytest.mark.unit
     def test_winner(self, app, tournament_with_data):
         with app.app_context():
             parser = get_parser(tournament_with_data["tournament_url"])
             match1_name = tournament_with_data["match1_name"]
-            
+
             # Match1 winner is team1
             winner = parser.parse(f"(winner {{{match1_name}}})")
-            assert hasattr(winner, 'obj')
+            assert hasattr(winner, "obj")
             assert winner.obj.id == "team1"
-    
+
     @pytest.mark.unit
     def test_loser(self, app, tournament_with_data):
         with app.app_context():
             parser = get_parser(tournament_with_data["tournament_url"])
             match1_name = tournament_with_data["match1_name"]
-            
+
             # Match1 loser is team2
             loser = parser.parse(f"(loser {{{match1_name}}})")
-            assert hasattr(loser, 'obj')
+            assert hasattr(loser, "obj")
             assert loser.obj.id == "team2"
-    
+
     @pytest.mark.unit
     def test_skip_condition(self, app, tournament_with_data):
         with app.app_context():
             parser = get_parser(tournament_with_data["tournament_url"])
             tournament_url = tournament_with_data["tournament_url"]
             match3_name = tournament_with_data["match3_name"]
-            
+
             # Match with no skip condition should return False
             assert parser.parse(f"(skip-condition {{{match3_name}}})") is False
-            
+
             # Match with skip condition true
-            match3 = Match.query.filter_by(event=tournament_url, name=match3_name).first()
+            match3 = Match.query.filter_by(
+                event=tournament_url, name=match3_name
+            ).first()
             match3.skip_condition = "true"
             db.session.commit()
             assert parser.parse(f"(skip-condition {{{match3_name}}})") is True
-            
+
             # Match with skip condition false
-            match3 = Match.query.filter_by(event=tournament_url, name=match3_name).first()
+            match3 = Match.query.filter_by(
+                event=tournament_url, name=match3_name
+            ).first()
             match3.skip_condition = "false"
             db.session.commit()
             assert parser.parse(f"(skip-condition {{{match3_name}}})") is False
-            
+
             # Match with skip condition expression
-            match3 = Match.query.filter_by(event=tournament_url, name=match3_name).first()
+            match3 = Match.query.filter_by(
+                event=tournament_url, name=match3_name
+            ).first()
             match3.skip_condition = "(== 0 (losses [team1]))"
             db.session.commit()
             # team1 has 0 losses, so this should be True
@@ -291,134 +297,134 @@ class TestMatchOperations:
 
 class TestListOperations:
     """Test list manipulation operations."""
-    
+
     @pytest.mark.unit
     def test_cons(self, app, tournament):
         with app.app_context():
             parser = get_parser(tournament.url)
-            
+
             result = parser.parse("(cons 1 2 3)")
             assert result == [1, 2, 3]
-    
+
     @pytest.mark.unit
     def test_car(self, app, tournament):
         with app.app_context():
             parser = get_parser(tournament.url)
-            
+
             assert parser.parse("(car (cons 1 2 3))") == 1
-    
+
     @pytest.mark.unit
     def test_cdr(self, app, tournament):
         with app.app_context():
             parser = get_parser(tournament.url)
-            
+
             result = parser.parse("(cdr (cons 1 2 3))")
             assert result == [2, 3]
-    
+
     @pytest.mark.unit
     def test_get(self, app, tournament):
         with app.app_context():
             parser = get_parser(tournament.url)
-            
+
             assert parser.parse("(get 0 (cons 10 20 30))") == 10
             assert parser.parse("(get 1 (cons 10 20 30))") == 20
             assert parser.parse("(get 2 (cons 10 20 30))") == 30
             # Out of bounds returns nil
             assert parser.parse("(get 5 (cons 10 20 30))") is None
-    
+
     @pytest.mark.unit
     def test_len(self, app, tournament):
         with app.app_context():
             parser = get_parser(tournament.url)
-            
+
             assert parser.parse("(len (cons 1 2 3))") == 3
             assert parser.parse("(len (cons))") == 0
-    
+
     @pytest.mark.unit
     def test_or_default(self, app, tournament):
         with app.app_context():
             parser = get_parser(tournament.url)
-            
+
             assert parser.parse("(or-default 10 20)") == 10
             assert parser.parse("(or-default nil 20)") == 20
-    
+
     @pytest.mark.unit
     def test_max(self, app, tournament):
         with app.app_context():
             parser = get_parser(tournament.url)
-            
+
             assert parser.parse("(max (cons 1 5 3 2))") == 5
-    
+
     @pytest.mark.unit
     def test_min(self, app, tournament):
         with app.app_context():
             parser = get_parser(tournament.url)
-            
+
             assert parser.parse("(min (cons 5 1 3 2))") == 1
 
 
 class TestLambdaFunctions:
     """Test lambda function definitions and calls."""
-    
+
     @pytest.mark.unit
     def test_lambda_identity(self, app, tournament):
         with app.app_context():
             parser = get_parser(tournament.url)
-            
+
             # Identity function
             result = parser.parse("((lambda (x) x) 42)")
             assert result == 42
-    
+
     @pytest.mark.unit
     def test_lambda_add(self, app, tournament):
         with app.app_context():
             parser = get_parser(tournament.url)
-            
+
             # Add 5 to a number
             result = parser.parse("((lambda (x) (+ x 5)) 10)")
             assert result == 15
-    
+
     @pytest.mark.unit
     def test_lambda_multiple_params(self, app, tournament):
         with app.app_context():
             parser = get_parser(tournament.url)
-            
+
             # Function with two parameters
             result = parser.parse("((lambda (x y) (+ x y)) 3 4)")
             assert result == 7
-    
+
     @pytest.mark.unit
     def test_map(self, app, tournament):
         with app.app_context():
             parser = get_parser(tournament.url)
-            
+
             # Map add 1 to each element
             result = parser.parse("(map (cons 1 2 3) (lambda (x) (+ x 1)))")
             assert result == [2, 3, 4]
-    
+
     @pytest.mark.unit
     def test_reduce(self, app, tournament):
         with app.app_context():
             parser = get_parser(tournament.url)
-            
+
             # Sum a list
             result = parser.parse("(reduce (cons 1 2 3 4) (lambda (acc x) (+ acc x)))")
             assert result == 10
-    
+
     @pytest.mark.unit
     def test_max_by(self, app, tournament):
         with app.app_context():
             parser = get_parser(tournament.url)
-            
+
             # Find element with maximum value when doubled
             result = parser.parse("(max-by (cons 1 3 2) (lambda (x) (* x 2)))")
             assert result == 3  # 3*2=6 is the max
-    
+
     @pytest.mark.unit
     def test_min_by(self, app, tournament):
         with app.app_context():
             parser = get_parser(tournament.url)
-            
+
             # Find element with minimum value when doubled
             result = parser.parse("(min-by (cons 3 1 2) (lambda (x) (* x 2)))")
             assert result == 1  # 1*2=2 is the min
@@ -426,140 +432,142 @@ class TestLambdaFunctions:
 
 class TestTagReferences:
     """Test tag-based team references."""
-    
+
     @pytest.mark.unit
     def test_tag_reference(self, app, tournament_with_data):
         with app.app_context():
             tournament_url = tournament_with_data["tournament_url"]
             team1_id = tournament_with_data["team1_id"]
-            
+
             # Create a tag pointing to team1
             tag = Tag(event=tournament_url, name="PoolA", team=team1_id)
             db.session.add(tag)
             db.session.commit()
-            
+
             parser = get_parser(tournament_url)
-            
+
             # Tag reference should resolve to team1
             team = parser.parse("[tag::PoolA]")
-            assert hasattr(team, 'obj')
+            assert hasattr(team, "obj")
             assert team.obj.id == "team1"
-    
+
     @pytest.mark.unit
     def test_tag_reference_unset(self, app, tournament_with_data):
         with app.app_context():
             tournament_url = tournament_with_data["tournament_url"]
-            
+
             # Create a tag without a team
             tag = Tag(event=tournament_url, name="PoolB", team=None)
             db.session.add(tag)
             db.session.commit()
-            
+
             parser = get_parser(tournament_url)
-            
+
             # Unset tag should return symbolic team
             result = parser.parse("[tag::PoolB]")
             # Should be a preserved expression or symbolic
-            assert isinstance(result, list) or hasattr(result, 'literal')
+            assert isinstance(result, list) or hasattr(result, "literal")
 
 
 class TestMatchReferences:
     """Test match-based team references (winner/loser)."""
-    
+
     @pytest.mark.unit
     def test_winner_reference(self, app, tournament_with_data):
         with app.app_context():
             parser = get_parser(tournament_with_data["tournament_url"])
             match1_name = tournament_with_data["match1_name"]
-            
+
             # winner::Match1 should be team1
             team = parser.parse(f"[winner::{match1_name}]")
-            assert hasattr(team, 'obj')
+            assert hasattr(team, "obj")
             assert team.obj.id == "team1"
-    
+
     @pytest.mark.unit
     def test_loser_reference(self, app, tournament_with_data):
         with app.app_context():
             parser = get_parser(tournament_with_data["tournament_url"])
             match1_name = tournament_with_data["match1_name"]
-            
+
             # loser::Match1 should be team2
             team = parser.parse(f"[loser::{match1_name}]")
-            assert hasattr(team, 'obj')
+            assert hasattr(team, "obj")
             assert team.obj.id == "team2"
 
 
 class TestComplexExpressions:
     """Test complex nested expressions."""
-    
+
     @pytest.mark.unit
     def test_nested_arithmetic(self, app, tournament):
         with app.app_context():
             parser = get_parser(tournament.url)
-            
+
             assert parser.parse("(+ (* 2 3) (/ 10 2))") == 11
             assert parser.parse("(- (+ 5 3) 2)") == 6
-    
+
     @pytest.mark.unit
     def test_complex_condition(self, app, tournament_with_data):
         with app.app_context():
             parser = get_parser(tournament_with_data["tournament_url"])
-            
+
             # Skip if team has 0 losses
             result = parser.parse("(== 0 (losses [team1]))")
             assert result is True  # team1 has 0 losses
-            
+
             result = parser.parse("(== 0 (losses [team2]))")
             assert result is False  # team2 has 2 losses
-    
+
     @pytest.mark.unit
     def test_logical_combination(self, app, tournament):
         with app.app_context():
             parser = get_parser(tournament.url)
-            
+
             assert parser.parse("(and (> 5 3) (< 2 4))") is True
             assert parser.parse("(or (> 1 3) (< 2 4))") is True
             assert parser.parse("(and (> 1 3) (< 2 4))") is False
-    
+
     @pytest.mark.unit
     def test_nested_if(self, app, tournament):
         with app.app_context():
             parser = get_parser(tournament.url)
-            
+
             result = parser.parse("(if (> 5 3) (if (< 2 1) 10 20) 30)")
             assert result == 20
 
 
 class TestSymbolicExpressions:
     """Test expressions with unresolved symbolic values."""
-    
+
     @pytest.mark.unit
     def test_preserved_expression_with_unresolved_team(self, app, tournament_with_data):
         with app.app_context():
             parser = get_parser(tournament_with_data["tournament_url"])
-            
+
             # Tag that doesn't exist or isn't set should preserve expression
             result = parser.parse("(== 0 (losses [tag::NonExistent]))")
             # Should be a preserved expression (list)
             assert isinstance(result, list)
             assert result[0] == "=="
-    
+
     @pytest.mark.unit
-    def test_preserved_expression_with_unresolved_match(self, app, tournament_with_data):
+    def test_preserved_expression_with_unresolved_match(
+        self, app, tournament_with_data
+    ):
         with app.app_context():
             parser = get_parser(tournament_with_data["tournament_url"])
-            
+
             # Match that doesn't exist should preserve expression
             result = parser.parse("(winner {NonExistentMatch})")
             # Should be a preserved expression (list)
             assert isinstance(result, list)
             assert result[0] == "winner"
-    
+
     @pytest.mark.unit
     def test_preserved_expression_nested(self, app, tournament_with_data):
         with app.app_context():
             parser = get_parser(tournament_with_data["tournament_url"])
-            
+
             # Complex expression with unresolved values should preserve
             result = parser.parse("(== 0 (losses [tag::UnsetTag]))")
             assert isinstance(result, list)
@@ -569,49 +577,49 @@ class TestSymbolicExpressions:
 
 class TestErrorHandling:
     """Test error handling for invalid expressions."""
-    
+
     @pytest.mark.unit
     def test_undefined_symbol(self, app, tournament):
         with app.app_context():
             parser = get_parser(tournament.url)
-            
+
             with pytest.raises(DSLValidationError, match="No symbol named"):
                 parser.parse("(undefined_function 1 2)")
-    
+
     @pytest.mark.unit
     def test_wrong_argument_count(self, app, tournament):
         with app.app_context():
             parser = get_parser(tournament.url)
-            
+
             with pytest.raises(DSLValidationError, match="expects.*argument"):
                 parser.parse("(+ 1 2 3)")  # + expects 2 args
-    
+
     @pytest.mark.unit
     def test_wrong_type_arithmetic(self, app, tournament):
         with app.app_context():
             parser = get_parser(tournament.url)
-            
+
             # This should preserve the expression if it contains unresolved identifiers
             # But if we try to add a boolean to an int, it should error
             with pytest.raises(DSLValidationError, match="must be an INT"):
                 parser.parse("(+ true 5)")
-    
+
     @pytest.mark.unit
     def test_empty_list_operations(self, app, tournament):
         with app.app_context():
             parser = get_parser(tournament.url)
-            
+
             with pytest.raises(DSLValidationError, match="empty list"):
                 parser.parse("(car (cons))")
-            
+
             with pytest.raises(DSLValidationError, match="empty list"):
                 parser.parse("(cdr (cons))")
-    
+
     @pytest.mark.unit
     def test_lambda_wrong_arg_count(self, app, tournament):
         with app.app_context():
             parser = get_parser(tournament.url)
-            
+
             # Lambda expects 1 arg but gets 2
             with pytest.raises(DSLValidationError, match="expects.*argument"):
                 parser.parse("((lambda (x) x) 1 2)")
@@ -619,95 +627,103 @@ class TestErrorHandling:
 
 class TestSkipConditionIntegration:
     """Test skip-condition expressions in realistic scenarios."""
-    
+
     @pytest.mark.unit
     def test_skip_if_team_has_losses(self, app, tournament_with_data):
         with app.app_context():
             parser = get_parser(tournament_with_data["tournament_url"])
             tournament_url = tournament_with_data["tournament_url"]
             match3_name = tournament_with_data["match3_name"]
-            
+
             # Skip if team2 has any losses (team2 has 2 losses)
-            match3 = Match.query.filter_by(event=tournament_url, name=match3_name).first()
+            match3 = Match.query.filter_by(
+                event=tournament_url, name=match3_name
+            ).first()
             match3.skip_condition = "(> (losses [team2]) 0)"
             db.session.commit()
-            
+
             result = parser.parse(f"(skip-condition {{{match3_name}}})")
             assert result is True
-    
+
     @pytest.mark.unit
     def test_skip_if_team_undefeated(self, app, tournament_with_data):
         with app.app_context():
             parser = get_parser(tournament_with_data["tournament_url"])
             tournament_url = tournament_with_data["tournament_url"]
             match3_name = tournament_with_data["match3_name"]
-            
+
             # Skip if team1 is undefeated (team1 has 0 losses)
-            match3 = Match.query.filter_by(event=tournament_url, name=match3_name).first()
+            match3 = Match.query.filter_by(
+                event=tournament_url, name=match3_name
+            ).first()
             match3.skip_condition = "(== 0 (losses [team1]))"
             db.session.commit()
-            
+
             result = parser.parse(f"(skip-condition {{{match3_name}}})")
             assert result is True
-    
+
     @pytest.mark.unit
     def test_skip_based_on_match_result(self, app, tournament_with_data):
         with app.app_context():
             parser = get_parser(tournament_with_data["tournament_url"])
             tournament_url = tournament_with_data["tournament_url"]
             match3_name = tournament_with_data["match3_name"]
-            
+
             # Skip match3 if match1's winner has losses
-            match3 = Match.query.filter_by(event=tournament_url, name=match3_name).first()
+            match3 = Match.query.filter_by(
+                event=tournament_url, name=match3_name
+            ).first()
             match3.skip_condition = "(> (losses [winner::Match1]) 0)"
             db.session.commit()
-            
+
             # team1 (winner of match1) has 0 losses, so this should be False
             result = parser.parse(f"(skip-condition {{{match3_name}}})")
             assert result is False
-    
+
     @pytest.mark.unit
     def test_skip_with_logical_combination(self, app, tournament_with_data):
         with app.app_context():
             parser = get_parser(tournament_with_data["tournament_url"])
             tournament_url = tournament_with_data["tournament_url"]
             match3_name = tournament_with_data["match3_name"]
-            
+
             # Skip if team1 has wins AND team2 has losses
-            match3 = Match.query.filter_by(event=tournament_url, name=match3_name).first()
+            match3 = Match.query.filter_by(
+                event=tournament_url, name=match3_name
+            ).first()
             match3.skip_condition = "(and (> (wins [team1]) 0) (> (losses [team2]) 0))"
             db.session.commit()
-            
+
             result = parser.parse(f"(skip-condition {{{match3_name}}})")
             assert result is True  # Both conditions are true
 
 
 class TestLambdaAdvanced:
     """Test advanced lambda features."""
-    
+
     @pytest.mark.unit
     def test_nested_lambdas(self, app, tournament):
         with app.app_context():
             parser = get_parser(tournament.url)
-            
+
             # Apply a function that returns another function
             result = parser.parse("(((lambda (x) (lambda (y) (+ x y))) 5) 3)")
             assert result == 8
-    
+
     @pytest.mark.unit
     def test_lambda_with_list_operations(self, app, tournament):
         with app.app_context():
             parser = get_parser(tournament.url)
-            
+
             # Double each element
             result = parser.parse("(map (cons 1 2 3) (lambda (x) (* x 2)))")
             assert result == [2, 4, 6]
-    
+
     @pytest.mark.unit
     def test_lambda_filter_pattern(self, app, tournament):
         with app.app_context():
             parser = get_parser(tournament.url)
-            
+
             # Find elements greater than 2 (using map and filtering concept)
             # Note: We don't have filter, but we can use map with conditional
             # This is a simplified example
@@ -717,38 +733,38 @@ class TestLambdaAdvanced:
 
 class TestEdgeCases:
     """Test edge cases and boundary conditions."""
-    
+
     @pytest.mark.unit
     def test_empty_expression(self, app, tournament):
         with app.app_context():
             parser = get_parser(tournament.url)
-            
+
             # Empty list
             result = parser.parse("()")
             assert result == []
-    
+
     @pytest.mark.unit
     def test_single_element_list(self, app, tournament):
         with app.app_context():
             parser = get_parser(tournament.url)
-            
+
             # Single element (not a function call, just a list)
             result = parser.parse("(cons 42)")
             assert result == [42]
-    
+
     @pytest.mark.unit
     def test_deeply_nested(self, app, tournament):
         with app.app_context():
             parser = get_parser(tournament.url)
-            
+
             result = parser.parse("(+ (+ 1 2) (+ 3 4))")
             assert result == 10
-    
+
     @pytest.mark.unit
     def test_equality_with_different_types(self, app, tournament):
         with app.app_context():
             parser = get_parser(tournament.url)
-            
+
             assert parser.parse("(== 5 5)") is True
             assert parser.parse("(== true true)") is True
             assert parser.parse("(== true false)") is False

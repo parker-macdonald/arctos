@@ -86,23 +86,23 @@ def resolve_team_name_to_id(team_name, tournament_url):
 
 def resolve_tag_to_team(tag_ref: str, tournament_url: str) -> str | None:
     """Resolve a tag reference (tag::TAG_NAME) to a team ID by querying the Tag table.
-    
+
     Args:
         tag_ref: Tag reference string (e.g., "tag::Pool A")
         tournament_url: Tournament URL
-        
+
     Returns:
         Team ID if tag exists and has a team assigned, None otherwise
     """
     from models import Tag
-    
+
     if not tag_ref or not tag_ref.strip().lower().startswith("tag::"):
         return None
-    
+
     tag_name = tag_ref[5:].strip()  # Remove "tag::" prefix
     if not tag_name:
         return None
-    
+
     tag = Tag.query.filter_by(event=tournament_url, name=tag_name).first()
     if tag and tag.team:
         return tag.team

@@ -5,7 +5,15 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import foreign
 
-from app.domain.enums import WinnerSide, MatchStatus, ScheduleType, WinnerSide, SetType, parse_enum, MatchNoteTarget
+from app.domain.enums import (
+    WinnerSide,
+    MatchStatus,
+    ScheduleType,
+    WinnerSide,
+    SetType,
+    parse_enum,
+    MatchNoteTarget,
+)
 from app.models.base import db
 from app.error_values import Some
 
@@ -70,7 +78,9 @@ class Match(db.Model):
         db.String(36), db.ForeignKey("matches.uuid"), nullable=True
     )
     next_match = db.Column(db.String(36), db.ForeignKey("matches.uuid"), nullable=True)
-    skip_condition = db.Column(db.Text)  # DSL expression that determines if match should be skipped
+    skip_condition = db.Column(
+        db.Text
+    )  # DSL expression that determines if match should be skipped
 
     # Relationships
     previous_match_obj = db.relationship(

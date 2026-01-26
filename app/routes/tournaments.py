@@ -1538,7 +1538,7 @@ def add_match(tournament_url):
             resolved_team = resolve_tag_to_team(team1_name, tournament_url)
             if resolved_team:
                 final_team1 = resolved_team
-    
+
     final_team2 = None
     if team2_id:
         final_team2 = team2_id
@@ -1572,7 +1572,7 @@ def add_match(tournament_url):
             final_refs = ", ".join(refs_list)
 
     skip_condition = request.form.get("skip_condition", "").strip() or None
-    
+
     match = Match(
         name=match_name,
         event=tournament_url,
@@ -2185,7 +2185,7 @@ def update_match(tournament_url):
     # Update skip_condition
     skip_condition = request.form.get("skip_condition", "").strip() or None
     match.skip_condition = skip_condition
-    
+
     # If refs_initial changed, clear refs and repopulate with explicit team IDs and resolved tag references
     old_refs_initial = match.refs_initial or ""
     match.refs_initial = refs_initial
@@ -2512,24 +2512,20 @@ def validate_dsl(tournament_url):
     """
     from flask import jsonify
     from app.utils.parser import get_parser, DSLValidationError
-    
+
     data = request.get_json()
     expression = data.get("expression", "").strip()
-    
+
     if not expression:
-        return jsonify({
-            "valid": True,
-            "simplified": None,
-            "error": None
-        })
-    
+        return jsonify({"valid": True, "simplified": None, "error": None})
+
     try:
         parser = get_parser(tournament_url)
         tree = parser.parse(expression)
         # The transformer automatically simplifies the expression
         # tree is already the simplified result
         simplified = tree
-        
+
         # Convert to string representation if it's not a simple type
         if isinstance(simplified, (int, bool, type(None))):
             simplified_str = str(simplified)
@@ -2538,24 +2534,20 @@ def validate_dsl(tournament_url):
             simplified_str = str(simplified)
         else:
             simplified_str = str(simplified)
-        
-        return jsonify({
-            "valid": True,
-            "simplified": simplified_str if simplified_str != expression else None,
-            "error": None
-        })
+
+        return jsonify(
+            {
+                "valid": True,
+                "simplified": simplified_str if simplified_str != expression else None,
+                "error": None,
+            }
+        )
     except DSLValidationError as e:
-        return jsonify({
-            "valid": False,
-            "simplified": None,
-            "error": str(e)
-        })
+        return jsonify({"valid": False, "simplified": None, "error": str(e)})
     except Exception as e:
-        return jsonify({
-            "valid": False,
-            "simplified": None,
-            "error": f"Parse error: {str(e)}"
-        })
+        return jsonify(
+            {"valid": False, "simplified": None, "error": f"Parse error: {str(e)}"}
+        )
 
 
 @bp.route("/<tournament_url>/delete", methods=["POST"])

@@ -137,7 +137,6 @@ def create_app(config=None):
                 response.cache_control.public = True
         return response
 
-
     # Error handlers
     from app.error_handlers import register_error_handlers
 
