@@ -2508,45 +2508,114 @@ def tournament_autocomplete(tournament_url):
 @bp.route("/<tournament_url>/api/validate-dsl", methods=["POST"])
 def validate_dsl(tournament_url):
     """Validate and simplify a DSL expression.
-    Returns JSON with: valid (bool), simplified (str or None), error (str or None)
+    Returns JSON with: valid (bool), value (the full interpreted value), simplified (str representation), error (str or None)
     """
     from flask import jsonify
-    from app.utils.parser import get_parser, DSLValidationError
+    from app.utils.parser import (
+        get_parser,
+        DSLValidationError,
+        Team,
+        Match,
+        SymbolicTeam,
+        SymbolicMatch,
+        Lambda,
+    )
+
+    def serialize_value(value):
+        """Convert the interpreted value to a JSON-serializable format."""
+        if isinstance(value, (int, bool, type(None))):
+            return value
+        elif isinstance(value, list):
+            # Recursively serialize list elements
+            return [serialize_value(item) for item in value]
+        elif isinstance(value, Team):
+            # Return team ID
+            return {"type": "team", "id": value.obj.id}
+        elif isinstance(value, Match):
+            # Return match name
+            return {"type": "match", "name": value.obj.name}
+        elif isinstance(value, SymbolicTeam):
+            # Return symbolic representation
+            return {"type": "symbolic_team", "literal": value.literal}
+        elif isinstance(value, SymbolicMatch):
+            # Return symbolic representation
+            return {"type": "symbolic_match", "literal": value.literal}
+        elif isinstance(value, Lambda):
+            # Lambda objects shouldn't appear in final results, but handle gracefully
+            return {"type": "lambda", "params": value.params}
+        else:
+            # Fallback to string representation
+            return str(value)
+
+    def value_to_string(value):
+        """Convert the interpreted value to a readable string representation."""
+        if isinstance(value, (int, bool, type(None))):
+            return str(value)
+        elif isinstance(value, list):
+            # Format as Lisp-like expression
+            if len(value) > 0 and isinstance(value[0], str):
+                # Preserved expression - format as s-expression
+                return "(" + " ".join(value_to_string(item) for item in value) + ")"
+            else:
+                # Data list
+                return "[" + ", ".join(value_to_string(item) for item in value) + "]"
+        elif isinstance(value, Team):
+            return f"[{value.obj.id}]"
+        elif isinstance(value, Match):
+            return f"{{{value.obj.name}}}"
+        elif isinstance(value, SymbolicTeam):
+            return f"[{value.literal}]"
+        elif isinstance(value, SymbolicMatch):
+            return f"{{{value.literal}}}"
+        elif isinstance(value, Lambda):
+            # Lambda objects shouldn't appear in final results, but handle gracefully
+            params_str = " ".join(value.params) if value.params else ""
+            return f"(lambda ({params_str}) ...)"
+        else:
+            return str(value)
 
     data = request.get_json()
     expression = data.get("expression", "").strip()
 
     if not expression:
-        return jsonify({"valid": True, "simplified": None, "error": None})
+        return jsonify(
+            {"valid": True, "value": None, "simplified": None, "error": None}
+        )
 
     try:
         parser = get_parser(tournament_url)
-        tree = parser.parse(expression)
-        # The transformer automatically simplifies the expression
-        # tree is already the simplified result
-        simplified = tree
+        result = parser.parse(expression)
+        print(result)
 
-        # Convert to string representation if it's not a simple type
-        if isinstance(simplified, (int, bool, type(None))):
-            simplified_str = str(simplified)
-        elif isinstance(simplified, list):
-            # It's still a list (not fully simplified), convert to readable format
-            simplified_str = str(simplified)
-        else:
-            simplified_str = str(simplified)
+        # Serialize the full value for JSON response
+        serialized_value = serialize_value(result)
+
+        # Create string representation
+        simplified_str = value_to_string(result)
+
+        # Only include simplified if it's different from the input
+        simplified = simplified_str if simplified_str != expression else None
 
         return jsonify(
             {
                 "valid": True,
-                "simplified": simplified_str if simplified_str != expression else None,
+                "value": serialized_value,
+                "simplified": simplified,
                 "error": None,
             }
         )
     except DSLValidationError as e:
-        return jsonify({"valid": False, "simplified": None, "error": str(e)})
+        return jsonify(
+            {"valid": False, "value": None, "simplified": None, "error": str(e)}
+        )
     except Exception as e:
         return jsonify(
-            {"valid": False, "simplified": None, "error": f"Parse error: {str(e)}"}
+            {
+                "valid": False,
+                "value": None,
+                "simplified": None,
+                "error": f"Parse error: {str(e)}",
+            }
         )
 
 
