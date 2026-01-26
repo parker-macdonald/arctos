@@ -7,9 +7,9 @@
 // atoms are all the non-list types.
 // identifiers are like. variable names for lambdas.
 
-?atom: INT -> int_atom
-     | BOOL -> bool_atom
+?atom: BOOL -> bool_atom
      | NIL -> nil_atom
+     | INT -> int_atom
      | TEAM -> team_atom
      | MATCH -> match_atom
      | IDENTIFIER -> identifier_atom
