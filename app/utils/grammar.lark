@@ -29,8 +29,11 @@ TEAM: "[" /[^\]]+/ "]"
 MATCH: "{" /[^}]+/ "}"
 
 // Identifier for function names, variables, etc.
-// Note: Must come after INT to avoid matching negative numbers
-IDENTIFIER: /[a-zA-Z_+*\/=><!&][a-zA-Z0-9_\-+*\/=><!&]*/ | /[a-zA-Z_]/
+// Note: INT is defined before IDENTIFIER, so INT will match - followed by digits first
+// The - operator must be allowed as an identifier for subtraction
+// Pattern: - followed by non-digit (or end of input), or other identifiers
+// We use a negative lookahead-like pattern: - not followed by digit
+IDENTIFIER: /-(?![0-9])/ | /-[a-zA-Z_+*\/=><!&][a-zA-Z0-9_\-+*\/=><!&]*/ | /[a-zA-Z_+*\/=><!&][a-zA-Z0-9_\-+*\/=><!&]*/ | /[a-zA-Z_]/
 
 // Whitespace handling
 %import common.WS

@@ -97,6 +97,39 @@ class Match(db.Model):
         post_update=True,
         backref="next_of",
     )
+
+    def get_skip_condition_dependencies(self) -> dict[str, set[str]]:
+        """
+        Analyze the skip condition to determine which matches it depends on.
+
+        Returns:
+            Dictionary with keys:
+            - "direct": Set of match names that must be completed (winner/loser determined)
+              for this skip condition to evaluate fully
+            - "skip_condition": Set of match names whose skip_conditions must be evaluable
+              (reducible to a boolean) for this skip condition to evaluate fully
+
+        Example:
+            If skip_condition is "(== 0 (losses [winner::Match1]))", this will return:
+            {
+                "direct": {"Match1"},  # Match1 must be completed to know its winner
+                "skip_condition": set()  # No skip-condition dependencies
+            }
+
+            If skip_condition is "(skip-condition {Match2})", this will return:
+            {
+                "direct": set(),
+                "skip_condition": {"Match2"}  # Match2's skip condition must be evaluable
+            }
+        """
+        from app.utils.dsl_dependency_analyzer import MatchDependencyAnalyzer
+
+        if not self.skip_condition:
+            return {"direct": set(), "skip_condition": set()}
+
+        analyzer = MatchDependencyAnalyzer(self.event)
+        return analyzer.analyze(self.skip_condition)
+
     team1_registration = db.relationship(
         "TeamRegistration",
         primaryjoin="and_(Match.team1 == foreign(TeamRegistration.team), Match.event == TeamRegistration.event)",

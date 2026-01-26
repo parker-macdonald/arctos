@@ -2585,7 +2585,6 @@ def validate_dsl(tournament_url):
     try:
         parser = get_parser(tournament_url)
         result = parser.parse(expression)
-        print(result)
 
         # Serialize the full value for JSON response
         serialized_value = serialize_value(result)
