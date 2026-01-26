@@ -82,7 +82,9 @@ def apply_match_dependencies(tournament_url: str, completed_match: Match) -> Non
                             refs_current_list[i] = initial_ref
                         else:
                             # Try to resolve as tag reference
-                            resolved_team = resolve_tag_to_team(initial_ref, tournament_url)
+                            resolved_team = resolve_tag_to_team(
+                                initial_ref, tournament_url
+                            )
                             if resolved_team:
                                 refs_current_list[i] = resolved_team
 

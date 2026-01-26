@@ -206,7 +206,7 @@ class MatchScheduleSerializer:
         # Clear team1/team2/refs (they are derived from _initial fields)
         # But populate explicit team IDs and resolved tag references from _initial fields
         from app.utils.helpers import resolve_tag_to_team
-        
+
         team1 = None
         if team1_initial:
             if is_explicit_team_id(team1_initial):
