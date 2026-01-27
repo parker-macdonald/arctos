@@ -1,3 +1,4 @@
+
 from __future__ import annotations
 
 import uuid
@@ -110,7 +111,7 @@ class Match(db.Model):
               (reducible to a boolean) for this skip condition to evaluate fully
 
         Example:
-            If skip_condition is "(== 0 (losses [winner::Match1]))", this will return:
+            If skip_condition is "(== 0 (losses [Match1::winner]))", this will return:
             {
                 "direct": {"Match1"},  # Match1 must be completed to know its winner
                 "skip_condition": set()  # No skip-condition dependencies

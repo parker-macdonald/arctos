@@ -49,8 +49,11 @@ class TeamRegistrationStatus(StrEnum):
 
 class MatchStatus(StrEnum):
     NOT_STARTED = "NOT_STARTED"
+    TIME_FINALIZED = "TIME_FINALIZED"
+    READY_TO_START = "READY_TO_START"
     IN_PROGRESS = "IN_PROGRESS"
     COMPLETED = "COMPLETED"
+    SKIPPED = "SKIPPED"
 
 
 class ScheduleType(StrEnum):
