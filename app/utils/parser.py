@@ -137,19 +137,19 @@ def parse_team_literal(literal: str, event: str):
     else:
         split = literal.split("::")
         assert len(split) == 2, f"Invalid team literal: {literal}"
-        base, suffix = split
-        if base == "winner":
-            match_obj = MatchDB.query.filter_by(name=suffix, event=event).first()
+        match_name, qualifier = split
+        if qualifier == "winner":
+            match_obj = MatchDB.query.filter_by(name=match_name, event=event).first()
             if not match_obj:
-                raise DSLValidationError(f"Match {suffix} not found")
+                raise DSLValidationError(f"Match {match_name} not found")
             return Match(match_obj, event).winner()
-        elif base == "loser":
-            match_obj = MatchDB.query.filter_by(name=suffix, event=event).first()
+        elif qualifier == "loser":
+            match_obj = MatchDB.query.filter_by(name=match_name, event=event).first()
             if not match_obj:
-                raise DSLValidationError(f"Match {suffix} not found")
+                raise DSLValidationError(f"Match {match_name} not found")
             return Match(match_obj, event).loser()
-        elif base == "tag":
-            tag = Tag.query.filter_by(name=suffix, event=event).first()
+        elif match_name == "tag":
+            tag = Tag.query.filter_by(name=qualifier, event=event).first()
             if not tag or not tag.team:
                 # Return symbolic team if tag doesn't exist or isn't set
                 return SymbolicTeam(literal, event)
@@ -247,7 +247,7 @@ class Match:
         winner = self.obj.winner_team_id
         if winner is None:
             # Return symbolic representation instead of None
-            return SymbolicTeam(f"winner::{self.obj.name}", self.url)
+            return SymbolicTeam(f"{self.obj.name}::winner", self.url)
         team_obj = TeamDB.query.filter_by(id=winner).first()
         if team_obj:
             return Team(team_obj, self.url)
@@ -257,7 +257,7 @@ class Match:
         loser = self.obj.loser_team_id
         if loser is None:
             # Return symbolic representation instead of None
-            return SymbolicTeam(f"loser::{self.obj.name}", self.url)
+            return SymbolicTeam(f"{self.obj.name}::loser", self.url)
         team_obj = TeamDB.query.filter_by(id=loser).first()
         if team_obj:
             return Team(team_obj, self.url)

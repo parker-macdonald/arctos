@@ -102,18 +102,18 @@ class MatchDependencyAnalyzer:
             # The context will determine the dependency type
             pass  # Handled by parent list node
         elif tree.data == "team_atom":
-            # Team atoms might contain match references like [winner::Match1]
+            # Team atoms might contain match references like [Match1::winner]
             # Extract match names from team literals
             if tree.children:
                 token = tree.children[0]
                 if isinstance(token, Token):
                     team_literal = token.value[1:-1]  # Remove brackets
-                    # Check if it's a winner:: or loser:: reference
+                    # Check if it's a MatchName::winner or MatchName::loser reference
                     if "::" in team_literal:
                         parts = team_literal.split("::", 1)
                         if len(parts) == 2:
-                            base, match_name = parts
-                            if base in {"winner", "loser"}:
+                            match_name, qualifier = parts
+                            if qualifier in {"winner", "loser"}:
                                 # This is a direct dependency (match must be completed to know winner/loser)
                                 dependencies["direct"].add(match_name)
                                 # Recursively analyze this match's skip condition if not already visited
@@ -201,7 +201,7 @@ class MatchDependencyAnalyzer:
                             )
                     # Also recursively visit to find nested dependencies
                     self._visit(arg, dependencies, visited_matches)
-                # Also visit first argument (TEAM) to find match references in team literals like [winner::Match1]
+                # Also visit first argument (TEAM) to find match references in team literals like [Match1::winner]
                 if tree.children[1:]:
                     self._visit(tree.children[1], dependencies, visited_matches)
 
@@ -270,7 +270,7 @@ class MatchDependencyAnalyzer:
     def _find_all_match_atoms(self, tree, matches: Set[str]):
         """
         Recursively find all match atoms in a tree and add them to the set.
-        Also finds match names in team literals like [winner::Match1].
+        Also finds match names in team literals like [Match1::winner].
 
         Args:
             tree: Tree node to search
@@ -286,16 +286,16 @@ class MatchDependencyAnalyzer:
             if isinstance(token, Token):
                 matches.add(token.value[1:-1])  # Remove braces
         elif tree.data == "team_atom" and tree.children:
-            # Extract match names from team literals like [winner::Match1] or [loser::Match1]
+            # Extract match names from team literals like [Match1::winner] or [Match1::loser]
             token = tree.children[0]
             if isinstance(token, Token):
                 team_literal = token.value[1:-1]  # Remove brackets
-                # Check if it's a winner:: or loser:: reference
+                # Check if it's a MatchName::winner or MatchName::loser reference
                 if "::" in team_literal:
                     parts = team_literal.split("::", 1)
                     if len(parts) == 2:
-                        base, match_name = parts
-                        if base in {"winner", "loser"}:
+                        match_name, qualifier = parts
+                        if qualifier in {"winner", "loser"}:
                             matches.add(match_name)
 
         # Recursively visit all children

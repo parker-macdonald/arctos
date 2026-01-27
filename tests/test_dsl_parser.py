@@ -478,8 +478,8 @@ class TestMatchReferences:
             parser = get_parser(tournament_with_data["tournament_url"])
             match1_name = tournament_with_data["match1_name"]
 
-            # winner::Match1 should be team1
-            team = parser.parse(f"[winner::{match1_name}]")
+            # Match1::winner should be team1
+            team = parser.parse(f"[{match1_name}::winner]")
             assert hasattr(team, "obj")
             assert team.obj.id == "team1"
 
@@ -489,8 +489,8 @@ class TestMatchReferences:
             parser = get_parser(tournament_with_data["tournament_url"])
             match1_name = tournament_with_data["match1_name"]
 
-            # loser::Match1 should be team2
-            team = parser.parse(f"[loser::{match1_name}]")
+            # Match1::loser should be team2
+            team = parser.parse(f"[{match1_name}::loser]")
             assert hasattr(team, "obj")
             assert team.obj.id == "team2"
 
@@ -673,7 +673,8 @@ class TestSkipConditionIntegration:
             match3 = Match.query.filter_by(
                 event=tournament_url, name=match3_name
             ).first()
-            match3.skip_condition = "(> (losses [winner::Match1]) 0)"
+            match1_name = tournament_with_data["match1_name"]
+            match3.skip_condition = f"(> (losses [{match1_name}::winner]) 0)"
             db.session.commit()
 
             # team1 (winner of match1) has 0 losses, so this should be False
