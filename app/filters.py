@@ -80,7 +80,10 @@ def render_markdown(text):
         output_format="html5",
     )
 
-    return Markup(bleach.linkify(html))
+    html = bleach.linkify(html)
+    # Wrap in a class so CSS can scale images to fit their container
+    html = f'<div class="markdown-content">{html}</div>'
+    return Markup(html)
 
 
 @bp.app_template_filter("localtime")
