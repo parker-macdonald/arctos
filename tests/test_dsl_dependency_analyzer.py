@@ -2,7 +2,7 @@
 Tests for the DSL dependency analyzer.
 
 Tests the MatchDependencyAnalyzer which analyzes skip-condition expressions
-to find match dependencies.
+(is-skipped, winner, loser, etc.) to find match dependencies.
 """
 
 import pytest
@@ -63,11 +63,11 @@ class TestMatchDependencyAnalyzer:
             assert result["skip_condition"] == set()
 
     @pytest.mark.unit
-    def test_skip_condition_dependency(self, app, tournament):
-        """Test skip-condition dependency."""
+    def test_is_skipped_dependency(self, app, tournament):
+        """Test is-skipped dependency."""
         with app.app_context():
             analyzer = MatchDependencyAnalyzer(tournament.url)
-            result = analyzer.analyze("(skip-condition {Match2})")
+            result = analyzer.analyze("(is-skipped {Match2})")
             assert result["direct"] == set()
             assert result["skip_condition"] == {"Match2"}
 
@@ -76,12 +76,12 @@ class TestMatchDependencyAnalyzer:
         """Test the complex expression with if statement."""
         with app.app_context():
             analyzer = MatchDependencyAnalyzer(tournament.url)
-            expression = "(skip-condition (if (== [teamnamehere] (winner {matchnamehere})) {othermatchname} {othermatchname2}))"
+            expression = "(is-skipped (if (== [teamnamehere] (winner {matchnamehere})) {othermatchname} {othermatchname2}))"
             result = analyzer.analyze(expression)
 
             # Should have matchnamehere as direct dependency (from winner call)
             assert "matchnamehere" in result["direct"]
-            # Should have othermatchname and othermatchname2 as skip-condition dependencies
+            # Should have othermatchname and othermatchname2 as skip_condition dependencies (is-skipped)
             assert "othermatchname" in result["skip_condition"]
             assert "othermatchname2" in result["skip_condition"]
             # matchnamehere should NOT be in skip_condition (it's a direct dependency)
@@ -100,39 +100,35 @@ class TestMatchDependencyAnalyzer:
             assert result["skip_condition"] == set()
 
     @pytest.mark.unit
-    def test_nested_skip_condition_dependencies(self, app, tournament):
-        """Test transitive skip-condition dependencies."""
+    def test_is_skipped_no_transitive_deps(self, app, tournament):
+        """Test that is-skipped does not add transitive skip_condition deps."""
         with app.app_context():
-            # Create matches with nested skip conditions
             match1 = Match(
                 name="Match1",
                 event=tournament.url,
-                skip_condition="true",
+                skip_condition="(is-skipped {Other})",
             )
             match2 = Match(
                 name="Match2",
                 event=tournament.url,
-                skip_condition="(skip-condition {Match1})",
+                skip_condition="(is-skipped {Match1})",
             )
             db.session.add_all([match1, match2])
             db.session.commit()
 
             analyzer = MatchDependencyAnalyzer(tournament.url)
-            result = analyzer.analyze("(skip-condition {Match2})")
-
-            # Match2 depends on Match1's skip condition
-            assert "Match2" in result["skip_condition"]
-            # Match1 should also be in skip_condition (transitive)
-            assert "Match1" in result["skip_condition"]
+            # (is-skipped {Match2}) only depends on Match2's status, not Match2's skip_condition
+            result = analyzer.analyze("(is-skipped {Match2})")
+            assert result["skip_condition"] == {"Match2"}
             assert result["direct"] == set()
 
     @pytest.mark.unit
     def test_mixed_dependencies(self, app, tournament):
-        """Test expression with both direct and skip-condition dependencies."""
+        """Test expression with both direct and skip_condition dependencies."""
         with app.app_context():
             analyzer = MatchDependencyAnalyzer(tournament.url)
             result = analyzer.analyze(
-                "(and (winner {Match1}) (skip-condition {Match2}))"
+                "(and (winner {Match1}) (is-skipped {Match2}))"
             )
             assert "Match1" in result["direct"]
             assert "Match2" in result["skip_condition"]
@@ -140,28 +136,26 @@ class TestMatchDependencyAnalyzer:
             assert "Match2" not in result["direct"]
 
     @pytest.mark.unit
-    def test_cycle_detection(self, app, tournament):
-        """Test that cycles in skip-condition dependencies don't cause infinite loops."""
+    def test_is_skipped_single_match(self, app, tournament):
+        """Test is-skipped with a single match (no recursion)."""
         with app.app_context():
-            # Create a cycle: Match1 depends on Match2, Match2 depends on Match1
             match1 = Match(
                 name="Match1",
                 event=tournament.url,
-                skip_condition="(skip-condition {Match2})",
+                skip_condition="(is-skipped {Match2})",
             )
             match2 = Match(
                 name="Match2",
                 event=tournament.url,
-                skip_condition="(skip-condition {Match1})",
+                skip_condition="(is-skipped {Match1})",
             )
             db.session.add_all([match1, match2])
             db.session.commit()
 
             analyzer = MatchDependencyAnalyzer(tournament.url)
-            # This should not hang or raise an error
-            result = analyzer.analyze("(skip-condition {Match1})")
-            assert "Match1" in result["skip_condition"]
-            assert "Match2" in result["skip_condition"]
+            result = analyzer.analyze("(is-skipped {Match1})")
+            assert result["skip_condition"] == {"Match1"}
+            assert result["direct"] == set()
 
     @pytest.mark.unit
     def test_match_model_method(self, app, tournament):
@@ -170,7 +164,7 @@ class TestMatchDependencyAnalyzer:
             match = Match(
                 name="TestMatch",
                 event=tournament.url,
-                skip_condition="(skip-condition (if (== [teamnamehere] (winner {matchnamehere})) {othermatchname} {othermatchname2}))",
+                skip_condition="(is-skipped (if (== [teamnamehere] (winner {matchnamehere})) {othermatchname} {othermatchname2}))",
             )
             db.session.add(match)
             db.session.commit()

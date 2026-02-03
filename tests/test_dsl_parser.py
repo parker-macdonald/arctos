@@ -260,39 +260,38 @@ class TestMatchOperations:
             assert loser.obj.id == "team2"
 
     @pytest.mark.unit
-    def test_skip_condition(self, app, tournament_with_data):
+    def test_is_skipped(self, app, tournament_with_data):
+        """(is-skipped MATCH) returns True if status SKIPPED, False if IN_PROGRESS/COMPLETED, symbolic otherwise."""
+        from app.domain.enums import MatchStatus
+
         with app.app_context():
             parser = get_parser(tournament_with_data["tournament_url"])
             tournament_url = tournament_with_data["tournament_url"]
             match3_name = tournament_with_data["match3_name"]
-
-            # Match with no skip condition should return False
-            assert parser.parse(f"(skip-condition {{{match3_name}}})") is False
-
-            # Match with skip condition true
             match3 = Match.query.filter_by(
                 event=tournament_url, name=match3_name
             ).first()
-            match3.skip_condition = "true"
-            db.session.commit()
-            assert parser.parse(f"(skip-condition {{{match3_name}}})") is True
 
-            # Match with skip condition false
-            match3 = Match.query.filter_by(
-                event=tournament_url, name=match3_name
-            ).first()
-            match3.skip_condition = "false"
+            # SKIPPED -> True
+            match3.status = MatchStatus.SKIPPED
             db.session.commit()
-            assert parser.parse(f"(skip-condition {{{match3_name}}})") is False
+            assert parser.parse(f"(is-skipped {{{match3_name}}})") is True
 
-            # Match with skip condition expression
-            match3 = Match.query.filter_by(
-                event=tournament_url, name=match3_name
-            ).first()
-            match3.skip_condition = "(== 0 (losses [team1]))"
+            # IN_PROGRESS -> False
+            match3.status = MatchStatus.IN_PROGRESS
             db.session.commit()
-            # team1 has 0 losses, so this should be True
-            assert parser.parse(f"(skip-condition {{{match3_name}}})") is True
+            assert parser.parse(f"(is-skipped {{{match3_name}}})") is False
+
+            # COMPLETED -> False
+            match3.status = MatchStatus.COMPLETED
+            db.session.commit()
+            assert parser.parse(f"(is-skipped {{{match3_name}}})") is False
+
+            # NOT_STARTED -> symbolic (stays as expression)
+            match3.status = MatchStatus.NOT_STARTED
+            db.session.commit()
+            result = parser.parse(f"(is-skipped {{{match3_name}}})")
+            assert isinstance(result, list) and result[0] == "is-skipped"
 
 
 class TestListOperations:
@@ -626,77 +625,75 @@ class TestErrorHandling:
 
 
 class TestSkipConditionIntegration:
-    """Test skip-condition expressions in realistic scenarios."""
+    """Test skip_condition expressions that use is-skipped."""
 
     @pytest.mark.unit
-    def test_skip_if_team_has_losses(self, app, tournament_with_data):
+    def test_skip_condition_with_is_skipped(self, app, tournament_with_data):
+        """Parsing a match's skip_condition (is-skipped Other) reflects Other's status."""
+        from app.domain.enums import MatchStatus
+
         with app.app_context():
             parser = get_parser(tournament_with_data["tournament_url"])
             tournament_url = tournament_with_data["tournament_url"]
             match3_name = tournament_with_data["match3_name"]
-
-            # Skip if team2 has any losses (team2 has 2 losses)
-            match3 = Match.query.filter_by(
-                event=tournament_url, name=match3_name
-            ).first()
-            match3.skip_condition = "(> (losses [team2]) 0)"
-            db.session.commit()
-
-            result = parser.parse(f"(skip-condition {{{match3_name}}})")
-            assert result is True
-
-    @pytest.mark.unit
-    def test_skip_if_team_undefeated(self, app, tournament_with_data):
-        with app.app_context():
-            parser = get_parser(tournament_with_data["tournament_url"])
-            tournament_url = tournament_with_data["tournament_url"]
-            match3_name = tournament_with_data["match3_name"]
-
-            # Skip if team1 is undefeated (team1 has 0 losses)
-            match3 = Match.query.filter_by(
-                event=tournament_url, name=match3_name
-            ).first()
-            match3.skip_condition = "(== 0 (losses [team1]))"
-            db.session.commit()
-
-            result = parser.parse(f"(skip-condition {{{match3_name}}})")
-            assert result is True
-
-    @pytest.mark.unit
-    def test_skip_based_on_match_result(self, app, tournament_with_data):
-        with app.app_context():
-            parser = get_parser(tournament_with_data["tournament_url"])
-            tournament_url = tournament_with_data["tournament_url"]
-            match3_name = tournament_with_data["match3_name"]
-
-            # Skip match3 if match1's winner has losses
-            match3 = Match.query.filter_by(
-                event=tournament_url, name=match3_name
-            ).first()
             match1_name = tournament_with_data["match1_name"]
-            match3.skip_condition = f"(> (losses [{match1_name}::winner]) 0)"
+
+            # match3's skip_condition: skip if match1 is skipped
+            match3 = Match.query.filter_by(
+                event=tournament_url, name=match3_name
+            ).first()
+            match1 = Match.query.filter_by(
+                event=tournament_url, name=match1_name
+            ).first()
+            match3.skip_condition = f"(is-skipped {{{match1_name}}})"
             db.session.commit()
 
-            # team1 (winner of match1) has 0 losses, so this should be False
-            result = parser.parse(f"(skip-condition {{{match3_name}}})")
+            match1.status = MatchStatus.SKIPPED
+            db.session.commit()
+            result = parser.parse(match3.skip_condition)
+            assert result is True
+
+            match1.status = MatchStatus.COMPLETED
+            db.session.commit()
+            result = parser.parse(match3.skip_condition)
             assert result is False
 
     @pytest.mark.unit
-    def test_skip_with_logical_combination(self, app, tournament_with_data):
+    def test_skip_condition_or_is_skipped(self, app, tournament_with_data):
+        """skip_condition (or (is-skipped A) (is-skipped B)) evaluates from status."""
+        from app.domain.enums import MatchStatus
+
         with app.app_context():
             parser = get_parser(tournament_with_data["tournament_url"])
             tournament_url = tournament_with_data["tournament_url"]
+            match1_name = tournament_with_data["match1_name"]
+            match2_name = tournament_with_data["match2_name"]
             match3_name = tournament_with_data["match3_name"]
 
-            # Skip if team1 has wins AND team2 has losses
             match3 = Match.query.filter_by(
                 event=tournament_url, name=match3_name
             ).first()
-            match3.skip_condition = "(and (> (wins [team1]) 0) (> (losses [team2]) 0))"
+            match3.skip_condition = f"(or (is-skipped {{{match1_name}}}) (is-skipped {{{match2_name}}}))"
             db.session.commit()
 
-            result = parser.parse(f"(skip-condition {{{match3_name}}})")
-            assert result is True  # Both conditions are true
+            # Neither skipped -> False
+            Match.query.filter_by(event=tournament_url, name=match1_name).update(
+                {"status": MatchStatus.COMPLETED}
+            )
+            Match.query.filter_by(event=tournament_url, name=match2_name).update(
+                {"status": MatchStatus.COMPLETED}
+            )
+            db.session.commit()
+            result = parser.parse(match3.skip_condition)
+            assert result is False
+
+            # match1 skipped -> True
+            Match.query.filter_by(event=tournament_url, name=match1_name).update(
+                {"status": MatchStatus.SKIPPED}
+            )
+            db.session.commit()
+            result = parser.parse(match3.skip_condition)
+            assert result is True
 
 
 class TestLambdaAdvanced:

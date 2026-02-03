@@ -2,7 +2,7 @@
 Dependency analyzer for DSL skip-condition expressions.
 
 This module provides functionality to analyze DSL expressions and determine
-which matches they depend on, and what type of dependency (direct or skip-condition).
+which matches they depend on, and what type of dependency (direct or skip_condition).
 """
 
 from lark import Lark, Tree, Token
@@ -16,7 +16,7 @@ class MatchDependencyAnalyzer:
 
     Dependencies are categorized as:
     - direct: The match must be completed (winner/loser determined) for the expression to evaluate
-    - skip_condition: The match's skip_condition must be reducible to a boolean for this expression
+    - skip_condition: The match's status must be known for (is-skipped MATCH) to evaluate
     """
 
     # Functions that require match completion (direct dependencies)
@@ -29,8 +29,8 @@ class MatchDependencyAnalyzer:
     # Functions where match is the second argument (first is TEAM)
     DIRECT_DEPENDENCY_FUNCTIONS_MATCH_SECOND = {"points-won", "points-lost"}
 
-    # Functions that require skip-condition evaluation
-    SKIP_CONDITION_DEPENDENCY_FUNCTIONS = {"skip-condition"}
+    # Functions that require match status (is-skipped: need status to be known)
+    SKIP_CONDITION_DEPENDENCY_FUNCTIONS = {"is-skipped"}
 
     def __init__(self, event: str):
         """
@@ -51,13 +51,13 @@ class MatchDependencyAnalyzer:
         Analyze a DSL expression to find match dependencies.
 
         Args:
-            expression: DSL expression string (skip-condition)
+            expression: DSL expression string (skip condition, may use is-skipped)
             visited_matches: Set of match names already being analyzed (for cycle detection)
 
         Returns:
             Dictionary with keys:
             - "direct": Set of match names that must be completed
-            - "skip_condition": Set of match names whose skip_conditions must be evaluable
+            - "skip_condition": Set of match names whose status must be known (is-skipped)
         """
         if not expression or not expression.strip():
             return {"direct": set(), "skip_condition": set()}
@@ -116,11 +116,6 @@ class MatchDependencyAnalyzer:
                             if qualifier in {"winner", "loser"}:
                                 # This is a direct dependency (match must be completed to know winner/loser)
                                 dependencies["direct"].add(match_name)
-                                # Recursively analyze this match's skip condition if not already visited
-                                if match_name not in visited_matches:
-                                    self._analyze_match_skip_condition(
-                                        match_name, dependencies, visited_matches
-                                    )
         elif tree.data in {"expression", "atom", "start"}:
             # Visit children (these are wrapper nodes)
             for child in tree.children:
@@ -180,11 +175,6 @@ class MatchDependencyAnalyzer:
                     match_name = self._extract_match_name(arg)
                     if match_name:
                         dependencies["direct"].add(match_name)
-                        # Recursively analyze this match's skip condition if not already visited
-                        if match_name not in visited_matches:
-                            self._analyze_match_skip_condition(
-                                match_name, dependencies, visited_matches
-                            )
                     # Also recursively visit to find nested dependencies
                     self._visit(arg, dependencies, visited_matches)
             elif function_name in self.DIRECT_DEPENDENCY_FUNCTIONS_MATCH_SECOND:
@@ -194,11 +184,6 @@ class MatchDependencyAnalyzer:
                     match_name = self._extract_match_name(arg)
                     if match_name:
                         dependencies["direct"].add(match_name)
-                        # Recursively analyze this match's skip condition if not already visited
-                        if match_name not in visited_matches:
-                            self._analyze_match_skip_condition(
-                                match_name, dependencies, visited_matches
-                            )
                     # Also recursively visit to find nested dependencies
                     self._visit(arg, dependencies, visited_matches)
                 # Also visit first argument (TEAM) to find match references in team literals like [Match1::winner]
@@ -208,32 +193,14 @@ class MatchDependencyAnalyzer:
         elif (
             function_name and function_name in self.SKIP_CONDITION_DEPENDENCY_FUNCTIONS
         ):
-            # skip-condition takes a MATCH argument, but it might be an expression that evaluates to a match
-            # We need to find all match atoms in the argument expression
+            # is-skipped(MATCH) needs the match's status; no recursive skip_condition analysis
             for arg in tree.children[1:]:
-                # Find all match atoms in the argument (could be nested in if expressions, etc.)
                 match_atoms = set()
                 self._find_all_match_atoms(arg, match_atoms)
-
-                # All match atoms found in the skip-condition argument are skip-condition dependencies
-                # BUT: if a match is used in a winner/loser/etc call, it's a direct dependency, not skip-condition
-                # So we'll add them as skip-condition for now, but the recursive visit will add direct ones too
                 for match_name in match_atoms:
                     dependencies["skip_condition"].add(match_name)
-                    # Recursively analyze this match's skip condition (if not already visited)
-                    if match_name not in visited_matches:
-                        visited_matches.add(match_name)
-                        self._analyze_match_skip_condition(
-                            match_name, dependencies, visited_matches
-                        )
-                        visited_matches.remove(match_name)
 
-                # Also recursively visit to find other dependencies (like winner calls)
-                # This will find direct dependencies and add them
                 self._visit(arg, dependencies, visited_matches)
-
-                # Remove any matches from skip_condition if they're also direct dependencies
-                # (a match can't be both - if it's used in winner/loser, it's direct)
                 dependencies["skip_condition"] -= dependencies["direct"]
 
         # Recursively visit all children
@@ -302,42 +269,3 @@ class MatchDependencyAnalyzer:
         for child in tree.children:
             self._find_all_match_atoms(child, matches)
 
-    def _analyze_match_skip_condition(
-        self,
-        match_name: str,
-        dependencies: Dict[str, Set[str]],
-        visited_matches: Set[str],
-    ):
-        """
-        Recursively analyze a match's skip condition to find transitive dependencies.
-
-        This method handles transitive dependencies: if match A's skip condition depends on
-        match B's skip condition, then match A transitively depends on match B.
-
-        Args:
-            match_name: Name of the match whose skip condition to analyze
-            dependencies: Dictionary to accumulate dependencies
-            visited_matches: Set of matches already being analyzed (for cycle detection)
-        """
-        try:
-            from app.models import Match
-            from flask import has_app_context
-
-            # Only query database if we're in an app context
-            if not has_app_context():
-                return
-
-            # Query the match's skip condition
-            match = Match.query.filter_by(name=match_name, event=self.event).first()
-            if not match or not match.skip_condition:
-                return
-
-            # Analyze the skip condition recursively with cycle detection
-            # Pass the visited_matches set to prevent infinite recursion
-            skip_cond_deps = self.analyze(match.skip_condition, visited_matches)
-            dependencies["direct"].update(skip_cond_deps["direct"])
-            dependencies["skip_condition"].update(skip_cond_deps["skip_condition"])
-        except Exception:
-            # If we can't query the database (e.g., no app context, import errors, etc.),
-            # just skip the recursive analysis. The direct dependencies are still found.
-            pass

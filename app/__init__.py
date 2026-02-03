@@ -2,6 +2,9 @@
 Tournament site Flask application factory.
 """
 
+import threading
+import time
+
 from flask import Flask
 from flask_login import LoginManager
 import os
@@ -141,6 +144,48 @@ def create_app(config=None):
     from app.error_handlers import register_error_handlers
 
     register_error_handlers(app)
+
+    # On boot: recompute schedule for all tournaments that are not complete (end_date in future or None)
+    try:
+        with app.app_context():
+            from datetime import datetime, timezone
+            from models import Tournament
+            from app.utils.scheduling import recompute_all_match_times
+            now = datetime.now(timezone.utc)
+            for t in Tournament.query.all():
+                if t.end_date is None:
+                    not_complete = True
+                else:
+                    end_utc = t.end_date.replace(tzinfo=timezone.utc) if t.end_date.tzinfo is None else t.end_date
+                    not_complete = end_utc >= now
+                if not_complete:
+                    try:
+                        recompute_all_match_times(t.url, after_create_edit=True)
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+
+    # Run scheduled scheduling callbacks every minute (in-process, no cron needed)
+    def _run_pending_callbacks_loop():
+        from app.utils.scheduling import (
+            get_tournaments_with_pending_callbacks,
+            run_pending_callbacks,
+        )
+        while True:
+            time.sleep(60)
+            try:
+                with app.app_context():
+                    for tournament_url in get_tournaments_with_pending_callbacks():
+                        try:
+                            run_pending_callbacks(tournament_url)
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
+    _callback_thread = threading.Thread(target=_run_pending_callbacks_loop, daemon=True)
+    _callback_thread.start()
 
     @app.errorhandler(413)
     def too_large(e):

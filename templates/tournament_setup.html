@@ -69,7 +69,15 @@
                             </div>
                         </div>
                     </div>
-                    
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3" id="min_warning_container" style="display: none;">
+                                <label for="min_warning" class="form-label">Min warning (minutes)</label>
+                                <input type="number" class="form-control" id="min_warning" name="min_warning" value="{{ matches[-1].min_warning if matches and matches[-1].min_warning is not none else 5 }}" min="0" title="Minutes before nominal start when time is finalized">
+                                <div class="form-text">Default: previous match's value</div>
+                            </div>
+                        </div>
+                    </div>
                     <div class="row">
                         <div class="col-md-6">
                             <div class="mb-3" id="start_time_container">
@@ -162,14 +170,14 @@
                         </div>
                     </div>
 
-                    <div class="row">
+                    <div class="row" id="skip_condition_container" style="display: none;">
                         <div class="col-md-12">
                             <div class="mb-3">
                                 <label for="skip_condition" class="form-label">Skip Condition</label>
                                 <input type="text" class="form-control" id="skip_condition" name="skip_condition" 
                                        placeholder="e.g., (== 0 (losses [Ursae Majoris]))">
                                 <div class="form-text">
-                                    Optional expression that evaluates to a boolean. If true, this match will be skipped. Defaults to false.
+                                    Optional expression that evaluates to a boolean. If true, this match will be skipped. Only for Dynamic and Break matches.
                                     <a href="#" class="text-decoration-none" data-bs-toggle="modal" data-bs-target="#dslHelpModal">
                                         <small>(skip condition help)</small>
                                     </a>
@@ -186,8 +194,11 @@
             </div>
         </div>
         <div class="card">
-            <div class="card-header">
+            <div class="card-header d-flex justify-content-between align-items-center">
                 <h5 class="mb-0">Match Schedule</h5>
+                <form method="POST" action="/{{ tournament.url }}/recompute-schedule" class="d-inline" onsubmit="return confirm('Recompute all match times and statuses as if a match were just edited?');">
+                    <button type="submit" class="btn btn-outline-primary btn-sm">Recompute schedule</button>
+                </form>
             </div>
             <div class="card-body">
                 {% if matches %}
@@ -309,7 +320,7 @@
                                             {% endif %}">
                                             {{ match.status.replace('_', ' ').title() }}
                                         </span>
-                                        {% if match.time_finalized %}
+                                        {% if match.is_time_finalized %}
                                             <span class="badge bg-primary ms-1" title="Time finalized - match start time is locked">Time Finalized</span>
                                         {% endif %}
                                         {% if match.ready_to_start %}
@@ -761,7 +772,7 @@
                 <ul>
                     <li><code>(== A B)</code> - Equality comparison</li>
                     <li><code>(> A B)</code>, <code>(< A B)</code>, <code>(>= A B)</code>, <code>(<= A B)</code> - Numeric comparisons</li>
-                    <li><code>(and A B)</code>, <code>(or A B)</code> - Logical operations</li>
+                    <li><code>(and A B)</code>, <code>(or A B)</code>, <code>(not A)</code> - Logical operations</li>
                 </ul>
                 
                 <h6>Team Operations</h6>
@@ -772,7 +783,7 @@
                     <li><code>(points-lost [TeamName])</code> - Total points lost by a team</li>
                     <li><code>(points-won [TeamName] {MatchName})</code> - Points won in a specific match</li>
                     <li><code>(points-lost [TeamName] {MatchName})</code> - Points lost in a specific match</li>
-                    <li><code>(skip-condition {MatchName})</code> - Skip condition for a match</li>
+                    <li><code>(is-skipped {MatchName})</code> - True if match status is SKIPPED, false if IN_PROGRESS or COMPLETED</li>
                 </ul>
                 
                 <h6>Match Operations</h6>
@@ -1121,6 +1132,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const dynamicSelect = document.getElementById('dynamic');
     const startTimeContainer = document.getElementById('start_time_container');
     const previousMatchContainer = document.getElementById('previous_match_container');
+    const minWarningContainer = document.getElementById('min_warning_container');
     const startTimeInput = document.getElementById('start_time');
     const previousMatchSelect = document.getElementById('previous_match');
     const fieldSelect = document.getElementById('field');
@@ -1224,6 +1236,7 @@ document.addEventListener('DOMContentLoaded', function() {
         if (isDynamic) {
             startTimeContainer.style.display = 'none';
             previousMatchContainer.style.display = 'block';
+            if (minWarningContainer) minWarningContainer.style.display = 'block';
             startTimeInput.value = ''; // Clear value for dynamic matches
             
             if (matchTypeValue === 'JOIN') {
@@ -1243,6 +1256,7 @@ document.addEventListener('DOMContentLoaded', function() {
         } else {
             startTimeContainer.style.display = 'block';
             previousMatchContainer.style.display = 'none';
+            if (minWarningContainer) minWarningContainer.style.display = 'none';
             previousMatchSelect.value = ''; // Clear previous match selection
             dynamicHelp.textContent = 'Static matches require a manual start time and are automatically sequenced by time.';
         }
@@ -1283,6 +1297,14 @@ document.addEventListener('DOMContentLoaded', function() {
         if (nsetsContainer) nsetsContainer.style.display = isBreakOrJoin ? 'none' : 'block';
         if (ribbonContainer) ribbonContainer.style.display = isBreakOrJoin ? 'none' : 'block';
         if (stonesField) stonesField.style.display = isBreakOrJoin ? 'none' : 'none'; // Hide for BREAK/JOIN, will be shown below if STONES
+
+        // Skip condition only for DYNAMIC and BREAK (not STATIC or JOIN)
+        const skipConditionContainer = document.getElementById('skip_condition_container');
+        if (skipConditionContainer) {
+            const showSkipCondition = matchTypeValue === 'true' || matchTypeValue === 'BREAK';
+            skipConditionContainer.style.display = showSkipCondition ? 'flex' : 'none';
+            if (!showSkipCondition) document.getElementById('skip_condition').value = '';
+        }
         
         // JOIN has zero length, disable length input
         if (matchTypeValue === 'JOIN') {
