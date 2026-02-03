@@ -9,7 +9,7 @@ this is a lisp based language with the following simple options:
 (points-lost TEAM MATCH) -> INT
 (points-won TEAM) -> INT
 (points-lost TEAM) -> INT
-(skip-condition MATCH) -> BOOL
+(is-skipped MATCH) -> BOOL
 
 (+ INT INT) -> INT
 (- INT INT) -> INT
@@ -22,6 +22,7 @@ this is a lisp based language with the following simple options:
 (== ANY ANY) -> BOOL
 (or BOOL BOOL) -> BOOL
 (and BOOL BOOL) -> BOOL
+(not BOOL) -> BOOL
 
 (if COND IF_TRUE IF_FALSE)
 
@@ -300,13 +301,14 @@ class Simplifier:
         "==",
         "or",
         "and",
+        "not",
         "wins",
         "losses",
         "winner",
         "loser",
         "points-won",
         "points-lost",
-        "skip-condition",
+        "is-skipped",
     }
 
     def __init__(self, parse_team_literal, parse_match_literal, env=None):
@@ -577,7 +579,7 @@ class Simplifier:
             # Handle arithmetic and comparison operators
             elif head in {"+", "-", "*", "/", ">", "<", ">=", "<=", "=="}:
                 return self._evaluate_binary_op(head, args)
-            elif head in {"or", "and"}:
+            elif head in {"or", "and", "not"}:
                 return self._evaluate_logical_op(head, args)
             # Handle team/match operations
             elif head == "wins":
@@ -592,8 +594,8 @@ class Simplifier:
                 return self._evaluate_points_won(head, args)
             elif head == "points-lost":
                 return self._evaluate_points_lost(head, args)
-            elif head == "skip-condition":
-                return self._evaluate_skip_condition(head, args)
+            elif head == "is-skipped":
+                return self._evaluate_is_skipped(head, args)
             else:
                 # Unknown function name
                 raise DSLValidationError(f"No symbol named '{head}'")
@@ -806,9 +808,17 @@ class Simplifier:
 
     def _evaluate_logical_op(self, op, args):
         """Evaluate logical operations."""
+        if op=="not":
+            self.validate_arg_count(op, args, 1)
+            a, = args
+            if isinstance(a, (SymbolicTeam, SymbolicMatch, list)):
+                return [op, a]
+            a_bool = a is not None and a is not False
+            return not a_bool
+        
         self._validate_arg_count(op, args, 2)
         a, b = args
-
+        
         # Check for symbolic values or preserved expressions - preserve if found
         if isinstance(a, (SymbolicTeam, SymbolicMatch)) or isinstance(
             b, (SymbolicTeam, SymbolicMatch)
@@ -817,19 +827,19 @@ class Simplifier:
         if isinstance(a, list) or isinstance(b, list):
             # One of the operands is a preserved expression
             return [op, a, b]
-
+        
         # Convert to boolean for logical operations
         # In Lisp-like languages, anything non-nil is truthy
         a_bool = a is not None and a is not False
         b_bool = b is not None and b is not False
-
+        
         if op == "or":
             return a_bool or b_bool
         elif op == "and":
             return a_bool and b_bool
         else:
             raise DSLValidationError(f"Unknown logical operator: {op}")
-
+        
     def _evaluate_wins(self, head, args):
         """Evaluate (wins TEAM) expression."""
         self._validate_arg_count(head, args, 1)
@@ -952,44 +962,31 @@ class Simplifier:
                 f"({head} ...) expects 1 or 2 arguments, got {len(args)}"
             )
 
-    def _evaluate_skip_condition(self, head, args):
-        """Evaluate (skip-condition MATCH) expression."""
+    def _evaluate_is_skipped(self, head, args):
+        """Evaluate (is-skipped MATCH) expression.
+
+        Returns True if match status is SKIPPED, False if IN_PROGRESS or COMPLETED,
+        otherwise stays symbolic (NOT_STARTED, TIME_FINALIZED, READY_TO_START).
+        """
+        from app.domain.enums import MatchStatus
+
         self._validate_arg_count(head, args, 1)
         match = args[0]
         if not isinstance(match, Match):
             return [head, match]  # Can't simplify if match is not resolved
 
-        # Get the match's skip_condition
-        skip_condition = (
-            match.obj.skip_condition if hasattr(match.obj, "skip_condition") else None
-        )
+        status = getattr(match.obj, "status", None)
+        if status is None:
+            return [head, match]  # Stay symbolic
 
-        if not skip_condition or not skip_condition.strip():
-            # No skip condition, return False (match should not be skipped)
+        # Normalize to string for comparison (DB may store as enum or string)
+        status_str = str(status) if status else None
+        if status_str == MatchStatus.SKIPPED:
+            return True
+        if status_str in (MatchStatus.IN_PROGRESS, MatchStatus.COMPLETED):
             return False
-
-        # Try to parse and simplify the skip_condition
-        try:
-            # Get parser for this event
-            parser = get_parser(match.url)
-            # Parse and simplify the skip_condition expression
-            tree = parser.parse(skip_condition.strip())
-            # tree is already simplified by the transformer
-
-            # The tree should be fully evaluated now
-            if isinstance(tree, bool):
-                return tree
-            # If it's None (NIL), treat as False
-            if tree is None:
-                return False
-            # If it's not a boolean, that's an error
-            raise DSLValidationError(
-                f"skip-condition must evaluate to a boolean, got {type(tree).__name__}"
-            )
-        except DSLValidationError:
-            raise
-        except Exception as e:
-            raise DSLValidationError(f"Error evaluating skip-condition: {str(e)}")
+        # NOT_STARTED, TIME_FINALIZED, READY_TO_START: stay symbolic
+        return [head, match]
 
     def _evaluate_cons(self, head, args):
         """Evaluate (cons ...) expression - creates a list from arguments."""
@@ -1231,26 +1228,34 @@ class Simplifier:
         return min_elem
 
 
-def get_parser(event: str):
+def get_parser(event: str, match_resolver=None):
+    """
+    Create a parser for the given event (tournament URL).
+
+    If match_resolver is provided, it is used to resolve match names when
+    parsing (e.g. for skip_condition). It should be a callable(name) -> Match
+    or SymbolicMatch. This avoids DB reads when matches are already in memory.
+    """
     import os
 
     grammar_path = os.path.join(os.path.dirname(__file__), "grammar.lark")
     with open(grammar_path, "r") as g:
-        # Create parser without transformer (we'll use Interpreter)
         parser = Lark(g, parser="lalr")
 
-        def parse(text):
-            # Parse to get Tree
-            tree = parser.parse(text)
+        parse_match = (
+            match_resolver
+            if match_resolver is not None
+            else (lambda x: parse_match_literal(x, event))
+        )
 
-            # Interpret with top-down control
+        def parse(text):
+            tree = parser.parse(text)
             interpreter = Simplifier(
                 lambda x: parse_team_literal(x, event),
-                lambda x: parse_match_literal(x, event),
+                parse_match,
             )
             return interpreter.visit(tree)
 
-        # Create a parser-like object
         class Parser:
             def __init__(self, parse_func):
                 self.parse = parse_func

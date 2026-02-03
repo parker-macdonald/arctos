@@ -376,7 +376,7 @@
                                                                         {{ match.status.replace('_', ' ').title() }}
                                                                     </span>
                                                                 {% endif %}
-                                                                {% if match.status != 'COMPLETED' and ((match.schedule_type == 'STATIC') or match.time_finalized) %}
+                                                                {% if match.status != 'COMPLETED' and ((match.schedule_type == 'STATIC') or match.is_time_finalized) %}
                                                                     <span class="badge bg-primary ms-1" title="Time finalized">Time Finalized</span>
                                                                 {% endif %}
                                                             </div>
@@ -653,7 +653,7 @@
                                                 <span class="badge bg-secondary">{{ match.status }}</span>
                                             {% endif %}
                                         {% endif %}
-                                        {% if match.status != 'COMPLETED' and ((match.schedule_type == 'STATIC') or match.time_finalized) %}
+                                        {% if match.status != 'COMPLETED' and ((match.schedule_type == 'STATIC') or match.is_time_finalized) %}
                                             <span class="badge bg-primary ms-1" title="Time finalized">Time Finalized</span>
                                         {% endif %}
                                     </td>

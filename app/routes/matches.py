@@ -1170,13 +1170,7 @@ def finalize_match_post(tournament_url):
     except Exception as e:
         print(f"Dependency update error for match {match.name}: {e}")
 
-    # Update dynamic schedule after completion (marks dependent matches as ready to start)
-    # try:
-    #     update_dynamic_schedule_after_completion(tournament_url, match)
-    # except Exception as e:
-    #     print(f"Dynamic scheduling update error for match {match.name}: {e}")
-
-    # Recompute all match times with the new algorithm
+    # Recompute all match times (MatchGraph-based scheduler)
     try:
         from app.utils.scheduling import recompute_all_match_times
 

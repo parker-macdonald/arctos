@@ -72,16 +72,16 @@ class Match(db.Model):
     camera_stream_starts = db.Column(
         db.Text
     )  # JSON object mapping camera_index to stream start time (ISO format)
-    time_finalized = db.Column(
-        db.Boolean, default=False
-    )  # True when start time is finalized (all dependencies started)
     previous_match = db.Column(
         db.String(36), db.ForeignKey("matches.uuid"), nullable=True
     )
     next_match = db.Column(db.String(36), db.ForeignKey("matches.uuid"), nullable=True)
     skip_condition = db.Column(
-        db.Text
+        db.Text, default="false"
     )  # DSL expression that determines if match should be skipped
+    min_warning = db.Column(
+        db.Integer, default=5
+    )  # Minutes before nominal start to finalize time (scheduling)
 
     # Relationships
     previous_match_obj = db.relationship(
@@ -107,21 +107,15 @@ class Match(db.Model):
             Dictionary with keys:
             - "direct": Set of match names that must be completed (winner/loser determined)
               for this skip condition to evaluate fully
-            - "skip_condition": Set of match names whose skip_conditions must be evaluable
-              (reducible to a boolean) for this skip condition to evaluate fully
+            - "skip_condition": Set of match names whose status must be known for (is-skipped MATCH)
+              to evaluate
 
         Example:
             If skip_condition is "(== 0 (losses [Match1::winner]))", this will return:
-            {
-                "direct": {"Match1"},  # Match1 must be completed to know its winner
-                "skip_condition": set()  # No skip-condition dependencies
-            }
+            {"direct": {"Match1"}, "skip_condition": set()}
 
-            If skip_condition is "(skip-condition {Match2})", this will return:
-            {
-                "direct": set(),
-                "skip_condition": {"Match2"}  # Match2's skip condition must be evaluable
-            }
+            If skip_condition is "(is-skipped {Match2})", this will return:
+            {"direct": set(), "skip_condition": {"Match2"}}
         """
         from app.utils.dsl_dependency_analyzer import MatchDependencyAnalyzer
 
@@ -177,8 +171,14 @@ class Match(db.Model):
             case _:
                 return None
 
+    @property
+    def is_time_finalized(self) -> bool:
+        """True when start time is locked: status is TIME_FINALIZED or any later state (READY_TO_START, IN_PROGRESS, COMPLETED, SKIPPED)."""
+        if self.status is None:
+            return False
+        return self.status != MatchStatus.NOT_STARTED
+
     def finalize(self) -> None:
-        self.time_finalized = True
         self.finalized_at = datetime.now(timezone.utc).replace(tzinfo=None)
         if self.schedule_type in ("JOIN", "BREAK"):
             self.confirmed_start_time = self.nominal_start_time

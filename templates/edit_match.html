@@ -73,7 +73,15 @@
                             </div>
                         </div>
                     </div>
-                    
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3" id="min_warning_container" {% if match.schedule_type == 'STATIC' %}style="display: none;"{% endif %}>
+                                <label for="min_warning" class="form-label">Min warning (minutes)</label>
+                                <input type="number" class="form-control" id="min_warning" name="min_warning" value="{{ match.min_warning if match.min_warning is not none else 5 }}" min="0" title="Minutes before nominal start when time is finalized">
+                                <div class="form-text">Minutes before nominal start when time is finalized</div>
+                            </div>
+                        </div>
+                    </div>
                     <div class="row">
                         <div class="col-md-6">
                             <div class="mb-3" id="start_time_container" {% if match.schedule_type != 'STATIC' %}style="display: none;"{% endif %}>
@@ -167,14 +175,14 @@
                         </div>
                     </div>
 
-                    <div class="row">
+                    <div class="row" id="skip_condition_container" {% if match.schedule_type not in ('DYNAMIC', 'BREAK') %}style="display: none;"{% endif %}>
                         <div class="col-md-12">
                             <div class="mb-3">
                                 <label for="skip_condition" class="form-label">Skip Condition</label>
                                 <input type="text" class="form-control" id="skip_condition" name="skip_condition" 
-                                       placeholder="e.g., (== 0 (losses [Ursae Majoris]))">
+                                       value="{{ match.skip_condition or '' }}" placeholder="e.g., (== 0 (losses [Ursae Majoris]))">
                                 <div class="form-text">
-                                    Optional expression that evaluates to a boolean. If true, this match will be skipped. Defaults to false.
+                                    Optional expression that evaluates to a boolean. If true, this match will be skipped. Only for Dynamic and Break matches.
                                     <a href="#" class="text-decoration-none" data-bs-toggle="modal" data-bs-target="#dslHelpModal">
                                         <small>(skip condition help)</small>
                                     </a>
@@ -533,6 +541,7 @@ document.addEventListener('DOMContentLoaded', function() {
     // Handle dynamic/static scheduling toggle
     const startTimeContainer = document.getElementById('start_time_container');
     const previousMatchContainer = document.getElementById('previous_match_container');
+    const minWarningContainer = document.getElementById('min_warning_container');
     const startTimeInput = document.getElementById('start_time');
     const previousMatchSelect = document.getElementById('previous_match');
     const fieldSelect = document.getElementById('field');
@@ -619,6 +628,7 @@ document.addEventListener('DOMContentLoaded', function() {
         if (isDynamic) {
             startTimeContainer.style.display = 'none';
             previousMatchContainer.style.display = 'block';
+            if (minWarningContainer) minWarningContainer.style.display = 'block';
             startTimeInput.value = ''; // Clear value for dynamic matches
             
             if (matchTypeValue === 'JOIN') {
@@ -635,6 +645,7 @@ document.addEventListener('DOMContentLoaded', function() {
         } else {
             startTimeContainer.style.display = 'block';
             previousMatchContainer.style.display = 'none';
+            if (minWarningContainer) minWarningContainer.style.display = 'none';
             previousMatchSelect.value = ''; // Clear previous match selection
             dynamicHelp.textContent = 'Static matches require a manual start time and are automatically sequenced by time.';
             // Value will be set by base.html script from data-utc attribute
@@ -700,6 +711,17 @@ document.addEventListener('DOMContentLoaded', function() {
         } else {
             if (lengthInput) lengthInput.disabled = false;
         }
+
+        // Skip condition only for DYNAMIC and BREAK (not STATIC or JOIN)
+        const skipConditionContainer = document.getElementById('skip_condition_container');
+        if (skipConditionContainer) {
+            const showSkipCondition = matchTypeValue === 'true' || matchTypeValue === 'BREAK';
+            skipConditionContainer.style.display = showSkipCondition ? 'flex' : 'none';
+            if (!showSkipCondition) {
+                const skipInput = document.getElementById('skip_condition');
+                if (skipInput) skipInput.value = '';
+            }
+        }
         
         // Update start time visibility based on match type selection
         updateStartTimeVisibility();
@@ -741,7 +763,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 <ul>
                     <li><code>(== A B)</code> - Equality comparison</li>
                     <li><code>(> A B)</code>, <code>(< A B)</code>, <code>(>= A B)</code>, <code>(<= A B)</code> - Numeric comparisons</li>
-                    <li><code>(and A B)</code>, <code>(or A B)</code> - Logical operations</li>
+                    <li><code>(and A B)</code>, <code>(or A B)</code>, <code>(not A)</code> - Logical operations</li>
                 </ul>
                 
                 <h6>Team Operations</h6>
@@ -752,7 +774,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     <li><code>(points-lost [TeamName])</code> - Total points lost by a team</li>
                     <li><code>(points-won [TeamName] {MatchName})</code> - Points won in a specific match</li>
                     <li><code>(points-lost [TeamName] {MatchName})</code> - Points lost in a specific match</li>
-                    <li><code>(skip-condition {MatchName})</code> - Skip condition for a match</li>
+                    <li><code>(is-skipped {MatchName})</code> - True if match status is SKIPPED, false if IN_PROGRESS or COMPLETED</li>
                 </ul>
                 
                 <h6>Match Operations</h6>

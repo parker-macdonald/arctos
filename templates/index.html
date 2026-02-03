@@ -102,6 +102,50 @@
                 <p>Check back later for upcoming events!</p>
             </div>
         {% endif %}
+
+        <h2 class="mt-5">Past events</h2>
+        {% if past_tournaments %}
+            <div class="row">
+                {% for tournament in past_tournaments %}
+                <div class="col-md-6 col-lg-4">
+                    <a href="/{{ tournament.url }}" class="card tournament-card text-decoration-none" style="display:block;">
+                        <div class="card-body">
+                            <h5 class="card-title">{{ tournament.name }}</h5>
+                            <p class="card-text">
+                                <i class="fas fa-calendar"></i>
+                                {% if tournament.end_date and tournament.end_date != tournament.start_date %}
+                                    {{ tournament.start_date.strftime('%B %d, %Y') }} - {{ tournament.end_date.strftime('%B %d, %Y') }}
+                                {% else %}
+                                    {{ tournament.start_date.strftime('%B %d, %Y') }}
+                                {% endif %}<br>
+                                <i class="fas fa-map-marker-alt"></i> {{ tournament.location or 'TBA' }}
+                                <br>
+                                {% set reg_count = team_counts.get(tournament.url, 0) %}
+                                {% if tournament.n_max_teams %}
+                                    <small class="text-muted">{{ reg_count }}/{{ tournament.n_max_teams }} teams registered</small>
+                                {% else %}
+                                    <small class="text-muted">{{ reg_count }} teams registered</small>
+                                {% endif %}
+                                {% if current_user.is_authenticated and user_reg_status and user_reg_status.get(tournament.url) %}
+                                    <br>
+                                    {% set urs = user_reg_status.get(tournament.url) %}
+                                    {% if urs.type == 'team' %}
+                                        <span class="badge {% if urs.status == 'CONFIRMED' %}bg-success{% else %}bg-warning{% endif %}">Team {{ urs.status or 'REGISTERED' }}</span>
+                                        <span class="badge {% if urs.paid %}bg-success{% else %}bg-warning{% endif %}">{% if urs.paid %}Paid{% else %}Unpaid{% endif %}</span>
+                                    {% elif urs.type == 'player' %}
+                                        <span class="badge {% if urs.status == 'CONFIRMED' %}bg-success{% elif urs.status == 'PENDING_TEAM_APPROVAL' %}bg-warning{% else %}bg-secondary{% endif %}">Player {{ urs.status }}</span>
+                                        <span class="badge {% if urs.paid %}bg-success{% else %}bg-warning{% endif %}">{% if urs.paid %}Paid{% else %}Unpaid{% endif %}</span>
+                                    {% endif %}
+                                {% endif %}
+                            </p>
+                        </div>
+                    </a>
+                </div>
+                {% endfor %}
+            </div>
+        {% else %}
+            <p class="text-muted">No past events to show.</p>
+        {% endif %}
     </div>
 </div>
 

@@ -841,8 +841,19 @@ def tournament_setup(tournament_url):
         event=tournament_url, status="CONFIRMED"
     ).all()
 
-    # Detect conflicts across all matches
-    conflicts = detect_match_conflicts(tournament_url)
+    # Detect conflicts across all matches; template expects dict match_uuid -> list of description strings
+    raw_conflicts = detect_match_conflicts(tournament_url)
+    name_to_uuids = {}
+    for m in matches:
+        name_to_uuids.setdefault(m.name, []).append(m.uuid)
+    conflicts = {}
+    for c in raw_conflicts:
+        desc1 = f"Overlaps with {c['match2']} on {c['field']}"
+        desc2 = f"Overlaps with {c['match1']} on {c['field']}"
+        for uid in name_to_uuids.get(c["match1"], []):
+            conflicts.setdefault(uid, []).append(desc1)
+        for uid in name_to_uuids.get(c["match2"], []):
+            conflicts.setdefault(uid, []).append(desc2)
 
     return render_template(
         "tournament_setup.html",
@@ -853,6 +864,20 @@ def tournament_setup(tournament_url):
         team_registrations=team_registrations,
         conflicts=conflicts,
     )
+
+
+@bp.route("/<tournament_url>/recompute-schedule", methods=["POST"])
+@login_required
+def recompute_schedule(tournament_url):
+    """Force full recompute of match times as if a match were just edited (TO only)."""
+    if is_not_TO(tournament_url):
+        return redirect(f"/{tournament_url}")
+    try:
+        recompute_all_match_times(tournament_url, after_create_edit=True)
+        flash("Schedule recomputed successfully.", "success")
+    except Exception as e:
+        flash(f"Recompute failed: {e}", "error")
+    return redirect(f"/{tournament_url}/setup")
 
 
 @bp.route("/<tournament_url>/export-schedule")
@@ -1571,7 +1596,27 @@ def add_match(tournament_url):
         if has_explicit_ids:
             final_refs = ", ".join(refs_list)
 
-    skip_condition = request.form.get("skip_condition", "").strip() or None
+    # Skip condition only for DYNAMIC and BREAK; clear for STATIC and JOIN
+    skip_condition_raw = request.form.get("skip_condition", "").strip() or None
+    skip_condition = (
+        skip_condition_raw
+        if schedule_type in (ScheduleType.DYNAMIC, ScheduleType.BREAK)
+        else None
+    )
+
+    # min_warning: from form, or previous match's value when previous_match is set, else 5
+    min_warning_val = request.form.get("min_warning")
+    if min_warning_val not in (None, ""):
+        min_warning_val = int(min_warning_val)
+    else:
+        prev_match_id = request.form.get("previous_match", "")
+        if prev_match_id:
+            prev_m = Match.query.get(prev_match_id)
+            min_warning_val = (
+                (prev_m.min_warning if prev_m and prev_m.min_warning is not None else 5)
+            )
+        else:
+            min_warning_val = 5
 
     match = Match(
         name=match_name,
@@ -1594,6 +1639,7 @@ def add_match(tournament_url):
         refs_initial=refs_initial,
         stones_per_set=stones_per_set_value,
         skip_condition=skip_condition,
+        min_warning=min_warning_val,
     )
 
     db.session.add(match)
@@ -1655,6 +1701,11 @@ def add_match(tournament_url):
         return redirect(f"/{tournament_url}/setup")
 
     db.session.commit()
+
+    try:
+        recompute_all_match_times(tournament_url, after_create_edit=True)
+    except Exception:
+        pass
 
     flash("Match added successfully!", "success")
     return redirect(f"/{tournament_url}/setup")
@@ -2188,9 +2239,20 @@ def update_match(tournament_url):
             request.form.get("length", match.nominal_length or 60)
         )
 
-    # Update skip_condition
-    skip_condition = request.form.get("skip_condition", "").strip() or None
-    match.skip_condition = skip_condition
+    # Update skip_condition (only for DYNAMIC and BREAK; clear for STATIC and JOIN)
+    skip_condition_raw = request.form.get("skip_condition", "").strip() or None
+    match.skip_condition = (
+        skip_condition_raw
+        if schedule_type in (ScheduleType.DYNAMIC, ScheduleType.BREAK)
+        else None
+    )
+
+    # Update min_warning (only meaningful for dynamic scheduling)
+    min_warning_val = request.form.get("min_warning")
+    if min_warning_val not in (None, ""):
+        match.min_warning = int(min_warning_val)
+    elif match.min_warning is None:
+        match.min_warning = 5
 
     # If refs_initial changed, clear refs and repopulate with explicit team IDs and resolved tag references
     old_refs_initial = match.refs_initial or ""
@@ -2282,7 +2344,7 @@ def update_match(tournament_url):
     db.session.flush()  # Flush before updating sequence
 
     # Recompute all match times (for all dynamic matches that depend on this one)
-    recompute_all_match_times(tournament_url)
+    recompute_all_match_times(tournament_url, after_create_edit=True)
 
     db.session.commit()
     flash("Match updated successfully!", "success")
@@ -2321,24 +2383,6 @@ def update_tags(tournament_url):
 
     db.session.commit()
     flash(f"Successfully updated {updated_count} tag(s)", "success")
-    return redirect(f"/{tournament_url}/setup")
-
-
-@bp.route("/<tournament_url>/recompute-schedule", methods=["POST"])
-@login_required
-def recompute_schedule(tournament_url):
-    """Recompute all match times for troubleshooting."""
-    if is_not_TO(tournament_url):
-        return redirect(f"/{tournament_url}")
-
-    try:
-        recompute_all_match_times(tournament_url)
-        db.session.commit()
-        flash("Schedule recomputed successfully", "success")
-    except Exception as e:
-        flash(f"Error recomputing schedule: {str(e)}", "error")
-        print(f"Error recomputing schedule: {e}")
-
     return redirect(f"/{tournament_url}/setup")
 
 
@@ -2402,7 +2446,7 @@ def push_back_matches(tournament_url):
             )
             updated_count += 1
 
-        # Also push back confirmed_start_time if it exists (even for time_finalized matches)
+        # Also push back confirmed_start_time if it exists (even when start time is already finalized)
         if match.confirmed_start_time:
             match.confirmed_start_time = match.confirmed_start_time + timedelta(
                 minutes=minutes
