@@ -54,6 +54,12 @@
         .admonition.tip { border-color: #198754; background-color: #e9f7ef; }
         .admonition.warning { border-color: #ffc107; background-color: #fff8e1; }
         .admonition.danger { border-color: #dc3545; background-color: #fdecea; }
+        /* Scale markdown images to fit container */
+        .markdown-content img {
+            max-width: 100%;
+            height: auto;
+            object-fit: contain;
+        }
         /* Style markdown tables */
         .card-body table,
         .card-body table.table {

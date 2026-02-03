@@ -26,16 +26,20 @@
 
 <div class="row">
     <div class="col-12">
-        <h2>Upcoming Tournaments</h2>
         {% if tournaments %}
-            <div class="row">
+            <h2 class="mb-3">Upcoming Events</h2>
+            <div id="upcoming-events" class="row mb-4"></div>
+            <h2 class="mb-3">Past Events</h2>
+            <div id="past-events" class="row"></div>
+            <div id="all-tournaments" class="d-none" aria-hidden="true">
                 {% for tournament in tournaments %}
-                <div class="col-md-6 col-lg-4">
+                {% set event_end = tournament.end_date or tournament.start_date %}
+                <div class="col-md-6 col-lg-4 tournament-card-wrapper" data-end-date="{{ event_end.isoformat() }}" data-start-date="{{ tournament.start_date.isoformat() }}">
                     <a href="/{{ tournament.url }}" class="card tournament-card text-decoration-none" style="display:block;">
                         <div class="card-body">
                             <h5 class="card-title">{{ tournament.name }}</h5>
                             <p class="card-text">
-                                <i class="fas fa-calendar"></i> 
+                                <i class="fas fa-calendar"></i>
                                 {% if tournament.end_date and tournament.end_date != tournament.start_date %}
                                     {{ tournament.start_date.strftime('%B %d, %Y') }} - {{ tournament.end_date.strftime('%B %d, %Y') }}
                                 {% else %}
@@ -66,10 +70,36 @@
                 </div>
                 {% endfor %}
             </div>
+            <script>
+            (function() {
+                var today = new Date();
+                today.setHours(0, 0, 0, 0);
+                var wrapper = document.getElementById('all-tournaments');
+                var cards = Array.prototype.slice.call(wrapper.querySelectorAll('.tournament-card-wrapper'));
+                var upcoming = document.getElementById('upcoming-events');
+                var past = document.getElementById('past-events');
+                var upcomingList = [], pastList = [];
+                cards.forEach(function(card) {
+                    var endStr = card.getAttribute('data-end-date');
+                    var endDate = new Date(endStr);
+                    endDate.setHours(0, 0, 0, 0);
+                    if (endDate >= today) {
+                        upcomingList.push({ el: card, start: card.getAttribute('data-start-date'), end: endStr });
+                    } else {
+                        pastList.push({ el: card, end: endStr });
+                    }
+                });
+                upcomingList.sort(function(a, b) { return a.start.localeCompare(b.start); });
+                pastList.sort(function(a, b) { return b.end.localeCompare(a.end); });
+                upcomingList.forEach(function(item) { upcoming.appendChild(item.el); });
+                pastList.forEach(function(item) { past.appendChild(item.el); });
+            })();
+            </script>
         {% else %}
+            <h2>Upcoming Events</h2>
             <div class="alert alert-info">
                 <h4>No tournaments available</h4>
-                <p>Check back later for upcoming tournaments!</p>
+                <p>Check back later for upcoming events!</p>
             </div>
         {% endif %}
     </div>
