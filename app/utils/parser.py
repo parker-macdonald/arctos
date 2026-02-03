@@ -183,7 +183,6 @@ class Team:
         self.url = event
         self.obj = obj
 
-    @lru_cache
     def points_won(self, m=None):
         # Filter Point columns first (before join) to reduce join set
         query = PointDB.query.filter(PointDB.rerolled == False)
@@ -199,7 +198,6 @@ class Team:
         )
         return query.count()
 
-    @lru_cache
     def points_lost(self, m=None):
         query = PointDB.query.filter(PointDB.rerolled == False)
         if m is not None:
@@ -213,7 +211,6 @@ class Team:
         )
         return query.count()
 
-    @lru_cache
     def wins(self):
         return (
             MatchDB.query.filter_by(
@@ -224,7 +221,6 @@ class Team:
             ).count()
         )
 
-    @lru_cache
     def losses(self):
         return (
             MatchDB.query.filter_by(

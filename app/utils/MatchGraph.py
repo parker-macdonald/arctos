@@ -10,10 +10,15 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from datetime import datetime, timedelta
-from typing import Optional, Set, Dict, List
+from typing import Optional, Set, Dict, List, Tuple
 
 from app.models.match import Match
 from app.domain.enums import ScheduleType, MatchStatus
+
+
+def _node_key(name: str, field: Optional[str]) -> Tuple[str, str]:
+    """Canonical key for a node: (name, field or ''). Matches with same name on different fields get different keys."""
+    return (name, field or "")
 
 
 class MatchGraphNode:
@@ -32,8 +37,10 @@ class MatchGraphNode:
         status: MatchStatus,
         component_uuids: Optional[Set[str]] = None,
         min_warning: int = 5,
+        field: Optional[str] = None,
     ):
         self.name = name
+        self.field = field or ""
         self.uuid = uuid
         self.nominal_start_time = nominal_start_time
         self.nominal_length = nominal_length
@@ -124,9 +131,9 @@ def _node_end_time(node: MatchGraphNode) -> Optional[datetime]:
     """Effective end time of a node (confirmed_end_time or start + length fallbacks)."""
     if node.confirmed_end_time:
         return node.confirmed_end_time
-    if node.confirmed_start_time and node.nominal_length:
+    if node.confirmed_start_time:
         return node.confirmed_start_time + timedelta(minutes=node.nominal_length)
-    if node.nominal_start_time and node.nominal_length:
+    if node.nominal_start_time:
         return node.nominal_start_time + timedelta(minutes=node.nominal_length)
     return None
 
@@ -192,51 +199,51 @@ class MatchGraph:
     """
     Directed acyclic graph (DAG) representation of matches for scheduling.
 
-    Nodes represent matches (or groups of JOIN matches with the same name).
+    Nodes represent matches (or groups of JOIN matches with the same name on the same field).
+    Keys are (name, field) so matches with the same name on different fields are distinct nodes.
     Edges represent dependencies: if match A depends on match B, there is an edge B -> A.
-
-    This allows efficient topological sorting without repeated database queries.
     """
 
     def __init__(self):
-        # Map from match name to node (for JOIN matches, all components share one node)
-        self.nodes_by_name: Dict[str, MatchGraphNode] = {}
-        # Map from match UUID to node name (for reverse lookup)
-        self.uuid_to_name: Dict[str, str] = {}
-        # Map from match name to set of component UUIDs (for JOIN matches)
-        self.name_to_uuids: Dict[str, Set[str]] = defaultdict(set)
+        # Map from (name, field) to node. Same name on different fields = different nodes.
+        self.nodes_by_key: Dict[Tuple[str, str], MatchGraphNode] = {}
+        # Map from match UUID to (name, field) for reverse lookup
+        self.uuid_to_key: Dict[str, Tuple[str, str]] = {}
+        # Map from (name, field) to set of component UUIDs (for JOIN matches)
+        self.key_to_uuids: Dict[Tuple[str, str], Set[str]] = defaultdict(set)
 
     def add_node(self, node: MatchGraphNode) -> None:
-        """Add a node to the graph."""
-        self.nodes_by_name[node.name] = node
-        self.uuid_to_name[node.uuid] = node.name
+        """Add a node to the graph. Key is (node.name, node.field)."""
+        key = _node_key(node.name, node.field)
+        self.nodes_by_key[key] = node
+        self.uuid_to_key[node.uuid] = key
         if node.component_uuids:
-            self.name_to_uuids[node.name].update(node.component_uuids)
+            self.key_to_uuids[key].update(node.component_uuids)
         else:
-            self.name_to_uuids[node.name].add(node.uuid)
+            self.key_to_uuids[key].add(node.uuid)
 
-    def get_node(self, name: str) -> Optional[MatchGraphNode]:
-        """Get a node by match name."""
-        return self.nodes_by_name.get(name)
+    def get_node(self, name: str, field: Optional[str] = None) -> Optional[MatchGraphNode]:
+        """Get a node by match name and field. field defaults to ''."""
+        key = _node_key(name, field)
+        return self.nodes_by_key.get(key)
 
     def add_dependency(
         self,
-        dependent_name: str,
-        dependency_name: str,
+        dependent_key: Tuple[str, str],
+        dependency_key: Tuple[str, str],
         *,
         is_skip_condition: bool = False,
     ) -> None:
         """
-        Add a dependency edge: dependent_name depends on dependency_name.
+        Add a dependency edge: dependent depends on dependency.
 
         Args:
-            dependent_name: Name of the match that depends on another
-            dependency_name: Name of the match that is depended upon
-            is_skip_condition: If True, use startOfMatchDep (effective time = start);
-                if False, use endOfMatchDep (effective time = end).
+            dependent_key: (name, field) of the match that depends on another
+            dependency_key: (name, field) of the match that is depended upon
+            is_skip_condition: If True, use startOfMatchDep; if False, use endOfMatchDep.
         """
-        dependent = self.nodes_by_name.get(dependent_name)
-        dependency_node = self.nodes_by_name.get(dependency_name)
+        dependent = self.nodes_by_key.get(dependent_key)
+        dependency_node = self.nodes_by_key.get(dependency_key)
 
         if dependent and dependency_node:
             dep: Dependency = (
@@ -270,18 +277,17 @@ class MatchGraph:
         # Kahn's algorithm for topological sort
         # Calculate in-degree for each node
         in_degree: Dict[MatchGraphNode, int] = {
-            node: len(node.dependencies) for node in self.nodes_by_name.values()
+            node: len(node.dependencies) for node in self.nodes_by_key.values()
         }
 
         # Queue of nodes with no incoming edges
         queue: List[MatchGraphNode] = [node for node, degree in in_degree.items() if degree == 0]
 
-        result: List[str] = []
+        result: List[Tuple[str, str]] = []
 
         while queue:
-            # Remove a node with no incoming edges
             node = queue.pop(0)
-            result.append(node.name)
+            result.append(_node_key(node.name, node.field))
 
             # For each dependent, reduce in-degree
             for dependent_node in node.dependents:
@@ -290,15 +296,15 @@ class MatchGraph:
                     queue.append(dependent_node)
 
         # Check for cycles
-        if len(result) != len(self.nodes_by_name):
-            remaining = set(self.nodes_by_name.keys()) - set(result)
+        if len(result) != len(self.nodes_by_key):
+            remaining = set(self.nodes_by_key.keys()) - set(result)
             raise ValueError(f"Cycle detected in match dependencies. Remaining nodes: {remaining}")
 
         return result
 
     def get_all_nodes(self) -> List[MatchGraphNode]:
         """Get all nodes in the graph."""
-        return list(self.nodes_by_name.values())
+        return list(self.nodes_by_key.values())
 
 
 def _extract_match_references(text: str) -> List[tuple[str, str]]:
@@ -351,136 +357,162 @@ def build_match_graph(
 
     graph = MatchGraph()
 
-    # Map from match name to list of Match objects (for handling JOIN matches)
-    matches_by_name: Dict[str, List[Match]] = defaultdict(list)
-    # Map from UUID to Match object
+    # Map from (name, field) to list of Match objects (for non-JOIN and for dependency resolution)
+    matches_by_key: Dict[Tuple[str, str], List[Match]] = defaultdict(list)
+    # JOIN matches grouped by name only: one logical node per name across all fields
+    joins_by_name: Dict[str, List[Match]] = defaultdict(list)
     matches_by_uuid: Dict[str, Match] = {}
 
     for match in all_matches:
-        matches_by_name[match.name].append(match)
+        key = _node_key(match.name, getattr(match, "field", None))
+        matches_by_key[key].append(match)
         matches_by_uuid[match.uuid] = match
+        if match.schedule_type == ScheduleType.JOIN:
+            joins_by_name[match.name].append(match)
 
-    # Create nodes: JOIN matches with the same name share a single node
-    for match_name, match_list in matches_by_name.items():
-        # Check if any of these matches are JOIN type
-        join_matches = [m for m in match_list if m.schedule_type == ScheduleType.JOIN]
+    join_names: Set[str] = set(joins_by_name.keys())
 
-        if join_matches:
-            # All JOIN matches with the same name form a single node
-            # Use the first one as the representative, but collect all UUIDs
-            representative = join_matches[0]
-            component_uuids = {m.uuid for m in join_matches}
+    def dep_key_for_match(m: Match) -> Tuple[str, str]:
+        """Resolve (name, field) key for a match: JOIN uses (name, ''), non-JOIN uses (name, field)."""
+        if m.schedule_type == ScheduleType.JOIN:
+            return (m.name, "")
+        return _node_key(m.name, getattr(m, "field", None))
 
-            min_warning = getattr(representative, "min_warning", None) or 5
-            node = MatchGraphNode(
-                name=representative.name,
-                uuid=representative.uuid,  # Use first UUID as primary
-                nominal_start_time=representative.nominal_start_time,
-                nominal_length=representative.nominal_length,
-                confirmed_start_time=representative.confirmed_start_time,
-                confirmed_end_time=representative.finalized_at,
-                schedule_type=representative.schedule_type,
-                skip_condition=representative.skip_condition,
-                status=representative.status,
-                component_uuids=component_uuids,
-                min_warning=min_warning,
-            )
-            graph.add_node(node)
-        else:
-            # Non-JOIN matches: each match is its own node
-            # If there are multiple matches with the same name (shouldn't happen for non-JOIN),
-            # we'll use the first one
-            match = match_list[0]
-            min_warning = getattr(match, "min_warning", None) or 5
-            node = MatchGraphNode(
-                name=match.name,
-                uuid=match.uuid,
-                nominal_start_time=match.nominal_start_time,
-                nominal_length=match.nominal_length,
-                confirmed_start_time=match.confirmed_start_time,
-                confirmed_end_time=match.finalized_at,
-                schedule_type=match.schedule_type,
-                skip_condition=match.skip_condition,
-                status=match.status,
-                min_warning=min_warning,
-            )
-            graph.add_node(node)
+    # Create nodes: one node per JOIN name (key = (name, "")), one node per (name, field) for non-JOIN
+    for name, join_list in joins_by_name.items():
+        representative = join_list[0]
+        component_uuids = {m.uuid for m in join_list}
+        min_warning = getattr(representative, "min_warning", 0)
+        node = MatchGraphNode(
+            name=representative.name,
+            uuid=representative.uuid,
+            nominal_start_time=representative.nominal_start_time,
+            nominal_length=representative.nominal_length,
+            confirmed_start_time=representative.confirmed_start_time,
+            confirmed_end_time=representative.finalized_at,
+            schedule_type=representative.schedule_type,
+            skip_condition=representative.skip_condition,
+            status=representative.status,
+            component_uuids=component_uuids,
+            min_warning=min_warning,
+            field="",
+        )
+        graph.add_node(node)
+
+    for key, match_list in matches_by_key.items():
+        if all(m.schedule_type == ScheduleType.JOIN for m in match_list):
+            continue  # already created above
+        match = match_list[0]
+        min_warning = getattr(match, "min_warning", 0)
+        node = MatchGraphNode(
+            name=match.name,
+            uuid=match.uuid,
+            nominal_start_time=match.nominal_start_time,
+            nominal_length=match.nominal_length,
+            confirmed_start_time=match.confirmed_start_time,
+            confirmed_end_time=match.finalized_at,
+            schedule_type=match.schedule_type,
+            skip_condition=match.skip_condition,
+            status=match.status,
+            min_warning=min_warning,
+            field=match.field or "",
+        )
+        graph.add_node(node)
 
     # Build dependency edges
-    for match_name, match_list in matches_by_name.items():
-        # For JOIN matches, process all components to collect dependencies
-        join_matches = [m for m in match_list if m.schedule_type == ScheduleType.JOIN]
+    for name in join_names:
+        dependent_key = (name, "")
+        join_matches = joins_by_name[name]
+        all_dep_keys: Set[Tuple[str, str]] = set()
+        skip_condition_dep_keys: Set[Tuple[str, str]] = set()
 
-        if join_matches:
-            # For JOIN matches: collect dependencies from all components
-            all_deps: Set[str] = set()
-            skip_condition_deps: Set[str] = set()
-
-            for join_match in join_matches:
-                # previous_match dependency
-                if join_match.previous_match:
-                    prev_match = matches_by_uuid.get(join_match.previous_match)
-                    if prev_match:
-                        # Find the node name for this match (could be a JOIN group)
-                        prev_node_name = prev_match.name
-                        # If the previous match is also a JOIN, it's already in the graph
-                        all_deps.add(prev_node_name)
-
-                # Skip condition dependencies
-                skip_deps = join_match.get_skip_condition_dependencies()
-                all_deps.update(skip_deps.get("direct", set()))
-                all_deps.update(skip_deps.get("skip_condition", set()))
-                # Track which are skip-condition dependencies
-                skip_condition_deps.update(skip_deps.get("skip_condition", set()))
-
-            # Add dependencies with correct type (startOfMatchDep vs endOfMatchDep)
-            for dep_name in all_deps:
-                if dep_name in graph.nodes_by_name:
-                    graph.add_dependency(
-                        match_name,
-                        dep_name,
-                        is_skip_condition=(dep_name in skip_condition_deps),
-                    )
-        else:
-            # Non-JOIN matches: process normally
-            match = match_list[0]
-
-            # Dependencies from team1_initial, team2_initial, refs_initial
-            # Check for MatchName::winner or MatchName::loser references that are not resolved
-            for initial_field in [match.team1_initial, match.team2_initial, match.refs_initial]:
-                refs = _extract_match_references(initial_field or "")
-                for ref_match_name, ref_type in refs:
-                    # Find the match by name
-                    ref_match_list = matches_by_name.get(ref_match_name)
-                    if ref_match_list:
-                        # Check if any of the matches with this name are resolved
-                        # For JOIN matches, they don't have match_winner, so they're always unresolved
-                        # For non-JOIN matches, check if resolved
-                        ref_match = ref_match_list[0]
-                        # JOIN matches can't be resolved (they don't have winners)
-                        if ref_match.schedule_type == ScheduleType.JOIN:
-                            # JOIN matches are always dependencies if referenced
-                            graph.add_dependency(match_name, ref_match_name)
-                        elif not _is_match_resolved(ref_match):
-                            # This is a dependency
-                            graph.add_dependency(match_name, ref_match_name)
-
-            # previous_match dependency
-            if match.previous_match:
-                prev_match = matches_by_uuid.get(match.previous_match)
+        for join_match in join_matches:
+            if join_match.previous_match:
+                prev_match = matches_by_uuid.get(join_match.previous_match)
                 if prev_match:
-                    prev_node_name = prev_match.name
-                    graph.add_dependency(match_name, prev_node_name)
+                    all_dep_keys.add(dep_key_for_match(prev_match))
 
-            # Skip condition dependencies (direct -> endOfMatchDep, skip_condition -> startOfMatchDep)
-            skip_deps = match.get_skip_condition_dependencies()
-            direct_skip_deps = skip_deps.get("direct", set())
-            skip_condition_deps = skip_deps.get("skip_condition", set())
-            for dep_name in direct_skip_deps:
-                if dep_name in graph.nodes_by_name:
-                    graph.add_dependency(match_name, dep_name, is_skip_condition=False)
-            for dep_name in skip_condition_deps:
-                if dep_name in graph.nodes_by_name:
-                    graph.add_dependency(match_name, dep_name, is_skip_condition=True)
+            skip_deps = join_match.get_skip_condition_dependencies()
+            for dep_name in skip_deps.get("direct", set()) | skip_deps.get("skip_condition", set()):
+                if dep_name in join_names:
+                    dep_key = (dep_name, "")
+                else:
+                    dep_key = (dep_name, join_match.field or "")
+                if dep_key not in graph.nodes_by_key:
+                    for k in graph.nodes_by_key:
+                        if k[0] == dep_name:
+                            dep_key = k
+                            break
+                if dep_key in graph.nodes_by_key:
+                    all_dep_keys.add(dep_key)
+                    if dep_name in skip_deps.get("skip_condition", set()):
+                        skip_condition_dep_keys.add(dep_key)
+
+        for dep_key in all_dep_keys:
+            if dep_key in graph.nodes_by_key:
+                graph.add_dependency(
+                    dependent_key,
+                    dep_key,
+                    is_skip_condition=(dep_key in skip_condition_dep_keys),
+                )
+
+    for key, match_list in matches_by_key.items():
+        if all(m.schedule_type == ScheduleType.JOIN for m in match_list):
+            continue
+        match_name, match_field = key
+        dependent_key = key
+        match = match_list[0]
+
+        for initial_field in [match.team1_initial, match.team2_initial, match.refs_initial]:
+            refs = _extract_match_references(initial_field or "")
+            for ref_match_name, ref_type in refs:
+                if ref_match_name in join_names:
+                    ref_key = (ref_match_name, "")
+                else:
+                    ref_key = (ref_match_name, match_field)
+                if ref_key not in graph.nodes_by_key:
+                    for k in graph.nodes_by_key:
+                        if k[0] == ref_match_name:
+                            ref_key = k
+                            break
+                if ref_key in graph.nodes_by_key:
+                    ref_list = matches_by_key.get(ref_key)
+                    if ref_list:
+                        ref_match = ref_list[0]
+                        if ref_match.schedule_type == ScheduleType.JOIN:
+                            graph.add_dependency(dependent_key, ref_key)
+                        elif not _is_match_resolved(ref_match):
+                            graph.add_dependency(dependent_key, ref_key)
+                    else:
+                        # ref_key is a JOIN node (name, ""); no entry in matches_by_key
+                        graph.add_dependency(dependent_key, ref_key)
+
+        if match.previous_match:
+            prev_match = matches_by_uuid.get(match.previous_match)
+            if prev_match:
+                prev_key = dep_key_for_match(prev_match)
+                graph.add_dependency(dependent_key, prev_key)
+
+        skip_deps = match.get_skip_condition_dependencies()
+        direct_skip_deps = skip_deps.get("direct", set())
+        skip_condition_deps = skip_deps.get("skip_condition", set())
+        for dep_name in direct_skip_deps:
+            dep_key = (dep_name, match_field) if dep_name not in join_names else (dep_name, "")
+            if dep_key not in graph.nodes_by_key:
+                for k in graph.nodes_by_key:
+                    if k[0] == dep_name:
+                        dep_key = k
+                        break
+            if dep_key in graph.nodes_by_key:
+                graph.add_dependency(dependent_key, dep_key, is_skip_condition=False)
+        for dep_name in skip_condition_deps:
+            dep_key = (dep_name, match_field) if dep_name not in join_names else (dep_name, "")
+            if dep_key not in graph.nodes_by_key:
+                for k in graph.nodes_by_key:
+                    if k[0] == dep_name:
+                        dep_key = k
+                        break
+            if dep_key in graph.nodes_by_key:
+                graph.add_dependency(dependent_key, dep_key, is_skip_condition=True)
 
     return graph

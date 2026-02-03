@@ -20,9 +20,6 @@ from app.utils.MatchGraph import (
     build_match_graph,
 )
 
-# Default min_warning when match has none set.
-DEFAULT_MIN_WARNING_MINUTES = 5
-
 # Per-tournament locks for serializing scheduling updates.
 _tournament_locks: Dict[str, threading.Lock] = {}
 _locks_lock = threading.Lock()
@@ -103,11 +100,14 @@ def _procedure_with_match(
         pass
     elif node.schedule_type in (ScheduleType.BREAK, ScheduleType.JOIN):
         latest_end = node.get_deps_latest_end_time()
+        print(f"latest_end: {node.name}: {latest_end}")
+        print([(d.node.name, d.get_time()) for d in node.dependencies])
         if latest_end is not None:
             node.nominal_start_time = latest_end
     elif node.schedule_type == ScheduleType.DYNAMIC:
         if node.status == MatchStatus.NOT_STARTED:
             latest_end = node.get_deps_latest_end_time()
+
             candidates = [now + min_warning]
             if latest_end is not None:
                 candidates.append(latest_end)
@@ -272,8 +272,8 @@ def run_scheduling_on_match_start_end(tournament_url: str) -> None:
         graph = build_match_graph(tournament_url, all_matches)
         order = graph.topological_sort()
         now = _now_utc()
-        for name in order:
-            node = graph.get_node(name)
+        for name, field in order:
+            node = graph.get_node(name, field)
             if node:
                 _procedure_with_match(
                     graph,
@@ -310,8 +310,8 @@ def run_scheduling_on_match_create_edit(tournament_url: str) -> None:
         now = _now_utc()
         _set_initial_finalized_from_beginning(graph, now)
         order = graph.topological_sort()
-        for name in order:
-            node = graph.get_node(name)
+        for name, field in order:
+            node = graph.get_node(name, field)
             if node:
                 _procedure_with_match(
                     graph,
@@ -353,7 +353,9 @@ def get_match_dependencies(match, tournament_url: str) -> List:
     """
     from app.models.match import Match
     graph = build_match_graph(tournament_url)
-    node = graph.get_node(match.name)
+    # JOIN matches share one node keyed by (name, ""); non-JOIN by (name, field)
+    field = "" if getattr(match, "schedule_type", None) == ScheduleType.JOIN else getattr(match, "field", None)
+    node = graph.get_node(match.name, field)
     if not node:
         return []
     schedule_deps = node.get_schedule_dependencies()
@@ -373,7 +375,9 @@ def compute_dynamic_match_nominal_start_time(match, tournament_url: str) -> Opti
     Uses match.min_warning when applicable.
     """
     graph = build_match_graph(tournament_url)
-    node = graph.get_node(match.name)
+    # JOIN matches share one node keyed by (name, ""); non-JOIN by (name, field)
+    field = "" if getattr(match, "schedule_type", None) == ScheduleType.JOIN else getattr(match, "field", None)
+    node = graph.get_node(match.name, field)
     if not node:
         return None
     now = _now_utc()
