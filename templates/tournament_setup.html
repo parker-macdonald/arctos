@@ -1286,10 +1286,10 @@ document.addEventListener('DOMContentLoaded', function() {
         if (ribbonContainer) ribbonContainer.style.display = isBreakOrJoin ? 'none' : 'block';
         if (stonesField) stonesField.style.display = isBreakOrJoin ? 'none' : 'none'; // Hide for BREAK/JOIN, will be shown below if STONES
 
-        // Skip condition only for SAFE, FAST, and BREAK (not STATIC or JOIN)
+        // Skip condition only for SAFE and FAST (not STATIC, BREAK, or JOIN)
         const skipConditionContainer = document.getElementById('skip_condition_container');
         if (skipConditionContainer) {
-            const showSkipCondition = matchTypeValue === 'SAFE' || matchTypeValue === 'FAST' || matchTypeValue === 'BREAK';
+            const showSkipCondition = matchTypeValue === 'SAFE' || matchTypeValue === 'FAST';
             skipConditionContainer.style.display = showSkipCondition ? 'flex' : 'none';
             if (!showSkipCondition) document.getElementById('skip_condition').value = '';
         }

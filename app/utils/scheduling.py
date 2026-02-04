@@ -96,7 +96,7 @@ def _procedure_with_match(
             node.status = MatchStatus.TIME_FINALIZED
 
     elif node.schedule_type in (ScheduleType.BREAK, ScheduleType.JOIN):
-        latest_end = node.get_deps_latest_end_time()
+        latest_end = node.get_direct_deps_latest_end_time()
         if latest_end is not None:
             node.nominal_start_time = latest_end
 
@@ -114,8 +114,6 @@ def _procedure_with_match(
             node.nominal_start_time = node.get_direct_deps_latest_end_time(
                 for_safe_nominal=False
             )
-
-    schedule_deps = node.get_schedule_dependencies()
 
     if _all_schedule_deps_in(node, (MatchStatus.COMPLETED, MatchStatus.SKIPPED)):
         skip_cond = _evaluate_skip_condition(tournament_url, node, name_to_match)
@@ -231,7 +229,7 @@ def compute_dynamic_match_nominal_start_time(
     if not node:
         return None
     if node.schedule_type in (ScheduleType.BREAK, ScheduleType.JOIN):
-        return node.get_deps_latest_end_time()
+        return node.get_direct_deps_latest_end_time()
     if node.schedule_type == ScheduleType.SAFE:
         return node.get_direct_deps_latest_end_time(for_safe_nominal=True)
     if node.schedule_type == ScheduleType.FAST:

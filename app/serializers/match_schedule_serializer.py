@@ -60,6 +60,10 @@ class MatchScheduleSerializer:
             result["refs_initial"] = match.refs_initial
         if match.field:
             result["field"] = match.field
+        if match.skip_condition:
+            result["skip_condition"] = match.skip_condition
+        if match.skip_condition:
+            result["skip_condition"] = match.skip_condition
 
         # Convert UUIDs to match names for relationships
         if match.previous_match:
@@ -247,6 +251,17 @@ class MatchScheduleSerializer:
             if has_explicit_ids:
                 refs = ", ".join(refs_list)
 
+        schedule_type = (
+            str(data.get("schedule_type", "STATIC")).strip() or "STATIC"
+        )
+        skip_condition_raw = str(data.get("skip_condition", "")).strip() or None
+        # Only accept skip_condition for SAFE and FAST; ignore for other types
+        skip_condition = (
+            skip_condition_raw
+            if schedule_type in ("SAFE", "FAST")
+            else None
+        )
+
         result = {
             "event": tournament_url,
             "name": name,
@@ -258,12 +273,12 @@ class MatchScheduleSerializer:
             "refs_initial": refs_initial,
             "field": str(data.get("field", "")).strip() or None,
             "nominal_length": data.get("nominal_length"),
-            "schedule_type": str(data.get("schedule_type", "STATIC")).strip()
-            or "STATIC",
+            "schedule_type": schedule_type,
             "set_type": str(data.get("set_type", "SETS")).strip() or "SETS",
             "ribbon": bool(data.get("ribbon", False)),
             "nsets": data.get("nsets"),
             "stones_per_set": data.get("stones_per_set"),
+            "skip_condition": skip_condition,
             "previous_match": None,
             "next_match": None,
         }

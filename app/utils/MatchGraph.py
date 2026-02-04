@@ -97,20 +97,6 @@ class MatchGraphNode:
             traverse(dep.node)
         return result
 
-    def get_deps_latest_end_time(self) -> Optional[datetime]:
-        """
-        Latest end/start time from all dependencies (skip-condition deps use start time).
-        Used for BREAK/JOIN nominal start.
-        """
-        if not self.dependencies:
-            return None
-        latest_time: Optional[datetime] = None
-        for dep in self.dependencies:
-            time_to_use = dep.get_time()
-            if time_to_use and (latest_time is None or time_to_use > latest_time):
-                latest_time = time_to_use
-        return latest_time
-
     def get_direct_deps_latest_end_time(
         self, for_safe_nominal: bool = False
     ) -> Optional[datetime]:
