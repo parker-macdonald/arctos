@@ -2245,11 +2245,11 @@ def update_match(tournament_url):
             request.form.get("length", match.nominal_length or 60)
         )
 
-    # Update skip_condition (only for SAFE, FAST, and BREAK; clear for STATIC and JOIN)
+    # Update skip_condition (only for SAFE, FAST; clear for STATIC, BREAK, and JOIN)
     skip_condition_raw = request.form.get("skip_condition", "").strip() or None
     match.skip_condition = (
         skip_condition_raw
-        if schedule_type in (ScheduleType.SAFE, ScheduleType.FAST, ScheduleType.BREAK)
+        if schedule_type in (ScheduleType.SAFE, ScheduleType.FAST)
         else None
     )
 
