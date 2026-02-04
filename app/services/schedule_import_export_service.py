@@ -527,6 +527,7 @@ class ScheduleImportExportService:
                         # Set initial status if not already set: STATIC matches are READY_TO_START, others are NOT_STARTED
                         if not match.status:
                             from app.domain.enums import ScheduleType, MatchStatus
+
                             if match.schedule_type == ScheduleType.STATIC:
                                 match.status = MatchStatus.READY_TO_START
                             else:
@@ -553,6 +554,7 @@ class ScheduleImportExportService:
                     # Set initial status if not already set: STATIC matches are READY_TO_START, others are NOT_STARTED
                     if not match.status:
                         from app.domain.enums import ScheduleType, MatchStatus
+
                         if match.schedule_type == ScheduleType.STATIC:
                             match.status = MatchStatus.READY_TO_START
                         else:

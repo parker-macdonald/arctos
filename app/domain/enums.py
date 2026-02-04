@@ -53,7 +53,7 @@ class MatchStatus(StrEnum):
 
     TIME_FINALIZED: start time will not be pushed back any
     further. match is guaranteed not to be skipped.
-    
+
     READY_TO_START: all ref and playing teams are known; game will
     start as soon as everyone is present.
 
@@ -65,6 +65,7 @@ class MatchStatus(StrEnum):
     end stamps are equal and are the time that the match was marked
     skipped.
     """
+
     NOT_STARTED = "NOT_STARTED"
     TIME_FINALIZED = "TIME_FINALIZED"
     READY_TO_START = "READY_TO_START"

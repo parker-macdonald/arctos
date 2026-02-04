@@ -148,12 +148,17 @@ def create_app(config=None):
             from datetime import datetime, timezone
             from models import Tournament
             from app.utils.scheduling import recompute_all_match_times
+
             now = datetime.now(timezone.utc)
             for t in Tournament.query.all():
                 if t.end_date is None:
                     not_complete = True
                 else:
-                    end_utc = t.end_date.replace(tzinfo=timezone.utc) if t.end_date.tzinfo is None else t.end_date
+                    end_utc = (
+                        t.end_date.replace(tzinfo=timezone.utc)
+                        if t.end_date.tzinfo is None
+                        else t.end_date
+                    )
                     not_complete = end_utc >= now
                 if not_complete:
                     try:

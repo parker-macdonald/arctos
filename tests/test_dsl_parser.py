@@ -673,7 +673,9 @@ class TestSkipConditionIntegration:
             match3 = Match.query.filter_by(
                 event=tournament_url, name=match3_name
             ).first()
-            match3.skip_condition = f"(or (is-skipped {{{match1_name}}}) (is-skipped {{{match2_name}}}))"
+            match3.skip_condition = (
+                f"(or (is-skipped {{{match1_name}}}) (is-skipped {{{match2_name}}}))"
+            )
             db.session.commit()
 
             # Neither skipped -> False
@@ -767,3 +769,18 @@ class TestEdgeCases:
             assert parser.parse("(== true true)") is True
             assert parser.parse("(== true false)") is False
             assert parser.parse("(== nil nil)") is True
+
+    @pytest.mark.unit
+    def test_equality_team_by_value_not_identity(self, app, tournament_with_data):
+        """(== [Match::winner] [TeamId]) and (== (winner {Match}) [TeamId]) use value equality.
+        Same team from different code paths (bracket vs winner call) must compare equal.
+        """
+        with app.app_context():
+            parser = get_parser(tournament_with_data["tournament_url"])
+            match1_name = tournament_with_data["match1_name"]
+
+            # Match1 winner is team1: bracket form vs literal must be True
+            assert parser.parse(f"(== [{match1_name}::winner] [team1])") is True
+            assert parser.parse(f"(== (winner {{{match1_name}}}) [team1])") is True
+            # Different team must be False
+            assert parser.parse(f"(== [{match1_name}::winner] [team2])") is False

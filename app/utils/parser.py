@@ -793,28 +793,28 @@ class Simplifier:
                 b, (int, bool, type(None))
             ):
                 return a == b
-            # For team/match objects, compare identity
+            # For team objects, compare by team id (same team can be produced by different code paths)
             elif isinstance(a, Team) and isinstance(b, Team):
-                return a is b  # Compare object identity
+                return a.obj.id == b.obj.id
             elif isinstance(a, Match) and isinstance(b, Match):
-                return a is b  # Compare object identity
+                return a.obj.uuid == b.obj.uuid
             else:
                 # Can't compare different types - preserve expression instead of returning False
                 return [op, a, b]
 
     def _evaluate_logical_op(self, op, args):
         """Evaluate logical operations."""
-        if op=="not":
+        if op == "not":
             self.validate_arg_count(op, args, 1)
-            a, = args
+            (a,) = args
             if isinstance(a, (SymbolicTeam, SymbolicMatch, list)):
                 return [op, a]
             a_bool = a is not None and a is not False
             return not a_bool
-        
+
         self._validate_arg_count(op, args, 2)
         a, b = args
-        
+
         # Check for symbolic values or preserved expressions - preserve if found
         if isinstance(a, (SymbolicTeam, SymbolicMatch)) or isinstance(
             b, (SymbolicTeam, SymbolicMatch)
@@ -823,19 +823,19 @@ class Simplifier:
         if isinstance(a, list) or isinstance(b, list):
             # One of the operands is a preserved expression
             return [op, a, b]
-        
+
         # Convert to boolean for logical operations
         # In Lisp-like languages, anything non-nil is truthy
         a_bool = a is not None and a is not False
         b_bool = b is not None and b is not False
-        
+
         if op == "or":
             return a_bool or b_bool
         elif op == "and":
             return a_bool and b_bool
         else:
             raise DSLValidationError(f"Unknown logical operator: {op}")
-        
+
     def _evaluate_wins(self, head, args):
         """Evaluate (wins TEAM) expression."""
         self._validate_arg_count(head, args, 1)

@@ -82,7 +82,11 @@ def _procedure_with_match(
 
     Mutates node (nominal_start_time, status). No callbacks.
     """
-    if node.status in (MatchStatus.COMPLETED, MatchStatus.IN_PROGRESS, MatchStatus.SKIPPED):
+    if node.status in (
+        MatchStatus.COMPLETED,
+        MatchStatus.IN_PROGRESS,
+        MatchStatus.SKIPPED,
+    ):
         return
 
     nominal_start_if_skipped: Optional[datetime] = None
@@ -98,12 +102,16 @@ def _procedure_with_match(
 
     elif node.schedule_type == ScheduleType.SAFE:
         if node.status == MatchStatus.NOT_STARTED:
-            node.nominal_start_time = node.get_direct_deps_latest_end_time(for_safe_nominal=True)
+            node.nominal_start_time = node.get_direct_deps_latest_end_time(
+                for_safe_nominal=True
+            )
             nominal_start_if_skipped = node.get_direct_deps_latest_end_time_if_skipped()
 
     elif node.schedule_type == ScheduleType.FAST:
         if node.status == MatchStatus.NOT_STARTED:
-            node.nominal_start_time = node.get_direct_deps_latest_end_time(for_safe_nominal=False)
+            node.nominal_start_time = node.get_direct_deps_latest_end_time(
+                for_safe_nominal=False
+            )
 
     schedule_deps = node.get_schedule_dependencies()
 
@@ -117,7 +125,11 @@ def _procedure_with_match(
                 else node.nominal_start_time
             )
         else:
-            if node.schedule_type in (ScheduleType.STATIC, ScheduleType.SAFE, ScheduleType.FAST):
+            if node.schedule_type in (
+                ScheduleType.STATIC,
+                ScheduleType.SAFE,
+                ScheduleType.FAST,
+            ):
                 node.status = MatchStatus.READY_TO_START
             else:
                 node.status = MatchStatus.COMPLETED
@@ -131,7 +143,9 @@ def _procedure_with_match(
 def _write_graph_to_db(graph: MatchGraph, uuid_to_match: Dict[str, object]) -> None:
     """Persist graph state to in-memory Match objects (no DB read). Caller commits once."""
     for node in graph.get_all_nodes():
-        uuids_to_update = list(node.component_uuids) if node.component_uuids else [node.uuid]
+        uuids_to_update = (
+            list(node.component_uuids) if node.component_uuids else [node.uuid]
+        )
         for uid in uuids_to_update:
             m = uuid_to_match.get(uid)
             if m is not None:
@@ -180,7 +194,11 @@ def get_match_dependencies(match, tournament_url: str) -> List:
     from app.models.match import Match
 
     graph = build_match_graph(tournament_url)
-    field = "" if getattr(match, "schedule_type", None) == ScheduleType.JOIN else getattr(match, "field", None)
+    field = (
+        ""
+        if getattr(match, "schedule_type", None) == ScheduleType.JOIN
+        else getattr(match, "field", None)
+    )
     node = graph.get_node(match.name, field)
     if not node:
         return []
@@ -194,13 +212,19 @@ def get_match_dependencies(match, tournament_url: str) -> List:
     ).all()
 
 
-def compute_dynamic_match_nominal_start_time(match, tournament_url: str) -> Optional[datetime]:
+def compute_dynamic_match_nominal_start_time(
+    match, tournament_url: str
+) -> Optional[datetime]:
     """
     Compute nominal_start_time for a SAFE/FAST/BREAK/JOIN match from the graph
     (for use when adding/editing a match before commit). Does not write to DB.
     """
     graph = build_match_graph(tournament_url)
-    field = "" if getattr(match, "schedule_type", None) == ScheduleType.JOIN else getattr(match, "field", None)
+    field = (
+        ""
+        if getattr(match, "schedule_type", None) == ScheduleType.JOIN
+        else getattr(match, "field", None)
+    )
     node = graph.get_node(match.name, field)
     if not node:
         return None
@@ -256,7 +280,9 @@ def detect_match_conflicts(tournament_url: str) -> List[dict]:
                 continue
             if not other.nominal_start_time or not other.nominal_length:
                 continue
-            other_end = other.nominal_start_time + timedelta(minutes=other.nominal_length)
+            other_end = other.nominal_start_time + timedelta(
+                minutes=other.nominal_length
+            )
             if m.nominal_start_time < other_end and end > other.nominal_start_time:
                 conflicts.append(
                     {"match1": m.name, "match2": other.name, "field": m.field}

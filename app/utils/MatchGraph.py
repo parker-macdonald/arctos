@@ -64,7 +64,10 @@ class MatchGraphNode:
         Used for computing latest end time for SAFE/FAST/BREAK/JOIN.
         """
         from app.utils.MatchGraph import endOfMatchDep
-        return set(dep.node for dep in self.dependencies if isinstance(dep, endOfMatchDep))
+
+        return set(
+            dep.node for dep in self.dependencies if isinstance(dep, endOfMatchDep)
+        )
 
     def get_schedule_dependencies(self) -> Set["MatchGraphNode"]:
         """
@@ -81,7 +84,8 @@ class MatchGraphNode:
                 return
             visited.add(node)
             if (
-                node.schedule_type in (ScheduleType.STATIC, ScheduleType.SAFE, ScheduleType.FAST)
+                node.schedule_type
+                in (ScheduleType.STATIC, ScheduleType.SAFE, ScheduleType.FAST)
                 and node.status != MatchStatus.SKIPPED
             ):
                 result.add(node)
@@ -245,7 +249,9 @@ class MatchGraph:
         else:
             self.key_to_uuids[key].add(node.uuid)
 
-    def get_node(self, name: str, field: Optional[str] = None) -> Optional[MatchGraphNode]:
+    def get_node(
+        self, name: str, field: Optional[str] = None
+    ) -> Optional[MatchGraphNode]:
         """Get a node by match name and field. field defaults to ''."""
         key = _node_key(name, field)
         return self.nodes_by_key.get(key)
@@ -304,7 +310,9 @@ class MatchGraph:
         }
 
         # Queue of nodes with no incoming edges
-        queue: List[MatchGraphNode] = [node for node, degree in in_degree.items() if degree == 0]
+        queue: List[MatchGraphNode] = [
+            node for node, degree in in_degree.items() if degree == 0
+        ]
 
         result: List[Tuple[str, str]] = []
 
@@ -321,7 +329,9 @@ class MatchGraph:
         # Check for cycles
         if len(result) != len(self.nodes_by_key):
             remaining = set(self.nodes_by_key.keys()) - set(result)
-            raise ValueError(f"Cycle detected in match dependencies. Remaining nodes: {remaining}")
+            raise ValueError(
+                f"Cycle detected in match dependencies. Remaining nodes: {remaining}"
+            )
 
         return result
 
@@ -357,6 +367,7 @@ def _extract_match_references(text: str) -> List[tuple[str, str]]:
 def _is_match_resolved(match: Match) -> bool:
     """Check if a match has been resolved (winner/loser determined)."""
     return match.match_winner is not None
+
 
 def build_match_graph(
     tournament_url: str,
@@ -452,7 +463,9 @@ def build_match_graph(
                     all_dep_keys.add(dep_key_for_match(prev_match))
 
             skip_deps = join_match.get_skip_condition_dependencies()
-            for dep_name in skip_deps.get("direct", set()) | skip_deps.get("skip_condition", set()):
+            for dep_name in skip_deps.get("direct", set()) | skip_deps.get(
+                "skip_condition", set()
+            ):
                 if dep_name in join_names:
                     dep_key = (dep_name, "")
                 else:
@@ -482,7 +495,11 @@ def build_match_graph(
         dependent_key = key
         match = match_list[0]
 
-        for initial_field in [match.team1_initial, match.team2_initial, match.refs_initial]:
+        for initial_field in [
+            match.team1_initial,
+            match.team2_initial,
+            match.refs_initial,
+        ]:
             refs = _extract_match_references(initial_field or "")
             for ref_match_name, ref_type in refs:
                 if ref_match_name in join_names:
@@ -516,7 +533,11 @@ def build_match_graph(
         direct_skip_deps = skip_deps.get("direct", set())
         skip_condition_deps = skip_deps.get("skip_condition", set())
         for dep_name in direct_skip_deps:
-            dep_key = (dep_name, match_field) if dep_name not in join_names else (dep_name, "")
+            dep_key = (
+                (dep_name, match_field)
+                if dep_name not in join_names
+                else (dep_name, "")
+            )
             if dep_key not in graph.nodes_by_key:
                 for k in graph.nodes_by_key:
                     if k[0] == dep_name:
@@ -525,7 +546,11 @@ def build_match_graph(
             if dep_key in graph.nodes_by_key:
                 graph.add_dependency(dependent_key, dep_key, is_skip_condition=False)
         for dep_name in skip_condition_deps:
-            dep_key = (dep_name, match_field) if dep_name not in join_names else (dep_name, "")
+            dep_key = (
+                (dep_name, match_field)
+                if dep_name not in join_names
+                else (dep_name, "")
+            )
             if dep_key not in graph.nodes_by_key:
                 for k in graph.nodes_by_key:
                     if k[0] == dep_name:
