@@ -19,6 +19,7 @@ from app.exceptions import (
     UnauthorizedError,
     ValidationError,
 )
+from app.domain.enums import MatchStatus
 from app.utils.helpers import can_head_ref_match
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -316,6 +317,6 @@ class MatchActionsService:
         match = MatchActionsService._require_match(tournament_url, match_id).Q()
         MatchActionsService._require_head_ref(tournament_url, user_id, match=match).Q()
 
-        match.status = "COMPLETED"
+        match.status = MatchStatus.COMPLETED
         db.session.commit()
-        return Ok({"match_id": match_id, "status": "COMPLETED"})
+        return Ok({"match_id": match_id, "status": MatchStatus.COMPLETED})

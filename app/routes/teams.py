@@ -25,6 +25,7 @@ from models import (
     Point,
     db,
 )
+from app.domain.enums import RegistrationStatus
 from app.utils.helpers import can_head_ref_match
 
 bp = Blueprint("teams", __name__)
@@ -35,7 +36,7 @@ def team_profile(team_id):
     """Display team profile."""
     team = Team.query.get_or_404(team_id)
     team_registrations = TeamRegistration.query.filter_by(
-        team=team_id, status="CONFIRMED"
+        team=team_id, status=RegistrationStatus.CONFIRMED
     ).all()
     player_registrations = PlayerRegistration.query.filter_by(team=team_id).all()
     tournaments = Tournament.query.all()
@@ -50,7 +51,7 @@ def team_profile(team_id):
 
         for team_reg in team_registrations:
             accepted_players = PlayerRegistration.query.filter_by(
-                event=team_reg.event, team=team_id, status="CONFIRMED"
+                event=team_reg.event, team=team_id, status=RegistrationStatus.CONFIRMED
             ).all()
             # Include Player objects for profile photos
             players_with_data = []
@@ -66,7 +67,7 @@ def team_profile(team_id):
     player_tournament_registrations = set()
     if current_user.is_authenticated and current_user.__class__.__name__ == "Player":
         player_regs = PlayerRegistration.query.filter_by(
-            player=current_user.id, team=team_id, status="CONFIRMED"
+            player=current_user.id, team=team_id, status=RegistrationStatus.CONFIRMED
         ).all()
         player_tournament_registrations = {reg.event for reg in player_regs}
         player_played_with_team = len(player_tournament_registrations) > 0

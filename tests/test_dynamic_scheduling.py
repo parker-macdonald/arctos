@@ -19,6 +19,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from app.domain.enums import MatchStatus
 from app.utils.scheduling import recompute_all_match_times
 from models import Match, db
 
@@ -55,7 +56,7 @@ class TestDynamicScheduling:
                 nominal_start_time=base_time.replace(tzinfo=None),
                 schedule_type="SAFE",
                 nominal_length=60,
-                status="COMPLETED",
+                status=MatchStatus.COMPLETED,
             )
             match2 = Match(
                 name="Match 2",
@@ -127,7 +128,7 @@ class TestDynamicScheduling:
                 nominal_start_time=base_time.replace(tzinfo=None),
                 schedule_type="SAFE",
                 nominal_length=60,
-                status="COMPLETED",
+                status=MatchStatus.COMPLETED,
             )
             match2 = Match(
                 name="Match 2",
@@ -149,7 +150,7 @@ class TestDynamicScheduling:
                 ),
                 schedule_type="STATIC",
                 nominal_length=60,
-                status="TIME_FINALIZED",
+                status=MatchStatus.TIME_FINALIZED,
             )
             after_boundary = Match(
                 name="Match 4",
@@ -218,7 +219,7 @@ class TestDynamicScheduling:
                 nominal_start_time=base_time.replace(tzinfo=None),
                 schedule_type="SAFE",
                 nominal_length=60,
-                status="COMPLETED",
+                status=MatchStatus.COMPLETED,
             )
             dep = Match(
                 name="Dep",
@@ -229,7 +230,7 @@ class TestDynamicScheduling:
                 ),
                 schedule_type="SAFE",
                 nominal_length=60,
-                status="COMPLETED",
+                status=MatchStatus.COMPLETED,
             )
             next_match = Match(
                 name="Next",
@@ -297,7 +298,7 @@ class TestDynamicScheduling:
                 nominal_start_time=base_time.replace(tzinfo=None),
                 schedule_type="SAFE",
                 nominal_length=60,
-                status="COMPLETED",
+                status=MatchStatus.COMPLETED,
             )
             other_field_dep = Match(
                 name="Dep",
@@ -308,7 +309,7 @@ class TestDynamicScheduling:
                 ),
                 schedule_type="SAFE",
                 nominal_length=60,
-                status="COMPLETED",
+                status=MatchStatus.COMPLETED,
             )
             other_field_match = Match(
                 name="Field2 Match",
@@ -350,7 +351,7 @@ class TestDynamicScheduling:
                 nominal_start_time=base_time.replace(tzinfo=None),
                 schedule_type="SAFE",
                 nominal_length=60,
-                status="COMPLETED",
+                status=MatchStatus.COMPLETED,
             )
             dep1 = Match(
                 name="Dep 1",
@@ -361,7 +362,7 @@ class TestDynamicScheduling:
                 ),
                 schedule_type="SAFE",
                 nominal_length=60,
-                status="COMPLETED",
+                status=MatchStatus.COMPLETED,
             )
             dep2 = Match(
                 name="Dep 2",
@@ -372,7 +373,7 @@ class TestDynamicScheduling:
                 ),
                 schedule_type="SAFE",
                 nominal_length=60,
-                status="COMPLETED",
+                status=MatchStatus.COMPLETED,
             )
             next_match = Match(
                 name="Next",
@@ -430,7 +431,7 @@ class TestDynamicScheduling:
                 nominal_start_time=base_time.replace(tzinfo=None),
                 schedule_type="SAFE",
                 nominal_length=60,
-                status="COMPLETED",
+                status=MatchStatus.COMPLETED,
             )
             db.session.add(match1)
             db.session.commit()
@@ -451,7 +452,7 @@ class TestDynamicScheduling:
                 nominal_start_time=base_time.replace(tzinfo=None),
                 schedule_type="SAFE",
                 nominal_length=60,
-                status="COMPLETED",
+                status=MatchStatus.COMPLETED,
             )
             db.session.add(match1)
             db.session.commit()

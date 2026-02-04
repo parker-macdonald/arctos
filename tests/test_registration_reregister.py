@@ -1,5 +1,6 @@
 import pytest
 
+from app.domain.enums import RegistrationStatus
 from models import PlayerRegistration, db
 from tests.utils import login_as
 
@@ -48,6 +49,6 @@ def test_player_can_reregister_after_rejected_without_creating_duplicate_row(
         ).all()
         assert len(regs) == 1
         assert regs[0].id == reg_id
-        assert regs[0].status == "CONFIRMED"
+        assert regs[0].status == RegistrationStatus.CONFIRMED
         assert regs[0].jersey_name == "Alice2"
         assert regs[0].jersey_number == "8"

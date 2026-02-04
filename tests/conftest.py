@@ -11,6 +11,7 @@ from flask_login import FlaskLoginClient
 
 # Import app components
 from app import create_app
+from app.domain.enums import MatchStatus, ScheduleType
 from models import (
     db,
     init_db,
@@ -181,11 +182,11 @@ def create_match(
         event=tournament_url,
         field=field,
         nominal_start_time=nominal_start_time,
-        schedule_type="SAFE" if dynamic else "STATIC",
+        schedule_type=ScheduleType.SAFE if dynamic else ScheduleType.STATIC,
         team1_initial=team1_initial,
         team2_initial=team2_initial,
         nominal_length=nominal_length,
-        status="NOT_STARTED",
+        status=MatchStatus.NOT_STARTED,
         set_type="SETS",
     )
     db.session.add(match)

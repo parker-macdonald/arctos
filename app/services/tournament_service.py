@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+from app.domain.enums import TeamRegistrationStatus
 from app.services.permission_service import PermissionService
 from app.utils.user_helpers import is_player, is_team
 from app.error_values import Some
@@ -59,7 +60,7 @@ class TournamentService:
                 db.session.query(
                     TeamRegistration.event, func.count(TeamRegistration.id)
                 )
-                .filter(TeamRegistration.status == "CONFIRMED")
+                .filter(TeamRegistration.status == TeamRegistrationStatus.CONFIRMED)
                 .filter(TeamRegistration.event.in_([t.url for t in tournaments]))
                 .group_by(TeamRegistration.event)
                 .all()

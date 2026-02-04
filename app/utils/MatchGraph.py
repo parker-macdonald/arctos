@@ -86,7 +86,7 @@ class MatchGraphNode:
             if (
                 node.schedule_type
                 in (ScheduleType.STATIC, ScheduleType.SAFE, ScheduleType.FAST)
-                and node.status != MatchStatus.SKIPPED
+                # and node.status != MatchStatus.SKIPPED # idt we should do this bc we know skipping only happens at match start
             ):
                 result.add(node)
                 return
@@ -121,32 +121,17 @@ class MatchGraphNode:
         - for_safe_nominal=True (SAFE nominal_start): for each direct dep x,
           if x is SKIPPED use END_TIME(x) + x.nominal_length else END_TIME(x); take latest.
         """
-        direct = self.get_direct_dependencies()
-        if not direct:
-            return None
-        latest: Optional[datetime] = None
-        for dep_node in direct:
-            t = _node_end_time(dep_node)
-            if t is None:
-                continue
-            if for_safe_nominal and dep_node.status == MatchStatus.SKIPPED:
-                if dep_node.nominal_length:
-                    t = t + timedelta(minutes=dep_node.nominal_length)
-            if latest is None or t > latest:
-                latest = t
-        return latest
 
-    def get_direct_deps_latest_end_time_if_skipped(self) -> Optional[datetime]:
-        """Latest END_TIME(x) over direct deps. Used as nominal_start when this match is skipped."""
-        direct = self.get_direct_dependencies()
-        if not direct:
+        if not self.dependencies:
             return None
-        latest: Optional[datetime] = None
-        for dep_node in direct:
-            t = _node_end_time(dep_node)
-            if t and (latest is None or t > latest):
-                latest = t
-        return latest
+        latest_time: Optional[datetime] = None
+        for dep in self.dependencies:
+            time_to_use = dep.get_time()
+            if for_safe_nominal and dep.node.status == MatchStatus.SKIPPED:
+                time_to_use = time_to_use + timedelta(minutes=dep.node.nominal_length)
+            if time_to_use and (latest_time is None or time_to_use > latest_time):
+                latest_time = time_to_use
+        return latest_time
 
 
 def _node_start_time(node: MatchGraphNode) -> Optional[datetime]:
@@ -156,6 +141,8 @@ def _node_start_time(node: MatchGraphNode) -> Optional[datetime]:
 
 def _node_end_time(node: MatchGraphNode) -> Optional[datetime]:
     """Effective end time of a node (confirmed_end_time or start + length fallbacks)."""
+    if node.status == MatchStatus.SKIPPED:
+        return node.nominal_start_time
     if node.confirmed_end_time:
         return node.confirmed_end_time
     if node.confirmed_start_time:

@@ -105,7 +105,9 @@ def _procedure_with_match(
             node.nominal_start_time = node.get_direct_deps_latest_end_time(
                 for_safe_nominal=True
             )
-            nominal_start_if_skipped = node.get_direct_deps_latest_end_time_if_skipped()
+            nominal_start_if_skipped = node.get_direct_deps_latest_end_time(
+                for_safe_nominal=False
+            )
 
     elif node.schedule_type == ScheduleType.FAST:
         if node.status == MatchStatus.NOT_STARTED:
