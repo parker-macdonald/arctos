@@ -132,21 +132,6 @@ class Match(db.Model):
         uselist=False,
     )
 
-    def started(self) -> bool:
-        return self.status in ("IN_PROGRESS", "COMPLETED")
-
-    @property
-    def is_not_started(self) -> bool:
-        return self.status == "NOT_STARTED"
-
-    @property
-    def is_in_progress(self) -> bool:
-        return self.status == "IN_PROGRESS"
-
-    @property
-    def is_completed(self) -> bool:
-        return self.status == "COMPLETED"
-
     @property
     def winner_team_id(self) -> str | None:
         match parse_enum(WinnerSide, getattr(self, "match_winner", None)):
@@ -176,12 +161,12 @@ class Match(db.Model):
 
     def finalize(self) -> None:
         self.finalized_at = datetime.now(timezone.utc).replace(tzinfo=None)
-        if self.schedule_type in ("JOIN", "BREAK"):
+        if self.schedule_type in (ScheduleType.JOIN, ScheduleType.BREAK):
             self.confirmed_start_time = self.nominal_start_time
-            self.status = "COMPLETED"
+            self.status = MatchStatus.COMPLETED
             self.completed_time = (
                 self.nominal_start_time
-                if self.schedule_type == "JOIN"
+                if self.schedule_type == ScheduleType.JOIN
                 else self.nominal_start_time + timedelta(minutes=self.nominal_length)
             )
 

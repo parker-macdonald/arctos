@@ -1,5 +1,6 @@
 import pytest
 
+from app.domain.enums import MatchStatus
 from app.error_values import Err, Ok
 from app.exceptions import RegistrationClosedError, ValidationError
 from app.services.match_service import MatchService
@@ -62,4 +63,4 @@ def test_match_service_overlap_raises_without_mutating_match(
 
     # Ensure not mutated
     m2 = Match.query.get(m.uuid)
-    assert m2.status == "NOT_STARTED"
+    assert m2.status == MatchStatus.NOT_STARTED

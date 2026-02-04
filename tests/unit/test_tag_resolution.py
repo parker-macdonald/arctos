@@ -9,6 +9,7 @@ Tests ensure correct behavior when refs_initial contains:
 
 import pytest
 
+from app.domain.enums import MatchStatus
 from app.utils.dependencies import apply_match_dependencies
 from models import Field, Match, Tag, Tournament, db
 
@@ -152,7 +153,7 @@ def test_apply_match_dependencies_preserves_explicit_teams_and_tag_resolutions(
         nominal_length=60,
         team1=team1_id,
         team2=team2_id,
-        status="COMPLETED",
+        status=MatchStatus.COMPLETED,
     )
     # Set winner (team1 wins)
     match1.match_winner = "TEAM1"
@@ -220,7 +221,7 @@ def test_mixed_refs_all_three_types(test_db, tournament, app):
         nominal_length=60,
         team1="team1",
         team2="team2",
-        status="COMPLETED",
+        status=MatchStatus.COMPLETED,
     )
     match1.match_winner = "TEAM1"
     db.session.add(match1)
@@ -441,7 +442,7 @@ def test_team1_team2_with_mixed_references(test_db, tournament, app):
         nominal_length=60,
         team1="team1",
         team2="team2",
-        status="COMPLETED",
+        status=MatchStatus.COMPLETED,
     )
     match1.match_winner = "TEAM1"
     db.session.add(match1)

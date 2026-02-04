@@ -14,6 +14,7 @@ from models import (
     TO,
     db,
 )
+from app.domain.enums import RegistrationStatus
 from app.utils.decorators import require_tournament_organizer
 from app.services.registration_service import RegistrationService
 from app.utils.user_helpers import is_player, is_team
@@ -124,7 +125,7 @@ def tournament_manage(tournament_url):
 
     team_registrations = (
         TeamRegistration.query.filter_by(event=tournament_url)
-        .filter(TeamRegistration.status != "CANCELLED")
+        .filter(TeamRegistration.status != RegistrationStatus.CANCELLED)
         .all()
     )
     teams_with_registrations = []
@@ -135,7 +136,7 @@ def tournament_manage(tournament_url):
 
     player_registrations = (
         PlayerRegistration.query.filter_by(event=tournament_url)
-        .filter(PlayerRegistration.status != "CANCELLED")
+        .filter(PlayerRegistration.status != RegistrationStatus.CANCELLED)
         .all()
     )
 
@@ -276,14 +277,14 @@ def deregister_any_team(tournament_url):
         return redirect(f"/{tournament_url}/manage")
 
     team_registration = TeamRegistration.query.filter_by(
-        event=tournament_url, team=team_id, status="CONFIRMED"
+        event=tournament_url, team=team_id, status=RegistrationStatus.CONFIRMED
     ).first()
 
     if team_registration:
-        team_registration.status = "CANCELLED"
+        team_registration.status = RegistrationStatus.CANCELLED
 
         PlayerRegistration.query.filter_by(event=tournament_url, team=team_id).update(
-            {"status": "CANCELLED"}
+            {"status": RegistrationStatus.CANCELLED}
         )
 
         db.session.commit()
@@ -317,12 +318,14 @@ def deregister_any_player(tournament_url):
 
     player_registration = (
         PlayerRegistration.query.filter_by(event=tournament_url, player=player_id)
-        .filter(PlayerRegistration.status.in_(["PENDING_TEAM_APPROVAL", "CONFIRMED"]))
+        .filter(PlayerRegistration.status.in_(
+            [RegistrationStatus.PENDING_TEAM_APPROVAL, RegistrationStatus.CONFIRMED]
+        ))
         .first()
     )
 
     if player_registration:
-        player_registration.status = "CANCELLED"
+        player_registration.status = RegistrationStatus.CANCELLED
 
         db.session.commit()
         flash("Player successfully deregistered", "success")
@@ -343,7 +346,7 @@ def edit_team_registration(tournament_url):
     tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
 
     team_registration = TeamRegistration.query.filter_by(
-        event=tournament_url, team=current_user.id, status="CONFIRMED"
+        event=tournament_url, team=current_user.id, status=RegistrationStatus.CONFIRMED
     ).first()
 
     if not team_registration:
@@ -372,7 +375,7 @@ def update_team_registration(tournament_url):
         return redirect(f"/{tournament_url}")
 
     team_registration = TeamRegistration.query.filter_by(
-        event=tournament_url, team=current_user.id, status="CONFIRMED"
+        event=tournament_url, team=current_user.id, status=RegistrationStatus.CONFIRMED
     ).first()
 
     if not team_registration:
@@ -408,7 +411,9 @@ def edit_player_registration(tournament_url):
 
     player_registration = (
         PlayerRegistration.query.filter_by(event=tournament_url, player=current_user.id)
-        .filter(PlayerRegistration.status.in_(["PENDING_TEAM_APPROVAL", "CONFIRMED"]))
+        .filter(PlayerRegistration.status.in_(
+            [RegistrationStatus.PENDING_TEAM_APPROVAL, RegistrationStatus.CONFIRMED]
+        ))
         .first()
     )
 
@@ -418,7 +423,7 @@ def edit_player_registration(tournament_url):
 
     # Get all registered teams for the dropdown
     registered_teams = TeamRegistration.query.filter_by(
-        event=tournament_url, status="CONFIRMED"
+        event=tournament_url, status=RegistrationStatus.CONFIRMED
     ).all()
 
     team_data = []
@@ -433,7 +438,7 @@ def edit_player_registration(tournament_url):
     current_team_reg = None
     if player_registration.team:
         current_team_reg = TeamRegistration.query.filter_by(
-            event=tournament_url, team=player_registration.team, status="CONFIRMED"
+            event=tournament_url, team=player_registration.team, status=RegistrationStatus.CONFIRMED
         ).first()
 
     return render_template(
@@ -461,7 +466,9 @@ def update_player_registration(tournament_url):
 
     player_registration = (
         PlayerRegistration.query.filter_by(event=tournament_url, player=current_user.id)
-        .filter(PlayerRegistration.status.in_(["PENDING_TEAM_APPROVAL", "CONFIRMED"]))
+        .filter(PlayerRegistration.status.in_(
+            [RegistrationStatus.PENDING_TEAM_APPROVAL, RegistrationStatus.CONFIRMED]
+        ))
         .first()
     )
 
@@ -483,11 +490,11 @@ def update_player_registration(tournament_url):
 
         # If joining a new team, set status to pending team approval
         if new_team_id:
-            player_registration.status = "PENDING_TEAM_APPROVAL"
+            player_registration.status = RegistrationStatus.PENDING_TEAM_APPROVAL
             flash("Team changed. Your new team must approve your request.", "warning")
         else:
             # No team selected - confirmed immediately
-            player_registration.status = "CONFIRMED"
+            player_registration.status = RegistrationStatus.CONFIRMED
             flash("Registration updated successfully!", "success")
     else:
         # Team didn't change, just update other fields
@@ -508,7 +515,7 @@ def tournament_invitations(tournament_url):
     tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
 
     team_registration = TeamRegistration.query.filter_by(
-        event=tournament_url, team=current_user.id, status="CONFIRMED"
+        event=tournament_url, team=current_user.id, status=RegistrationStatus.CONFIRMED
     ).first()
 
     if not team_registration:
@@ -516,7 +523,7 @@ def tournament_invitations(tournament_url):
         return redirect(f"/{tournament_url}")
 
     pending_regs = PlayerRegistration.query.filter_by(
-        event=tournament_url, team=current_user.id, status="PENDING_TEAM_APPROVAL"
+        event=tournament_url, team=current_user.id, status=RegistrationStatus.PENDING_TEAM_APPROVAL
     ).all()
 
     pending_with_players = []
@@ -532,7 +539,7 @@ def tournament_invitations(tournament_url):
 
     # Calculate current team size (confirmed players on this team)
     current_team_size = PlayerRegistration.query.filter_by(
-        event=tournament_url, team=current_user.id, status="CONFIRMED"
+        event=tournament_url, team=current_user.id, status=RegistrationStatus.CONFIRMED
     ).count()
 
     # Get all player registrations for this team (all statuses)
@@ -568,10 +575,10 @@ def accept_invitation(tournament_url, invitation_id):
         id=invitation_id,
         event=tournament_url,
         team=current_user.id,
-        status="PENDING_TEAM_APPROVAL",
+        status=RegistrationStatus.PENDING_TEAM_APPROVAL,
     ).first_or_404()
 
-    player_registration.status = "CONFIRMED"
+    player_registration.status = RegistrationStatus.CONFIRMED
     db.session.commit()
     flash("Player approved! They are now on your team.", "success")
 
@@ -590,10 +597,10 @@ def decline_invitation(tournament_url, invitation_id):
         id=invitation_id,
         event=tournament_url,
         team=current_user.id,
-        status="PENDING_TEAM_APPROVAL",
+        status=RegistrationStatus.PENDING_TEAM_APPROVAL,
     ).first_or_404()
 
-    player_registration.status = "REJECTED"
+    player_registration.status = RegistrationStatus.REJECTED
     db.session.commit()
     flash("Player request declined", "info")
     return redirect(f"/{tournament_url}/invitations")

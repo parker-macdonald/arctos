@@ -7,6 +7,7 @@ import hashlib
 import re
 from flask import current_app
 from flask_login import current_user
+from app.domain.enums import RegistrationStatus
 from models import Tournament, PlayerRegistration, Match
 
 
@@ -41,7 +42,7 @@ def can_head_ref_match(tournament_url: str, player_id: str, match=None) -> bool:
         player_reg = PlayerRegistration.query.filter_by(
             event=tournament_url,
             player=player_id,
-            status="CONFIRMED",
+            status=RegistrationStatus.CONFIRMED,
         ).first()
         return player_reg is not None
 
@@ -55,7 +56,7 @@ def can_head_ref_match(tournament_url: str, player_id: str, match=None) -> bool:
                     event=tournament_url,
                     player=player_id,
                     team=team_id,
-                    status="CONFIRMED",
+                    status=RegistrationStatus.CONFIRMED,
                 ).first()
                 if player_reg:
                     return True

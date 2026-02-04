@@ -53,7 +53,12 @@ from app.utils.camera_helpers import (
     require_camera_key,
 )
 
-from app.domain.enums import ScheduleType, SetType, MatchStatus
+from app.domain.enums import (
+    MatchStatus,
+    RegistrationStatus,
+    ScheduleType,
+    SetType,
+)
 
 # for finalizing recordings which calls ffmpeg
 # only one worker bc ffmpeg does its own parallelism
@@ -235,13 +240,13 @@ def tournament_home(tournament_url):
             return redirect("/")
 
     team_registrations = TeamRegistration.query.filter_by(
-        event=tournament_url, status="CONFIRMED"
+        event=tournament_url, status=RegistrationStatus.CONFIRMED
     ).all()
 
     teams_with_counts = []
     for team_reg in team_registrations:
         player_count = PlayerRegistration.query.filter_by(
-            event=tournament_url, team=team_reg.team, status="CONFIRMED"
+            event=tournament_url, team=team_reg.team, status=RegistrationStatus.CONFIRMED
         ).count()
 
         team = Team.query.get(team_reg.team)
@@ -251,7 +256,7 @@ def tournament_home(tournament_url):
 
     unattached_players = []
     player_registrations = PlayerRegistration.query.filter_by(
-        event=tournament_url, team=None, status="CONFIRMED"
+        event=tournament_url, team=None, status=RegistrationStatus.CONFIRMED
     ).all()
 
     for player_reg in player_registrations:
@@ -269,7 +274,7 @@ def tournament_home(tournament_url):
         if current_user.__class__.__name__ == "Team":
             is_current_team_registered = (
                 TeamRegistration.query.filter_by(
-                    event=tournament_url, team=current_user.id, status="CONFIRMED"
+                    event=tournament_url, team=current_user.id, status=RegistrationStatus.CONFIRMED
                 ).first()
                 is not None
             )
@@ -280,7 +285,7 @@ def tournament_home(tournament_url):
                 )
                 .filter(
                     PlayerRegistration.status.in_(
-                        ["PENDING_TEAM_APPROVAL", "CONFIRMED"]
+                        [RegistrationStatus.PENDING_TEAM_APPROVAL, RegistrationStatus.CONFIRMED]
                     )
                 )
                 .first()
@@ -341,7 +346,7 @@ def tournament_schedule(tournament_url):
     from models import TeamRegistration
 
     team_registrations = TeamRegistration.query.filter_by(
-        event=tournament_url, status="CONFIRMED"
+        event=tournament_url, status=RegistrationStatus.CONFIRMED
     ).all()
 
     # Build list of team options (ID and pseudonym)
@@ -400,7 +405,13 @@ def tournament_results(tournament_url):
 
     from models import Point
 
-    matches = Match.query.filter_by(event=tournament_url, status="COMPLETED").all()
+    matches = (
+        Match.query.filter(
+            Match.event == tournament_url,
+            Match.status.in_([MatchStatus.COMPLETED, MatchStatus.SKIPPED]),
+        )
+        .all()
+    )
     points_by_match = {}
     if matches:
         match_ids = [m.uuid for m in matches]
@@ -485,7 +496,7 @@ def tournament_bracket(tournament_url):
                     if tag and tag.team:
                         # Tag has a team assigned - resolve it
                         team_reg = TeamRegistration.query.filter_by(
-                            event=tournament_url, team=tag.team, status="CONFIRMED"
+                            event=tournament_url, team=tag.team, status=RegistrationStatus.CONFIRMED
                         ).first()
                         if team_reg:
                             team = Team.query.get(tag.team)
@@ -516,7 +527,11 @@ def tournament_bracket(tournament_url):
                 match = Match.query.filter_by(
                     event=tournament_url, name=match_name
                 ).first()
-                if match and match.status == "COMPLETED" and match.match_winner:
+                if (
+                    match
+                    and match.status == MatchStatus.COMPLETED
+                    and match.match_winner
+                ):
                     # Determine winner/loser team
                     if ref_type == "winner":
                         team_id = (
@@ -535,7 +550,7 @@ def tournament_bracket(tournament_url):
 
                     if team_id:
                         team_reg = TeamRegistration.query.filter_by(
-                            event=tournament_url, team=team_id, status="CONFIRMED"
+                            event=tournament_url, team=team_id, status=RegistrationStatus.CONFIRMED
                         ).first()
                         if team_reg:
                             team = Team.query.get(team_id)
@@ -557,7 +572,7 @@ def tournament_bracket(tournament_url):
             # Check if it's a team ID
             elif team_ref:
                 team_reg = TeamRegistration.query.filter_by(
-                    event=tournament_url, team=team_ref, status="CONFIRMED"
+                    event=tournament_url, team=team_ref, status=RegistrationStatus.CONFIRMED
                 ).first()
                 if team_reg:
                     team = Team.query.get(team_ref)
@@ -575,7 +590,7 @@ def tournament_bracket(tournament_url):
                     if tag and tag.team:
                         # Tag has a team assigned - resolve it
                         team_reg = TeamRegistration.query.filter_by(
-                            event=tournament_url, team=tag.team, status="CONFIRMED"
+                            event=tournament_url, team=tag.team, status=RegistrationStatus.CONFIRMED
                         ).first()
                         if team_reg:
                             team = Team.query.get(tag.team)
@@ -641,7 +656,7 @@ def bracket_setup(tournament_url):
 
     # Get teams for team selection
     team_registrations = TeamRegistration.query.filter_by(
-        event=tournament_url, status="CONFIRMED"
+        event=tournament_url, status=RegistrationStatus.CONFIRMED
     ).all()
 
     # Get tags
@@ -838,7 +853,7 @@ def tournament_setup(tournament_url):
     tags = Tag.query.filter_by(event=tournament_url).all()
     # Only confirmed teams should be eligible for tag-to-team conversion.
     team_registrations = TeamRegistration.query.filter_by(
-        event=tournament_url, status="CONFIRMED"
+        event=tournament_url, status=RegistrationStatus.CONFIRMED
     ).all()
 
     # Detect conflicts across all matches; template expects dict match_uuid -> list of description strings
@@ -966,7 +981,7 @@ def tournament_register(tournament_url):
         return redirect(f"/{tournament_url}")
 
     team_registrations = TeamRegistration.query.filter_by(
-        event=tournament_url, status="CONFIRMED"
+        event=tournament_url, status=RegistrationStatus.CONFIRMED
     ).all()
 
     registered_teams = []
@@ -1135,7 +1150,7 @@ def record_match_status():
         ).first()
         if match:
             # Continue recording if match is still IN_PROGRESS (not yet finalized)
-            if match.status == "IN_PROGRESS":
+            if match.status == MatchStatus.IN_PROGRESS:
                 return jsonify(
                     {
                         "hasActiveMatch": True,
@@ -1166,7 +1181,7 @@ def record_match_status():
 
     # No specific match tracked - find any active match on this field
     match = Match.query.filter_by(
-        event=tournament_url, field=field_name, status="IN_PROGRESS"
+        event=tournament_url, field=field_name, status=MatchStatus.IN_PROGRESS
     ).first()
 
     if match:
@@ -2379,9 +2394,9 @@ def update_all_references(tournament_url):
 
     from app.utils.dependencies import apply_match_dependencies
 
-    # Get all completed matches
+    # Get all completed matches (have a winner; skipped matches are excluded)
     completed_matches = Match.query.filter_by(
-        event=tournament_url, status="COMPLETED"
+        event=tournament_url, status=MatchStatus.COMPLETED
     ).all()
 
     updated_count = 0
@@ -2414,10 +2429,9 @@ def push_back_matches(tournament_url):
         flash("Invalid number of minutes", "error")
         return redirect(f"/{tournament_url}/setup")
 
-    # Get all non-started matches (status != 'IN_PROGRESS' and status != 'COMPLETED')
     non_started_matches = (
         Match.query.filter_by(event=tournament_url)
-        .filter(~Match.status.in_([MatchStatus.IN_PROGRESS, MatchStatus.COMPLETED]))
+        .filter(~Match.status.in_([MatchStatus.IN_PROGRESS, MatchStatus.COMPLETED, MatchStatus.SKIPPED]))
         .all()
     )
 

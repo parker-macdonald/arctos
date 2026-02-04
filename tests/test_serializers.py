@@ -1,5 +1,6 @@
 import pytest
 
+from app.domain.enums import MatchStatus
 from app.serializers.match_note_serializer import MatchNoteSerializer
 from models import Match, MatchNote, Player, db
 
@@ -12,7 +13,7 @@ def test_match_note_serializer_includes_team_id_for_team_targets(test_db, tourna
         name="M1",
         event=tournament_url,
         schedule_type="SAFE",
-        status="NOT_STARTED",
+        status=MatchStatus.NOT_STARTED,
         team1="team_1",
         team2="team_2",
     )

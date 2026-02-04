@@ -8,7 +8,7 @@ import pytest
 from datetime import datetime, timezone, timedelta
 
 from app.utils.parser import get_parser, DSLValidationError
-from app.domain.enums import WinnerSide
+from app.domain.enums import MatchStatus, WinnerSide
 from models import Match, Team, Point, Tag, db
 
 
@@ -33,7 +33,7 @@ def tournament_with_data(app, test_db, tournament):
             schedule_type="SAFE",
             set_type="SETS",
             nominal_length=60,
-            status="COMPLETED",
+            status=MatchStatus.COMPLETED,
             team1="team1",
             team2="team2",
             match_winner=WinnerSide.TEAM1,
@@ -45,7 +45,7 @@ def tournament_with_data(app, test_db, tournament):
             schedule_type="SAFE",
             set_type="SETS",
             nominal_length=60,
-            status="COMPLETED",
+            status=MatchStatus.COMPLETED,
             team1="team2",
             team2="team3",
             match_winner=WinnerSide.TEAM2,
@@ -57,7 +57,7 @@ def tournament_with_data(app, test_db, tournament):
             schedule_type="SAFE",
             set_type="SETS",
             nominal_length=60,
-            status="NOT_STARTED",
+            status=MatchStatus.NOT_STARTED,
             team1="team1",
             team2="team3",
         )
