@@ -167,14 +167,14 @@
                         </div>
                     </div>
 
-                    <div class="row" id="skip_condition_container" {% if match.schedule_type not in ('SAFE', 'FAST', 'BREAK') %}style="display: none;"{% endif %}>
+                    <div class="row" id="skip_condition_container" {% if match.schedule_type not in ('SAFE', 'FAST') %}style="display: none;"{% endif %}>
                         <div class="col-md-12">
                             <div class="mb-3">
                                 <label for="skip_condition" class="form-label">Skip Condition</label>
                                 <input type="text" class="form-control" id="skip_condition" name="skip_condition" 
                                        value="{{ match.skip_condition or '' }}" placeholder="e.g., (== 0 (losses [Ursae Majoris]))">
                                 <div class="form-text">
-                                    Optional expression that evaluates to a boolean. If true, this match will be skipped. Only for Safe, Fast, and Break matches.
+                                    Optional expression that evaluates to a boolean. If true, this match will be skipped. Only for Safe and Fast matches.
                                     <a href="#" class="text-decoration-none" data-bs-toggle="modal" data-bs-target="#dslHelpModal">
                                         <small>(skip condition help)</small>
                                     </a>
@@ -703,10 +703,10 @@ document.addEventListener('DOMContentLoaded', function() {
             if (lengthInput) lengthInput.disabled = false;
         }
 
-        // Skip condition only for SAFE, FAST, and BREAK (not STATIC or JOIN)
+        // Skip condition only for SAFE and FAST (not STATIC, BREAK, or JOIN)
         const skipConditionContainer = document.getElementById('skip_condition_container');
         if (skipConditionContainer) {
-            const showSkipCondition = matchTypeValue === 'SAFE' || matchTypeValue === 'FAST' || matchTypeValue === 'BREAK';
+            const showSkipCondition = matchTypeValue === 'SAFE' || matchTypeValue === 'FAST';
             skipConditionContainer.style.display = showSkipCondition ? 'flex' : 'none';
             if (!showSkipCondition) {
                 const skipInput = document.getElementById('skip_condition');

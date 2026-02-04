@@ -1614,11 +1614,11 @@ def add_match(tournament_url):
         if has_explicit_ids:
             final_refs = ", ".join(refs_list)
 
-    # Skip condition only for SAFE, FAST, and BREAK; clear for STATIC and JOIN
+    # Skip condition only for SAFE and FAST; clear for STATIC, BREAK, and JOIN
     skip_condition_raw = request.form.get("skip_condition", "").strip() or None
     skip_condition = (
         skip_condition_raw
-        if schedule_type in (ScheduleType.SAFE, ScheduleType.FAST, ScheduleType.BREAK)
+        if schedule_type in (ScheduleType.SAFE, ScheduleType.FAST)
         else None
     )
 
