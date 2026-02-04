@@ -38,7 +38,7 @@ def test_match_service_overlap_raises_without_mutating_match(
     m = Match(
         name="Overlap",
         event=tournament_url,
-        schedule_type="DYNAMIC",
+        schedule_type="SAFE",
         set_type="SETS",
         status="NOT_STARTED",
         nominal_length=60,

@@ -38,7 +38,7 @@ class Match(db.Model):
     nominal_length = db.Column(db.Integer)  # minutes
     schedule_type = db.Column(
         db.Enum(ScheduleType), default=ScheduleType.STATIC
-    )  # STATIC, DYNAMIC, BREAK, JOIN
+    )  # STATIC, SAFE, FAST, BREAK, JOIN
     set_type = db.Column(
         db.Enum(SetType), default=SetType.SETS
     )  # SETS, STONES (only for non-BREAK/JOIN matches)
@@ -79,9 +79,6 @@ class Match(db.Model):
     skip_condition = db.Column(
         db.Text, default="false"
     )  # DSL expression that determines if match should be skipped
-    min_warning = db.Column(
-        db.Integer, default=5
-    )  # Minutes before nominal start to finalize time (scheduling)
 
     # Relationships
     previous_match_obj = db.relationship(

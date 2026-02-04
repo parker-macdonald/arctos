@@ -873,7 +873,7 @@ def recompute_schedule(tournament_url):
     if is_not_TO(tournament_url):
         return redirect(f"/{tournament_url}")
     try:
-        recompute_all_match_times(tournament_url, after_create_edit=True)
+        recompute_all_match_times(tournament_url)
         flash("Schedule recomputed successfully.", "success")
     except Exception as e:
         flash(f"Recompute failed: {e}", "error")
@@ -1466,9 +1466,12 @@ def add_match(tournament_url):
         set_type = SetType.SETS  # Not used for JOIN, but set a default
         nominal_length = 0
     else:
-        schedule_type = (
-            ScheduleType.DYNAMIC if match_type_value == "true" else ScheduleType.STATIC
-        )
+        if match_type_value == ScheduleType.SAFE:
+            schedule_type = ScheduleType.SAFE
+        elif match_type_value == ScheduleType.FAST:
+            schedule_type = ScheduleType.FAST
+        else:
+            schedule_type = ScheduleType.STATIC
         set_type = request.form.get("match_type", SetType.SETS)
         nominal_length = int(request.form.get("length", 60))
 
@@ -1596,27 +1599,13 @@ def add_match(tournament_url):
         if has_explicit_ids:
             final_refs = ", ".join(refs_list)
 
-    # Skip condition only for DYNAMIC and BREAK; clear for STATIC and JOIN
+    # Skip condition only for SAFE, FAST, and BREAK; clear for STATIC and JOIN
     skip_condition_raw = request.form.get("skip_condition", "").strip() or None
     skip_condition = (
         skip_condition_raw
-        if schedule_type in (ScheduleType.DYNAMIC, ScheduleType.BREAK)
+        if schedule_type in (ScheduleType.SAFE, ScheduleType.FAST, ScheduleType.BREAK)
         else None
     )
-
-    # min_warning: from form, or previous match's value when previous_match is set, else 5
-    min_warning_val = request.form.get("min_warning")
-    if min_warning_val not in (None, ""):
-        min_warning_val = int(min_warning_val)
-    else:
-        prev_match_id = request.form.get("previous_match", "")
-        if prev_match_id:
-            prev_m = Match.query.get(prev_match_id)
-            min_warning_val = (
-                (prev_m.min_warning if prev_m and prev_m.min_warning is not None else 5)
-            )
-        else:
-            min_warning_val = 5
 
     match = Match(
         name=match_name,
@@ -1639,7 +1628,6 @@ def add_match(tournament_url):
         refs_initial=refs_initial,
         stones_per_set=stones_per_set_value,
         skip_condition=skip_condition,
-        min_warning=min_warning_val,
     )
 
     db.session.add(match)
@@ -1703,7 +1691,7 @@ def add_match(tournament_url):
     db.session.commit()
 
     try:
-        recompute_all_match_times(tournament_url, after_create_edit=True)
+        recompute_all_match_times(tournament_url)
     except Exception:
         pass
 
@@ -2081,9 +2069,12 @@ def update_match(tournament_url):
         schedule_type = ScheduleType.JOIN
         set_type = match.set_type  # Keep existing set_type
     else:
-        schedule_type = (
-            ScheduleType.DYNAMIC if match_type_value == "true" else ScheduleType.STATIC
-        )
+        if match_type_value == ScheduleType.SAFE:
+            schedule_type = ScheduleType.SAFE
+        elif match_type_value == ScheduleType.FAST:
+            schedule_type = ScheduleType.FAST
+        else:
+            schedule_type = ScheduleType.STATIC
         set_type = request.form.get("match_type", match.set_type)
 
     # BREAK and JOIN matches don't have teams/refs
@@ -2239,20 +2230,13 @@ def update_match(tournament_url):
             request.form.get("length", match.nominal_length or 60)
         )
 
-    # Update skip_condition (only for DYNAMIC and BREAK; clear for STATIC and JOIN)
+    # Update skip_condition (only for SAFE, FAST, and BREAK; clear for STATIC and JOIN)
     skip_condition_raw = request.form.get("skip_condition", "").strip() or None
     match.skip_condition = (
         skip_condition_raw
-        if schedule_type in (ScheduleType.DYNAMIC, ScheduleType.BREAK)
+        if schedule_type in (ScheduleType.SAFE, ScheduleType.FAST, ScheduleType.BREAK)
         else None
     )
-
-    # Update min_warning (only meaningful for dynamic scheduling)
-    min_warning_val = request.form.get("min_warning")
-    if min_warning_val not in (None, ""):
-        match.min_warning = int(min_warning_val)
-    elif match.min_warning is None:
-        match.min_warning = 5
 
     # If refs_initial changed, clear refs and repopulate with explicit team IDs and resolved tag references
     old_refs_initial = match.refs_initial or ""
@@ -2344,7 +2328,7 @@ def update_match(tournament_url):
     db.session.flush()  # Flush before updating sequence
 
     # Recompute all match times (for all dynamic matches that depend on this one)
-    recompute_all_match_times(tournament_url, after_create_edit=True)
+    recompute_all_match_times(tournament_url)
 
     db.session.commit()
     flash("Match updated successfully!", "success")

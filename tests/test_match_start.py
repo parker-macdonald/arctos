@@ -18,7 +18,7 @@ def test_start_match_post_starts_match(app, client, tournament, head_ref_player)
         m = Match(
             name="Start Me",
             event=tournament_url,
-            schedule_type="DYNAMIC",
+            schedule_type="SAFE",
             set_type="SETS",
             status="NOT_STARTED",
             nominal_length=60,
@@ -58,7 +58,7 @@ def test_start_match_post_rejects_overlap(app, client, tournament, head_ref_play
         m = Match(
             name="Overlap",
             event=tournament_url,
-            schedule_type="DYNAMIC",
+            schedule_type="SAFE",
             set_type="SETS",
             status="NOT_STARTED",
             nominal_length=60,

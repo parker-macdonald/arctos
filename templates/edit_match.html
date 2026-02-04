@@ -52,13 +52,14 @@
                                 <label for="dynamic" class="form-label">Match Type</label>
                                 <select class="form-select" id="dynamic" name="dynamic">
                                     <option value="false" {% if match.schedule_type == 'STATIC' %}selected{% endif %}>Static (starts at scheduled time)</option>
-                                    <option value="true" {% if match.schedule_type == 'DYNAMIC' %}selected{% endif %}>Dynamic (computed from dependencies)</option>
+                                    <option value="SAFE" {% if match.schedule_type == 'SAFE' %}selected{% endif %}>Safe (time finalized when last dependency starts)</option>
+                                    <option value="FAST" {% if match.schedule_type == 'FAST' %}selected{% endif %}>Fast (time finalized when dependencies complete)</option>
                                     <option value="BREAK" {% if match.schedule_type == 'BREAK' %}selected{% endif %}>Break</option>
                                     <option value="JOIN" {% if match.schedule_type == 'JOIN' %}selected{% endif %}>Join</option>
                                 </select>
                                 <div class="form-text" id="dynamic-help">
                                     {% if match.schedule_type != 'STATIC' %}
-                                    Dynamic matches compute start time from referenced matches (e.g., "Match Name winner"). 
+                                    Safe/Fast matches compute start time from referenced matches (e.g., "Match Name winner"). 
                                     Matches without dependencies must be static.
                                     {% else %}
                                     Static matches require a manual start time.
@@ -70,15 +71,6 @@
                             <div class="mb-3">
                                 <label for="length" class="form-label">Length (minutes)</label>
                                 <input type="number" class="form-control" id="length" name="length" value="{{ match.nominal_length or 60 }}" min="1">
-                            </div>
-                        </div>
-                    </div>
-                    <div class="row">
-                        <div class="col-md-6">
-                            <div class="mb-3" id="min_warning_container" {% if match.schedule_type == 'STATIC' %}style="display: none;"{% endif %}>
-                                <label for="min_warning" class="form-label">Min warning (minutes)</label>
-                                <input type="number" class="form-control" id="min_warning" name="min_warning" value="{{ match.min_warning if match.min_warning is not none else 5 }}" min="0" title="Minutes before nominal start when time is finalized">
-                                <div class="form-text">Minutes before nominal start when time is finalized</div>
                             </div>
                         </div>
                     </div>
@@ -175,14 +167,14 @@
                         </div>
                     </div>
 
-                    <div class="row" id="skip_condition_container" {% if match.schedule_type not in ('DYNAMIC', 'BREAK') %}style="display: none;"{% endif %}>
+                    <div class="row" id="skip_condition_container" {% if match.schedule_type not in ('SAFE', 'FAST', 'BREAK') %}style="display: none;"{% endif %}>
                         <div class="col-md-12">
                             <div class="mb-3">
                                 <label for="skip_condition" class="form-label">Skip Condition</label>
                                 <input type="text" class="form-control" id="skip_condition" name="skip_condition" 
                                        value="{{ match.skip_condition or '' }}" placeholder="e.g., (== 0 (losses [Ursae Majoris]))">
                                 <div class="form-text">
-                                    Optional expression that evaluates to a boolean. If true, this match will be skipped. Only for Dynamic and Break matches.
+                                    Optional expression that evaluates to a boolean. If true, this match will be skipped. Only for Safe, Fast, and Break matches.
                                     <a href="#" class="text-decoration-none" data-bs-toggle="modal" data-bs-target="#dslHelpModal">
                                         <small>(skip condition help)</small>
                                     </a>
@@ -538,10 +530,9 @@ document.addEventListener('DOMContentLoaded', function() {
         stonesField.style.display = 'block';
     }
     
-    // Handle dynamic/static scheduling toggle
+    // Handle match type scheduling toggle
     const startTimeContainer = document.getElementById('start_time_container');
     const previousMatchContainer = document.getElementById('previous_match_container');
-    const minWarningContainer = document.getElementById('min_warning_container');
     const startTimeInput = document.getElementById('start_time');
     const previousMatchSelect = document.getElementById('previous_match');
     const fieldSelect = document.getElementById('field');
@@ -623,20 +614,21 @@ document.addEventListener('DOMContentLoaded', function() {
     
     function updateStartTimeVisibility() {
         const matchTypeValue = dynamicSelect.value;
-        const isDynamic = matchTypeValue === 'true' || matchTypeValue === 'BREAK' || matchTypeValue === 'JOIN';
+        const isComputed = matchTypeValue === 'SAFE' || matchTypeValue === 'FAST' || matchTypeValue === 'BREAK' || matchTypeValue === 'JOIN';
         
-        if (isDynamic) {
+        if (isComputed) {
             startTimeContainer.style.display = 'none';
             previousMatchContainer.style.display = 'block';
-            if (minWarningContainer) minWarningContainer.style.display = 'block';
-            startTimeInput.value = ''; // Clear value for dynamic matches
+            startTimeInput.value = ''; // Clear value for computed matches
             
             if (matchTypeValue === 'JOIN') {
                 dynamicHelp.textContent = 'Join matches are zero-length and synchronized with other joins of the same name.';
             } else if (matchTypeValue === 'BREAK') {
                 dynamicHelp.textContent = 'Break matches compute start time from the previous match on the field.';
+            } else if (matchTypeValue === 'SAFE') {
+                dynamicHelp.textContent = 'Safe matches finalize start time when the last dependency starts (at least one match of warning).';
             } else {
-                dynamicHelp.textContent = 'Dynamic matches compute start time from the previous match on the field.';
+                dynamicHelp.textContent = 'Fast matches finalize start time when dependencies complete (fastest play, teams must watch the schedule).';
             }
             
             updatePreviousMatchOptions();
@@ -645,7 +637,6 @@ document.addEventListener('DOMContentLoaded', function() {
         } else {
             startTimeContainer.style.display = 'block';
             previousMatchContainer.style.display = 'none';
-            if (minWarningContainer) minWarningContainer.style.display = 'none';
             previousMatchSelect.value = ''; // Clear previous match selection
             dynamicHelp.textContent = 'Static matches require a manual start time and are automatically sequenced by time.';
             // Value will be set by base.html script from data-utc attribute
@@ -673,7 +664,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if (fieldSelect) {
         fieldSelect.addEventListener('change', function() {
             const matchTypeValue = dynamicSelect.value;
-            if (matchTypeValue === 'true' || matchTypeValue === 'BREAK' || matchTypeValue === 'JOIN') {
+            if (matchTypeValue === 'SAFE' || matchTypeValue === 'FAST' || matchTypeValue === 'BREAK' || matchTypeValue === 'JOIN') {
                 updatePreviousMatchOptions();
                 // Autofill disabled on edit page - user should manually select previous match
             }
@@ -712,10 +703,10 @@ document.addEventListener('DOMContentLoaded', function() {
             if (lengthInput) lengthInput.disabled = false;
         }
 
-        // Skip condition only for DYNAMIC and BREAK (not STATIC or JOIN)
+        // Skip condition only for SAFE, FAST, and BREAK (not STATIC or JOIN)
         const skipConditionContainer = document.getElementById('skip_condition_container');
         if (skipConditionContainer) {
-            const showSkipCondition = matchTypeValue === 'true' || matchTypeValue === 'BREAK';
+            const showSkipCondition = matchTypeValue === 'SAFE' || matchTypeValue === 'FAST' || matchTypeValue === 'BREAK';
             skipConditionContainer.style.display = showSkipCondition ? 'flex' : 'none';
             if (!showSkipCondition) {
                 const skipInput = document.getElementById('skip_condition');

@@ -75,7 +75,8 @@ class MatchStatus(StrEnum):
 
 class ScheduleType(StrEnum):
     STATIC = "STATIC"
-    DYNAMIC = "DYNAMIC"
+    SAFE = "SAFE"
+    FAST = "FAST"
     BREAK = "BREAK"
     JOIN = "JOIN"
 

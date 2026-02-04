@@ -52,12 +52,13 @@
                                 </a>
                                 <select class="form-select" id="dynamic" name="dynamic">
                                     <option value="false">Static (starts at scheduled time)</option>
-                                    <option value="true">Dynamic (computed from dependencies)</option>
+                                    <option value="SAFE">Safe (time finalized when last dependency starts)</option>
+                                    <option value="FAST">Fast (time finalized when dependencies complete)</option>
                                     <option value="BREAK">Break</option>
                                     <option value="JOIN">Join</option>
                                 </select>
                                 <div class="form-text" id="dynamic-help">
-                                    Dynamic matches compute start time from referenced matches (e.g., "Match Name winner"). 
+                                    Safe/Fast matches compute start time from referenced matches (e.g., "Match Name winner"). 
                                     Matches without dependencies must be static.
                                 </div>
                             </div>
@@ -66,15 +67,6 @@
                             <div class="mb-3">
                                 <label for="length" class="form-label">Length (minutes)</label>
                                 <input type="number" class="form-control" id="length" name="length" value="{{ matches[-1].nominal_length if matches else 60 }}" min="1">
-                            </div>
-                        </div>
-                    </div>
-                    <div class="row">
-                        <div class="col-md-6">
-                            <div class="mb-3" id="min_warning_container" style="display: none;">
-                                <label for="min_warning" class="form-label">Min warning (minutes)</label>
-                                <input type="number" class="form-control" id="min_warning" name="min_warning" value="{{ matches[-1].min_warning if matches and matches[-1].min_warning is not none else 5 }}" min="0" title="Minutes before nominal start when time is finalized">
-                                <div class="form-text">Default: previous match's value</div>
                             </div>
                         </div>
                     </div>
@@ -306,8 +298,10 @@
                                             <span class="badge bg-warning">Break</span>
                                         {% elif match.schedule_type == 'JOIN' %}
                                             <span class="badge bg-primary">Join</span>
-                                        {% elif match.schedule_type == 'DYNAMIC' %}
-                                            <span class="badge bg-info">Dynamic</span>
+                                        {% elif match.schedule_type == 'SAFE' %}
+                                            <span class="badge bg-info">Safe</span>
+                                        {% elif match.schedule_type == 'FAST' %}
+                                            <span class="badge bg-info">Fast</span>
                                         {% else %}
                                             <span class="badge bg-secondary">Static</span>
                                         {% endif %}
@@ -461,32 +455,30 @@
                 <p>
                     Unless you are willing to cut a large portion of matches short, however, this requires a large 
                     nominal length, which leads to lots of idle time before every match starts (see: Fog of War 2025).
-                    To fix this, we introduce the <i>dynamic scheduling</i>, implemented by the <code>dynamic</code>
-                    match type.
+                    To fix this, we introduce <i>computed scheduling</i>, implemented by <code>Safe</code> and <code>Fast</code>
+                    match types.
                 </p>
                 
-                <h6>Dynamic Matches</h6>
+                <h6>Safe and Fast Matches</h6>
                 <p>
-                    Dynamic matches do not have a nominal start time (that you, the TO, can set, at least). Instead,
-                    their nominal start time is computed based on the nominal length of their dependencies. Match 
+                    Safe and Fast matches do not have a nominal start time (that you, the TO, can set, at least). Instead,
+                    their nominal start time is computed based on the end times of their dependencies. Match 
                     dependencies are:
                     <ul>
-                        <li>the preceeding match: this match has to wait until the previous match is over.</li>
+                        <li>the preceding match: this match has to wait until the previous match is over.</li>
                         <li>dependent teams: if "match1 winner" is one of the teams playing or reffing in this match, this match is dependent on match 1</li>
                     </ul>
                     The system sets this match's start time to the latest possible end time across all dependencies.
                 </p>
                 <p>
-                    The magic happens when matches begin to be completed. Every time a match is completed, it we update 
-                    all other matches. If a match ends early, its end time will be earlier than its nominal length would predict, 
-                    and so subsequent matches will be shifted forward! This seems great, but it creates a problem: it breaks our
-                    ability to tell teams when they need to be at their matches. If we shift their matches forward, we can't possibly
-                    penalize them for being late.
+                    <strong>Safe</strong> matches finalize their start time when the <em>last dependency match starts</em>. 
+                    That gives teams at least one match of warning before they need to be at the field, so you can reasonably 
+                    expect them to be on time.
                 </p>
                 <p>
-                    To solve this, we lock the start time of dynamic matches when the last of their dependency matches starts.
-                    When this happens, matches are marked as "time finalized" on the schedule. This means that teams always know 
-                    their matches' start times at least nominal_length ahead of time, so it's reasonable to expect them to be on time.
+                    <strong>Fast</strong> matches finalize their start time only when <em>all dependency matches are completed</em>. 
+                    That allows the fastest possible play (matches can start as soon as dependencies finish), but teams must 
+                    watch the schedule constantly.
                 </p>
                 <p>
                     <strong>Note:</strong> Matches without dependencies (like the first match of the day) must be static.
@@ -1132,7 +1124,6 @@ document.addEventListener('DOMContentLoaded', function() {
     const dynamicSelect = document.getElementById('dynamic');
     const startTimeContainer = document.getElementById('start_time_container');
     const previousMatchContainer = document.getElementById('previous_match_container');
-    const minWarningContainer = document.getElementById('min_warning_container');
     const startTimeInput = document.getElementById('start_time');
     const previousMatchSelect = document.getElementById('previous_match');
     const fieldSelect = document.getElementById('field');
@@ -1231,20 +1222,21 @@ document.addEventListener('DOMContentLoaded', function() {
     
     function updateStartTimeVisibility() {
         const matchTypeValue = dynamicSelect.value;
-        const isDynamic = matchTypeValue === 'true' || matchTypeValue === 'BREAK' || matchTypeValue === 'JOIN';
+        const isComputed = matchTypeValue === 'SAFE' || matchTypeValue === 'FAST' || matchTypeValue === 'BREAK' || matchTypeValue === 'JOIN';
         
-        if (isDynamic) {
+        if (isComputed) {
             startTimeContainer.style.display = 'none';
             previousMatchContainer.style.display = 'block';
-            if (minWarningContainer) minWarningContainer.style.display = 'block';
-            startTimeInput.value = ''; // Clear value for dynamic matches
+            startTimeInput.value = ''; // Clear value for computed matches
             
             if (matchTypeValue === 'JOIN') {
                 dynamicHelp.textContent = 'Join matches are zero-length and synchronized with other joins of the same name.';
             } else if (matchTypeValue === 'BREAK') {
                 dynamicHelp.textContent = 'Break matches compute start time from the previous match on the field.';
+            } else if (matchTypeValue === 'SAFE') {
+                dynamicHelp.textContent = 'Safe matches finalize start time when the last dependency starts (at least one match of warning).';
             } else {
-                dynamicHelp.textContent = 'Dynamic matches compute start time from the previous match on the field.';
+                dynamicHelp.textContent = 'Fast matches finalize start time when dependencies complete (fastest play, teams must watch the schedule).';
             }
             
             updatePreviousMatchOptions();
@@ -1256,7 +1248,6 @@ document.addEventListener('DOMContentLoaded', function() {
         } else {
             startTimeContainer.style.display = 'block';
             previousMatchContainer.style.display = 'none';
-            if (minWarningContainer) minWarningContainer.style.display = 'none';
             previousMatchSelect.value = ''; // Clear previous match selection
             dynamicHelp.textContent = 'Static matches require a manual start time and are automatically sequenced by time.';
         }
@@ -1266,7 +1257,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if (fieldSelect) {
         fieldSelect.addEventListener('change', function() {
             const matchTypeValue = dynamicSelect.value;
-            if (matchTypeValue === 'true' || matchTypeValue === 'BREAK' || matchTypeValue === 'JOIN') {
+            if (matchTypeValue === 'SAFE' || matchTypeValue === 'FAST' || matchTypeValue === 'BREAK' || matchTypeValue === 'JOIN') {
                 updatePreviousMatchOptions();
                 // Use setTimeout to ensure the options are updated before autofilling
                 setTimeout(function() {
@@ -1298,10 +1289,10 @@ document.addEventListener('DOMContentLoaded', function() {
         if (ribbonContainer) ribbonContainer.style.display = isBreakOrJoin ? 'none' : 'block';
         if (stonesField) stonesField.style.display = isBreakOrJoin ? 'none' : 'none'; // Hide for BREAK/JOIN, will be shown below if STONES
 
-        // Skip condition only for DYNAMIC and BREAK (not STATIC or JOIN)
+        // Skip condition only for SAFE, FAST, and BREAK (not STATIC or JOIN)
         const skipConditionContainer = document.getElementById('skip_condition_container');
         if (skipConditionContainer) {
-            const showSkipCondition = matchTypeValue === 'true' || matchTypeValue === 'BREAK';
+            const showSkipCondition = matchTypeValue === 'SAFE' || matchTypeValue === 'FAST' || matchTypeValue === 'BREAK';
             skipConditionContainer.style.display = showSkipCondition ? 'flex' : 'none';
             if (!showSkipCondition) document.getElementById('skip_condition').value = '';
         }
@@ -1329,7 +1320,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if (matchTypeSelect) {
         matchTypeSelect.addEventListener('change', function() {
             const stonesField = document.getElementById('stones-per-set-field');
-            const matchTypeValue = dynamicSelect.value;
+            const matchTypeValue = dynamicSelect ? dynamicSelect.value : '';
             const isBreakOrJoin = matchTypeValue === 'BREAK' || matchTypeValue === 'JOIN';
             
             if (stonesField) {
@@ -1344,7 +1335,7 @@ document.addEventListener('DOMContentLoaded', function() {
         
         // Initialize stones field visibility on page load
         const stonesField = document.getElementById('stones-per-set-field');
-        const matchTypeValue = dynamicSelect.value;
+        const matchTypeValue = dynamicSelect ? dynamicSelect.value : '';
         const isBreakOrJoin = matchTypeValue === 'BREAK' || matchTypeValue === 'JOIN';
         if (stonesField && !isBreakOrJoin && matchTypeSelect.value === 'STONES') {
             stonesField.style.display = 'block';

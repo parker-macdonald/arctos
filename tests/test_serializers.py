@@ -11,7 +11,7 @@ def test_match_note_serializer_includes_team_id_for_team_targets(test_db, tourna
     m = Match(
         name="M1",
         event=tournament_url,
-        schedule_type="DYNAMIC",
+        schedule_type="SAFE",
         status="NOT_STARTED",
         team1="team_1",
         team2="team_2",
