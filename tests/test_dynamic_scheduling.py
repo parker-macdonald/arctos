@@ -1,9 +1,9 @@
 """
 Tests for dynamic match scheduling (MatchGraph-based scheduler).
 
-These tests validate recompute_all_match_times() (run_scheduling_on_match_start_end)
+These tests validate recompute_all_match_times() / run_scheduling()
 with the current Match/Tournament schema:
-- Match.schedule_type (STATIC/DYNAMIC/BREAK/JOIN)
+- Match.schedule_type (STATIC/SAFE/FAST/BREAK/JOIN)
 - Match.previous_match for dependency chains
 - Match.finalized_at for completion time used by the graph
 
@@ -19,7 +19,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from app.utils.scheduling import recompute_all_match_times, run_scheduling_on_match_create_edit
+from app.utils.scheduling import recompute_all_match_times
 from models import Match, db
 
 
@@ -53,7 +53,7 @@ class TestDynamicScheduling:
                 event=tournament_url,
                 field=field,
                 nominal_start_time=base_time.replace(tzinfo=None),
-                schedule_type="DYNAMIC",
+                schedule_type="SAFE",
                 nominal_length=60,
                 status="COMPLETED",
             )
@@ -62,7 +62,7 @@ class TestDynamicScheduling:
                 event=tournament_url,
                 field=field,
                 nominal_start_time=(base_time + timedelta(hours=1)).replace(tzinfo=None),
-                schedule_type="DYNAMIC",
+                schedule_type="SAFE",
                 nominal_length=60,
                 status="NOT_STARTED",
             )
@@ -71,7 +71,7 @@ class TestDynamicScheduling:
                 event=tournament_url,
                 field=field,
                 nominal_start_time=(base_time + timedelta(hours=2)).replace(tzinfo=None),
-                schedule_type="DYNAMIC",
+                schedule_type="SAFE",
                 nominal_length=60,
                 status="NOT_STARTED",
             )
@@ -115,7 +115,7 @@ class TestDynamicScheduling:
                 event=tournament_url,
                 field=field,
                 nominal_start_time=base_time.replace(tzinfo=None),
-                schedule_type="DYNAMIC",
+                schedule_type="SAFE",
                 nominal_length=60,
                 status="COMPLETED",
             )
@@ -124,7 +124,7 @@ class TestDynamicScheduling:
                 event=tournament_url,
                 field=field,
                 nominal_start_time=(base_time + timedelta(hours=2)).replace(tzinfo=None),
-                schedule_type="DYNAMIC",
+                schedule_type="SAFE",
                 nominal_length=60,
                 status="NOT_STARTED",
             )
@@ -142,7 +142,7 @@ class TestDynamicScheduling:
                 event=tournament_url,
                 field=field,
                 nominal_start_time=(base_time + timedelta(hours=6)).replace(tzinfo=None),
-                schedule_type="DYNAMIC",
+                schedule_type="SAFE",
                 nominal_length=60,
                 status="NOT_STARTED",
             )
@@ -198,7 +198,7 @@ class TestDynamicScheduling:
                 event=tournament_url,
                 field=field,
                 nominal_start_time=base_time.replace(tzinfo=None),
-                schedule_type="DYNAMIC",
+                schedule_type="SAFE",
                 nominal_length=60,
                 status="COMPLETED",
             )
@@ -209,7 +209,7 @@ class TestDynamicScheduling:
                 nominal_start_time=(base_time + timedelta(hours=1, minutes=30)).replace(
                     tzinfo=None
                 ),
-                schedule_type="DYNAMIC",
+                schedule_type="SAFE",
                 nominal_length=60,
                 status="COMPLETED",
             )
@@ -218,7 +218,7 @@ class TestDynamicScheduling:
                 event=tournament_url,
                 field=field,
                 nominal_start_time=(base_time + timedelta(hours=1)).replace(tzinfo=None),
-                schedule_type="DYNAMIC",
+                schedule_type="SAFE",
                 nominal_length=60,
                 status="NOT_STARTED",
             )
@@ -227,7 +227,7 @@ class TestDynamicScheduling:
                 event=tournament_url,
                 field=field,
                 nominal_start_time=(base_time + timedelta(hours=2)).replace(tzinfo=None),
-                schedule_type="DYNAMIC",
+                schedule_type="SAFE",
                 nominal_length=60,
                 team1_initial="Dep::winner",
                 status="NOT_STARTED",
@@ -273,7 +273,7 @@ class TestDynamicScheduling:
                 event=tournament_url,
                 field="Field 1",
                 nominal_start_time=base_time.replace(tzinfo=None),
-                schedule_type="DYNAMIC",
+                schedule_type="SAFE",
                 nominal_length=60,
                 status="COMPLETED",
             )
@@ -282,7 +282,7 @@ class TestDynamicScheduling:
                 event=tournament_url,
                 field="Field 2",
                 nominal_start_time=(base_time + timedelta(hours=1)).replace(tzinfo=None),
-                schedule_type="DYNAMIC",
+                schedule_type="SAFE",
                 nominal_length=60,
                 status="COMPLETED",
             )
@@ -291,7 +291,7 @@ class TestDynamicScheduling:
                 event=tournament_url,
                 field="Field 2",
                 nominal_start_time=(base_time + timedelta(hours=2)).replace(tzinfo=None),
-                schedule_type="DYNAMIC",
+                schedule_type="SAFE",
                 nominal_length=60,
                 team1_initial="Dep::winner",
                 status="NOT_STARTED",
@@ -322,7 +322,7 @@ class TestDynamicScheduling:
                 event=tournament_url,
                 field=field,
                 nominal_start_time=base_time.replace(tzinfo=None),
-                schedule_type="DYNAMIC",
+                schedule_type="SAFE",
                 nominal_length=60,
                 status="COMPLETED",
             )
@@ -331,7 +331,7 @@ class TestDynamicScheduling:
                 event=tournament_url,
                 field=field,
                 nominal_start_time=(base_time + timedelta(hours=1)).replace(tzinfo=None),
-                schedule_type="DYNAMIC",
+                schedule_type="SAFE",
                 nominal_length=60,
                 status="COMPLETED",
             )
@@ -342,7 +342,7 @@ class TestDynamicScheduling:
                 nominal_start_time=(base_time + timedelta(hours=1, minutes=10)).replace(
                     tzinfo=None
                 ),
-                schedule_type="DYNAMIC",
+                schedule_type="SAFE",
                 nominal_length=60,
                 status="COMPLETED",
             )
@@ -351,7 +351,7 @@ class TestDynamicScheduling:
                 event=tournament_url,
                 field=field,
                 nominal_start_time=(base_time + timedelta(hours=2)).replace(tzinfo=None),
-                schedule_type="DYNAMIC",
+                schedule_type="SAFE",
                 nominal_length=60,
                 status="NOT_STARTED",
             )
@@ -360,7 +360,7 @@ class TestDynamicScheduling:
                 event=tournament_url,
                 field=field,
                 nominal_start_time=(base_time + timedelta(hours=3)).replace(tzinfo=None),
-                schedule_type="DYNAMIC",
+                schedule_type="SAFE",
                 nominal_length=60,
                 team1_initial="Dep 1::winner",
                 team2_initial="Dep 2::winner",
@@ -394,7 +394,7 @@ class TestDynamicScheduling:
                 event=tournament_url,
                 field=field,
                 nominal_start_time=base_time.replace(tzinfo=None),
-                schedule_type="DYNAMIC",
+                schedule_type="SAFE",
                 nominal_length=60,
                 status="COMPLETED",
             )
@@ -415,7 +415,7 @@ class TestDynamicScheduling:
                 event=tournament_url,
                 field=None,
                 nominal_start_time=base_time.replace(tzinfo=None),
-                schedule_type="DYNAMIC",
+                schedule_type="SAFE",
                 nominal_length=60,
                 status="COMPLETED",
             )

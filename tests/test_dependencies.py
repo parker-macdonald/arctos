@@ -13,7 +13,7 @@ def test_apply_match_dependencies_substitutes_winner_loser_and_refs(
         completed = Match(
             name="Match A",
             event=tournament_url,
-            schedule_type="DYNAMIC",
+            schedule_type="SAFE",
             status="COMPLETED",
             team1="team_1",
             team2="team_2",
@@ -22,7 +22,7 @@ def test_apply_match_dependencies_substitutes_winner_loser_and_refs(
         dependent = Match(
             name="Match B",
             event=tournament_url,
-            schedule_type="DYNAMIC",
+            schedule_type="SAFE",
             status="NOT_STARTED",
             team1=None,
             team2=None,
@@ -50,7 +50,7 @@ def test_apply_match_dependencies_noop_when_no_winner(test_db, tournament):
         completed = Match(
             name="Match A",
             event=tournament_url,
-            schedule_type="DYNAMIC",
+            schedule_type="SAFE",
             status="COMPLETED",
             team1="team_1",
             team2="team_2",
@@ -59,7 +59,7 @@ def test_apply_match_dependencies_noop_when_no_winner(test_db, tournament):
         dependent = Match(
             name="Match B",
             event=tournament_url,
-            schedule_type="DYNAMIC",
+            schedule_type="SAFE",
             status="NOT_STARTED",
             team1=None,
             team2=None,

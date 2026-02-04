@@ -181,7 +181,7 @@ def create_match(
         event=tournament_url,
         field=field,
         nominal_start_time=nominal_start_time,
-        schedule_type="DYNAMIC" if dynamic else "STATIC",
+        schedule_type="SAFE" if dynamic else "STATIC",
         team1_initial=team1_initial,
         team2_initial=team2_initial,
         nominal_length=nominal_length,

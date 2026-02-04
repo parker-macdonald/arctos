@@ -10,7 +10,7 @@ def test_match_winner_loser_team_id_properties():
         team2="b",
         match_winner="TEAM1",
         status="COMPLETED",
-        schedule_type="DYNAMIC",
+        schedule_type="SAFE",
         name="x",
         event="e",
     )
@@ -22,7 +22,7 @@ def test_match_winner_loser_team_id_properties():
         team2="b",
         match_winner="TEAM2",
         status="COMPLETED",
-        schedule_type="DYNAMIC",
+        schedule_type="SAFE",
         name="x2",
         event="e",
     )
@@ -34,7 +34,7 @@ def test_match_winner_loser_team_id_properties():
         team2="b",
         match_winner=None,
         status="COMPLETED",
-        schedule_type="DYNAMIC",
+        schedule_type="SAFE",
         name="x3",
         event="e",
     )

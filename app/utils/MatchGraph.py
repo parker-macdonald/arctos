@@ -36,7 +36,6 @@ class MatchGraphNode:
         skip_condition: Optional[str],
         status: MatchStatus,
         component_uuids: Optional[Set[str]] = None,
-        min_warning: int = 5,
         field: Optional[str] = None,
     ):
         self.name = name
@@ -49,7 +48,6 @@ class MatchGraphNode:
         self.schedule_type = schedule_type
         self.skip_condition = skip_condition
         self.status = status
-        self.min_warning = min_warning
         # For JOIN matches: set of UUIDs of component matches
         self.component_uuids = component_uuids or set()
         # Dependencies: set of Dependency wrappers (startOfMatchDep or endOfMatchDep)
@@ -60,66 +58,91 @@ class MatchGraphNode:
     def __repr__(self) -> str:
         return f"MatchGraphNode(name={self.name!r}, uuid={self.uuid}, deps={len(self.dependencies)})"
 
+    def get_direct_dependencies(self) -> Set["MatchGraphNode"]:
+        """
+        Dependencies that contribute to nominal start time (end-of-match deps only).
+        Used for computing latest end time for SAFE/FAST/BREAK/JOIN.
+        """
+        from app.utils.MatchGraph import endOfMatchDep
+        return set(dep.node for dep in self.dependencies if isinstance(dep, endOfMatchDep))
+
     def get_schedule_dependencies(self) -> Set["MatchGraphNode"]:
         """
         Get schedule dependencies by traversing the dependency tree.
 
-        Returns only STATIC or DYNAMIC matches, skipping over BREAK, JOIN, and SKIPPED matches.
-        Traverses through BREAK, JOIN, and SKIPPED matches as if they have no dependencies,
-        effectively finding the "real" scheduling dependencies.
-
-        Returns:
-            Set of nodes that are STATIC or DYNAMIC and are schedule dependencies
+        Returns only STATIC, SAFE, or FAST matches; skips over BREAK, JOIN, and SKIPPED.
+        Used to decide when this match becomes READY_TO_START / TIME_FINALIZED.
         """
         result: Set["MatchGraphNode"] = set()
         visited: Set["MatchGraphNode"] = set()
 
         def traverse(node: "MatchGraphNode") -> None:
-            """Recursively traverse dependencies, collecting STATIC/DYNAMIC matches."""
             if node in visited:
                 return
             visited.add(node)
-
-            # If this is a STATIC or DYNAMIC match and not SKIPPED, add it and stop traversing
             if (
-                node.schedule_type in (ScheduleType.STATIC, ScheduleType.DYNAMIC)
+                node.schedule_type in (ScheduleType.STATIC, ScheduleType.SAFE, ScheduleType.FAST)
                 and node.status != MatchStatus.SKIPPED
             ):
                 result.add(node)
                 return
-
-            # For BREAK, JOIN, and SKIPPED matches, continue traversing their dependencies
-            # (treat them as transparent in the dependency chain)
             for dep in node.dependencies:
                 traverse(dep.node)
 
-        # Start traversal from this node's dependencies
         for dep in self.dependencies:
             traverse(dep.node)
-
         return result
 
     def get_deps_latest_end_time(self) -> Optional[datetime]:
         """
-        Get the latest end time from all normal dependencies (not schedule dependencies).
-
-        For skip-condition dependencies, uses start time instead of end time.
-        For other dependencies, uses end time with appropriate fallbacks.
-
-        Returns:
-            Latest end/start time from dependencies, or None if no dependencies
+        Latest end/start time from all dependencies (skip-condition deps use start time).
+        Used for BREAK/JOIN nominal start.
         """
         if not self.dependencies:
             return None
-
         latest_time: Optional[datetime] = None
         for dep in self.dependencies:
             time_to_use = dep.get_time()
-            if time_to_use:
-                if latest_time is None or time_to_use > latest_time:
-                    latest_time = time_to_use
-
+            if time_to_use and (latest_time is None or time_to_use > latest_time):
+                latest_time = time_to_use
         return latest_time
+
+    def get_direct_deps_latest_end_time(
+        self, for_safe_nominal: bool = False
+    ) -> Optional[datetime]:
+        """
+        Latest end time from direct (end-of-match) dependencies only.
+
+        - for_safe_nominal=False (FAST/BREAK/JOIN): latest END_TIME(x) for each direct dep.
+        - for_safe_nominal=True (SAFE nominal_start): for each direct dep x,
+          if x is SKIPPED use END_TIME(x) + x.nominal_length else END_TIME(x); take latest.
+        """
+        direct = self.get_direct_dependencies()
+        if not direct:
+            return None
+        latest: Optional[datetime] = None
+        for dep_node in direct:
+            t = _node_end_time(dep_node)
+            if t is None:
+                continue
+            if for_safe_nominal and dep_node.status == MatchStatus.SKIPPED:
+                if dep_node.nominal_length:
+                    t = t + timedelta(minutes=dep_node.nominal_length)
+            if latest is None or t > latest:
+                latest = t
+        return latest
+
+    def get_direct_deps_latest_end_time_if_skipped(self) -> Optional[datetime]:
+        """Latest END_TIME(x) over direct deps. Used as nominal_start when this match is skipped."""
+        direct = self.get_direct_dependencies()
+        if not direct:
+            return None
+        latest: Optional[datetime] = None
+        for dep_node in direct:
+            t = _node_end_time(dep_node)
+            if t and (latest is None or t > latest):
+                latest = t
+        return latest
 
 
 def _node_start_time(node: MatchGraphNode) -> Optional[datetime]:
@@ -382,7 +405,6 @@ def build_match_graph(
     for name, join_list in joins_by_name.items():
         representative = join_list[0]
         component_uuids = {m.uuid for m in join_list}
-        min_warning = getattr(representative, "min_warning", 0)
         node = MatchGraphNode(
             name=representative.name,
             uuid=representative.uuid,
@@ -394,7 +416,6 @@ def build_match_graph(
             skip_condition=representative.skip_condition,
             status=representative.status,
             component_uuids=component_uuids,
-            min_warning=min_warning,
             field="",
         )
         graph.add_node(node)
@@ -403,7 +424,6 @@ def build_match_graph(
         if all(m.schedule_type == ScheduleType.JOIN for m in match_list):
             continue  # already created above
         match = match_list[0]
-        min_warning = getattr(match, "min_warning", 0)
         node = MatchGraphNode(
             name=match.name,
             uuid=match.uuid,
@@ -414,7 +434,6 @@ def build_match_graph(
             schedule_type=match.schedule_type,
             skip_condition=match.skip_condition,
             status=match.status,
-            min_warning=min_warning,
             field=match.field or "",
         )
         graph.add_node(node)

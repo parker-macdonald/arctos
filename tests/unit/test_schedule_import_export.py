@@ -285,7 +285,7 @@ def test_break_join_matches_can_have_duplicate_names_on_different_fields(
 
 @pytest.mark.unit
 def test_regular_matches_cannot_have_duplicate_names(test_db, tournament, app):
-    """Regular matches (STATIC/DYNAMIC) must have unique names within tournament."""
+    """Regular matches (STATIC/SAFE/FAST) must have unique names within tournament."""
     tournament_url = tournament.url
 
     # Create a field
