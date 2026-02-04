@@ -721,8 +721,8 @@ def start_match(tournament_url):
         flash("You are not authorized to start matches for this tournament", "error")
         return redirect(f"/{tournament_url}/schedule")
 
-    if match.status != "NOT_STARTED":
-        flash("This match has already been started or completed", "error")
+    if match.status != MatchStatus.READY_TO_START:
+        flash(f"This match has non-READY status {match.status}", "error")
         return redirect(f"/{tournament_url}/schedule")
 
     if not match.team1 or not match.team2:

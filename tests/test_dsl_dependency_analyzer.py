@@ -127,9 +127,7 @@ class TestMatchDependencyAnalyzer:
         """Test expression with both direct and skip_condition dependencies."""
         with app.app_context():
             analyzer = MatchDependencyAnalyzer(tournament.url)
-            result = analyzer.analyze(
-                "(and (winner {Match1}) (is-skipped {Match2}))"
-            )
+            result = analyzer.analyze("(and (winner {Match1}) (is-skipped {Match2}))")
             assert "Match1" in result["direct"]
             assert "Match2" in result["skip_condition"]
             assert "Match1" not in result["skip_condition"]

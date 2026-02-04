@@ -201,18 +201,14 @@ window.MathJax = {
                 </div>
                 {% endif %}
                 
-                {% if current_user.is_authenticated and current_user.__class__.__name__ == 'Player' and is_head_ref %}
+                {% if is_head_ref %}
                 <div class="row mt-3">
                     <div class="col-12">
                         <div class="d-flex gap-2">
-                            {% if match.status == 'NOT_STARTED' and match.team1 and match.team2 and (not match.refs_initial or match.refs) %}
-                                {% if match.schedule_type == 'STATIC' or match.ready_to_start %}
-                                    <a href="/{{ tournament.url }}/start-match?id={{ match.uuid }}" class="btn btn-success">Start Match</a>
-                                {% else %}
-                                    <span class="btn btn-secondary disabled" title="Waiting on dependencies">Cannot Start</span>
-                                {% endif %}
+                            {% if match.status == 'READY_TO_START' %}
+                                <a href="/{{ tournament.url }}/start-match?id={{ match.uuid }}" class="btn btn-success">Start Match</a>
                             {% elif match.status == 'NOT_STARTED' %}
-                                <span class="btn btn-secondary disabled">Cannot Start</span>
+                                <span class="btn btn-secondary disabled" title="Waiting on dependencies">Cannot Start</span>
                             {% elif match.status == 'IN_PROGRESS' %}
                                 <a href="/{{ tournament.url }}/run-match?id={{ match.uuid }}" class="btn btn-warning">Run Match</a>
                             {% endif %}

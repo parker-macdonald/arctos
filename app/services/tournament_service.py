@@ -102,9 +102,7 @@ class TournamentService:
                 past_tournaments.append(t)
             else:
                 upcoming_tournaments.append(t)
-        past_tournaments.sort(
-            key=lambda t: (t.end_date or t.start_date), reverse=True
-        )
+        past_tournaments.sort(key=lambda t: (t.end_date or t.start_date), reverse=True)
 
         return {
             "tournaments": tournaments,  # legacy; template can use upcoming/past

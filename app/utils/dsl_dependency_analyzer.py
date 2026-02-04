@@ -268,4 +268,3 @@ class MatchDependencyAnalyzer:
         # Recursively visit all children
         for child in tree.children:
             self._find_all_match_atoms(child, matches)
-

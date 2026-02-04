@@ -61,7 +61,9 @@ class TestDynamicScheduling:
                 name="Match 2",
                 event=tournament_url,
                 field=field,
-                nominal_start_time=(base_time + timedelta(hours=1)).replace(tzinfo=None),
+                nominal_start_time=(base_time + timedelta(hours=1)).replace(
+                    tzinfo=None
+                ),
                 schedule_type="SAFE",
                 nominal_length=60,
                 status="NOT_STARTED",
@@ -70,7 +72,9 @@ class TestDynamicScheduling:
                 name="Match 3",
                 event=tournament_url,
                 field=field,
-                nominal_start_time=(base_time + timedelta(hours=2)).replace(tzinfo=None),
+                nominal_start_time=(base_time + timedelta(hours=2)).replace(
+                    tzinfo=None
+                ),
                 schedule_type="SAFE",
                 nominal_length=60,
                 status="NOT_STARTED",
@@ -90,14 +94,20 @@ class TestDynamicScheduling:
 
             assert (
                 abs(
-                    (_aware_utc(match2.nominal_start_time) - finalize_time).total_seconds()
+                    (
+                        _aware_utc(match2.nominal_start_time) - finalize_time
+                    ).total_seconds()
                 )
                 < 2
             )
-            expected_match3 = finalize_time + timedelta(minutes=match2.nominal_length or 60)
+            expected_match3 = finalize_time + timedelta(
+                minutes=match2.nominal_length or 60
+            )
             assert (
                 abs(
-                    (_aware_utc(match3.nominal_start_time) - expected_match3).total_seconds()
+                    (
+                        _aware_utc(match3.nominal_start_time) - expected_match3
+                    ).total_seconds()
                 )
                 < 2
             )
@@ -123,7 +133,9 @@ class TestDynamicScheduling:
                 name="Match 2",
                 event=tournament_url,
                 field=field,
-                nominal_start_time=(base_time + timedelta(hours=2)).replace(tzinfo=None),
+                nominal_start_time=(base_time + timedelta(hours=2)).replace(
+                    tzinfo=None
+                ),
                 schedule_type="SAFE",
                 nominal_length=60,
                 status="NOT_STARTED",
@@ -132,7 +144,9 @@ class TestDynamicScheduling:
                 name="Match 3 Static",
                 event=tournament_url,
                 field=field,
-                nominal_start_time=(base_time + timedelta(hours=4)).replace(tzinfo=None),
+                nominal_start_time=(base_time + timedelta(hours=4)).replace(
+                    tzinfo=None
+                ),
                 schedule_type="STATIC",
                 nominal_length=60,
                 status="TIME_FINALIZED",
@@ -141,7 +155,9 @@ class TestDynamicScheduling:
                 name="Match 4",
                 event=tournament_url,
                 field=field,
-                nominal_start_time=(base_time + timedelta(hours=6)).replace(tzinfo=None),
+                nominal_start_time=(base_time + timedelta(hours=6)).replace(
+                    tzinfo=None
+                ),
                 schedule_type="SAFE",
                 nominal_length=60,
                 status="NOT_STARTED",
@@ -162,9 +178,11 @@ class TestDynamicScheduling:
 
             assert (
                 abs(
-                    (_aware_utc(match2.nominal_start_time) - finalize_time).total_seconds()
+                    (
+                        _aware_utc(match2.nominal_start_time) - finalize_time
+                    ).total_seconds()
                 )
-                < 2 
+                < 2
             )
             assert (
                 abs(
@@ -217,7 +235,9 @@ class TestDynamicScheduling:
                 name="Next",
                 event=tournament_url,
                 field=field,
-                nominal_start_time=(base_time + timedelta(hours=1)).replace(tzinfo=None),
+                nominal_start_time=(base_time + timedelta(hours=1)).replace(
+                    tzinfo=None
+                ),
                 schedule_type="SAFE",
                 nominal_length=60,
                 status="NOT_STARTED",
@@ -226,7 +246,9 @@ class TestDynamicScheduling:
                 name="Constrained",
                 event=tournament_url,
                 field=field,
-                nominal_start_time=(base_time + timedelta(hours=2)).replace(tzinfo=None),
+                nominal_start_time=(base_time + timedelta(hours=2)).replace(
+                    tzinfo=None
+                ),
                 schedule_type="SAFE",
                 nominal_length=60,
                 team1_initial="Dep::winner",
@@ -281,7 +303,9 @@ class TestDynamicScheduling:
                 name="Dep",
                 event=tournament_url,
                 field="Field 2",
-                nominal_start_time=(base_time + timedelta(hours=1)).replace(tzinfo=None),
+                nominal_start_time=(base_time + timedelta(hours=1)).replace(
+                    tzinfo=None
+                ),
                 schedule_type="SAFE",
                 nominal_length=60,
                 status="COMPLETED",
@@ -290,7 +314,9 @@ class TestDynamicScheduling:
                 name="Field2 Match",
                 event=tournament_url,
                 field="Field 2",
-                nominal_start_time=(base_time + timedelta(hours=2)).replace(tzinfo=None),
+                nominal_start_time=(base_time + timedelta(hours=2)).replace(
+                    tzinfo=None
+                ),
                 schedule_type="SAFE",
                 nominal_length=60,
                 team1_initial="Dep::winner",
@@ -330,7 +356,9 @@ class TestDynamicScheduling:
                 name="Dep 1",
                 event=tournament_url,
                 field=field,
-                nominal_start_time=(base_time + timedelta(hours=1)).replace(tzinfo=None),
+                nominal_start_time=(base_time + timedelta(hours=1)).replace(
+                    tzinfo=None
+                ),
                 schedule_type="SAFE",
                 nominal_length=60,
                 status="COMPLETED",
@@ -350,7 +378,9 @@ class TestDynamicScheduling:
                 name="Next",
                 event=tournament_url,
                 field=field,
-                nominal_start_time=(base_time + timedelta(hours=2)).replace(tzinfo=None),
+                nominal_start_time=(base_time + timedelta(hours=2)).replace(
+                    tzinfo=None
+                ),
                 schedule_type="SAFE",
                 nominal_length=60,
                 status="NOT_STARTED",
@@ -359,7 +389,9 @@ class TestDynamicScheduling:
                 name="Target",
                 event=tournament_url,
                 field=field,
-                nominal_start_time=(base_time + timedelta(hours=3)).replace(tzinfo=None),
+                nominal_start_time=(base_time + timedelta(hours=3)).replace(
+                    tzinfo=None
+                ),
                 schedule_type="SAFE",
                 nominal_length=60,
                 team1_initial="Dep 1::winner",
@@ -379,7 +411,9 @@ class TestDynamicScheduling:
             recompute_all_match_times(tournament_url)
 
             db.session.refresh(target)
-            assert _aware_utc(target.nominal_start_time) >= _aware_utc(dep2.finalized_at)
+            assert _aware_utc(target.nominal_start_time) >= _aware_utc(
+                dep2.finalized_at
+            )
 
     @pytest.mark.unit
     def test_no_subsequent_matches(self, app, test_db, tournament):
