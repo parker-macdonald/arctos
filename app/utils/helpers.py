@@ -7,6 +7,7 @@ import hashlib
 import re
 from flask import current_app
 from flask_login import current_user
+from app.domain.enums import RegistrationStatus
 from models import Tournament, PlayerRegistration, Match
 
 
@@ -26,15 +27,6 @@ def can_head_ref_match(tournament_url: str, player_id: str, match=None) -> bool:
     if not tournament:
         return False
 
-    # If allow anyone is enabled, check if player is registered
-    if tournament.head_refs_allow_anyone:
-        player_reg = PlayerRegistration.query.filter_by(
-            event=tournament_url,
-            player=player_id,
-            status="CONFIRMED",
-        ).first()
-        return player_reg is not None
-
     # Check explicit allowed list
     if tournament.head_refs_allowed_list:
         allowed_list = [
@@ -44,6 +36,15 @@ def can_head_ref_match(tournament_url: str, player_id: str, match=None) -> bool:
         ]
         if player_id in allowed_list:
             return True
+
+    # If allow anyone is enabled, check if player is registered
+    if tournament.head_refs_allow_anyone:
+        player_reg = PlayerRegistration.query.filter_by(
+            event=tournament_url,
+            player=player_id,
+            status=RegistrationStatus.CONFIRMED,
+        ).first()
+        return player_reg is not None
 
     # Check reffing teams (requires match context)
     if tournament.head_refs_allow_reffing_teams and match:
@@ -55,25 +56,11 @@ def can_head_ref_match(tournament_url: str, player_id: str, match=None) -> bool:
                     event=tournament_url,
                     player=player_id,
                     team=team_id,
-                    status="CONFIRMED",
+                    status=RegistrationStatus.CONFIRMED,
                 ).first()
                 if player_reg:
                     return True
 
-    return False
-
-
-def is_head_ref_any(viewed_player_id: str) -> bool:
-    """Check if the current user is a head ref in any tournament."""
-    if not current_user.is_authenticated:
-        return False
-    try:
-        tournaments = Tournament.query.all()
-        for t in tournaments:
-            if can_head_ref_match(t.url, current_user.id):
-                return True
-    except Exception:
-        return False
     return False
 
 
@@ -95,6 +82,31 @@ def resolve_team_name_to_id(team_name, tournament_url):
     if reg:
         return reg.team
 
+    return None
+
+
+def resolve_tag_to_team(tag_ref: str, tournament_url: str) -> str | None:
+    """Resolve a tag reference (tag::TAG_NAME) to a team ID by querying the Tag table.
+
+    Args:
+        tag_ref: Tag reference string (e.g., "tag::Pool A")
+        tournament_url: Tournament URL
+
+    Returns:
+        Team ID if tag exists and has a team assigned, None otherwise
+    """
+    from models import Tag
+
+    if not tag_ref or not tag_ref.strip().lower().startswith("tag::"):
+        return None
+
+    tag_name = tag_ref[5:].strip()  # Remove "tag::" prefix
+    if not tag_name:
+        return None
+
+    tag = Tag.query.filter_by(event=tournament_url, name=tag_name).first()
+    if tag and tag.team:
+        return tag.team
     return None
 
 

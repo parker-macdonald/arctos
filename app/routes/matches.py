@@ -17,7 +17,7 @@ from app.utils.responses import json_error, json_success
 from app.utils.datetime_helpers import to_iso_z
 from app.error_values import Ok, Err
 from app.utils.result_helpers import json_from_result, public_error_message
-
+from app.domain.enums import RegistrationStatus, MatchStatus, ScheduleType, SetType
 
 bp = Blueprint("matches", __name__)
 
@@ -40,7 +40,7 @@ def scoreboard():
 
     # Find the active match on this field (only IN_PROGRESS)
     match = Match.query.filter_by(
-        event=tournament_url, field=field_name, status="IN_PROGRESS"
+        event=tournament_url, field=field_name, status=MatchStatus.IN_PROGRESS
     ).first()
 
     # Get team information helper
@@ -137,13 +137,13 @@ def scoreboard():
         .all()
     )
 
-    # Find most recent completed match (previous) - skip BREAK/JOIN matches
+    # Find most recent completed or skipped match (previous) - skip BREAK/JOIN matches
     prev_match = None
     for m in reversed(all_field_matches):
         if (
-            m.status == "COMPLETED"
+            m.status in (MatchStatus.COMPLETED, MatchStatus.SKIPPED)
             and m.completed_time
-            and m.schedule_type not in ("BREAK", "JOIN")
+            and m.schedule_type not in (ScheduleType.BREAK, ScheduleType.JOIN)
         ):
             prev_match = m
             break
@@ -151,9 +151,12 @@ def scoreboard():
     # Find next match (not started or ready to start) - skip BREAK/JOIN matches
     next_match = None
     for m in all_field_matches:
-        if m.schedule_type not in ("BREAK", "JOIN") and (
-            m.status in ("NOT_STARTED", "IN_PROGRESS")
-            or (m.status == "COMPLETED" and not m.completed_time)
+        if m.schedule_type not in (ScheduleType.BREAK, ScheduleType.JOIN) and (
+            m.status in (MatchStatus.NOT_STARTED, MatchStatus.IN_PROGRESS)
+            or (
+                m.status in (MatchStatus.COMPLETED, MatchStatus.SKIPPED)
+                and not m.completed_time
+            )
         ):
             next_match = m
             break
@@ -243,7 +246,7 @@ def scoreboard_state():
 
     # Find the active match on this field (only IN_PROGRESS)
     match = Match.query.filter_by(
-        event=tournament_url, field=field_name, status="IN_PROGRESS"
+        event=tournament_url, field=field_name, status=MatchStatus.IN_PROGRESS
     ).first()
 
     # Get team information helper
@@ -335,13 +338,13 @@ def scoreboard_state():
         .all()
     )
 
-    # Find most recent completed match (previous) - skip BREAK/JOIN matches
+    # Find most recent completed or skipped match (previous) - skip BREAK/JOIN matches
     prev_match = None
     for m in reversed(all_field_matches):
         if (
-            m.status == "COMPLETED"
+            m.status in (MatchStatus.COMPLETED, MatchStatus.SKIPPED)
             and m.completed_time
-            and m.schedule_type not in ("BREAK", "JOIN")
+            and m.schedule_type not in (ScheduleType.BREAK, ScheduleType.JOIN)
         ):
             prev_match = m
             break
@@ -349,9 +352,12 @@ def scoreboard_state():
     # Find next match (not started or ready to start) - skip BREAK/JOIN matches
     next_match = None
     for m in all_field_matches:
-        if m.schedule_type not in ("BREAK", "JOIN") and (
-            m.status in ("NOT_STARTED", "IN_PROGRESS")
-            or (m.status == "COMPLETED" and not m.completed_time)
+        if m.schedule_type not in (ScheduleType.BREAK, ScheduleType.JOIN) and (
+            m.status in (MatchStatus.NOT_STARTED, MatchStatus.IN_PROGRESS)
+            or (
+                m.status in (MatchStatus.COMPLETED, MatchStatus.SKIPPED)
+                and not m.completed_time
+            )
         ):
             next_match = m
             break
@@ -645,8 +651,8 @@ def match_page(tournament_url):
                         }
                     )
 
-    # Add recorded videos (only for completed matches)
-    if match.status == "COMPLETED" and recorded_videos:
+    # Add recorded videos (only for completed matches; skipped matches have no recording)
+    if match.status == MatchStatus.COMPLETED and recorded_videos:
         # Add recorded videos with unique indices (starting after YouTube cameras)
         for idx, recording in enumerate(recorded_videos):
             available_cameras.append(
@@ -688,7 +694,7 @@ def match_page(tournament_url):
             )
 
     return render_template(
-        "match_page_websocket.html",
+        "match_page.html",
         tournament=tournament,
         match=match,
         points=points,
@@ -721,8 +727,8 @@ def start_match(tournament_url):
         flash("You are not authorized to start matches for this tournament", "error")
         return redirect(f"/{tournament_url}/schedule")
 
-    if match.status != "NOT_STARTED":
-        flash("This match has already been started or completed", "error")
+    if match.status != MatchStatus.READY_TO_START:
+        flash(f"This match has non-READY status {match.status}", "error")
         return redirect(f"/{tournament_url}/schedule")
 
     if not match.team1 or not match.team2:
@@ -744,7 +750,7 @@ def start_match(tournament_url):
             return redirect(f"/{tournament_url}/schedule")
 
     # For dynamic matches, require dependencies to be completed (or marked ready)
-    if match.schedule_type != "STATIC":
+    if match.schedule_type != ScheduleType.STATIC:
         try:
             from app.utils.scheduling import get_match_dependencies
 
@@ -752,7 +758,7 @@ def start_match(tournament_url):
         except Exception:
             deps = []
         all_deps_finished = (len(deps) == 0) or all(
-            d.status == "COMPLETED" for d in deps
+            d.status in (MatchStatus.COMPLETED, MatchStatus.SKIPPED) for d in deps
         )
         # Also allow if ready_to_start flag is set
         is_ready_flag = match.ready_to_start or False
@@ -771,7 +777,7 @@ def start_match(tournament_url):
         .filter(
             PlayerRegistration.event == tournament_url,
             PlayerRegistration.team == match.team1,
-            PlayerRegistration.status == "CONFIRMED",
+            PlayerRegistration.status == RegistrationStatus.CONFIRMED,
         )
         .all()
     )
@@ -782,7 +788,7 @@ def start_match(tournament_url):
         .filter(
             PlayerRegistration.event == tournament_url,
             PlayerRegistration.team == match.team2,
-            PlayerRegistration.status == "CONFIRMED",
+            PlayerRegistration.status == RegistrationStatus.CONFIRMED,
         )
         .all()
     )
@@ -792,7 +798,7 @@ def start_match(tournament_url):
         .join(Player, PlayerRegistration.player == Player.id)
         .filter(
             PlayerRegistration.event == tournament_url,
-            PlayerRegistration.status == "CONFIRMED",
+            PlayerRegistration.status == RegistrationStatus.CONFIRMED,
         )
         .all()
     )
@@ -958,8 +964,8 @@ def run_match(tournament_url):
         flash("Match not found", "error")
         return redirect(f"/{tournament_url}/schedule")
 
-    if match.status == "COMPLETED":
-        flash("This match has already been completed", "error")
+    if match.status in (MatchStatus.COMPLETED, MatchStatus.SKIPPED):
+        flash("This match has already been completed or skipped", "error")
         return redirect(f"/{tournament_url}/schedule")
 
     if not can_head_ref_match(tournament_url, current_user.id, match=match):
@@ -976,7 +982,7 @@ def run_match(tournament_url):
             player_ids = json.loads(match.team1_players)
             for pid in player_ids:
                 pr = PlayerRegistration.query.filter_by(
-                    event=tournament_url, player=pid, status="CONFIRMED"
+                    event=tournament_url, player=pid, status=RegistrationStatus.CONFIRMED
                 ).first()
                 if pr:
                     player = Player.query.get(pid)
@@ -990,7 +996,7 @@ def run_match(tournament_url):
             player_ids = json.loads(match.team2_players)
             for pid in player_ids:
                 pr = PlayerRegistration.query.filter_by(
-                    event=tournament_url, player=pid, status="CONFIRMED"
+                    event=tournament_url, player=pid, status=RegistrationStatus.CONFIRMED
                 ).first()
                 if pr:
                     player = Player.query.get(pid)
@@ -1008,7 +1014,7 @@ def run_match(tournament_url):
         )
 
     return render_template(
-        "run_match_websocket.html",
+        "run_match.html",
         tournament=tournament,
         match=match,
         points=points,
@@ -1032,8 +1038,8 @@ def finalize_match(tournament_url):
         flash("Match not found", "error")
         return redirect(f"/{tournament_url}/schedule")
 
-    if match.status == "COMPLETED":
-        flash("This match has already been completed", "error")
+    if match.status in (MatchStatus.COMPLETED, MatchStatus.SKIPPED):
+        flash("This match has already been completed/skipped", "error")
         return redirect(f"/{tournament_url}/schedule")
 
     if not can_head_ref_match(tournament_url, current_user.id, match=match):
@@ -1121,7 +1127,7 @@ def finalize_match_post(tournament_url):
         flash("You are not authorized to finalize matches for this tournament", "error")
         return redirect(f"/{tournament_url}/schedule")
 
-    match.status = "COMPLETED"
+    match.status = MatchStatus.COMPLETED
     # Note: end_time may need to be added to Match model if not present
 
     match_winner = request.form.get("match_winner")
@@ -1165,33 +1171,12 @@ def finalize_match_post(tournament_url):
         match.team2_signature = team2_signature
     db.session.commit()
 
-    from app import get_socketio
-
-    socketio = get_socketio()
-    socketio.emit(
-        "match_completed",
-        {
-            "match_id": match_id,
-            "status": "COMPLETED",
-            "winner": match_winner,
-            # Emit completion time as UTC ISO string with 'Z' when available
-            "finalized_at": to_iso_z(match.completed_time).unwrap_or(None),
-        },
-        room=f"match_{match_id}",
-    )
-
     try:
         apply_match_dependencies(tournament_url, match)
     except Exception as e:
         print(f"Dependency update error for match {match.name}: {e}")
 
-    # Update dynamic schedule after completion (marks dependent matches as ready to start)
-    # try:
-    #     update_dynamic_schedule_after_completion(tournament_url, match)
-    # except Exception as e:
-    #     print(f"Dynamic scheduling update error for match {match.name}: {e}")
-
-    # Recompute all match times with the new algorithm
+    # Recompute all match times (MatchGraph-based scheduler)
     try:
         from app.utils.scheduling import recompute_all_match_times
 
@@ -1277,9 +1262,12 @@ def match_state(tournament_url):
             }
         )
 
-    # Get finalized_at if match is completed
+    # Get finalized_at if match is completed or skipped
     finalized_at = None
-    if match.status == "COMPLETED" and match.finalized_at:
+    if (
+        match.status in (MatchStatus.COMPLETED, MatchStatus.SKIPPED)
+        and match.finalized_at
+    ):
         finalized_at = match.finalized_at.isoformat()
 
     return jsonify(

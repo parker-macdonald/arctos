@@ -52,13 +52,14 @@
                                 <label for="dynamic" class="form-label">Match Type</label>
                                 <select class="form-select" id="dynamic" name="dynamic">
                                     <option value="false" {% if match.schedule_type == 'STATIC' %}selected{% endif %}>Static (starts at scheduled time)</option>
-                                    <option value="true" {% if match.schedule_type == 'DYNAMIC' %}selected{% endif %}>Dynamic (computed from dependencies)</option>
+                                    <option value="SAFE" {% if match.schedule_type == 'SAFE' %}selected{% endif %}>Safe (time finalized when last dependency starts)</option>
+                                    <option value="FAST" {% if match.schedule_type == 'FAST' %}selected{% endif %}>Fast (time finalized when dependencies complete)</option>
                                     <option value="BREAK" {% if match.schedule_type == 'BREAK' %}selected{% endif %}>Break</option>
                                     <option value="JOIN" {% if match.schedule_type == 'JOIN' %}selected{% endif %}>Join</option>
                                 </select>
                                 <div class="form-text" id="dynamic-help">
                                     {% if match.schedule_type != 'STATIC' %}
-                                    Dynamic matches compute start time from referenced matches (e.g., "Match Name winner"). 
+                                    Safe/Fast matches compute start time from referenced matches (e.g., "Match Name winner"). 
                                     Matches without dependencies must be static.
                                     {% else %}
                                     Static matches require a manual start time.
@@ -73,7 +74,6 @@
                             </div>
                         </div>
                     </div>
-                    
                     <div class="row">
                         <div class="col-md-6">
                             <div class="mb-3" id="start_time_container" {% if match.schedule_type != 'STATIC' %}style="display: none;"{% endif %}>
@@ -163,6 +163,23 @@
                                         Ribbon Game (not counted in tournament results)
                                     </label>
                                 </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row" id="skip_condition_container" {% if match.schedule_type not in ('SAFE', 'FAST') %}style="display: none;"{% endif %}>
+                        <div class="col-md-12">
+                            <div class="mb-3">
+                                <label for="skip_condition" class="form-label">Skip Condition</label>
+                                <input type="text" class="form-control" id="skip_condition" name="skip_condition" 
+                                       value="{{ match.skip_condition or '' }}" placeholder="e.g., (== 0 (losses [Ursae Majoris]))">
+                                <div class="form-text">
+                                    Optional expression that evaluates to a boolean. If true, this match will be skipped. Only for Safe and Fast matches.
+                                    <a href="#" class="text-decoration-none" data-bs-toggle="modal" data-bs-target="#dslHelpModal">
+                                        <small>(skip condition help)</small>
+                                    </a>
+                                </div>
+                                <div id="skip_condition_feedback" class="mt-2" style="display: none;"></div>
                             </div>
                         </div>
                     </div>
@@ -442,6 +459,65 @@ document.getElementById('match_type').addEventListener('change', function() {
     }
 });
 
+// DSL validation for skip_condition field
+const skipConditionInput = document.getElementById('skip_condition');
+const skipConditionFeedback = document.getElementById('skip_condition_feedback');
+let dslValidationTimer;
+
+if (skipConditionInput && skipConditionFeedback) {
+    skipConditionInput.addEventListener('input', function() {
+        const expression = this.value.trim();
+        const tournamentUrl = '{{ tournament.url }}';
+        
+        // Clear previous timer
+        clearTimeout(dslValidationTimer);
+        
+        // Hide feedback if empty
+        if (!expression) {
+            skipConditionFeedback.style.display = 'none';
+            skipConditionInput.classList.remove('is-invalid', 'is-valid');
+            return;
+        }
+        
+        // Debounce validation
+        dslValidationTimer = setTimeout(() => {
+            fetch(`/${tournamentUrl}/api/validate-dsl`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ expression: expression }),
+                credentials: 'same-origin'
+            })
+            .then(response => response.json())
+            .then(data => {
+                skipConditionFeedback.style.display = 'block';
+                
+                if (data.valid) {
+                    skipConditionInput.classList.remove('is-invalid');
+                    skipConditionInput.classList.add('is-valid');
+                    
+                    let message = '<small class="text-success">✓ Valid expression';
+                    if (data.simplified !== null && data.simplified !== expression) {
+                        message += ` (simplified: ${data.simplified})`;
+                    }
+                    message += '</small>';
+                    skipConditionFeedback.innerHTML = message;
+                } else {
+                    skipConditionInput.classList.remove('is-valid');
+                    skipConditionInput.classList.add('is-invalid');
+                    skipConditionFeedback.innerHTML = `<small class="text-danger">✗ ${data.error || 'Invalid expression'}</small>`;
+                }
+            })
+            .catch(error => {
+                skipConditionInput.classList.remove('is-valid');
+                skipConditionInput.classList.add('is-invalid');
+                skipConditionFeedback.innerHTML = `<small class="text-danger">✗ Error validating expression: ${error.message}</small>`;
+            });
+        }, 500); // 500ms debounce
+    });
+}
+
 // Initialize stones field visibility on page load
 document.addEventListener('DOMContentLoaded', function() {
     const matchType = document.getElementById('match_type');
@@ -454,7 +530,7 @@ document.addEventListener('DOMContentLoaded', function() {
         stonesField.style.display = 'block';
     }
     
-    // Handle dynamic/static scheduling toggle
+    // Handle match type scheduling toggle
     const startTimeContainer = document.getElementById('start_time_container');
     const previousMatchContainer = document.getElementById('previous_match_container');
     const startTimeInput = document.getElementById('start_time');
@@ -538,19 +614,21 @@ document.addEventListener('DOMContentLoaded', function() {
     
     function updateStartTimeVisibility() {
         const matchTypeValue = dynamicSelect.value;
-        const isDynamic = matchTypeValue === 'true' || matchTypeValue === 'BREAK' || matchTypeValue === 'JOIN';
+        const isComputed = matchTypeValue === 'SAFE' || matchTypeValue === 'FAST' || matchTypeValue === 'BREAK' || matchTypeValue === 'JOIN';
         
-        if (isDynamic) {
+        if (isComputed) {
             startTimeContainer.style.display = 'none';
             previousMatchContainer.style.display = 'block';
-            startTimeInput.value = ''; // Clear value for dynamic matches
+            startTimeInput.value = ''; // Clear value for computed matches
             
             if (matchTypeValue === 'JOIN') {
                 dynamicHelp.textContent = 'Join matches are zero-length and synchronized with other joins of the same name.';
             } else if (matchTypeValue === 'BREAK') {
                 dynamicHelp.textContent = 'Break matches compute start time from the previous match on the field.';
+            } else if (matchTypeValue === 'SAFE') {
+                dynamicHelp.textContent = 'Safe matches finalize start time when the last dependency starts (at least one match of warning).';
             } else {
-                dynamicHelp.textContent = 'Dynamic matches compute start time from the previous match on the field.';
+                dynamicHelp.textContent = 'Fast matches finalize start time when dependencies complete (fastest play, teams must watch the schedule).';
             }
             
             updatePreviousMatchOptions();
@@ -586,7 +664,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if (fieldSelect) {
         fieldSelect.addEventListener('change', function() {
             const matchTypeValue = dynamicSelect.value;
-            if (matchTypeValue === 'true' || matchTypeValue === 'BREAK' || matchTypeValue === 'JOIN') {
+            if (matchTypeValue === 'SAFE' || matchTypeValue === 'FAST' || matchTypeValue === 'BREAK' || matchTypeValue === 'JOIN') {
                 updatePreviousMatchOptions();
                 // Autofill disabled on edit page - user should manually select previous match
             }
@@ -624,6 +702,17 @@ document.addEventListener('DOMContentLoaded', function() {
         } else {
             if (lengthInput) lengthInput.disabled = false;
         }
+
+        // Skip condition only for SAFE and FAST (not STATIC, BREAK, or JOIN)
+        const skipConditionContainer = document.getElementById('skip_condition_container');
+        if (skipConditionContainer) {
+            const showSkipCondition = matchTypeValue === 'SAFE' || matchTypeValue === 'FAST';
+            skipConditionContainer.style.display = showSkipCondition ? 'flex' : 'none';
+            if (!showSkipCondition) {
+                const skipInput = document.getElementById('skip_condition');
+                if (skipInput) skipInput.value = '';
+            }
+        }
         
         // Update start time visibility based on match type selection
         updateStartTimeVisibility();
@@ -641,4 +730,85 @@ document.addEventListener('DOMContentLoaded', function() {
     dynamicSelect.addEventListener('change', updateMatchTypeVisibility);
 });
 </script>
+
+<div class="modal fade" id="dslHelpModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Skip Condition Help</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p>The skip condition uses a Lisp-like lanugage to express boolean conditions. If it evaluates to true, the match will be skipped.</p>
+
+                <h6>Basic Values</h6>
+                <ul>
+                    <li><code>true</code> - True</li>
+                    <li><code>false</code> - False</li>
+                    <li><code>nil</code> - Nil</li>
+                    <li><code>[TeamName]</code> - Team name (username, <code>tag::TagName</code>, or <code>MatchName::winner</code>/<code>MatchName::loser</code>)</li>
+                    <li><code>{MatchName}</code> - Match name</li>
+                </ul>
+                
+                <h6>Basic Operations</h6>
+                <ul>
+                    <li><code>(== A B)</code> - Equality comparison</li>
+                    <li><code>(> A B)</code>, <code>(< A B)</code>, <code>(>= A B)</code>, <code>(<= A B)</code> - Numeric comparisons</li>
+                    <li><code>(and A B)</code>, <code>(or A B)</code>, <code>(not A)</code> - Logical operations</li>
+                </ul>
+                
+                <h6>Team Operations</h6>
+                <ul>
+                    <li><code>(wins [TeamName])</code> - Number of wins for a team</li>
+                    <li><code>(losses [TeamName])</code> - Number of losses for a team</li>
+                    <li><code>(points-won [TeamName])</code> - Total points won by a team</li>
+                    <li><code>(points-lost [TeamName])</code> - Total points lost by a team</li>
+                    <li><code>(points-won [TeamName] {MatchName})</code> - Points won in a specific match</li>
+                    <li><code>(points-lost [TeamName] {MatchName})</code> - Points lost in a specific match</li>
+                    <li><code>(is-skipped {MatchName})</code> - True if match status is SKIPPED, false if IN_PROGRESS or COMPLETED</li>
+                </ul>
+                
+                <h6>Match Operations</h6>
+                <ul>
+                    <li><code>(winner {MatchName})</code> - Winner team of a match (returns team or NIL)</li>
+                    <li><code>(loser {MatchName})</code> - Loser team of a match (returns team or NIL)</li>
+                </ul>
+
+
+                <h6>Other Operations</h6>
+                <ul>
+                    <li><code>(if CONDITION IF_TRUE IF_FALSE)</code> - If condition is true, return IF_TRUE, otherwise return IF_FALSE</li>
+                    <li><code>(lambda (*args) (output))</code> - Define a lambda function</li>
+                    <li><code>(cons *_)</code> - Create a list from the arguments</li>
+                    <li><code>(car LIST)</code> - Get the first element of a list</li>
+                    <li><code>(cdr LIST)</code> - Get the rest of a list</li>
+                    <li><code>(get INDEX LIST)</code> - Get the element at index</li>
+                    <li><code>(or-default VAL DEFAULT)</code> - Returns VAL if VAL is not NIL else DEFAULT</li>
+                    <li><code>(len LIST)</code> - Length of a list</li>
+                    <li><code>(map LIST FUNC)</code> - Apply a function to each element of a list</li>
+                    <li><code>(reduce LIST FUNC)</code> - Reduce a list to a single value</li>
+                    <li><code>(max LIST)</code> - Maximum value in a list</li>
+                    <li><code>(min LIST)</code> - Minimum value in a list</li>
+                    <li><code>(max_by LIST FUNC)</code> - Maximum value in a list by a function</li>
+                    <li><code>(min_by LIST FUNC)</code> - Minimum value in a list by a function</li>
+                </ul>
+
+                <h6>Examples</h6>
+                <ul>
+                    <li><code>(== 0 (losses [TeamName]))</code> - Skip if team has no losses</li>
+                    <li><code>(> (wins [TeamA]) (wins [TeamB]))</code> - Skip if TeamA has more wins than TeamB</li>
+                    <li><code>(== (winner {Match1}) [TeamName])</code> - Skip if TeamName won Match1</li>
+                </ul>
+                
+                <p class="text-muted small mt-3">
+                    <strong>Note:</strong> The expression must eventually evaluate to a boolean (true/false), but it doesn't need to simplify to a boolean immediately. 
+                    There is very minimal error checking, so be careful. <strong>You can deadlock your tournament if you do this wrong!</strong>
+                </p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
 {% endblock %}

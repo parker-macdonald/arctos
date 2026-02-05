@@ -1,0 +1,41 @@
+?start: expression
+
+// same as lisp! everything is atom or list.
+?expression: atom
+           | list
+
+// atoms are all the non-list types.
+// identifiers are like. variable names for lambdas.
+
+?atom: BOOL -> bool_atom
+     | NIL -> nil_atom
+     | INT -> int_atom
+     | TEAM -> team_atom
+     | MATCH -> match_atom
+     | IDENTIFIER -> identifier_atom
+
+// Lists (S-expressions) - everything is a list!
+list: "(" (expression (expression)*)? ")"
+
+// Data type literals
+INT: /-?\d+/
+BOOL: "true" | "false"
+NIL: "nil"
+
+// Teams are in square brackets
+TEAM: "[" /[^\]]+/ "]"
+
+// Matches are in curly braces
+MATCH: "{" /[^}]+/ "}"
+
+// Identifier for function names, variables, etc.
+// Note: INT is defined before IDENTIFIER, so INT will match - followed by digits first
+// The - operator must be allowed as an identifier for subtraction
+// Pattern: - followed by non-digit (or end of input), or other identifiers
+// We use a negative lookahead-like pattern: - not followed by digit
+IDENTIFIER: /-(?![0-9])/ | /-[a-zA-Z_+*\/=><!&][a-zA-Z0-9_\-+*\/=><!&]*/ | /[a-zA-Z_+*\/=><!&][a-zA-Z0-9_\-+*\/=><!&]*/ | /[a-zA-Z_]/
+
+// Whitespace handling
+%import common.WS
+%ignore WS
+%ignore /;.*/

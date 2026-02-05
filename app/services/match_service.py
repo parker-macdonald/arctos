@@ -47,6 +47,7 @@ class MatchService:
         stones_per_set: Optional[str] = None,
     ) -> Result["Match", ArctosError]:
         from models import Match, Tournament, Field, db
+        from app.domain.enums import MatchStatus
         from app.utils.scheduling import recompute_all_match_times
 
         if not match_id:
@@ -63,9 +64,11 @@ class MatchService:
                 )
             )
 
-        if match.status != "NOT_STARTED":
+        if match.status != MatchStatus.READY_TO_START:
             return Err(
-                ValidationError("This match has already been started or completed")
+                ValidationError(
+                    f"This match has non-READY_TO_START status {match.status}"
+                )
             )
 
         raw_team1 = (team1_players_csv or "").strip()
@@ -96,7 +99,7 @@ class MatchService:
         team2_players = _dedup(team2_players)
 
         # Mutations start here (after validation)
-        match.status = "IN_PROGRESS"
+        match.status = MatchStatus.IN_PROGRESS
         # Use UTC time (stored as naive in DB, treated as UTC)
         match.confirmed_start_time = datetime.now(timezone.utc).replace(tzinfo=None)
 

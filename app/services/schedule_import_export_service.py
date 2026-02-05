@@ -524,6 +524,14 @@ class ScheduleImportExportService:
                             if k not in ("previous_match", "next_match")
                         }
                         match = Match(**create_dict)
+                        # Set initial status if not already set: STATIC matches are READY_TO_START, others are NOT_STARTED
+                        if not match.status:
+                            from app.domain.enums import ScheduleType, MatchStatus
+
+                            if match.schedule_type == ScheduleType.STATIC:
+                                match.status = MatchStatus.READY_TO_START
+                            else:
+                                match.status = MatchStatus.NOT_STARTED
                         db.session.add(match)
                         db.session.flush()  # Flush to get the match object with field set
                         match_name_to_uuid[match_name] = match.uuid
@@ -543,6 +551,14 @@ class ScheduleImportExportService:
                         if k not in ("previous_match", "next_match")
                     }
                     match = Match(**create_dict)
+                    # Set initial status if not already set: STATIC matches are READY_TO_START, others are NOT_STARTED
+                    if not match.status:
+                        from app.domain.enums import ScheduleType, MatchStatus
+
+                        if match.schedule_type == ScheduleType.STATIC:
+                            match.status = MatchStatus.READY_TO_START
+                        else:
+                            match.status = MatchStatus.NOT_STARTED
                     db.session.add(match)
                     db.session.flush()  # Flush to get the match object with field set
                     match_name_to_uuid[match_name] = match.uuid

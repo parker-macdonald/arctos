@@ -4,12 +4,10 @@ Tournament site Flask application factory.
 
 from flask import Flask
 from flask_login import LoginManager
-from flask_socketio import SocketIO
 import os
 
 # Initialize extensions (will be initialized in create_app)
 db = None
-socketio = None
 login_manager = LoginManager()
 
 # Override url_for to handle subpath deployment
@@ -26,7 +24,7 @@ def url_for(endpoint, **values):
 
 def create_app(config=None):
     """Application factory."""
-    global db, socketio
+    global db
 
     app = Flask(__name__, static_folder="../static", template_folder="../templates")
     config = config or dict()
@@ -80,9 +78,6 @@ def create_app(config=None):
     except Exception:
         # If creation fails, continue; errors will surface when accessed
         pass
-
-    # Initialize SocketIO
-    socketio = SocketIO(app, cors_allowed_origins="*")
 
     # Initialize login manager
     login_manager.init_app(app)
@@ -142,12 +137,36 @@ def create_app(config=None):
                 response.cache_control.public = True
         return response
 
-    # Initialize websocket handlers
-
     # Error handlers
     from app.error_handlers import register_error_handlers
 
     register_error_handlers(app)
+
+    # On boot: recompute schedule for all tournaments that are not complete (end_date in future or None)
+    try:
+        with app.app_context():
+            from datetime import datetime, timezone
+            from models import Tournament
+            from app.utils.scheduling import recompute_all_match_times
+
+            now = datetime.now(timezone.utc)
+            for t in Tournament.query.all():
+                if t.end_date is None:
+                    not_complete = True
+                else:
+                    end_utc = (
+                        t.end_date.replace(tzinfo=timezone.utc)
+                        if t.end_date.tzinfo is None
+                        else t.end_date
+                    )
+                    not_complete = end_utc >= now
+                if not_complete:
+                    try:
+                        recompute_all_match_times(t.url)
+                    except Exception:
+                        pass
+    except Exception:
+        pass
 
     @app.errorhandler(413)
     def too_large(e):
@@ -157,8 +176,3 @@ def create_app(config=None):
         return redirect(url_for("main.index"))
 
     return app
-
-
-def get_socketio():
-    """Get the socketio instance."""
-    return socketio

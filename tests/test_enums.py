@@ -13,7 +13,8 @@ from app.domain.enums import (
 @pytest.mark.unit
 def test_parse_enum_accepts_valid_strings():
     assert parse_enum(MatchStatus, "COMPLETED").unwrap() == MatchStatus.COMPLETED
-    assert parse_enum(ScheduleType, "DYNAMIC").unwrap() == ScheduleType.DYNAMIC
+    assert parse_enum(ScheduleType, "SAFE").unwrap() == ScheduleType.SAFE
+    assert parse_enum(ScheduleType, "FAST").unwrap() == ScheduleType.FAST
     assert parse_enum(SetType, "SETS").unwrap() == SetType.SETS
     assert parse_enum(WinnerSide, "TEAM1").unwrap() == WinnerSide.TEAM1
     assert (

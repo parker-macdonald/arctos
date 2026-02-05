@@ -1,5 +1,6 @@
 import pytest
 
+from app.domain.enums import RegistrationStatus, TeamRegistrationStatus
 from models import PlayerRegistration, TeamRegistration, db
 from tests.utils import login_as
 from datetime import datetime
@@ -23,7 +24,7 @@ def test_team_register_and_deregister_flow(app, client, tournament, team):
 
     reg = TeamRegistration.query.filter_by(event=tournament_url, team=team_id).first()
     assert reg is not None
-    assert reg.status == "CONFIRMED"
+    assert reg.status == TeamRegistrationStatus.CONFIRMED
     assert reg.pseudonym == "Team Pseudonym"
 
     resp2 = client.post(f"/{tournament_url}/deregister-team", follow_redirects=False)
@@ -31,7 +32,7 @@ def test_team_register_and_deregister_flow(app, client, tournament, team):
 
     reg2 = TeamRegistration.query.filter_by(event=tournament_url, team=team_id).first()
     assert reg2 is not None
-    assert reg2.status == "CANCELLED"
+    assert reg2.status == TeamRegistrationStatus.CANCELLED
 
 
 @pytest.mark.integration
@@ -79,4 +80,4 @@ def test_player_register_and_deregister_flow(app, client, tournament, player):
         event=tournament_url, player=player_id
     ).first()
     assert reg2 is not None
-    assert reg2.status == "CANCELLED"
+    assert reg2.status == RegistrationStatus.CANCELLED

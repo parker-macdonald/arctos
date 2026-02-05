@@ -137,6 +137,7 @@ def write_toml_schedule(
                 "team2_initial",
                 "refs_initial",
                 "field",
+                "skip_condition",
             ]:
                 if field_name in match and match[field_name]:
                     lines.append(
