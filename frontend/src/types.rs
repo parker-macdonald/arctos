@@ -208,6 +208,8 @@ pub struct PlayerProfileData {
 pub struct PlayerProfileResponse {
     pub player: PlayerProfileData,
     pub registrations: Vec<PlayerRegItem>,
+    #[serde(default)]
+    pub injuries: Vec<PlayerInjury>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -215,6 +217,15 @@ pub struct PlayerRegItem {
     pub event: String,
     pub team: Option<String>,
     pub status: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PlayerInjury {
+    pub id: u32,
+    pub message: String,
+    pub stamp: Option<String>,
+    pub active: bool,
+    pub show: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
