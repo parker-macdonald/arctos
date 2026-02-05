@@ -65,6 +65,7 @@ fn StonesPlayerWasm(stones_val: ReadSignal<Option<Result<StonesResponse, String>
         Rc::new(RefCell::new(ScheduleState {
             times: HashSet::new(),
             sources: HashMap::new(),
+            media_dest: None,
         }))
     });
 
@@ -160,6 +161,11 @@ fn StonesPlayerWasm(stones_val: ReadSignal<Option<Result<StonesResponse, String>
                     };
                     ctx_start_time.set(Some(js_sys::Date::now() / 1000.0));
                     audio_ctx.set(Some(c.clone()));
+                    // On first creation, also create a MediaStream destination and hook it to a hidden audio element.
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        ensure_media_destination(&c, schedule_state.clone());
+                    }
                     if c.state() != web_sys::AudioContextState::Running {
                         if c.resume().is_err() {
                             custom_status.set(Some("Could not start audio. Click Play again.".into()));
@@ -171,6 +177,11 @@ fn StonesPlayerWasm(stones_val: ReadSignal<Option<Result<StonesResponse, String>
             };
             if ctx.state() != web_sys::AudioContextState::Running {
                 let _ = ctx.resume();
+            }
+            #[cfg(target_arch = "wasm32")]
+            {
+                // Ensure MediaStreamDestination is present even if context already existed.
+                ensure_media_destination(&ctx, schedule_state.clone());
             }
             let stones_opt = stones_val.read().as_ref().and_then(|r| r.as_ref().ok()).cloned();
             let idx = selected_index();
@@ -209,6 +220,55 @@ fn StonesPlayerWasm(stones_val: ReadSignal<Option<Result<StonesResponse, String>
         Some(ms) => format!("{:.1} ms", ms),
         None => "-".to_string(),
     };
+
+    #[cfg(target_arch = "wasm32")]
+    fn ensure_media_destination(
+        ctx: &web_sys::AudioContext,
+        mut schedule_state: Signal<Rc<RefCell<ScheduleState>>>,
+    ) {
+        use wasm_bindgen::JsCast;
+        use wasm_bindgen::JsValue;
+
+        // If we already have a destination, nothing to do.
+        if schedule_state
+            .read()
+            .borrow()
+            .media_dest
+            .as_ref()
+            .is_some()
+        {
+            return;
+        }
+
+        let dest = match ctx.create_media_stream_destination() {
+            Ok(d) => d,
+            Err(_) => return,
+        };
+
+        if let Some(window) = web_sys::window() {
+            if let Some(doc) = window.document() {
+                if let Some(el) = doc.get_element_by_id("audio-stream") {
+                    if let Ok(audio) = el.dyn_into::<web_sys::HtmlAudioElement>() {
+                        // audio.srcObject = dest.stream;
+                        if let Ok(stream) = js_sys::Reflect::get(
+                            &JsValue::from(dest.clone()),
+                            &JsValue::from_str("stream"),
+                        ) {
+                            let _ = js_sys::Reflect::set(
+                                &audio,
+                                &JsValue::from_str("srcObject"),
+                                &stream,
+                            );
+                        }
+                        audio.set_autoplay(true);
+                        let _ = audio.play();
+                    }
+                }
+            }
+        }
+
+        schedule_state.write().borrow_mut().media_dest = Some(dest);
+    }
 
     #[derive(Clone)]
     struct SoundBtn {
@@ -347,6 +407,15 @@ fn StonesPlayerWasm(stones_val: ReadSignal<Option<Result<StonesResponse, String>
                                 }
                             }
 
+                        // Hidden audio element used as a MediaStream sink so that
+                        // mobile browsers treat playback as regular media and keep
+                        // playing reliably when the screen locks or app is backgrounded.
+                        audio {
+                            id: "audio-stream",
+                            autoplay: true,
+                            style: "display: none;",
+                        }
+
                             div { class: "mb-3",
                                 h5 { "Stats" }
                                 p { "Estimated offset: {offset_str} s" }
@@ -375,6 +444,7 @@ fn next_beat_time(now: f64, offset: f64) -> f64 {
 struct ScheduleState {
     times: HashSet<i64>,
     sources: HashMap<i64, web_sys::AudioBufferSourceNode>,
+    media_dest: Option<web_sys::MediaStreamAudioDestinationNode>,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -404,9 +474,18 @@ fn schedule_sound_at(
         Err(_) => return false,
     };
     let _ = source.set_buffer(Some(&buf));
-    let destination = ctx.destination();
-    if source.connect_with_audio_node(&destination).is_err() {
-        return false;
+    {
+        let state = state_rc.borrow();
+        if let Some(ref media_dest) = state.media_dest {
+            if source.connect_with_audio_node(media_dest).is_err() {
+                return false;
+            }
+        } else {
+            let destination = ctx.destination();
+            if source.connect_with_audio_node(&destination).is_err() {
+                return false;
+            }
+        }
     }
     let state_rc2 = state_rc.clone();
     let rounded2 = rounded_ms;
