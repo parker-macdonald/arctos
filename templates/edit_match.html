@@ -349,7 +349,7 @@
                         );
                         displaySuggestions(filteredSuggestions, suggestionsDiv, input);
                     } else {
-                        fetch(`/${tournamentUrl}/api/autocomplete?q=${encodeURIComponent(query)}`)
+                        fetch(`/${tournamentUrl}/_api/autocomplete?q=${encodeURIComponent(query)}`)
                             .then(response => response.json())
                             .then(suggestions => {
                                 displaySuggestions(suggestions, suggestionsDiv, input);
@@ -363,7 +363,7 @@
                 
                 // Load all suggestions once on page load
                 function loadAllSuggestions() {
-                    fetch(`/${tournamentUrl}/api/autocomplete?q=`)
+                    fetch(`/${tournamentUrl}/_api/autocomplete?q=`)
                         .then(response => response.json())
                         .then(suggestions => {
                             // Only cache if backend provided a non-empty list
@@ -481,7 +481,7 @@ if (skipConditionInput && skipConditionFeedback) {
         
         // Debounce validation
         dslValidationTimer = setTimeout(() => {
-            fetch(`/${tournamentUrl}/api/validate-dsl`, {
+            fetch(`/${tournamentUrl}/_api/validate-dsl`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',

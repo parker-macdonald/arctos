@@ -1,0 +1,182 @@
+use crate::api;
+use crate::pages::layout::use_auth_invalidate;
+use crate::Route;
+use dioxus::prelude::*;
+
+fn register_title(user_type: &str) -> String {
+    match user_type {
+        "team" => "Register as Team".to_string(),
+        _ => "Register as Player".to_string(),
+    }
+}
+
+#[component]
+pub fn Register() -> Element {
+    let mut username = use_signal(|| String::new());
+    let mut password = use_signal(|| String::new());
+    let mut confirm_password = use_signal(|| String::new());
+    let mut name = use_signal(|| String::new());
+    let mut user_type = use_signal(|| "player".to_string());
+    let mut err = use_signal(|| None::<String>);
+    let navigator = use_navigator();
+    let auth_invalidate = use_auth_invalidate();
+    let google_url = format!("{}/auth/google/login", api::base_url());
+
+    rsx! {
+        div { class: "row justify-content-center",
+            div { class: "col-md-6",
+                div { class: "card",
+                    div { class: "card-header",
+                        div { class: "d-flex justify-content-between align-items-center",
+                            h3 { class: "mb-0", "{register_title(&user_type())}" }
+                            div { class: "btn-group btn-group-sm", role: "group",
+                                button {
+                                    r#type: "button",
+                                    class: if user_type() == "player" { "btn btn-primary" } else { "btn btn-outline-primary" },
+                                    onclick: move |_| user_type.set("player".into()),
+                                    "Player"
+                                }
+                                button {
+                                    r#type: "button",
+                                    class: if user_type() == "team" { "btn btn-primary" } else { "btn btn-outline-primary" },
+                                    onclick: move |_| user_type.set("team".into()),
+                                    "Team"
+                                }
+                            }
+                        }
+                    }
+                    div { class: "card-body",
+                        form {
+                            onsubmit: move |ev| {
+                                ev.prevent_default();
+                                let u = username().clone();
+                                let p = password().clone();
+                                let cp = confirm_password().clone();
+                                let n = name().clone();
+                                let t = user_type().clone();
+                                if u.is_empty() || p.is_empty() || n.is_empty() {
+                                    err.set(Some("Username, password, and display name required".into()));
+                                    return;
+                                }
+                                if p != cp {
+                                    err.set(Some("Passwords do not match".into()));
+                                    return;
+                                }
+                                err.set(None);
+                                let nav = navigator.clone();
+                                let mut auth_invalidate = auth_invalidate;
+                                spawn(async move {
+                                    match api::register(&u, &p, &n, &t).await {
+                                        Ok(_) => {
+                                            auth_invalidate.set(auth_invalidate() + 1);
+                                            let _ = nav.push("/");
+                                        }
+                                        Err(e) => err.set(Some(e)),
+                                    }
+                                });
+                            },
+                            div { class: "mb-3",
+                                label { r#for: "username", class: "form-label", "Username" }
+                                input {
+                                    r#type: "text",
+                                    class: "form-control",
+                                    id: "username",
+                                    name: "username",
+                                    value: "{username()}",
+                                    oninput: move |ev| username.set(ev.value().clone()),
+                                    required: true,
+                                    pattern: "[a-zA-Z0-9][a-zA-Z0-9_-]*[a-zA-Z0-9]|[a-zA-Z0-9]",
+                                }
+                                div { class: "form-text",
+                                    "This will be your unique identifier. "
+                                    strong { "It is permanent." }
+                                    " Must be URL-safe: only letters, numbers, hyphens, and underscores. Cannot start or end with hyphen or underscore."
+                                }
+                            }
+                            div { class: "mb-3",
+                                label { r#for: "name", class: "form-label", "Display Name" }
+                                input {
+                                    r#type: "text",
+                                    class: "form-control",
+                                    id: "name",
+                                    name: "name",
+                                    value: "{name()}",
+                                    oninput: move |ev| name.set(ev.value().clone()),
+                                    required: true,
+                                }
+                                div { class: "form-text", "Your public display name" }
+                            }
+                            div { class: "mb-3",
+                                label { r#for: "password", class: "form-label", "Password" }
+                                input {
+                                    r#type: "password",
+                                    class: "form-control",
+                                    id: "password",
+                                    name: "password",
+                                    value: "{password()}",
+                                    oninput: move |ev| password.set(ev.value().clone()),
+                                    required: true,
+                                }
+                            }
+                            div { class: "mb-3",
+                                label { r#for: "confirm_password", class: "form-label", "Confirm Password" }
+                                input {
+                                    r#type: "password",
+                                    class: "form-control",
+                                    id: "confirm_password",
+                                    name: "confirm_password",
+                                    value: "{confirm_password()}",
+                                    oninput: move |ev| confirm_password.set(ev.value().clone()),
+                                    required: true,
+                                }
+                            }
+                            div { class: "d-grid",
+                                button { r#type: "submit", class: "btn btn-primary", id: "submitBtn", "Register" }
+                            }
+                        }
+                        hr {}
+                        div { class: "text-center mb-3",
+                            p { class: "text-muted", "Or" }
+                        }
+                        div { class: "d-grid mb-3",
+                            a { href: "{google_url}", class: "btn btn-outline-secondary",
+                                span { style: "margin-right: 8px; vertical-align: middle; display: inline-block; width: 18px; height: 18px;",
+                                    svg { width: "18", height: "18", view_box: "0 0 18 18",
+                                        path { fill: "#4285F4", d: "M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.717v2.258h2.908c1.702-1.567 2.684-3.874 2.684-6.615z" }
+                                        path { fill: "#34A853", d: "M9 18c2.43 0 4.467-.806 5.96-2.184l-2.908-2.258c-.806.54-1.837.86-3.052.86-2.347 0-4.33-1.585-5.04-3.715H.957v2.332C2.438 15.983 5.482 18 9 18z" }
+                                        path { fill: "#FBBC05", d: "M3.96 10.703c-.18-.54-.282-1.117-.282-1.703s.102-1.163.282-1.703V4.965H.957C.348 6.175 0 7.55 0 9s.348 2.825.957 4.035l3.003-2.332z" }
+                                        path { fill: "#EA4335", d: "M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0 5.482 0 2.438 2.017.957 4.965L3.96 7.297C4.67 5.167 6.653 3.58 9 3.58z" }
+                                    }
+                                }
+                                "Sign in with Google"
+                            }
+                        }
+                        hr {}
+                        div { class: "text-center",
+                            p { "Already have an account? " Link { to: Route::Login {}, "Login here" } }
+                            p {
+                                "Or register as a "
+                                button {
+                                    type: "button",
+                                    class: "btn btn-link p-0",
+                                    onclick: move |_| user_type.set("player".into()),
+                                    "player"
+                                }
+                                " or "
+                                button {
+                                    type: "button",
+                                    class: "btn btn-link p-0",
+                                    onclick: move |_| user_type.set("team".into()),
+                                    "team"
+                                }
+                            }
+                        }
+                        if let Some(e) = err.read().as_ref() {
+                            div { class: "alert alert-danger mt-3 mb-0", "{e}" }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

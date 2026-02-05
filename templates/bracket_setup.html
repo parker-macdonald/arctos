@@ -204,7 +204,7 @@ function fetchSuggestions(query, suggestionsDiv, input) {
         );
         displaySuggestions(filteredSuggestions, suggestionsDiv, input);
     } else {
-        fetch(`/${tournamentUrl}/api/autocomplete?q=${encodeURIComponent(query)}`)
+        fetch(`/${tournamentUrl}/_api/autocomplete?q=${encodeURIComponent(query)}`)
             .then(response => response.json())
             .then(suggestions => {
                 displaySuggestions(suggestions, suggestionsDiv, input);
@@ -324,7 +324,7 @@ function initializeAutocomplete(input) {
 
 // Load all suggestions on page load
 function loadAllSuggestions() {
-    fetch(`/${tournamentUrl}/api/autocomplete?q=`)
+    fetch(`/${tournamentUrl}/_api/autocomplete?q=`)
         .then(response => response.json())
         .then(suggestions => {
             if (Array.isArray(suggestions) && suggestions.length > 0) {

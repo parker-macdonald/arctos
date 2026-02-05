@@ -2,7 +2,7 @@
 Main routes (homepage, etc.)
 """
 
-from flask import Blueprint, render_template, url_for, Response
+from flask import Blueprint, render_template, url_for, Response, send_from_directory, send_file
 from flask_login import current_user
 from app.services.tournament_service import TournamentService
 import os
@@ -10,6 +10,25 @@ from pathlib import Path
 from flask import request
 
 bp = Blueprint("main", __name__)
+
+# Dioxus SPA is built to frontend/dist; serve it at /app/
+_FRONTEND_DIST = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
+
+
+@bp.route("/app/")
+@bp.route("/app")
+def app_spa():
+    """Serve the Dioxus SPA index. SPA lives at /app/."""
+    index_path = _FRONTEND_DIST / "index.html"
+    if not index_path.exists():
+        return "Frontend not built. Run: cd frontend && dx build", 503
+    return send_file(index_path, mimetype="text/html")
+
+
+@bp.route("/app/<path:path>")
+def app_static(path):
+    """Serve SPA assets (JS, WASM, etc.) from frontend/dist."""
+    return send_from_directory(_FRONTEND_DIST, path)
 
 
 @bp.route("/")

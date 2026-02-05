@@ -20,11 +20,11 @@ def register_error_handlers(app: Flask) -> None:
     def _handle_arctos_error(e: ArctosError):
         # Decide “API” vs “HTML” conservatively.
         # We treat the request as API when:
-        # - it's under /api, or
+        # - it's under /_api, or
         # - the client explicitly prefers JSON over HTML.
         accepts = request.accept_mimetypes
         prefers_json = (accepts.best == "application/json") and not accepts.accept_html
-        is_api_path = request.path.startswith("/api")
+        is_api_path = request.path.startswith("/_api")
         if request.is_json or is_api_path or prefers_json:
             # Keep prior behavior: many endpoints historically returned 200 even on errors.
             return json_error(

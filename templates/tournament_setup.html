@@ -1004,7 +1004,7 @@
                         );
                         displaySuggestions(filteredSuggestions, suggestionsDiv, input);
                     } else {
-                        fetch(`/${tournamentUrl}/api/autocomplete?q=${encodeURIComponent(query)}`)
+                        fetch(`/${tournamentUrl}/_api/autocomplete?q=${encodeURIComponent(query)}`)
                             .then(response => response.json())
                             .then(suggestions => {
                                 displaySuggestions(suggestions, suggestionsDiv, input);
@@ -1018,7 +1018,7 @@
                 
                 // Load all suggestions once on page load
                 function loadAllSuggestions() {
-                    fetch(`/${tournamentUrl}/api/autocomplete?q=`)
+                    fetch(`/${tournamentUrl}/_api/autocomplete?q=`)
                         .then(response => response.json())
                         .then(suggestions => {
                             // Only cache if backend provided a non-empty list
@@ -1420,7 +1420,7 @@ document.addEventListener('DOMContentLoaded', function() {
             
             // Debounce validation
             dslValidationTimer = setTimeout(() => {
-                fetch(`/${tournamentUrl}/api/validate-dsl`, {
+                fetch(`/${tournamentUrl}/_api/validate-dsl`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -1470,7 +1470,7 @@ async function copyCameraUrl(tournamentUrl, fieldName, buttonElement) {
         
         // Generate the camera URL with key
         // We need to fetch it from the server since the key is generated server-side
-        const url = `/api/camera-url?tournament=${encodeURIComponent(tournamentUrl)}&field=${encodeURIComponent(fieldName)}`;
+        const url = `/_api/camera-url?tournament=${encodeURIComponent(tournamentUrl)}&field=${encodeURIComponent(fieldName)}`;
         console.log('Fetching camera URL from:', url);
         
         const response = await fetch(url, {
