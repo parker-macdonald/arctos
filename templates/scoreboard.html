@@ -398,7 +398,7 @@
         {% else %}
         // Poll for scoreboard state updates (between matches)
         function pollScoreboardState() {
-            fetch(`/api/scoreboard-state?tournament=${tournamentUrl}&field=${fieldName}`)
+            fetch(`/_api/scoreboard-state?tournament=${tournamentUrl}&field=${fieldName}`)
                 .then(response => response.json())
                 .then(data => {
                     if (data.error) {

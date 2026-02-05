@@ -997,7 +997,7 @@ def tournament_register(tournament_url):
     )
 
 
-@bp.route("/api/camera-url")
+@bp.route("/_api/camera-url")
 @login_required
 def camera_url_api():
     """Generate camera recording URL with access key. Requires TO access."""
@@ -1081,7 +1081,7 @@ def record_page(tournament_url):
     return render_template("record.html", tournament=tournament, field_name=field_name)
 
 
-@bp.route("/api/record/match-status")
+@bp.route("/_api/record/match-status")
 def record_match_status():
     """Check if a field has an active match for point recording. No access key required."""
     from models import Point
@@ -1203,7 +1203,7 @@ def record_match_status():
         return jsonify({"hasActiveMatch": False})
 
 
-@bp.route("/api/record/upload-chunk", methods=["POST"])
+@bp.route("/_api/record/upload-chunk", methods=["POST"])
 def record_upload_chunk():
     """Receive and store a video chunk for point recording. No access key required."""
     import os
@@ -1361,7 +1361,7 @@ def record_upload_chunk():
     )
 
 
-@bp.route("/api/record/finalize", methods=["POST"])
+@bp.route("/_api/record/finalize", methods=["POST"])
 def record_finalize():
     data = request.json
     tournament_url = data.get("tournament")
@@ -2466,7 +2466,7 @@ def push_back_matches(tournament_url):
     return redirect(f"/{tournament_url}/setup")
 
 
-@bp.route("/<tournament_url>/api/autocomplete")
+@bp.route("/<tournament_url>/_api/autocomplete")
 def tournament_autocomplete(tournament_url):
     """Autocomplete endpoint for tournament setup.
     Returns a list of suggestions with fields: type, value, label, id
@@ -2553,7 +2553,7 @@ def tournament_autocomplete(tournament_url):
         return jsonify(suggestions[:50])
 
 
-@bp.route("/<tournament_url>/api/validate-dsl", methods=["POST"])
+@bp.route("/<tournament_url>/_api/validate-dsl", methods=["POST"])
 def validate_dsl(tournament_url):
     """Validate and simplify a DSL expression.
     Returns JSON with: valid (bool), value (the full interpreted value), simplified (str representation), error (str or None)

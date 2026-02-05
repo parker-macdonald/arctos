@@ -22,7 +22,7 @@ from app.domain.enums import RegistrationStatus, MatchStatus, ScheduleType, SetT
 bp = Blueprint("matches", __name__)
 
 
-@bp.route("/api/scoreboard")
+@bp.route("/_api/scoreboard")
 def scoreboard():
     """Scoreboard page for OBS overlay. Public endpoint."""
     from flask import make_response
@@ -235,7 +235,7 @@ def scoreboard():
     return response
 
 
-@bp.route("/api/scoreboard-state")
+@bp.route("/_api/scoreboard-state")
 def scoreboard_state():
     """Get scoreboard state as JSON for polling. Public endpoint."""
     tournament_url = request.args.get("tournament")

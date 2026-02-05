@@ -165,7 +165,7 @@ function getSupportedMimeType() {
 // Check if field has active match
 async function checkMatchStatus() {
     try {
-        let url = `/api/record/match-status?tournament=${tournamentUrl}&field=${encodeURIComponent(fieldName)}`;
+        let url = `/_api/record/match-status?tournament=${tournamentUrl}&field=${encodeURIComponent(fieldName)}`;
         if (matchId && isRecording) {
             url += `&current_match_id=${matchId}`;
         }
@@ -375,7 +375,7 @@ async function finishUploadingChunksAndFinalize(sessionId, matchIdForFinalize) {
     
     // Call finalization endpoint
     try {
-        const response = await fetch('/api/record/finalize', {
+        const response = await fetch('/_api/record/finalize', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
@@ -902,7 +902,7 @@ async function uploadChunk(chunk, recorderNum, pointId) {
                 
                 // Use low priority for chunk uploads so polling requests can get through quickly
                 // The polling requests are small and time-sensitive, while uploads can tolerate slight delays
-                const response = await fetch('/api/record/upload-chunk', {
+                const response = await fetch('/_api/record/upload-chunk', {
                     method: 'POST',
                     body: formData,
                     Priority: 'low', // Allow polling requests to take precedence

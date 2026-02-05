@@ -35,6 +35,15 @@ def create_app(config=None):
     )
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
     app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024  # 10MB max file size
+    app.config["SESSION_COOKIE_HTTPONLY"] = True
+    # For cross-origin SPA (e.g. dx serve on port 8080, Flask on 5006), set ARCTOS_CORS_DEV=1
+    # so the session cookie is sent with credentialed requests. SameSite=None requires Secure
+    # in production; on localhost some browsers allow it over HTTP.
+    if os.environ.get("ARCTOS_CORS_DEV") == "1":
+        app.config["SESSION_COOKIE_SAMESITE"] = "None"
+        app.config["SESSION_COOKIE_SECURE"] = True
+    else:
+        app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 
     # Google OAuth configuration
     app.config["GOOGLE_CLIENT_ID"] = os.environ.get("GOOGLE_CLIENT_ID", "")
@@ -83,6 +92,16 @@ def create_app(config=None):
     login_manager.init_app(app)
     login_manager.login_view = "auth.login"
 
+    @login_manager.unauthorized_handler
+    def unauthorized():
+        from flask import request, redirect, url_for, jsonify
+
+        # For _api routes, return 401 JSON so the SPA gets a proper response instead of
+        # a redirect to /login (which would cause CORS errors when the browser follows it).
+        if request.path.startswith("/_api"):
+            return jsonify({"error": "Not authenticated"}), 401
+        return redirect(url_for(login_manager.login_view, next=request.url))
+
     @login_manager.user_loader
     def load_user(user_id):
         from models import Player, Team
@@ -102,8 +121,10 @@ def create_app(config=None):
     from app.routes.matches import bp as matches_bp
     from app.routes.notes import bp as notes_bp
     from app.routes.registration import bp as registration_bp
+    from app.routes._api import bp as _api_bp
 
     app.register_blueprint(main_bp)
+    app.register_blueprint(_api_bp)
     app.register_blueprint(auth_bp)
     app.register_blueprint(players_bp)
     app.register_blueprint(teams_bp)
@@ -121,6 +142,64 @@ def create_app(config=None):
     @app.context_processor
     def inject_url_for():
         return dict(url_for=url_for)
+
+    # CORS for /_api when using dx serve (frontend on different port/protocol than Flask)
+    def _cors_allowed_origin(origin_header):
+        if not origin_header:
+            return None
+        origin_lower = origin_header.strip().lower()
+        if "localhost" in origin_lower or "127.0.0.1" in origin_lower:
+            return origin_header.strip()
+        return None
+
+    def _add_cors_headers(response_or_headers, origin):
+        if hasattr(response_or_headers, "headers"):
+            h = response_or_headers.headers
+        else:
+            h = response_or_headers
+        h["Access-Control-Allow-Origin"] = origin
+        h["Access-Control-Allow-Credentials"] = "true"
+        h["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+        h["Access-Control-Allow-Headers"] = "Content-Type, Authorization, Accept"
+        h["Vary"] = "Origin"
+
+    @app.after_request
+    def add_cors_for_api(response):
+        from flask import request
+
+        # Add CORS for /_api and, in dev, for /static/ (e.g. stones player fetches /static/stones/*)
+        is_api = request.path.startswith("/_api")
+        is_static_cors = (
+            os.environ.get("ARCTOS_CORS_DEV") == "1"
+            and request.endpoint == "static"
+            and request.path.startswith("/static/")
+        )
+        if not is_api and not is_static_cors:
+            return response
+        origin_header = request.headers.get("Origin")
+        origin = _cors_allowed_origin(origin_header) if origin_header else None
+        if origin:
+            _add_cors_headers(response, origin)
+        return response
+
+    @app.before_request
+    def handle_api_preflight():
+        from flask import request, make_response
+
+        # Preflight for /_api and for /static/ in CORS dev (browser may send OPTIONS for credentialed fetch)
+        is_api = request.path.startswith("/_api")
+        is_static_cors = (
+            os.environ.get("ARCTOS_CORS_DEV") == "1"
+            and request.path.startswith("/static/")
+        )
+        if request.method != "OPTIONS" or (not is_api and not is_static_cors):
+            return None
+        origin_header = request.headers.get("Origin")
+        origin = _cors_allowed_origin(origin_header) if origin_header else None
+        r = make_response("", 204)
+        if origin:
+            _add_cors_headers(r, origin)
+        return r
 
     # Add cache headers to static file responses (especially images)
     @app.after_request

@@ -1,0 +1,11 @@
+[application]
+name = "Arctos"
+default_platform = "web"
+out_dir = "dist"
+
+[application.web]
+title = "Arctos"
+base_path = "/app/"
+
+[build]
+release = false
