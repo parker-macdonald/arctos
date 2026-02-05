@@ -18,6 +18,7 @@ from models import (
     TeamRegistration,
     PlayerRegistration,
     TO,
+    Injury,
     db,
 )
 
@@ -486,19 +487,186 @@ def player_profile(player_id):
     if not player:
         return jsonify({"error": "Not found"}), 404
     regs = PlayerRegistration.query.filter_by(player=player_id).all()
+    injuries_q = Injury.query.filter_by(player=player_id).order_by(Injury.stamp.desc()).all()
+    can_see_private = current_user.is_authenticated and current_user.id == player_id
+    injuries = []
+    for inj in injuries_q:
+        if inj.show or can_see_private:
+            injuries.append(
+                {
+                    "id": inj.id,
+                    "message": inj.message,
+                    "stamp": _dt_iso(getattr(inj, "stamp", None)),
+                    "active": getattr(inj, "active", False),
+                    "show": getattr(inj, "show", False),
+                }
+            )
     return jsonify(
         {
             "player": {
                 "id": player.id,
                 "name": player.name,
                 "profile_photo": player.profile_photo,
-                "phone": player.phone if (current_user.is_authenticated and current_user.id == player_id) else None,
+                "phone": player.phone
+                if (current_user.is_authenticated and current_user.id == player_id)
+                else None,
                 "location": player.location,
                 "bio": player.bio,
             },
-            "registrations": [{"event": r.event, "team": r.team, "status": r.status.value if hasattr(r.status, "value") else str(r.status)} for r in regs],
+            "registrations": [
+                {
+                    "event": r.event,
+                    "team": r.team,
+                    "status": r.status.value if hasattr(r.status, "value") else str(r.status),
+                }
+                for r in regs
+            ],
+            "injuries": injuries,
         }
     )
+
+
+@bp.route("/players/<player_id>/injuries", methods=["GET"])
+@login_required
+def player_injuries(player_id):
+    """List injuries for the current player (owner only)."""
+    if current_user.id != player_id or current_user.__class__.__name__ != "Player":
+        return jsonify({"error": "Forbidden"}), 403
+    injuries = (
+        Injury.query.filter_by(player=player_id)
+        .order_by(Injury.stamp.desc())
+        .all()
+    )
+    return jsonify(
+        {
+            "injuries": [
+                {
+                    "id": inj.id,
+                    "message": inj.message,
+                    "stamp": _dt_iso(getattr(inj, "stamp", None)),
+                    "active": getattr(inj, "active", False),
+                    "show": getattr(inj, "show", False),
+                }
+                for inj in injuries
+            ]
+        }
+    )
+
+
+@bp.route("/players/<player_id>/injuries", methods=["POST"])
+@login_required
+def add_injury_api(player_id):
+    """Create a new injury for the current player."""
+    if current_user.id != player_id or current_user.__class__.__name__ != "Player":
+        return jsonify({"error": "Forbidden"}), 403
+    if not request.is_json:
+        return jsonify({"error": "Content-Type must be application/json"}), 415
+    data = request.get_json() or {}
+    message = (data.get("message") or "").strip()
+    if not message:
+        return jsonify({"error": "message is required"}), 400
+    active = bool(data.get("active", True))
+    show = bool(data.get("show", True))
+    date_str = data.get("date")
+    inj = Injury(player=player_id, message=message, active=active, show=show)
+    if date_str:
+        try:
+            from datetime import datetime
+
+            inj.stamp = datetime.strptime(date_str, "%Y-%m-%d")
+        except Exception:
+            return jsonify({"error": "Invalid date format, expected YYYY-MM-DD"}), 400
+    db.session.add(inj)
+    db.session.commit()
+    return (
+        jsonify(
+            {
+                "id": inj.id,
+                "message": inj.message,
+                "stamp": _dt_iso(getattr(inj, "stamp", None)),
+                "active": getattr(inj, "active", False),
+                "show": getattr(inj, "show", False),
+            }
+        ),
+        201,
+    )
+
+
+@bp.route("/players/<player_id>/injuries/<int:injury_id>", methods=["GET"])
+@login_required
+def get_injury_api(player_id, injury_id):
+    """Get a single injury (owner only)."""
+    if current_user.id != player_id or current_user.__class__.__name__ != "Player":
+        return jsonify({"error": "Forbidden"}), 403
+    inj = Injury.query.filter_by(id=injury_id, player=player_id).first()
+    if not inj:
+        return jsonify({"error": "Not found"}), 404
+    return jsonify(
+        {
+            "id": inj.id,
+            "message": inj.message,
+            "stamp": _dt_iso(getattr(inj, "stamp", None)),
+            "active": getattr(inj, "active", False),
+            "show": getattr(inj, "show", False),
+        }
+    )
+
+
+@bp.route("/players/<player_id>/injuries/<int:injury_id>", methods=["PUT"])
+@login_required
+def update_injury_api(player_id, injury_id):
+    """Update an injury (owner only)."""
+    if current_user.id != player_id or current_user.__class__.__name__ != "Player":
+        return jsonify({"error": "Forbidden"}), 403
+    inj = Injury.query.filter_by(id=injury_id, player=player_id).first()
+    if not inj:
+        return jsonify({"error": "Not found"}), 404
+    if not request.is_json:
+        return jsonify({"error": "Content-Type must be application/json"}), 415
+    data = request.get_json() or {}
+    message = data.get("message")
+    if message is not None:
+        message = message.strip()
+        if not message:
+            return jsonify({"error": "message is required"}), 400
+        inj.message = message
+    if "active" in data:
+        inj.active = bool(data.get("active"))
+    if "show" in data:
+        inj.show = bool(data.get("show"))
+    if "date" in data:
+        date_str = data.get("date")
+        if date_str:
+            try:
+                from datetime import datetime
+
+                inj.stamp = datetime.strptime(date_str, "%Y-%m-%d")
+            except Exception:
+                return jsonify({"error": "Invalid date format, expected YYYY-MM-DD"}), 400
+    db.session.commit()
+    return jsonify(
+        {
+            "id": inj.id,
+            "message": inj.message,
+            "stamp": _dt_iso(getattr(inj, "stamp", None)),
+            "active": getattr(inj, "active", False),
+            "show": getattr(inj, "show", False),
+        }
+    )
+
+
+@bp.route("/players/<player_id>/injuries/<int:injury_id>", methods=["DELETE"])
+@login_required
+def delete_injury_api(player_id, injury_id):
+    """Delete an injury (owner only)."""
+    if current_user.id != player_id or current_user.__class__.__name__ != "Player":
+        return jsonify({"error": "Forbidden"}), 403
+    inj = Injury.query.filter_by(id=injury_id, player=player_id).first()
+    if not inj:
+        return jsonify({"error": "Not found"}), 404
+    db.session.delete(inj)
+    db.session.commit()
+    return jsonify({"ok": True})
 
 
 @bp.route("/teams", methods=["GET"])

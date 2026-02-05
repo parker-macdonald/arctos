@@ -521,3 +521,97 @@ pub async fn complete_match(tournament_url: &str, match_id: &str) -> Result<Valu
     }
     Ok(data)
 }
+
+// Injury management
+
+pub async fn get_injury(
+    player_id: &str,
+    injury_id: u32,
+) -> Result<crate::types::PlayerInjury, String> {
+    let c = client();
+    let r = with_credentials(
+        c.get(format!(
+            "{}/_api/players/{}/injuries/{}",
+            base(),
+            player_id,
+            injury_id
+        )),
+    )
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    let data: crate::types::PlayerInjury = response_json(r).await?;
+    Ok(data)
+}
+
+pub async fn create_injury(
+    player_id: &str,
+    message: &str,
+    date: Option<&str>,
+    active: bool,
+    show: bool,
+) -> Result<crate::types::PlayerInjury, String> {
+    let c = client();
+    let body = serde_json::json!({
+        "message": message,
+        "date": date,
+        "active": active,
+        "show": show,
+    });
+    let r = with_credentials(
+        c.post(format!("{}/_api/players/{}/injuries", base(), player_id)).json(&body),
+    )
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    let data: crate::types::PlayerInjury = response_json(r).await?;
+    Ok(data)
+}
+
+pub async fn update_injury(
+    player_id: &str,
+    injury_id: u32,
+    message: &str,
+    date: Option<&str>,
+    active: bool,
+    show: bool,
+) -> Result<crate::types::PlayerInjury, String> {
+    let c = client();
+    let body = serde_json::json!({
+        "message": message,
+        "date": date,
+        "active": active,
+        "show": show,
+    });
+    let r = with_credentials(
+        c.put(format!(
+            "{}/_api/players/{}/injuries/{}",
+            base(),
+            player_id,
+            injury_id
+        ))
+        .json(&body),
+    )
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    let data: crate::types::PlayerInjury = response_json(r).await?;
+    Ok(data)
+}
+
+pub async fn delete_injury(player_id: &str, injury_id: u32) -> Result<(), String> {
+    let c = client();
+    let r = with_credentials(
+        c.delete(format!(
+            "{}/_api/players/{}/injuries/{}",
+            base(),
+            player_id,
+            injury_id
+        )),
+    )
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    let _data: Value = response_json(r).await?;
+    Ok(())
+}

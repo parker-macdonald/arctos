@@ -29,6 +29,8 @@ mod tournament_home;
 mod tournament_register;
 mod tournament_setup;
 mod tournament_settings;
+mod add_injury;
+mod edit_injury;
 
 pub use about::About;
 pub use bracket::Bracket;
@@ -61,3 +63,5 @@ pub use tournament_home::TournamentHome;
 pub use tournament_register::TournamentRegister;
 pub use tournament_setup::TournamentSetup;
 pub use tournament_settings::TournamentSettings;
+pub use add_injury::AddInjury;
+pub use edit_injury::EditInjury;
