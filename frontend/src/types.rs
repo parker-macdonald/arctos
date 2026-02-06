@@ -8,7 +8,7 @@ pub struct User {
     pub user_type: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Tournament {
     pub url: String,
     pub name: String,
@@ -29,6 +29,12 @@ pub struct Tournament {
     pub num_fields: Option<u32>,
     pub max_team_size_roster: Option<u32>,
     pub max_team_size_field: Option<u32>,
+    pub terms_link: Option<String>,
+    pub head_refs_allowed_list: Option<String>,
+    #[serde(default)]
+    pub head_refs_allow_reffing_teams: bool,
+    #[serde(default)]
+    pub head_refs_allow_anyone: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -82,6 +88,151 @@ pub struct TournamentDetailResponse {
     pub to_entries: Vec<ToEntry>,
     pub is_current_team_registered: bool,
     pub is_current_player_registered: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TournamentManageResponse {
+    pub tournament: Tournament,
+    pub search_query: String,
+    pub search_type: String,
+    pub team_registrations: Vec<ManageTeamRegistration>,
+    pub player_registrations: Vec<ManagePlayerRegistration>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ManageTeamRegistration {
+    pub registration: ManageTeamRegistrationData,
+    pub team: ManageTeamInfo,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ManageTeamRegistrationData {
+    pub id: u32,
+    pub team: String,
+    pub pseudonym: String,
+    pub status: String,
+    pub paid: bool,
+    pub amount_paid: f64,
+    pub registered_at: Option<String>,
+    pub paid_at: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ManageTeamInfo {
+    pub id: String,
+    pub name: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ManagePlayerRegistration {
+    pub registration: ManagePlayerRegistrationData,
+    pub player: ManagePlayerInfo,
+    pub team: Option<ManageTeamInfo>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ManagePlayerRegistrationData {
+    pub id: u32,
+    pub player: String,
+    pub team: Option<String>,
+    pub jersey_name: Option<String>,
+    pub jersey_number: Option<String>,
+    pub status: String,
+    pub paid: bool,
+    pub amount_paid: f64,
+    pub registered_at: Option<String>,
+    pub paid_at: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ManagePlayerInfo {
+    pub id: String,
+    pub name: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TournamentInvitationsResponse {
+    pub tournament: Tournament,
+    pub team_registration: InvitationTeamRegistration,
+    pub current_team_size: u32,
+    pub invitations: Vec<InvitationItem>,
+    pub team_roster: Vec<RosterItem>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct InvitationTeamRegistration {
+    pub id: u32,
+    pub pseudonym: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct InvitationItem {
+    pub registration: InvitationRegistration,
+    pub player: InvitationPlayer,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct InvitationRegistration {
+    pub id: u32,
+    pub jersey_name: Option<String>,
+    pub jersey_number: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct InvitationPlayer {
+    pub id: String,
+    pub name: String,
+    pub profile_photo: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RosterItem {
+    pub registration: RosterRegistration,
+    pub player: InvitationPlayer,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RosterRegistration {
+    pub id: u32,
+    pub jersey_name: Option<String>,
+    pub jersey_number: Option<String>,
+    pub status: String,
+    pub paid: bool,
+    pub amount_paid: f64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct BracketResponse {
+    pub tournament: Tournament,
+    pub brackets: Vec<BracketItem>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct BracketItem {
+    pub name: String,
+    pub image: String,
+    pub teams: Vec<BracketTeamEntry>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct BracketTeamEntry {
+    pub team_info: Option<BracketTeamInfo>,
+    pub x: i32,
+    pub y: i32,
+    pub halign: String,
+    pub valign: String,
+    pub size: i32,
+    pub is_reference: bool,
+    pub is_tag: bool,
+    pub match_name: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct BracketTeamInfo {
+    pub id: Option<String>,
+    pub pseudonym: Option<String>,
+    pub profile_photo: Option<String>,
+    pub display_text: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -162,6 +313,8 @@ pub struct MatchDetailData {
     pub team2: Option<String>,
     pub team1_name: String,
     pub team2_name: String,
+    pub team1_initial: Option<String>,
+    pub team2_initial: Option<String>,
     pub status: String,
     pub nominal_start_time: Option<String>,
     pub confirmed_start_time: Option<String>,
@@ -170,6 +323,13 @@ pub struct MatchDetailData {
     pub stones_per_set: Option<u32>,
     pub stones_remaining: Option<u32>,
     pub match_winner: Option<String>,
+    pub schedule_type: Option<String>,
+    pub nominal_length: Option<u32>,
+    pub previous_match: Option<String>,
+    pub refs_initial: Option<String>,
+    pub ribbon: bool,
+    pub skip_condition: Option<String>,
+    pub nsets: Option<u32>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -180,10 +340,109 @@ pub struct MatchDetailResponse {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct StartMatchResponse {
+    pub tournament: Tournament,
+    pub match_info: StartMatchInfo,
+    pub team1_players: Vec<StartMatchPlayer>,
+    pub team2_players: Vec<StartMatchPlayer>,
+    pub all_players: Vec<StartMatchPlayer>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct StartMatchInfo {
+    pub uuid: String,
+    pub name: String,
+    pub field: Option<String>,
+    pub set_type: Option<String>,
+    pub refs: Option<String>,
+    pub team1_name: String,
+    pub team2_name: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct StartMatchPlayer {
+    pub id: String,
+    pub name: String,
+    pub jersey_name: Option<String>,
+    pub jersey_number: Option<String>,
+    pub team: Option<String>,
+    pub paid: bool,
+    #[serde(default)]
+    pub injuries: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct StartMatchRequest {
+    pub match_id: String,
+    pub team1_players: Vec<String>,
+    pub team2_players: Vec<String>,
+    pub match_notes: String,
+    pub stones_per_set: Option<u32>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct StartMatchPostResponse {
+    pub match_id: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FinalizeMatchResponse {
+    pub tournament: Tournament,
+    pub match_info: FinalizeMatchInfo,
+    pub points: Vec<FinalizePoint>,
+    pub point_notes_map: std::collections::HashMap<String, Vec<FinalizeNote>>,
+    pub stones_elapsed_map: std::collections::HashMap<String, u32>,
+    pub team1_score: u32,
+    pub team2_score: u32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FinalizeMatchInfo {
+    pub uuid: String,
+    pub name: String,
+    pub team1_name: String,
+    pub team2_name: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FinalizePoint {
+    pub uuid: String,
+    pub set_number: Option<u32>,
+    pub winner: Option<String>,
+    pub rerolled: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FinalizeNote {
+    pub text: Option<String>,
+    pub target: Option<String>,
+    pub player_id: Option<String>,
+    pub player_name: Option<String>,
+    pub player_display: Option<String>,
+    pub team_id: Option<String>,
+    pub created_at: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FinalizeMatchRequest {
+    pub match_id: String,
+    pub match_winner: String,
+    pub final_notes: String,
+    pub team1_signature: Option<String>,
+    pub team2_signature: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FinalizeMatchPostResponse {
+    pub ok: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PlayerListItem {
     pub id: String,
     pub name: String,
     pub profile_photo: Option<String>,
+    pub location: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -205,21 +464,6 @@ pub struct PlayerProfileData {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct PlayerProfileResponse {
-    pub player: PlayerProfileData,
-    pub registrations: Vec<PlayerRegItem>,
-    #[serde(default)]
-    pub injuries: Vec<PlayerInjury>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct PlayerRegItem {
-    pub event: String,
-    pub team: Option<String>,
-    pub status: String,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PlayerInjury {
     pub id: u32,
     pub message: String,
@@ -229,10 +473,47 @@ pub struct PlayerInjury {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PlayerProfileResponse {
+    pub player: PlayerProfileData,
+    pub registrations: Vec<PlayerRegItem>,
+    #[serde(default)]
+    pub injuries: Vec<PlayerInjury>,
+    #[serde(default)]
+    pub player_notes: Vec<PlayerNoteItem>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PlayerRegItem {
+    pub event: String,
+    pub team: Option<String>,
+    pub team_pseudonym: Option<String>,
+    pub status: String,
+    pub jersey_name: Option<String>,
+    pub jersey_number: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PlayerNoteItem {
+    pub created_at: Option<String>,
+    pub text: String,
+    pub point_index: String,
+    #[serde(rename = "match")]
+    pub match_info: Option<NoteMatchInfo>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct NoteMatchInfo {
+    pub event: String,
+    pub uuid: String,
+    pub name: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TeamListItem {
     pub id: String,
     pub name: String,
     pub profile_photo: Option<String>,
+    pub location: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -245,18 +526,59 @@ pub struct TeamProfileData {
     pub id: String,
     pub name: String,
     pub profile_photo: Option<String>,
+    pub location: Option<String>,
+    pub email: Option<String>,
+    pub website: Option<String>,
+    pub about: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TeamProfileResponse {
     pub team: TeamProfileData,
     pub registrations: Vec<TeamRegItem>,
+    #[serde(default)]
+    pub team_notes: Vec<TeamNoteItem>,
+    #[serde(default)]
+    pub tournament_players: std::collections::HashMap<String, Vec<TournamentPlayerItem>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TeamRegItem {
     pub event: String,
     pub pseudonym: Option<String>,
+    pub status: String,
+    pub paid: bool,
+    pub amount_paid: f64,
+    pub start_date: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TeamNoteItem {
+    pub created_at: Option<String>,
+    pub text: String,
+    pub point_index: String,
+    #[serde(rename = "match")]
+    pub match_info: NoteMatchInfo,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TournamentPlayerItem {
+    pub registration: TournamentPlayerRegistration,
+    pub player: Option<TournamentPlayerInfo>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TournamentPlayerRegistration {
+    pub player: String,
+    pub jersey_name: Option<String>,
+    pub jersey_number: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TournamentPlayerInfo {
+    pub id: String,
+    pub name: String,
+    pub profile_photo: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -307,4 +629,142 @@ pub struct PrevNextMatch {
     pub team1_photo: Option<String>,
     pub team2_photo: Option<String>,
     pub winner: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FieldResponse {
+    pub id: u32,
+    pub name: String,
+    pub camera_urls: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TagResponse {
+    pub id: u32,
+    pub name: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TagListItem {
+    pub id: u32,
+    pub name: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TagsListResponse {
+    pub tags: Vec<TagListItem>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MarkdownPageResponse {
+    pub title: String,
+    pub markdown: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct GoogleChooseAccountTypeResponse {
+    pub email: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct GoogleCompleteProfileResponse {
+    pub email: String,
+    pub user_type: String,
+    pub suggested_name: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct GoogleChooseAccountTypeRequest {
+    pub user_type: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct GoogleCompleteProfileRequest {
+    pub username: String,
+    pub display_name: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct UpdateFieldRequest {
+    pub name: String,
+    pub camera_urls: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct UpdateTagRequest {
+    pub name: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct UpdateMatchRequest {
+    pub name: Option<String>,
+    pub field: Option<String>,
+    pub schedule_type: Option<String>,
+    pub length: Option<u32>,
+    pub start_time: Option<String>,
+    pub previous_match_id: Option<String>,
+    pub refs: Option<Vec<String>>,
+    pub team1: Option<String>,
+    pub team2: Option<String>,
+    pub set_type: Option<String>,
+    pub nsets: Option<u32>,
+    pub stones_per_set: Option<u32>,
+    pub ribbon: Option<bool>,
+    pub skip_condition: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct UpdatePlayerProfileRequest {
+    pub name: Option<String>,
+    pub phone: Option<String>,
+    pub location: Option<String>,
+    pub bio: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct UpdateTeamProfileRequest {
+    pub name: Option<String>,
+    pub location: Option<String>,
+    pub email: Option<String>,
+    pub website: Option<String>,
+    pub about: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PlayerRegistrationData {
+    pub id: u32,
+    pub jersey_name: Option<String>,
+    pub jersey_number: Option<String>,
+    pub team: Option<String>,
+    pub status: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MyPlayerRegistrationResponse {
+    pub registration: PlayerRegistrationData,
+    pub current_team: Option<TeamOption>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct UpdatePlayerRegistrationRequest {
+    pub jersey_name: Option<String>,
+    pub jersey_number: Option<String>,
+    pub team: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TeamRegistrationData {
+    pub id: u32,
+    pub pseudonym: Option<String>,
+    pub status: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MyTeamRegistrationResponse {
+    pub registration: TeamRegistrationData,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct UpdateTeamRegistrationRequest {
+    pub pseudonym: Option<String>,
 }

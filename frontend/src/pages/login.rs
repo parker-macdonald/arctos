@@ -92,9 +92,9 @@ pub fn Login() -> Element {
                         div { class: "text-center",
                             p {
                                 "Don't have an account? "
-                                Link { to: Route::Register {}, "Register as Player" }
+                                a { href: "/app/register?type=player", "Register as Player" }
                                 " or "
-                                Link { to: Route::Register {}, "Register as Team" }
+                                a { href: "/app/register?type=team", "Register as Team" }
                             }
                         }
                         if let Some(e) = err.read().as_ref() {

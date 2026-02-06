@@ -3,6 +3,28 @@ use crate::pages::layout::use_auth_invalidate;
 use crate::Route;
 use dioxus::prelude::*;
 
+fn get_query_param(name: &str) -> Option<String> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let window = web_sys::window()?;
+        let search = window.location().search().ok()?;
+        let params = web_sys::UrlSearchParams::new_with_str(&search).ok()?;
+        params.get(name)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = name;
+        None
+    }
+}
+
+fn initial_user_type() -> String {
+    match get_query_param("type").as_deref() {
+        Some("team") => "team".to_string(),
+        _ => "player".to_string(),
+    }
+}
+
 fn register_title(user_type: &str) -> String {
     match user_type {
         "team" => "Register as Team".to_string(),
@@ -16,11 +38,11 @@ pub fn Register() -> Element {
     let mut password = use_signal(|| String::new());
     let mut confirm_password = use_signal(|| String::new());
     let mut name = use_signal(|| String::new());
-    let mut user_type = use_signal(|| "player".to_string());
+    let mut user_type = use_signal(initial_user_type);
     let mut err = use_signal(|| None::<String>);
     let navigator = use_navigator();
     let auth_invalidate = use_auth_invalidate();
-    let google_url = format!("{}/auth/google/login", api::base_url());
+    let google_base = format!("{}/auth/google/login", api::base_url());
 
     rsx! {
         div { class: "row justify-content-center",
@@ -139,7 +161,7 @@ pub fn Register() -> Element {
                             p { class: "text-muted", "Or" }
                         }
                         div { class: "d-grid mb-3",
-                            a { href: "{google_url}", class: "btn btn-outline-secondary",
+                            a { href: "{google_base}?type={user_type()}", class: "btn btn-outline-secondary",
                                 span { style: "margin-right: 8px; vertical-align: middle; display: inline-block; width: 18px; height: 18px;",
                                     svg { width: "18", height: "18", view_box: "0 0 18 18",
                                         path { fill: "#4285F4", d: "M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.717v2.258h2.908c1.702-1.567 2.684-3.874 2.684-6.615z" }
@@ -156,17 +178,21 @@ pub fn Register() -> Element {
                             p { "Already have an account? " Link { to: Route::Login {}, "Login here" } }
                             p {
                                 "Or register as a "
-                                button {
-                                    type: "button",
-                                    class: "btn btn-link p-0",
-                                    onclick: move |_| user_type.set("player".into()),
+                                a {
+                                    href: "/app/register?type=player",
+                                    onclick: move |ev| {
+                                        ev.prevent_default();
+                                        user_type.set("player".into());
+                                    },
                                     "player"
                                 }
                                 " or "
-                                button {
-                                    type: "button",
-                                    class: "btn btn-link p-0",
-                                    onclick: move |_| user_type.set("team".into()),
+                                a {
+                                    href: "/app/register?type=team",
+                                    onclick: move |ev| {
+                                        ev.prevent_default();
+                                        user_type.set("team".into());
+                                    },
                                     "team"
                                 }
                             }

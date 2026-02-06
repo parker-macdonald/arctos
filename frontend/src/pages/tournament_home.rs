@@ -43,7 +43,6 @@ pub fn TournamentHome(url: String) -> Element {
         let u = url_for_data.clone();
         async move { api::tournament_detail(&u).await.map_err(|e| e.to_string()) }
     });
-    let url_for_me = url.clone();
     let me_res = use_resource(move || async move { api::me().await });
     let val = data.value();
     let backend = api::base_url();
@@ -83,14 +82,14 @@ pub fn TournamentHome(url: String) -> Element {
                             if current_user.user_type == "team" {
                                 if d.is_current_team_registered {
                                     a { href: "{backend}/{url}/invitations", class: "btn btn-outline-primary", "Manage Roster" }
-                                    a { href: "{backend}/{url}/edit-team-registration", class: "btn btn-outline-secondary", "Edit Registration" }
+                                    Link { to: Route::EditTeamRegistration { tournament_url: url.clone() }, class: "btn btn-outline-secondary", "Edit Registration" }
                                     a { href: "{backend}/{url}/deregister-team", class: "btn btn-outline-danger", "Deregister Team" }
                                 } else {
                                     Link { to: Route::TournamentRegister { url: url.clone() }, class: "btn btn-success", "Register" }
                                 }
                             } else if current_user.user_type == "player" {
                                 if d.is_current_player_registered {
-                                    a { href: "{backend}/{url}/edit-player-registration", class: "btn btn-outline-secondary", "Edit Registration" }
+                                    Link { to: Route::EditPlayerRegistration { tournament_url: url.clone() }, class: "btn btn-outline-secondary", "Edit Registration" }
                                     a { href: "{backend}/{url}/deregister-player", class: "btn btn-outline-danger", "Deregister Player" }
                                 } else {
                                     Link { to: Route::TournamentRegister { url: url.clone() }, class: "btn btn-success", "Register" }
@@ -167,7 +166,22 @@ pub fn TournamentHome(url: String) -> Element {
                                     Link { to: Route::TournamentSetup { url: url.clone() }, class: "btn btn-outline-secondary", "Setup" }
                                     a { href: "{backend}/{url}/bracket-setup", class: "btn btn-outline-secondary", "Bracket Setup" }
                                     Link { to: Route::Manage { url: url.clone() }, class: "btn btn-outline-warning", "Registration Management" }
-                                    a { href: "{backend}/{url}/delete", class: "btn btn-outline-danger", "Delete Tournament" }
+                                    form {
+                                        action: "{backend}/{url}/delete",
+                                        method: "post",
+                                        class: "border rounded p-2",
+                                        div { class: "mb-2",
+                                            label { class: "form-label small mb-1", "Type the tournament URL to confirm" }
+                                            input {
+                                                class: "form-control form-control-sm",
+                                                name: "confirm_url",
+                                                "type": "text",
+                                                placeholder: "{url}",
+                                                required: true
+                                            }
+                                        }
+                                        button { class: "btn btn-outline-danger btn-sm w-100", "type": "submit", "Delete Tournament" }
+                                    }
                                 }
                             }
                         }
