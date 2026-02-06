@@ -37,7 +37,8 @@ pub fn About() -> Element {
                     li { strong { "minimal" } ": collect all data necessary for functionality and nothing more." }
                 }
                 div { class: "alert alert-info mt-5",
-                    "📖 Read more in the "
+                    i { class: "fas fa-book" }
+                    " Read more in the "
                     Link { to: Route::Docs {}, class: "alert-link", "User Documentation" }
                     "."
                 }
@@ -46,7 +47,7 @@ pub fn About() -> Element {
                     div { class: "col-md-4 mb-3",
                         div { class: "card h-100 border-0 shadow-sm",
                             div { class: "card-body",
-                                h5 { class: "card-title text-primary", "📅 Flexible Scheduling" }
+                                h5 { class: "card-title", i { class: "fas fa-calendar-alt text-primary" } " Flexible Scheduling" }
                                 p { class: "card-text text-muted", "Give teams clear, predictable, and efficient schedules. Implement any tournament structure." }
                             }
                         }
@@ -54,7 +55,7 @@ pub fn About() -> Element {
                     div { class: "col-md-4 mb-3",
                         div { class: "card h-100 border-0 shadow-sm",
                             div { class: "card-body",
-                                h5 { class: "card-title text-warning", "⚡ Live Updates" }
+                                h5 { class: "card-title", i { class: "fas fa-bolt text-warning" } " Live Updates" }
                                 p { class: "card-text text-muted", "Get live score updates for matches as they happen, and overlay a scoreboard on your live stream in OBS." }
                             }
                         }
@@ -62,7 +63,7 @@ pub fn About() -> Element {
                     div { class: "col-md-4 mb-3",
                         div { class: "card h-100 border-0 shadow-sm",
                             div { class: "card-body",
-                                h5 { class: "card-title text-success", "🔍 Player Tracking" }
+                                h5 { class: "card-title", i { class: "fas fa-magnifying-glass text-success" } " Player Tracking" }
                                 p { class: "card-text text-muted", "Log injuries and view results for all tournaments." }
                             }
                         }
@@ -72,7 +73,7 @@ pub fn About() -> Element {
                     div { class: "col-md-4 mb-3",
                         div { class: "card h-100 border-0 shadow-sm",
                             div { class: "card-body",
-                                h5 { class: "card-title text-info", "👥 Registration" }
+                                h5 { class: "card-title", i { class: "fas fa-users text-info" } " Registration" }
                                 p { class: "card-text text-muted", "Manage team and player registrations and payment. Stripe payment portal coming soon." }
                             }
                         }
@@ -80,7 +81,7 @@ pub fn About() -> Element {
                     div { class: "col-md-4 mb-3",
                         div { class: "card h-100 border-0 shadow-sm",
                             div { class: "card-body",
-                                h5 { class: "card-title text-secondary", "🔧 Head Ref Tools" }
+                                h5 { class: "card-title", i { class: "fas fa-wrench text-secondary" } " Head Ref Tools" }
                                 p { class: "card-text text-muted", "Automatically track point outcomes, scores, and stone count. Log notes on teams, players, and points." }
                             }
                         }
@@ -88,7 +89,7 @@ pub fn About() -> Element {
                     div { class: "col-md-4 mb-3",
                         div { class: "card h-100 border-0 shadow-sm",
                             div { class: "card-body",
-                                h5 { class: "card-title text-danger", "📹 YouTube Live Integration" }
+                                h5 { class: "card-title", i { class: "fas fa-video text-danger" } " YouTube Live Integration" }
                                 p { class: "card-text text-muted", "Automatically scrub to points in live streams for easy footage analysis." }
                             }
                         }

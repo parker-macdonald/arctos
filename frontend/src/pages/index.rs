@@ -1,5 +1,5 @@
 use crate::api;
-use crate::types::UserRegStatus;
+use crate::types::{Tournament, UserRegStatus};
 use crate::Route;
 use dioxus::prelude::*;
 
@@ -31,36 +31,14 @@ pub fn Index() -> Element {
                         h2 { class: "mb-3", "Upcoming Events" }
                         div { class: "row mb-4",
                             for t in data.upcoming.iter() {
-                                div { key: "{t.url}", class: "col-md-6 col-lg-4 mb-3",
-                                    Link {
-                                        to: Route::TournamentHome { url: t.url.clone() },
-                                        class: "card tournament-card text-decoration-none",
-                                        style: "display: block; transition: box-shadow 0.2s ease, transform 0.2s ease;",
-                                        div { class: "card-body",
-                                            h5 { class: "card-title", "{t.name}" }
-                                            p { class: "card-text",
-                                                span { class: "text-muted",
-                                                    "📅 {format_date_display(&t.start_date, t.end_date.as_ref())}"
-                                                }
-                                                br {}
-                                                span { class: "text-muted",
-                                                    "📍 {t.location.as_deref().unwrap_or(\"TBA\")}"
-                                                }
-                                                br {}
-                                                if let Some(max) = t.n_max_teams {
-                                                    small { class: "text-muted",
-                                                        "{data.team_counts.get(&t.url).copied().unwrap_or(0)}/{max} teams registered"
-                                                    }
-                                                } else {
-                                                    small { class: "text-muted",
-                                                        "{data.team_counts.get(&t.url).copied().unwrap_or(0)} teams registered"
-                                                    }
-                                                }
-                                                if let Some(urs) = data.user_reg_status.get(&t.url) {
-                                                    br {}
-                                                    UserRegBadges { urs: urs.clone() }
-                                                }
-                                            }
+                                {
+                                    let count = data.team_counts.get(&t.url).copied().unwrap_or(0);
+                                    let urs = data.user_reg_status.get(&t.url).cloned();
+                                    rsx! {
+                                        TournamentCard {
+                                            tournament: t.clone(),
+                                            team_count: count,
+                                            user_reg_status: urs
                                         }
                                     }
                                 }
@@ -69,16 +47,14 @@ pub fn Index() -> Element {
                         h2 { class: "mb-3", "Past Events" }
                         div { class: "row",
                             for t in data.past.iter() {
-                                div { key: "{t.url}", class: "col-md-6 col-lg-4 mb-3",
-                                    Link {
-                                        to: Route::TournamentHome { url: t.url.clone() },
-                                        class: "card tournament-card text-decoration-none",
-                                        style: "display: block;",
-                                        div { class: "card-body",
-                                            h5 { class: "card-title", "{t.name}" }
-                                            p { class: "card-text text-muted",
-                                                "{format_date_display(&t.start_date, t.end_date.as_ref())}"
-                                            }
+                                {
+                                    let count = data.team_counts.get(&t.url).copied().unwrap_or(0);
+                                    let urs = data.user_reg_status.get(&t.url).cloned();
+                                    rsx! {
+                                        TournamentCard {
+                                            tournament: t.clone(),
+                                            team_count: count,
+                                            user_reg_status: urs
                                         }
                                     }
                                 }
@@ -95,6 +71,50 @@ pub fn Index() -> Element {
                     p { class: "text-danger", "{e}" }
                 } else {
                     p { class: "text-muted", "Loading…" }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn TournamentCard(
+    tournament: Tournament,
+    team_count: u32,
+    user_reg_status: Option<UserRegStatus>,
+) -> Element {
+    let max_teams = tournament.n_max_teams;
+    rsx! {
+        div { key: "{tournament.url}", class: "col-md-6 col-lg-4 mb-3",
+            Link {
+                to: Route::TournamentHome { url: tournament.url.clone() },
+                class: "card tournament-card text-decoration-none",
+                style: "display: block; transition: box-shadow 0.2s ease, transform 0.2s ease;",
+                div { class: "card-body",
+                    h5 { class: "card-title", "{tournament.name}" }
+                    p { class: "card-text",
+                        span { class: "text-muted",
+                            "📅 {format_date_display(&tournament.start_date, tournament.end_date.as_ref())}"
+                        }
+                        br {}
+                        span { class: "text-muted",
+                            "📍 {tournament.location.as_deref().unwrap_or(\"TBA\")}"
+                        }
+                        br {}
+                        if let Some(max) = max_teams {
+                            small { class: "text-muted",
+                                "{team_count}/{max} teams registered"
+                            }
+                        } else {
+                            small { class: "text-muted",
+                                "{team_count} teams registered"
+                            }
+                        }
+                        if let Some(urs) = user_reg_status {
+                            br {}
+                            UserRegBadges { urs: urs }
+                        }
+                    }
                 }
             }
         }

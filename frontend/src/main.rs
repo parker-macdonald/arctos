@@ -22,6 +22,15 @@ enum Route {
     #[route("/register")]
     Register {},
 
+    #[route("/auth/google/choose-account-type")]
+    GoogleChooseAccountType {},
+
+    #[route("/auth/google/complete-profile")]
+    GoogleCompleteProfile {},
+
+    #[route("/markdown/:slug")]
+    MarkdownPage { slug: String },
+
     #[route("/:url")]
     TournamentHome { url: String },
 
@@ -66,6 +75,36 @@ enum Route {
 
     #[route("/:url/match")]
     MatchPage { url: String },
+
+    #[route("/:url/match/:match_id")]
+    MatchPageById { url: String, match_id: String },
+
+    #[route("/players/:player_id/injuries/new")]
+    AddInjury { player_id: String },
+
+    #[route("/players/:player_id/injuries/:injury_id/edit")]
+    EditInjury { player_id: String, injury_id: u32 },
+
+    #[route("/players/:player_id/edit")]
+    EditPlayerProfile { player_id: String },
+
+    #[route("/teams/:team_id/edit")]
+    EditTeamProfile { team_id: String },
+
+    #[route("/:tournament_url/fields/:field_id/edit")]
+    EditField { tournament_url: String, field_id: u32 },
+
+    #[route("/:tournament_url/tags/:tag_id/edit")]
+    EditTag { tournament_url: String, tag_id: u32 },
+
+    #[route("/:tournament_url/matches/:match_id/edit")]
+    EditMatch { tournament_url: String, match_id: String },
+
+    #[route("/:tournament_url/register/player/edit")]
+    EditPlayerRegistration { tournament_url: String },
+
+    #[route("/:tournament_url/register/team/edit")]
+    EditTeamRegistration { tournament_url: String },
 
     #[route("/players")]
     PlayersList {},
