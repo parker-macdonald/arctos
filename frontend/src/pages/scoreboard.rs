@@ -22,7 +22,7 @@ fn get_query_param(name: &str) -> Option<String> {
 pub fn Scoreboard(url: String) -> Element {
     let field = get_query_param("field");
     let poll_tick = use_signal(|| 0u32);
-    let mut poll_started = use_signal(|| false);
+    let poll_started = use_signal(|| false);
     #[cfg(target_arch = "wasm32")]
     {
         let mut poll_tick = poll_tick;

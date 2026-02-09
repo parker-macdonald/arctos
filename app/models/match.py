@@ -125,11 +125,13 @@ class Match(db.Model):
         "TeamRegistration",
         primaryjoin="and_(Match.team1 == foreign(TeamRegistration.team), Match.event == TeamRegistration.event)",
         uselist=False,
+        viewonly=True,
     )
     team2_registration = db.relationship(
         "TeamRegistration",
         primaryjoin="and_(Match.team2 == foreign(TeamRegistration.team), Match.event == TeamRegistration.event)",
         uselist=False,
+        viewonly=True,
     )
 
     @property

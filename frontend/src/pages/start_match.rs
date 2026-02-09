@@ -42,8 +42,8 @@ pub fn StartMatch(url: String) -> Element {
     let mut team2_selected = use_signal(HashSet::<String>::new);
     let mut team1_search = use_signal(String::new);
     let mut team2_search = use_signal(String::new);
-    let mut team1_notes = use_signal(Vec::<String>::new);
-    let mut team2_notes = use_signal(Vec::<String>::new);
+    let team1_notes = use_signal(Vec::<String>::new);
+    let team2_notes = use_signal(Vec::<String>::new);
     let mut match_notes = use_signal(String::new);
     let navigator = use_navigator();
     let submit_url = url.clone();

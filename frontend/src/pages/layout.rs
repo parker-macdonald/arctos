@@ -59,7 +59,7 @@ pub fn Layout() -> Element {
                         li { class: "nav-item",
                             Link { to: Route::Stones {}, class: "nav-link", "Stones" }
                         }
-                        if let Some(Ok(u)) = user.read().as_ref() {
+                        if let Some(Ok(_u)) = user.read().as_ref() {
                             li { class: "nav-item",
                                 Link { to: Route::NewTournament {}, class: "nav-link", "Create Tournament" }
                             }

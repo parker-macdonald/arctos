@@ -1500,8 +1500,8 @@ def add_match(tournament_url):
     else:
         team1_name = request.form.get("team1", "")
         team2_name = request.form.get("team2", "")
-        team1_id = resolve_team_name_to_id(team1_name, tournament_url)
-        team2_id = resolve_team_name_to_id(team2_name, tournament_url)
+        team1_id, _ = resolve_team_name_to_id(team1_name, tournament_url)
+        team2_id, _ = resolve_team_name_to_id(team2_name, tournament_url)
         refs_initial = request.form.get("refs", "")
 
     ribbon = request.form.get("ribbon", "") == "on"  # Checkbox value
@@ -2102,8 +2102,8 @@ def update_match(tournament_url):
     else:
         team1_name = request.form.get("team1", "")
         team2_name = request.form.get("team2", "")
-        team1_id = resolve_team_name_to_id(team1_name, tournament_url)
-        team2_id = resolve_team_name_to_id(team2_name, tournament_url)
+        team1_id, _ = resolve_team_name_to_id(team1_name, tournament_url)
+        team2_id, _ = resolve_team_name_to_id(team2_name, tournament_url)
         refs_initial = request.form.get("refs", "")
 
     # Validate match name doesn't contain "::"

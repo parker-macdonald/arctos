@@ -264,10 +264,12 @@ pub struct ScheduleField {
     pub name: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct TeamOption {
     pub id: String,
     pub pseudonym: Option<String>,
+    #[serde(default)]
+    pub profile_photo: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -767,4 +769,134 @@ pub struct MyTeamRegistrationResponse {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct UpdateTeamRegistrationRequest {
     pub pseudonym: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ScheduleSetupResponse {
+    pub tournament: Tournament,
+    pub matches: Vec<MatchSetupData>,
+    pub fields: Vec<FieldSetupData>,
+    pub tags: Vec<TagSetupData>,
+    pub team_options: Vec<TeamOption>,
+    pub is_to: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct MatchSetupData {
+    pub uuid: String,
+    pub name: String,
+    pub field: Option<String>,
+    pub team1: Option<String>,
+    pub team2: Option<String>,
+    pub team1_initial: Option<String>,
+    pub team2_initial: Option<String>,
+    pub status: String,
+    pub nominal_start_time: Option<String>,
+    pub confirmed_start_time: Option<String>,
+    pub completed_time: Option<String>,
+    pub schedule_type: Option<String>,
+    pub set_type: Option<String>,
+    pub nominal_length: Option<u32>,
+    pub previous_match: Option<String>,
+    pub next_match: Option<String>,
+    pub refs: Option<String>,
+    pub refs_initial: Option<String>,
+    pub ribbon: bool,
+    pub skip_condition: Option<String>,
+    pub nsets: Option<u32>,
+    pub stones_per_set: Option<u32>,
+    pub stones_remaining: Option<u32>,
+    pub match_winner: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct FieldSetupData {
+    pub id: u32,
+    pub name: String,
+    pub camera_urls: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct TagSetupData {
+    pub id: u32,
+    pub name: String,
+    #[serde(default)]
+    pub team: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CreateMatchRequest {
+    pub name: String,
+    pub field: Option<String>,
+    pub length: Option<u32>,
+    pub schedule_type: Option<String>,
+    pub start_time: Option<String>,
+    pub previous_match_id: Option<String>,
+    pub team1: Option<String>,
+    pub team2: Option<String>,
+    pub refs: Option<Vec<String>>,
+    pub set_type: Option<String>,
+    pub nsets: Option<u32>,
+    pub stones_per_set: Option<u32>,
+    pub ribbon: Option<bool>,
+    pub skip_condition: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CreateMatchResponse {
+    pub success: bool,
+    pub uuid: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ValidateDslResponse {
+    pub valid: bool,
+    #[serde(default)]
+    pub simplified: Option<String>,
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CreateFieldRequest {
+    pub name: String,
+    pub camera_urls: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CreateFieldResponse {
+    pub success: bool,
+    pub id: u32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CreateTagRequest {
+    pub name: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CreateTagResponse {
+    pub success: bool,
+    pub id: u32,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PushBackRequest {
+    pub minutes: i32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct UpdateTagsRequest {
+    pub tag_id: u32,
+    pub team_id: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ExportScheduleResponse {
+    pub toml: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ImportScheduleRequest {
+    pub toml: String,
 }

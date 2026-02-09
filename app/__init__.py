@@ -159,7 +159,7 @@ def create_app(config=None):
             h = response_or_headers
         h["Access-Control-Allow-Origin"] = origin
         h["Access-Control-Allow-Credentials"] = "true"
-        h["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+        h["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
         h["Access-Control-Allow-Headers"] = "Content-Type, Authorization, Accept"
         h["Vary"] = "Origin"
 
@@ -167,8 +167,8 @@ def create_app(config=None):
     def add_cors_for_api(response):
         from flask import request
 
-        # Add CORS for /_api and, in dev, for /static/ (e.g. stones player fetches /static/stones/*)
-        is_api = request.path.startswith("/_api")
+        # Add CORS for /_api (including /<tournament>/_api/validate-dsl) and, in dev, for /static/
+        is_api = "/_api" in request.path
         is_static_cors = (
             os.environ.get("ARCTOS_CORS_DEV") == "1"
             and request.endpoint == "static"
@@ -186,8 +186,8 @@ def create_app(config=None):
     def handle_api_preflight():
         from flask import request, make_response
 
-        # Preflight for /_api and for /static/ in CORS dev (browser may send OPTIONS for credentialed fetch)
-        is_api = request.path.startswith("/_api")
+        # Preflight for /_api (including /<tournament>/_api/validate-dsl) and for /static/ in CORS dev
+        is_api = "/_api" in request.path
         is_static_cors = (
             os.environ.get("ARCTOS_CORS_DEV") == "1"
             and request.path.startswith("/static/")

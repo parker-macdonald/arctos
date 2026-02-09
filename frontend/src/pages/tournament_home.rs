@@ -46,6 +46,8 @@ pub fn TournamentHome(url: String) -> Element {
     let me_res = use_resource(move || async move { api::me().await });
     let val = data.value();
     let backend = api::base_url();
+    let mut delete_modal_open = use_signal(|| false);
+    let mut delete_confirm_url = use_signal(|| String::new());
 
     rsx! {
         if let Some(Ok(d)) = val.read().as_ref() {
@@ -166,21 +168,13 @@ pub fn TournamentHome(url: String) -> Element {
                                     Link { to: Route::TournamentSetup { url: url.clone() }, class: "btn btn-outline-secondary", "Setup" }
                                     a { href: "{backend}/{url}/bracket-setup", class: "btn btn-outline-secondary", "Bracket Setup" }
                                     Link { to: Route::Manage { url: url.clone() }, class: "btn btn-outline-warning", "Registration Management" }
-                                    form {
-                                        action: "{backend}/{url}/delete",
-                                        method: "post",
-                                        class: "border rounded p-2",
-                                        div { class: "mb-2",
-                                            label { class: "form-label small mb-1", "Type the tournament URL to confirm" }
-                                            input {
-                                                class: "form-control form-control-sm",
-                                                name: "confirm_url",
-                                                "type": "text",
-                                                placeholder: "{url}",
-                                                required: true
-                                            }
-                                        }
-                                        button { class: "btn btn-outline-danger btn-sm w-100", "type": "submit", "Delete Tournament" }
+                                    button {
+                                        class: "btn btn-outline-danger",
+                                        onclick: move |_| {
+                                            delete_modal_open.set(true);
+                                            delete_confirm_url.set(String::new());
+                                        },
+                                        "Delete Tournament"
                                     }
                                 }
                             }
@@ -295,6 +289,50 @@ pub fn TournamentHome(url: String) -> Element {
                                             }
                                         }
                                     }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if is_current_user_to(me_res.read().as_ref(), &d.to_entries) && delete_modal_open() {
+                div { class: "modal d-block", tabindex: -1, style: "background: rgba(0,0,0,0.5)",
+                    div { class: "modal-dialog modal-dialog-centered",
+                        div { class: "modal-content",
+                            div { class: "modal-header",
+                                h5 { class: "modal-title", "Delete Tournament" }
+                                button { class: "btn-close", onclick: move |_| delete_modal_open.set(false) }
+                            }
+                            div { class: "modal-body",
+                                div { class: "alert alert-danger",
+                                    strong { "Warning: " }
+                                    "This action cannot be undone. All matches, registrations, and data will be permanently removed."
+                                }
+                                p { "To confirm, type the tournament URL exactly:" }
+                                p { class: "text-center mb-2", strong { "{url}" } }
+                                form { id: "delete-tournament-form", action: "{backend}/{url}/delete", method: "post",
+                                    div { class: "mb-3",
+                                        label { class: "form-label", "Tournament URL:" }
+                                        input {
+                                            class: "form-control",
+                                            name: "confirm_url",
+                                            "type": "text",
+                                            placeholder: "{url}",
+                                            value: "{delete_confirm_url()}",
+                                            oninput: move |e| delete_confirm_url.set(e.value()),
+                                        }
+                                    }
+                                }
+                            }
+                            div { class: "modal-footer",
+                                button { class: "btn btn-secondary", onclick: move |_| delete_modal_open.set(false), "Cancel" }
+                                button {
+                                    class: "btn btn-danger",
+                                    "type": "submit",
+                                    form: "delete-tournament-form",
+                                    disabled: delete_confirm_url() != url,
+                                    "Delete Tournament"
                                 }
                             }
                         }
