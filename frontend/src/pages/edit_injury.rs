@@ -30,7 +30,7 @@ pub fn EditInjury(player_id: String, injury_id: u32) -> Element {
     }));
 
     let player_id_for_submit = player_id.clone();
-    let onsubmit = move |evt: Event<FormData>| {
+    let onsubmit = move |_evt: Event<FormData>| {
         let player_id = player_id_for_submit.clone();
         async move {
             loading.set(true);

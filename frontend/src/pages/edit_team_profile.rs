@@ -32,7 +32,7 @@ pub fn EditTeamProfile(team_id: String) -> Element {
     }));
 
     let team_id_for_submit = team_id.clone();
-    let onsubmit = move |evt: Event<FormData>| {
+    let onsubmit = move |_evt: Event<FormData>| {
         let team_id = team_id_for_submit.clone();
         async move {
             loading.set(true);

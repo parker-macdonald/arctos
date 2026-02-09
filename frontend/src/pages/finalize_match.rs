@@ -4,7 +4,7 @@ use dioxus::prelude::*;
 use std::cell::RefCell;
 use std::rc::Rc;
 use wasm_bindgen::closure::Closure;
-use wasm_bindgen::JsCast;
+use wasm_bindgen::JsCast as _;
 
 fn get_query_param(name: &str) -> Option<String> {
     #[cfg(target_arch = "wasm32")]

@@ -53,7 +53,7 @@ fn StonesPlayerWasm(stones_val: ReadSignal<Option<Result<StonesResponse, String>
     let mut is_playing = use_signal(|| false);
     let mut selected_index = use_signal(|| 0usize);
     let mut filter = use_signal(|| BayesianOffsetFilter::default());
-    let mut rtt_ms = use_signal(|| Option::<f64>::None);
+    let rtt_ms = use_signal(|| Option::<f64>::None);
     let mut last_scheduled_beat = use_signal(|| Option::<f64>::None);
     let mut custom_status = use_signal(|| Option::<String>::None);
 
@@ -301,6 +301,7 @@ fn StonesPlayerWasm(stones_val: ReadSignal<Option<Result<StonesResponse, String>
                     p {
                         "This is a stones player that plays globally synchronized stones: all devices on this page will (eventually) play stones at the same time."
                     }
+                    p { strong { "Important Notes:" } }
                     ul {
                         li { "The speed of sound is about 343 m/s (~110 ms to cross a 40 m field). If stones sound out of sync, try standing equidistant from speakers." }
                         li { "It should only take a few (3–5) stones to sync. If not syncing, click \"Reset Bayesian filter\" on all devices at roughly the same time." }
@@ -418,8 +419,8 @@ fn StonesPlayerWasm(stones_val: ReadSignal<Option<Result<StonesResponse, String>
 
                             div { class: "mb-3",
                                 h5 { "Stats" }
-                                p { "Estimated offset: {offset_str} s" }
-                                p { "Variance (P): {var_str} s²" }
+                                p { "Offset (x\u{0302}): {offset_str} s" }
+                                p { "Variance (P): {var_str} s\u{00B2}" }
                                 p { "Round trip time: {rtt_display}" }
                             }
                         }
@@ -493,6 +494,7 @@ fn schedule_sound_at(
         state_rc2.borrow_mut().sources.remove(&rounded2);
         state_rc2.borrow_mut().times.remove(&rounded2);
     }) as Box<dyn FnOnce()>);
+    #[allow(deprecated)]
     let _ = source.set_onended(Some(closure.as_ref().unchecked_ref()));
     closure.forget();
     if source.start_with_when(audio_time).is_err() {
@@ -509,12 +511,13 @@ fn clear_scheduled(
     audio_ctx: &Signal<Option<web_sys::AudioContext>>,
 ) {
     let mut state = state_rc.borrow_mut();
-    let current = audio_ctx
+    let _current = audio_ctx
         .read()
         .as_ref()
         .map(|c| c.current_time())
         .unwrap_or(0.0);
     for (_, source) in state.sources.drain() {
+        #[allow(deprecated)]
         let _ = source.stop();
         let _ = source.disconnect();
     }

@@ -33,15 +33,25 @@ fn with_credentials(req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
     }
 }
 
+fn truncate_error_body(text: &str, max_len: usize) -> String {
+    let t = text.trim();
+    if t.len() <= max_len {
+        t.to_string()
+    } else {
+        format!("{}... ({} bytes total). Check server logs for full error.", &t[..max_len], t.len())
+    }
+}
+
 async fn response_json<T: serde::de::DeserializeOwned>(
     resp: reqwest::Response,
 ) -> Result<T, String> {
     if !resp.status().is_success() {
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
-        return Err(format!("Server returned error {}: {}", status, text));
+        let truncated = truncate_error_body(&text, 200);
+        return Err(format!("Server returned error {}: {}", status, truncated));
     }
-    
+
     // Check content type
     let ct_str = resp
         .headers()
@@ -51,10 +61,11 @@ async fn response_json<T: serde::de::DeserializeOwned>(
     if let Some(ct) = ct_str.as_deref() {
         if !ct.contains("application/json") {
             let text = resp.text().await.unwrap_or_default();
+            let truncated = truncate_error_body(&text, 200);
             return Err(format!(
                 "Server returned non-JSON (content-type: {}). Maybe the backend is not running or /_api/ routes are missing. Body: {}",
                 ct,
-                text
+                truncated
             ));
         }
     }
@@ -945,6 +956,256 @@ pub async fn update_my_team_registration(
             tournament_url
         ))
         .json(req),
+    )
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    
+    let data: Value = response_json(r).await?;
+    if data.get("success").and_then(|v| v.as_bool()) == Some(true) {
+        Ok(())
+    } else {
+        Err(data.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown error").to_string())
+    }
+}
+
+pub async fn schedule_setup(tournament_url: &str) -> Result<ScheduleSetupResponse, String> {
+    let c = client();
+    let r = with_credentials(c.get(format!(
+        "{}/_api/tournaments/{}/schedule-setup",
+        base(),
+        tournament_url
+    )))
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    
+    if r.status().as_u16() == 403 {
+        return Err("Schedule not published".to_string());
+    }
+    response_json(r).await
+}
+
+pub async fn create_match(
+    tournament_url: &str,
+    req: &CreateMatchRequest,
+) -> Result<CreateMatchResponse, String> {
+    let c = client();
+    let r = with_credentials(
+        c.post(format!("{}/_api/tournaments/{}/matches", base(), tournament_url))
+        .json(req)
+    )
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    response_json(r).await
+}
+
+/// Validate a DSL skip-condition expression. Uses the tournaments blueprint route.
+pub async fn validate_dsl(tournament_url: &str, expression: &str) -> Result<ValidateDslResponse, String> {
+    let c = client();
+    let body = serde_json::json!({ "expression": expression });
+    let r = with_credentials(
+        c.post(format!("{}/{}/_api/validate-dsl", base(), tournament_url))
+        .json(&body)
+    )
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    response_json(r).await
+}
+
+pub async fn delete_match(tournament_url: &str, match_id: &str) -> Result<(), String> {
+    let c = client();
+    let r = with_credentials(
+        c.delete(format!("{}/_api/tournaments/{}/matches/{}", base(), tournament_url, match_id))
+    )
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    
+    let data: Value = response_json(r).await?;
+    if data.get("success").and_then(|v| v.as_bool()) == Some(true) {
+        Ok(())
+    } else {
+        Err(data.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown error").to_string())
+    }
+}
+
+pub async fn create_field(
+    tournament_url: &str,
+    req: &CreateFieldRequest,
+) -> Result<CreateFieldResponse, String> {
+    let c = client();
+    let r = with_credentials(
+        c.post(format!("{}/_api/tournaments/{}/fields", base(), tournament_url))
+        .json(req)
+    )
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    response_json(r).await
+}
+
+pub async fn delete_field(tournament_url: &str, field_id: u32) -> Result<(), String> {
+    let c = client();
+    let r = with_credentials(
+        c.delete(format!("{}/_api/tournaments/{}/fields/{}", base(), tournament_url, field_id))
+    )
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    
+    let data: Value = response_json(r).await?;
+    if data.get("success").and_then(|v| v.as_bool()) == Some(true) {
+        Ok(())
+    } else {
+        Err(data.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown error").to_string())
+    }
+}
+
+pub async fn create_tag(
+    tournament_url: &str,
+    req: &CreateTagRequest,
+) -> Result<CreateTagResponse, String> {
+    let c = client();
+    let r = with_credentials(
+        c.post(format!("{}/_api/tournaments/{}/tags", base(), tournament_url))
+        .json(req)
+    )
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    response_json(r).await
+}
+
+pub async fn delete_tag(tournament_url: &str, tag_id: u32) -> Result<(), String> {
+    let c = client();
+    let resp = with_credentials(
+        c.delete(format!("{}/_api/tournaments/{}/tags/{}", base(), tournament_url, tag_id))
+    )
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+
+    if resp.status().is_success() {
+        let data: Value = resp.json().await.map_err(|e| e.to_string())?;
+        if data.get("success").and_then(|v| v.as_bool()) == Some(true) {
+            return Ok(());
+        }
+        return Err(
+            data.get("error")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Unknown error")
+                .to_string(),
+        );
+    }
+    let text = resp.text().await.unwrap_or_default();
+    let err_msg = serde_json::from_str::<Value>(&text)
+        .ok()
+        .and_then(|v| v.get("error").cloned())
+        .and_then(|v| v.as_str().map(String::from))
+        .unwrap_or_else(|| format!("Delete failed: {}", truncate_error_body(&text, 200)));
+    Err(err_msg)
+}
+
+pub async fn recompute_schedule(tournament_url: &str) -> Result<(), String> {
+    let c = client();
+    let r = with_credentials(
+        c.post(format!("{}/_api/tournaments/{}/recompute-schedule", base(), tournament_url))
+    )
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    
+    let data: Value = response_json(r).await?;
+    if data.get("success").and_then(|v| v.as_bool()) == Some(true) {
+        Ok(())
+    } else {
+        Err(data.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown error").to_string())
+    }
+}
+
+#[allow(dead_code)]
+pub async fn update_all_references(tournament_url: &str) -> Result<(), String> {
+    let c = client();
+    let r = with_credentials(
+        c.post(format!("{}/_api/tournaments/{}/update-all-references", base(), tournament_url))
+    )
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    
+    let data: Value = response_json(r).await?;
+    if data.get("success").and_then(|v| v.as_bool()) == Some(true) {
+        Ok(())
+    } else {
+        Err(data.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown error").to_string())
+    }
+}
+
+#[allow(dead_code)]
+pub async fn push_back_matches(
+    tournament_url: &str,
+    req: &PushBackRequest,
+) -> Result<(), String> {
+    let c = client();
+    let r = with_credentials(
+        c.post(format!("{}/_api/tournaments/{}/push-back-matches", base(), tournament_url))
+        .json(req)
+    )
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    
+    let data: Value = response_json(r).await?;
+    if data.get("success").and_then(|v| v.as_bool()) == Some(true) {
+        Ok(())
+    } else {
+        Err(data.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown error").to_string())
+    }
+}
+
+pub async fn update_tags(
+    tournament_url: &str,
+    req: &UpdateTagsRequest,
+) -> Result<(), String> {
+    let c = client();
+    let r = with_credentials(
+        c.post(format!("{}/_api/tournaments/{}/update-tags", base(), tournament_url))
+        .json(req)
+    )
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    
+    let data: Value = response_json(r).await?;
+    if data.get("success").and_then(|v| v.as_bool()) == Some(true) {
+        Ok(())
+    } else {
+        Err(data.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown error").to_string())
+    }
+}
+
+pub async fn export_schedule(tournament_url: &str) -> Result<ExportScheduleResponse, String> {
+    let c = client();
+    let r = with_credentials(
+        c.get(format!("{}/_api/tournaments/{}/export-schedule", base(), tournament_url))
+    )
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    response_json(r).await
+}
+
+pub async fn import_schedule(
+    tournament_url: &str,
+    req: &ImportScheduleRequest,
+) -> Result<(), String> {
+    let c = client();
+    let r = with_credentials(
+        c.post(format!("{}/_api/tournaments/{}/import-schedule", base(), tournament_url))
+        .json(req)
     )
     .send()
     .await

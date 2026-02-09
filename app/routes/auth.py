@@ -203,7 +203,7 @@ def google_callback():
             "email": email,
             "name": name,
         }
-        return redirect(url_for("auth.google_choose_account_type"))
+        return redirect("/app/auth/google/choose-account-type")
 
     except Exception as e:
         flash(f"Error during Google authentication: {str(e)}", "error")

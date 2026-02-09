@@ -1,6 +1,5 @@
 use crate::api;
 use crate::pages::layout::use_auth_invalidate;
-use crate::Route;
 use dioxus::prelude::*;
 
 #[component]

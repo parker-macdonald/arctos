@@ -1,0 +1,497 @@
+/* Schedule Timeline Styles */
+
+/* Focusable container for keyboard shortcuts; hide outline so it doesn't look selected */
+.schedule-keyboard-focus:focus {
+    outline: none;
+}
+
+.schedule-timeline-wrapper {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    background: white;
+    max-height: 85vh;
+}
+
+.schedule-timeline-nav {
+    flex-shrink: 0;
+    padding: 0.5rem;
+    border-bottom: 1px solid #ddd;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    background: #f8f9fa;
+}
+
+/* Only this area scrolls; nav and header stay fixed at top */
+.schedule-timeline-scroll {
+    flex: 1;
+    min-height: 0;
+    overflow-x: auto;
+    overflow-y: auto;
+}
+
+.schedule-timeline-nav button {
+    min-height: 44px; /* Touch-friendly */
+    font-size: clamp(12px, 2vw, 14px);
+}
+
+.schedule-timeline-date {
+    margin-left: auto;
+    font-weight: 500;
+    font-size: clamp(12px, 2vw, 14px);
+}
+
+.schedule-timeline {
+    display: grid;
+    grid-template-columns: 80px repeat(var(--num-fields, 1), minmax(220px, 1fr));
+    min-width: fit-content;
+    /* Larger time scale; wider min column to reduce wrapping on narrow screens */
+    --slot-height: 6rem; /* ~96px */
+    --header-height: 56px;
+}
+
+.schedule-timeline-header {
+    display: contents;
+    font-weight: 600;
+    background: #f8f9fa;
+    border-bottom: 2px solid #ddd;
+}
+
+.schedule-timeline-header > div {
+    position: sticky;
+    top: 0;
+    z-index: 30;
+    padding: 0.5rem 0.6rem;
+    border-right: 1px solid #ddd;
+    border-bottom: 2px solid #ddd;
+    font-size: clamp(13px, 2vw, 15px);
+    min-height: var(--header-height);
+    display: flex;
+    align-items: center;
+    background: #f8f9fa;
+}
+
+.schedule-timeline-time-col {
+    position: sticky;
+    left: 0;
+    background: white;
+    z-index: 5;
+    border-right: 2px solid #ccc;
+    font-weight: 500;
+    font-size: clamp(13px, 2vw, 15px);
+    padding: 0.4rem 0.5rem;
+}
+
+.schedule-timeline-header .schedule-timeline-time-col {
+    background: #f8f9fa;
+    z-index: 31;
+}
+
+.schedule-timeline-body {
+    display: contents;
+}
+
+.schedule-timeline-row {
+    display: contents;
+}
+
+.schedule-timeline-row > div {
+    border-right: 1px solid #ddd;
+    border-bottom: 1px solid #ddd;
+    min-height: var(--slot-height);
+    position: relative;
+}
+
+.schedule-timeline-cell {
+    padding: 4px 6px;
+    overflow: visible;
+}
+
+/* Subtle alternating background bands to help scan rows */
+.schedule-timeline-row:nth-child(odd) .schedule-timeline-cell {
+    background-color: #ffffff;
+}
+
+.schedule-timeline-row:nth-child(even) .schedule-timeline-cell {
+    background-color: #f9fafb;
+}
+
+.schedule-timeline-event-container {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+}
+
+.schedule-timeline-event {
+    position: relative;
+    padding: 0.4rem 0.6rem 0.45rem 0.65rem;
+    padding-right: 2rem; /* leave room for corner status badge */
+    margin: 0 3px;
+    border-radius: 6px;
+    color: #111;
+    font-size: clamp(13px, 2vw, 16px);
+    line-height: 1.35;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    border: 1px solid rgba(0, 0, 0, 0.22);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.25);
+    transition: opacity 0.2s, box-shadow 0.15s, transform 0.15s;
+    z-index: 10;
+}
+
+/* Highlight whole block when team is playing – wide gradient tint */
+.schedule-timeline-event--highlight-playing {
+    border-left: 6px solid #e57373;
+    background: linear-gradient(to right, rgba(229, 115, 115, 0.35) 0%, rgba(229, 115, 115, 0.15) 45%, transparent 100%);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.25), inset 0 0 0 1px rgba(229, 115, 115, 0.5);
+}
+
+/* Highlight whole block when team is ref – wide gradient tint */
+.schedule-timeline-event--highlight-ref {
+    border-left: 6px solid #9575cd;
+    background: linear-gradient(to right, rgba(149, 117, 205, 0.35) 0%, rgba(149, 117, 205, 0.15) 45%, transparent 100%);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.25), inset 0 0 0 1px rgba(149, 117, 205, 0.5);
+}
+
+.schedule-timeline-event:hover {
+    opacity: 0.96;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.35);
+    transform: translateY(-1px);
+}
+
+.schedule-timeline-event-name {
+    font-weight: 600;
+    font-size: 1.02em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: normal;
+    line-height: 1.3;
+}
+
+.schedule-timeline-event-teams {
+    font-size: 0.9em;
+    opacity: 0.95;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: normal;
+    line-height: 1.3;
+}
+
+.schedule-timeline-event-refs {
+    font-size: 0.85em;
+    opacity: 0.9;
+    color: #555;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: normal;
+    margin-top: 0.15rem;
+    line-height: 1.3;
+}
+
+/* In-cell join: horizontal line at start of slot (top of cell); label in edit mode; always on top */
+.schedule-timeline-join-in-cell {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 0;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    pointer-events: none;
+    z-index: 25;
+    padding-top: 2px;
+}
+
+.schedule-timeline-join-in-cell .schedule-timeline-join-label {
+    pointer-events: auto;
+    cursor: pointer;
+}
+
+.schedule-timeline-join-line-in-cell {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 2px;
+    height: 0;
+    border-top: 2px solid #333;
+    z-index: 24;
+}
+
+.schedule-timeline-join-label {
+    position: relative;
+    z-index: 6;
+    font-size: clamp(12px, 1.6vw, 14px);
+    font-weight: 600;
+    color: #222;
+    background: rgba(255, 255, 255, 0.95);
+    padding: 0.2rem 0.5rem;
+    border-radius: 4px;
+    border: 1px solid #666;
+    white-space: nowrap;
+}
+
+.schedule-timeline-join-pill {
+    pointer-events: auto;
+    background: rgba(255, 255, 255, 0.95);
+    border: 1px solid #666;
+    border-radius: 999px;
+    padding: 0.15rem 0.45rem;
+    font-size: clamp(10px, 1.5vw, 12px);
+    font-weight: 600;
+    color: #222;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.schedule-timeline-event-header {
+    margin-bottom: 0.2rem;
+}
+
+/* Status as compact corner badge (top-right) so it doesn't consume horizontal space */
+.schedule-timeline-status-tag--corner {
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    padding: 0.1rem 0.35rem;
+    border-radius: 4px;
+    font-size: 0.7em;
+    font-weight: 600;
+    color: #111;
+    border: 1px solid rgba(0, 0, 0, 0.2);
+    text-transform: none;
+    white-space: nowrap;
+    line-height: 1.2;
+    z-index: 2;
+}
+
+.schedule-timeline-status-tag {
+    flex-shrink: 0;
+    padding: 0.12rem 0.5rem;
+    border-radius: 999px;
+    font-size: 0.85em;
+    font-weight: 600;
+    color: #111;
+    border: 1px solid rgba(0, 0, 0, 0.15);
+    text-transform: none;
+    white-space: nowrap;
+}
+
+/* Tag, reference/link, and ribbon SVG icons – Bootstrap primary blue (#0d6efd) */
+.icon-primary-svg {
+    width: 1em;
+    height: 1em;
+    object-fit: contain;
+    vertical-align: -0.15em;
+    filter: invert(27%) sepia(98%) saturate(2476%) hue-rotate(226deg) brightness(99%) contrast(101%);
+}
+
+/* Ribbon game indicator: bottom-right corner, tooltip on hover */
+.schedule-timeline-ribbon-icon {
+    position: absolute;
+    bottom: 2px;
+    right: 2px;
+    font-size: 0.85em;
+    line-height: 1;
+    opacity: 0.9;
+    z-index: 2;
+    pointer-events: auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.schedule-timeline-ribbon-icon img {
+    width: 1em;
+    height: 1em;
+    object-fit: contain;
+    filter: invert(27%) sepia(98%) saturate(2476%) hue-rotate(226deg) brightness(99%) contrast(101%);
+}
+
+/* Mobile responsiveness */
+@media (max-width: 768px) {
+    .schedule-timeline {
+        --slot-height: 5rem;
+        grid-template-columns: 80px repeat(var(--num-fields, 1), minmax(180px, 1fr));
+    }
+    
+    .schedule-timeline-time-col {
+        min-width: 70px;
+    }
+    
+    .schedule-timeline-field-col {
+        min-width: 180px;
+    }
+}
+
+@media (max-width: 480px) {
+    .schedule-timeline {
+        --slot-height: 4.5rem;
+        grid-template-columns: 80px repeat(var(--num-fields, 1), minmax(160px, 1fr));
+    }
+    
+    .schedule-timeline-field-col {
+        min-width: 160px;
+    }
+    
+    .schedule-timeline-event {
+        font-size: clamp(12px, 3.5vw, 14px);
+        padding: 0.35rem 0.5rem;
+    }
+}
+
+/* Team/referee token input (Gmail-style chips) */
+.team-token-input {
+    position: relative;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.35rem;
+    min-height: calc(1.5em + 0.75rem + 2px);
+    padding: 0.25rem 0.5rem;
+    cursor: text;
+}
+
+.team-token-input-inner {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.35rem;
+    flex: 1;
+    min-width: 80px;
+}
+
+.team-token-input-field {
+    border: none;
+    outline: none;
+    flex: 1;
+    min-width: 120px;
+    padding: 0.2rem 0;
+    background: transparent;
+}
+
+.team-token-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.2rem 0.4rem;
+    border-radius: 4px;
+    font-size: 0.9em;
+    background: #e9ecef;
+    border: 1px solid #dee2e6;
+}
+
+.team-token-chip-focused {
+    border-color: #0d6efd;
+    box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.25);
+}
+
+.team-token-chip-team .team-token-avatar {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.4em;
+    height: 1.4em;
+    border-radius: 50%;
+    background: #6c757d;
+    color: white;
+    font-size: 0.75em;
+    font-weight: 600;
+}
+
+.team-token-chip-tag {
+    background: #e7f1ff;
+    border-color: #b6d4fe;
+}
+
+.team-token-chip-tag .team-token-icon,
+.team-token-chip-tag .icon-primary-svg {
+    font-size: 1em;
+}
+
+.team-token-chip-winner .team-token-badge,
+.winner-badge {
+    background: #198754;
+    color: white;
+    padding: 0.1rem 0.35rem;
+    border-radius: 3px;
+    font-size: 0.75em;
+    font-weight: 600;
+}
+
+.team-token-chip-loser .team-token-badge,
+.loser-badge {
+    background: #dc3545;
+    color: white;
+    padding: 0.1rem 0.35rem;
+    border-radius: 3px;
+    font-size: 0.75em;
+    font-weight: 600;
+}
+
+.team-token-remove {
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0 0.2rem;
+    margin-left: 0.2rem;
+    font-size: 1.1em;
+    line-height: 1;
+    color: #6c757d;
+    border-radius: 2px;
+}
+
+.team-token-remove:hover {
+    color: #dc3545;
+    background: #f8d7da;
+}
+
+.team-token-autocomplete {
+    position: absolute;
+    z-index: 1050;
+    max-height: 220px;
+    overflow-y: auto;
+    margin-top: 2px;
+    min-width: 200px;
+}
+
+.team-token-autocomplete .dropdown-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
+}
+
+.team-token-autocomplete .team-token-avatar.small {
+    width: 1.2em;
+    height: 1.2em;
+    font-size: 0.7em;
+}
+
+.team-token-autocomplete .winner-badge.small,
+.team-token-autocomplete .loser-badge.small {
+    font-size: 0.7em;
+    padding: 0.05rem 0.25rem;
+}
+
+/* Schedule table view: keep cells as table-cell so Team 1 / Team 2 / Refs columns layout correctly */
+.schedule-table-view table {
+    table-layout: auto;
+    width: 100%;
+}
+
+.schedule-table-view table td,
+.schedule-table-view table th {
+    display: table-cell;
+    vertical-align: middle;
+}

@@ -92,7 +92,7 @@ pub fn EditMatch(tournament_url: String, match_id: String) -> Element {
 
     let tournament_url_for_submit = tournament_url.clone();
     let match_id_for_submit = match_id.clone();
-    let onsubmit = move |evt: Event<FormData>| {
+    let onsubmit = move |_evt: Event<FormData>| {
         let tournament_url = tournament_url_for_submit.clone();
         let match_id = match_id_for_submit.clone();
         async move {
