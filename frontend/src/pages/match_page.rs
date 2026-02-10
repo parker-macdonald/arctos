@@ -1,6 +1,12 @@
 use crate::api;
 use crate::Route;
+use crate::stones_filter::BayesianOffsetFilter;
 use dioxus::prelude::*;
+use serde_json::Value;
+#[cfg(target_arch = "wasm32")]
+use gloo_timers::callback::Interval;
+#[cfg(target_arch = "wasm32")]
+use chrono;
 
 fn get_query_param(name: &str) -> Option<String> {
     #[cfg(target_arch = "wasm32")]
@@ -15,6 +21,114 @@ fn get_query_param(name: &str) -> Option<String> {
         let _ = name;
         None
     }
+}
+
+/// Compute stones elapsed for a point using Bayesian filter for server time
+#[cfg(target_arch = "wasm32")]
+fn compute_stones_elapsed(
+    start_stamp: Option<&str>,
+    end_stamp: Option<&str>,
+    filter: &Signal<BayesianOffsetFilter>,
+) -> String {
+    const BEAT_INTERVAL: f64 = 1.5;
+    
+    let start = if let Some(s) = start_stamp {
+        // Parse ISO 8601 timestamp
+        if let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(s) {
+            parsed.timestamp_millis() as f64 / 1000.0
+        } else {
+            return "0".to_string();
+        }
+    } else {
+        return "0".to_string();
+    };
+    
+    let end = if let Some(e) = end_stamp {
+        // Parse ISO 8601 timestamp
+        if let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(e) {
+            parsed.timestamp_millis() as f64 / 1000.0
+        } else {
+            // Ongoing point - use server time
+            let client_time = js_sys::Date::now() / 1000.0;
+            let offset = filter.read().get_mean();
+            client_time + offset
+        }
+    } else {
+        // Ongoing point - use server time
+        let client_time = js_sys::Date::now() / 1000.0;
+        let offset = filter.read().get_mean();
+        client_time + offset
+    };
+    
+    let start_count = (start / BEAT_INTERVAL).floor() as i64;
+    let end_count = (end / BEAT_INTERVAL).floor() as i64;
+    let elapsed = (end_count - start_count).max(0);
+    elapsed.to_string()
+}
+
+/// Compute stones remaining from points list
+#[cfg(target_arch = "wasm32")]
+fn compute_stones_remaining(
+    points: &[&crate::types::PointData],
+    filter: &Signal<BayesianOffsetFilter>,
+) -> String {
+    if points.is_empty() {
+        return "??".to_string();
+    }
+    
+    // Find the last point
+    let last_point = points[points.len() - 1];
+    
+    // If last point is ongoing (no end_stamp), compute from it
+    let last_point_is_ongoing = last_point.end_stamp.is_none();
+    if last_point_is_ongoing {
+        if let Some(stones_at_start) = last_point.stones_at_start {
+            if let Some(start_stamp) = &last_point.stamp {
+                let elapsed_str = compute_stones_elapsed(Some(start_stamp), None, filter);
+                if let Ok(elapsed) = elapsed_str.parse::<u32>() {
+                    let remaining = stones_at_start.saturating_sub(elapsed);
+                    return remaining.to_string();
+                }
+            }
+        }
+    }
+    
+    // Last point is completed, find the last completed point with stones_at_start
+    for pt in points.iter().rev() {
+        if pt.end_stamp.is_some() {
+            if let Some(stones_at_start) = pt.stones_at_start {
+                if let (Some(start_stamp), Some(end_stamp)) = (&pt.stamp, &pt.end_stamp) {
+                    let elapsed_str = compute_stones_elapsed(Some(start_stamp), Some(end_stamp), filter);
+                    if let Ok(elapsed) = elapsed_str.parse::<u32>() {
+                        let remaining = stones_at_start.saturating_sub(elapsed);
+                        return remaining.to_string();
+                    }
+                }
+            }
+        }
+    }
+    
+    "??".to_string()
+}
+
+/// Parse team display name to check if it's a match reference (e.g., "MatchName::winner" or "MatchName winner")
+fn parse_team_reference(display: &str) -> Option<(String, String)> {
+    // Check for "::winner" or "::loser"
+    if let Some(pos) = display.find("::") {
+        let match_name = display[..pos].to_string();
+        let suffix = display[pos..].to_string();
+        if suffix == "::winner" || suffix == "::loser" {
+            return Some((match_name, display.replace("::", " ")));
+        }
+    }
+    // Check for " winner" or " loser" at the end
+    if display.ends_with(" winner") || display.ends_with(" loser") {
+        if let Some(pos) = display.rfind(' ') {
+            let match_name = display[..pos].to_string();
+            return Some((match_name, display.to_string()));
+        }
+    }
+    None
 }
 
 #[component]
@@ -33,6 +147,8 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
     let url_for_resource = url.clone();
     let id_for_resource = match_id.clone();
     let name_for_resource = match_name.clone();
+    
+    // Main match data
     let data = use_resource(move || {
         let u = url_for_resource.clone();
         let id = id_for_resource.clone();
@@ -47,7 +163,162 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
             }
         }
     });
+    
+    // Polling for live match state updates
+    let poll_tick = use_signal(|| 0u32);
+    let poll_started = use_signal(|| false);
+    let url_for_poll = url.clone();
+    let match_id_for_poll = match_id.clone();
+    
+    #[cfg(target_arch = "wasm32")]
+    {
+        let mut poll_tick = poll_tick;
+        let mut poll_started = poll_started;
+        use_effect(move || {
+            if let Some(Ok(d)) = data.value().read().as_ref() {
+                if d.match_data.status == "IN_PROGRESS" && !poll_started() {
+                    let handle = Interval::new(1000, move || {
+                        poll_tick.set(poll_tick() + 1);
+                    });
+                    poll_started.set(true);
+                    std::mem::forget(handle);
+                }
+            }
+        });
+    }
+    
+    // Match state from polling
+    let state_signal = use_signal(|| None as Option<Result<Value, String>>);
+    use_effect(move || {
+        let u = url_for_poll.clone();
+        let id = match_id_for_poll.clone();
+        let _tick = poll_tick();
+        let mut state_signal = state_signal;
+        if let Some(id) = id {
+            if let Some(Ok(d)) = data.value().read().as_ref() {
+                if d.match_data.status == "IN_PROGRESS" {
+                    spawn(async move {
+                        match api::match_state(&u, &id).await {
+                            Ok(v) => state_signal.set(Some(Ok(v))),
+                            Err(e) => state_signal.set(Some(Err(e))),
+                        }
+                    });
+                }
+            }
+        }
+    });
+    
+    // User info for permissions
+    let user_info = use_resource(move || async move {
+        api::me().await.ok()
+    });
+    
+    
+    // Bayesian filter for server time sync (for stones elapsed calculation)
+    #[cfg(target_arch = "wasm32")]
+    let time_filter = use_signal(|| BayesianOffsetFilter::default());
+    
+    #[cfg(target_arch = "wasm32")]
+    {
+        use_effect(move || {
+            if let Some(Ok(d)) = data.value().read().as_ref() {
+                if d.match_data.status == "IN_PROGRESS" && d.match_data.set_type.as_deref() == Some("STONES") {
+                    let mut filter = time_filter;
+                    spawn(async move {
+                        loop {
+                            let client_send = js_sys::Date::now() / 1000.0;
+                            if let Ok(res) = api::server_time().await {
+                                let client_receive = js_sys::Date::now() / 1000.0;
+                                let rtt = client_receive - client_send;
+                                let offset = res.server_time - client_receive + (rtt / 2.0);
+                                filter.write().update(offset);
+                            }
+                            gloo_timers::future::TimeoutFuture::new(997).await;
+                        }
+                    });
+                }
+            }
+        });
+    }
+    
+    // Stones elapsed update interval (for ongoing points)
+    #[cfg(target_arch = "wasm32")]
+    let stones_update_tick = use_signal(|| 0u32);
+    #[cfg(target_arch = "wasm32")]
+    {
+        let mut stones_update_tick = stones_update_tick;
+        use_effect(move || {
+            if let Some(Ok(d)) = data.value().read().as_ref() {
+                if d.match_data.status == "IN_PROGRESS" && d.match_data.set_type.as_deref() == Some("STONES") {
+                    let handle = Interval::new(100, move || {
+                        stones_update_tick.set(stones_update_tick() + 1);
+                    });
+                    std::mem::forget(handle);
+                }
+            }
+        });
+    }
+    
     let val = data.value();
+    let base_url = api::base_url();
+    let navigator = use_navigator();
+    
+    // Initialize video player JavaScript when cameras are available
+    #[cfg(target_arch = "wasm32")]
+    {
+        let val_for_effect = val.clone();
+        let match_id_for_effect = match_id.clone();
+        let url_for_effect = url.clone();
+        use_effect(move || {
+            if let Some(Ok(d)) = val_for_effect.read().as_ref() {
+                if !d.available_cameras.is_empty() {
+                    let cameras = d.available_cameras.clone();
+                    let points = d.points.clone();
+                    let match_id_str = match_id_for_effect.clone();
+                    let url_str = url_for_effect.clone();
+                    spawn(async move {
+                        // Initialize MathJax
+                        let _ = dioxus::prelude::document::eval(r#"
+                            window.MathJax = {
+                                tex: {
+                                    inlineMath: [['$', '$'], ['\\(', '\\)']],
+                                    displayMath: [['$$', '$$'], ['\\[', '\\]']]
+                                }
+                            };
+                        "#).await;
+                        
+                        // Initialize video player (placeholder - full implementation requires YouTube IFrame API)
+                        let cameras_json = serde_json::to_string(&cameras).unwrap_or_else(|_| "[]".to_string());
+                        let points_json = serde_json::to_string(&points.iter().map(|p| serde_json::json!({
+                            "uuid": p.uuid,
+                            "stamp": p.stamp,
+                            "end_stamp": p.end_stamp,
+                            "stones_at_start": p.stones_at_start,
+                        })).collect::<Vec<_>>()).unwrap_or_else(|_| "[]".to_string());
+                        let match_id_val = match_id_str.as_ref().map(|s| s.as_str()).unwrap_or("");
+                        let url_val = url_str.as_str();
+                        
+                        let js_init = format!(
+                            r#"
+                            console.log('Match page video player initialized', {{
+                                matchId: '{}',
+                                tournamentUrl: '{}',
+                                availableCameras: {},
+                                pointsData: {}
+                            }});
+                            "#,
+                            match_id_val.replace('\'', "\\'"),
+                            url_val.replace('\'', "\\'"),
+                            cameras_json,
+                            points_json
+                        );
+                        let _ = dioxus::prelude::document::eval(&js_init).await;
+                    });
+                }
+            }
+        });
+    }
+    
     rsx! {
         if let Some(Ok(d)) = val.read().as_ref() {
             div { class: "row",
@@ -56,10 +327,20 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                     nav { "aria-label": "breadcrumb",
                         ol { class: "breadcrumb",
                             li { class: "breadcrumb-item",
-                                Link { to: Route::TournamentHome { url: url.clone() }, "{url}" }
+                                Link {
+                                    to: Route::TournamentHome {
+                                        url: url.clone(),
+                                    },
+                                    "{url}"
+                                }
                             }
                             li { class: "breadcrumb-item",
-                                Link { to: Route::Schedule { url: url.clone() }, "Schedule" }
+                                Link {
+                                    to: Route::Schedule {
+                                        url: url.clone(),
+                                    },
+                                    "Schedule"
+                                }
                             }
                             li { class: "breadcrumb-item active", "{d.match_data.name}" }
                         }
@@ -69,6 +350,7 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
 
             div { class: "row",
                 div { class: "col-md-8",
+                    // Match Information Card
                     div { class: "card",
                         div { class: "card-header",
                             h5 { class: "mb-0", "Match Information" }
@@ -79,14 +361,113 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                                     div { class: "d-flex align-items-center mb-2",
                                         strong { class: "me-2", "Teams:" }
                                         div {
-                                            span { "{d.match_data.team1_name}" }
-                                            if d.match_data.match_winner.as_deref() == Some("TEAM1") {
-                                                span { class: "badge bg-success ms-2", "Winner" }
+                                            // Team 1
+                                            if let Some((match_name, display_text)) = parse_team_reference(
+                                                &d.match_data.team1_name,
+                                            )
+                                            {
+                                                Link {
+                                                    to: Route::MatchPage {
+                                                        url: url.clone(),
+                                                    },
+                                                    class: "text-decoration-none",
+                                                    "{display_text}"
+                                                }
+                                            } else if let Some(team1_id) = &d.match_data.team1 {
+                                                Link {
+                                                    to: Route::TeamProfile {
+                                                        id: team1_id.clone(),
+                                                    },
+                                                    class: "text-decoration-none",
+                                                    "{d.match_data.team1_name}"
+                                                }
+                                            } else {
+                                                span { "{d.match_data.team1_name}" }
+                                            }
+                                            if d.match_data.status == "COMPLETED"
+                                                && d.match_data.match_winner.as_deref() == Some("TEAM1")
+                                            {
+                                                span { class: "badge bg-success ms-2",
+                                                    "Winner"
+                                                }
                                             }
                                             span { class: "mx-2", "vs" }
-                                            span { "{d.match_data.team2_name}" }
-                                            if d.match_data.match_winner.as_deref() == Some("TEAM2") {
-                                                span { class: "badge bg-success ms-2", "Winner" }
+                                            // Team 2
+                                            if let Some((match_name, display_text)) = parse_team_reference(
+                                                &d.match_data.team2_name,
+                                            )
+                                            {
+                                                Link {
+                                                    to: Route::MatchPage {
+                                                        url: url.clone(),
+                                                    },
+                                                    class: "text-decoration-none",
+                                                    "{display_text}"
+                                                }
+                                            } else if let Some(team2_id) = &d.match_data.team2 {
+                                                Link {
+                                                    to: Route::TeamProfile {
+                                                        id: team2_id.clone(),
+                                                    },
+                                                    class: "text-decoration-none",
+                                                    "{d.match_data.team2_name}"
+                                                }
+                                            } else {
+                                                span { "{d.match_data.team2_name}" }
+                                            }
+                                            if d.match_data.status == "COMPLETED"
+                                                && d.match_data.match_winner.as_deref() == Some("TEAM2")
+                                            {
+                                                span { class: "badge bg-success ms-2",
+                                                    "Winner"
+                                                }
+                                            }
+                                        }
+                                    }
+                                    // Refs display
+                                    if let Some(refs) = &d.match_data.refs_initial {
+                                        if !refs.is_empty() {
+                                            div { class: "d-flex align-items-center mb-2",
+                                                strong { class: "me-2", "Refs:" }
+                                                span {
+                                                    {
+                                                        refs.split(',')
+                                                            .filter_map(|ref_trimmed| {
+                                                                let ref_trimmed = ref_trimmed.trim();
+                                                                if ref_trimmed.is_empty() {
+                                                                    return None;
+                                                                }
+                                                                Some(ref_trimmed)
+                                                            })
+                                                            .enumerate()
+                                                            .map(|(idx, ref_trimmed)| {
+                                                                let refs_vec: Vec<&str> = refs
+                                                                    .split(',')
+                                                                    .filter(|s| !s.trim().is_empty())
+                                                                    .collect();
+                                                                let is_last = idx == refs_vec.len() - 1;
+                                                                rsx! {
+                                                                    if let Some((match_name, display_text)) = parse_team_reference(ref_trimmed) {
+                                                                        Link {
+                                                                            to: Route::MatchPage {
+                                                                                url: url.clone(),
+                                                                            },
+                                                                            class: "text-decoration-none",
+                                                                            "{display_text}"
+                                                                        }
+                                                                        if !is_last {
+                                                                            ", "
+                                                                        }
+                                                                    } else {
+                                                                        span { "{ref_trimmed}" }
+                                                                        if !is_last {
+                                                                            ", "
+                                                                        }
+                                                                    }
+                                                                }
+                                                            })
+                                                    }
+                                                }
                                             }
                                         }
                                     }
@@ -95,15 +476,22 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                                     div { class: "d-flex align-items-center mb-2",
                                         strong { class: "me-2", "Status:" }
                                         span {
+                                            id: "match-status",
                                             class: format!(
                                                 "badge {}",
                                                 match d.match_data.status.as_str() {
                                                     "COMPLETED" => "bg-success",
                                                     "IN_PROGRESS" => "bg-warning",
                                                     _ => "bg-secondary",
-                                                }
+                                                },
                                             ),
-                                            "{d.match_data.status}"
+                                            {
+                                                match d.match_data.status.as_str() {
+                                                    "COMPLETED" => "Completed",
+                                                    "IN_PROGRESS" => "In Progress",
+                                                    _ => "Scheduled",
+                                                }
+                                            }
                                         }
                                     }
                                     if let Some(field) = &d.match_data.field {
@@ -114,11 +502,19 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                                     }
                                     div { class: "d-flex align-items-center mb-2",
                                         strong { class: "me-2", "Start:" }
-                                        span { "{d.match_data.confirmed_start_time.as_deref().or(d.match_data.nominal_start_time.as_deref()).unwrap_or(\"TBA\")}" }
+                                        span {
+                                            {
+                                                d.match_data
+                                                    .confirmed_start_time
+                                                    .as_deref()
+                                                    .or(d.match_data.nominal_start_time.as_deref())
+                                                    .unwrap_or("TBA")
+                                            }
+                                        }
                                     }
                                     div { class: "d-flex align-items-center mb-2",
                                         strong { class: "me-2", "End:" }
-                                        span { "{d.match_data.completed_time.as_deref().unwrap_or(\"TBA\")}" }
+                                        span { {d.match_data.completed_time.as_deref().unwrap_or("TBA")} }
                                     }
                                 }
                                 div { class: "col-md-4" }
@@ -138,32 +534,620 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                                     }
                                 }
                             }
+
+                            // Action buttons
+                            if let Some(Some(user)) = user_info.value().read().as_ref() {
+                                if user.user_type == "player" {
+                                    // Head ref actions
+                                    if d.match_data.status == "READY_TO_START" {
+                                        div { class: "row mt-3",
+                                            div { class: "col-12",
+                                                div { class: "d-flex gap-2",
+                                                    Link {
+                                                        to: Route::StartMatch {
+                                                            url: url.clone(),
+                                                            match_id: d.match_data.uuid.clone(),
+                                                        },
+                                                        class: "btn btn-success",
+                                                        "Start Match"
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    } else if d.match_data.status == "IN_PROGRESS" {
+                                        div { class: "row mt-3",
+                                            div { class: "col-12",
+                                                div { class: "d-flex gap-2",
+                                                    Link {
+                                                        to: Route::RunMatch {
+                                                            url: url.clone(),
+                                                            match_id: d.match_data.uuid.clone(),
+                                                        },
+                                                        class: "btn btn-warning",
+                                                        "Run Match"
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                // TO actions
+                                if user.user_type == "TO" {
+                                    if let Some(id) = &match_id {
+                                        div { class: "row mt-3",
+                                            div { class: "col-12",
+                                                div { class: "d-flex gap-2",
+                                                    Link {
+                                                        to: Route::EditMatch {
+                                                            tournament_url: url.clone(),
+                                                            match_id: id.clone(),
+                                                        },
+                                                        class: "btn btn-primary",
+                                                        "Edit Match"
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Live Match Status Card
+                    div { class: "card mt-3",
+                        div { class: "card-header",
+                            h5 { class: "mb-0",
+                                "Match Status: "
+                                span {
+                                    id: "live-status-message",
+                                    class: match d.match_data.status.as_str() {
+                                        "COMPLETED" => "text-success",
+                                        "IN_PROGRESS" => "text-success",
+                                        _ => "text-muted",
+                                    },
+                                    {
+                                        match d.match_data.status.as_str() {
+                                            "COMPLETED" => "✓ completed",
+                                            "IN_PROGRESS" => "● live",
+                                            _ => "○ not started",
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        div { class: "card-body",
+                            // Stones remaining (for STONES matches) - compute from points
+                            if d.match_data.set_type.as_deref() == Some("STONES") {
+                                div { class: "row mb-3",
+                                    div { class: "col-md-6",
+                                        p {
+                                            strong { "Stones Remaining: " }
+                                            span { id: "live-stones-remaining",
+                                                {
+                                                    {
+                                                        #[cfg(target_arch = "wasm32")]
+                                                        {
+                                                            let _update_tick = stones_update_tick();
+                                                            let points_to_use = if let Some(Ok(_state)) = state_signal
+                                                                .read()
+                                                                .as_ref()
+                                                            {
+                                                                d.points.iter().collect::<Vec<_>>()
+                                                            } else {
+                                                                d.points.iter().collect::<Vec<_>>()
+                                                            };
+                                                            compute_stones_remaining(&points_to_use, &time_filter)
+                                                        }
+                                                        #[cfg(not(target_arch = "wasm32"))]
+                                                        {
+                                                            d.match_data
+                                                                .stones_remaining
+                                                                .map(|s| s.to_string())
+                                                                .unwrap_or_else(|| "??".to_string())
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Score by Set - update from state
+                            div { class: "mb-3",
+                                h6 { "Score by Set" }
+                                div { id: "score-by-set",
+                                    {
+                                        // Get scores from state if available, otherwise from match data
+                                        {
+                                            let scores_by_set: std::collections::BTreeMap<u32, (u32, u32)> = if let Some(
+                                                Ok(state),
+                                            ) = state_signal.read().as_ref()
+                                            {
+                                                if let Some(scores) = state
+                                                    .get("scores_by_set")
+                                                    .and_then(|v| v.as_object()) // Fallback: compute from points
+                                                {
+                                                    let mut map = std::collections::BTreeMap::new();
+                                                    for (set_str, scores_obj) in scores {
+                                                        if let (Ok(set_num), Some(team1), Some(team2)) = (
+                                                            set_str.parse::<u32>(),
+                                                            scores_obj.get("team1_score").and_then(|v| v.as_u64()),
+                                                            scores_obj.get("team2_score").and_then(|v| v.as_u64()),
+                                                        ) { // Compute from match data points
+                                                            map.insert(set_num, (team1 as u32, team2 as u32));
+                                                        }
+                                                    }
+                                                    map
+                                                } else {
+                                                    let mut sets: std::collections::BTreeMap<u32, (u32, u32)> = std::collections::BTreeMap::new();
+                                                    for pt in &d.points {
+                                                        if !pt.rerolled {
+                                                            let set_num = pt.set_number.unwrap_or(1);
+                                                            let entry = sets.entry(set_num).or_insert((0, 0));
+                                                            match pt.winner.as_deref() {
+                                                                Some("TEAM1") => entry.0 += 1,
+                                                                Some("TEAM2") => entry.1 += 1,
+                                                                _ => {}
+                                                            }
+                                                        }
+                                                    }
+                                                    sets
+                                                }
+                                            } else {
+                                                let mut sets: std::collections::BTreeMap<u32, (u32, u32)> = std::collections::BTreeMap::new();
+                                                for pt in &d.points {
+                                                    if !pt.rerolled {
+                                                        let set_num = pt.set_number.unwrap_or(1);
+                                                        let entry = sets.entry(set_num).or_insert((0, 0));
+                                                        match pt.winner.as_deref() {
+                                                            Some("TEAM1") => entry.0 += 1,
+                                                            Some("TEAM2") => entry.1 += 1,
+                                                            _ => {}
+                                                        }
+                                                    }
+                                                }
+                                                sets
+                                            };
+                                            if !scores_by_set.is_empty() {
+                                                rsx! {
+                                                    // Team names header
+                                                    div { class: "row mb-2",
+                                                        div { class: "col-5 text-center",
+                                                            small { class: "text-muted", "{d.match_data.team1_name}" }
+                                                        }
+                                                        div { class: "col-2" }
+                                                        div { class: "col-5 text-center",
+                                                            small { class: "text-muted", "{d.match_data.team2_name}" }
+                                                        }
+                                                    }
+                                                    // Scores for each set
+                                                    {
+                                                        scores_by_set
+                                                            .iter()
+                                                            .map(|(set_num, (team1_score, team2_score))| {
+                                                                rsx! {
+                                                                    div { class: "row mb-1", key: "{set_num}",
+                                                                        div { class: "col-5 text-center",
+                                                                            strong { id: "live-team1-set-{set_num}-score", "{team1_score}" }
+                                                                        }
+                                                                        div { class: "col-2 text-center",
+                                                                            small { class: "text-muted", "Set {set_num}" }
+                                                                        }
+                                                                        div { class: "col-5 text-center",
+                                                                            strong { id: "live-team2-set-{set_num}-score", "{team2_score}" }
+                                                                        }
+                                                                    }
+                                                                }
+                                                            })
+                                                    }
+                                                }
+                                            } else {
+                                                rsx! {
+                                                    div { class: "text-muted text-center", "No points yet" }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Points Table - update from state
+                    div { class: "card mt-3",
+                        div { class: "card-header",
+                            h5 { class: "mb-0", "Points" }
+                        }
+                        div { class: "card-body",
+                            {
+                                let points_to_display: Vec<&crate::types::PointData> = d
+                                    .points
+                                    .iter()
+                                    .collect();
+                                if points_to_display.is_empty() {
+                                    rsx! {
+                                        p { class: "text-muted", "No points recorded yet." }
+                                    }
+                                } else {
+                                    rsx! {
+                                        div { class: "table-responsive",
+                                            table { class: "table table-sm",
+                                                thead {
+                                                    tr {
+                                                        th { "#" }
+                                                        th { "Set" }
+                                                        th { "Stones Elapsed" }
+                                                        th { "Winner" }
+                                                        th { "Rerun" }
+                                                    }
+                                                }
+                                                tbody { id: "live-points-table",
+                                                    for (idx, pt) in points_to_display.iter().enumerate() {
+                                                        tr { key: "{pt.uuid}", id: "live-point-row-{pt.uuid}",
+                                                            td { "{idx + 1}" }
+                                                            td { "{pt.set_number.unwrap_or(1)}" }
+                                                            td {
+                                                                id: "live-stones-{pt.uuid}",
+                                                                "data-stamp": pt.stamp.as_deref().unwrap_or(""),
+                                                                "data-end": pt.end_stamp.as_deref().unwrap_or(""),
+                                                                "data-stones-at-start": pt.stones_at_start.map(|s: u32| s.to_string()).unwrap_or_default(),
+                                                                        {
+                                                                            {
+                                                                                #[cfg(target_arch = "wasm32")]
+                                                                                {
+                                                                                    let _update_tick = stones_update_tick();
+                                                                                    compute_stones_elapsed(
+                                                                                        pt.stamp.as_deref(),
+                                                                                        pt.end_stamp.as_deref(),
+                                                                                        &time_filter,
+                                                                                    )
+                                                                                }
+                                                                                #[cfg(not(target_arch = "wasm32"))] { "0" }
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                    td {
+                                                                        {
+                                                                            match pt.winner.as_deref() {
+                                                                                Some("TEAM1") => d.match_data.team1_name.clone(),
+                                                                                Some("TEAM2") => d.match_data.team2_name.clone(),
+                                                                                _ => "-".to_string(),
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                    td {
+                                                                        if pt.rerolled {
+                                                                            span { class: "badge bg-warning", "Rerun" }
+                                                                        } else {
+                                                                            span { class: "badge bg-success", "Normal" }
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Match Footage Section
+                    if !d.available_cameras.is_empty() || d.camera_url.is_some() {
+                        div { class: "card mt-3",
+                            div { class: "card-header d-flex justify-content-between align-items-center",
+                                h5 { class: "mb-0", "Match Footage" }
+                                if d.available_cameras.len() > 1 {
+                                    div { class: "dropdown",
+                                        button {
+                                            class: "btn btn-sm btn-outline-secondary dropdown-toggle",
+                                            "type": "button",
+                                            id: "camera-selector-dropdown",
+                                            "data-bs-toggle": "dropdown",
+                                            "aria-expanded": "false",
+                                            "📹 Camera {d.available_cameras[0].index + 1}"
+                                        }
+                                        ul {
+                                            class: "dropdown-menu dropdown-menu-end",
+                                            "aria-labelledby": "camera-selector-dropdown",
+                                            {
+                                                d.available_cameras
+                                                    .iter()
+                                                    .enumerate()
+                                                    .map(|(idx, cam)| {
+                                                        rsx! {
+                                                            li { key: "{cam.index}",
+                                                                a {
+                                                                    class: "dropdown-item camera-option",
+                                                                    href: "#",
+                                                                    "data-camera-index": "{cam.index}",
+                                                                    "data-camera-url": cam.url.as_deref().unwrap_or(""),
+                                                                    "data-stream-start": cam.stream_start_time.as_deref().unwrap_or(""),
+                                                                    "data-camera-type": "{cam.camera_type}",
+                                                                    "data-video-path": cam.video_path.as_deref().unwrap_or(""),
+                                                                    "data-camera-id": cam.camera_id.as_deref().unwrap_or(""),
+                                                                    onclick: move |_| {}, // Camera switching handled by JavaScript, // Camera switching handled by JavaScript,
+                                                                    {
+                                                                        if cam.camera_type == "recorded" {
+                                                                            format!(
+                                                                                "Recorded: {} ({})",
+                                                                                cam.camera_id.as_deref().unwrap_or("unknown"),
+                                                                                cam
+                                                                                    .session_id
+                                                                                    .as_deref()
+                                                                                    .map(|s| &s[..8.min(s.len())])
+                                                                                    .unwrap_or("unknown"),
+                                                                            )
+                                                                        } else {
+                                                                            format!("Camera {}", cam.index + 1)
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    })
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            div { class: "card-body",
+                                div { id: "video-stream-container",
+                                    div {
+                                        id: "youtube-stream-not-started",
+                                        style: "display: none;",
+                                        p { class: "text-muted", "📹 Stream not started" }
+                                    }
+                                    div {
+                                        id: "youtube-player-container",
+                                        style: "display: none;",
+                                        div {
+                                            id: "youtube-player",
+                                            style: "width: 100%; max-width: 100%; aspect-ratio: 16 / 9;",
+                                        }
+                                    }
+                                    div {
+                                        id: "local-video-container",
+                                        style: "display: none;",
+                                        video {
+                                            id: "local-video-player",
+                                            controls: true,
+                                            style: "width: 100%; max-width: 100%;",
+                                            "Your browser does not support the video tag."
+                                        }
+                                    }
+                                    div { class: "mt-3 d-flex align-items-center flex-wrap gap-2",
+                                        span { "Seek to point:" }
+                                        select {
+                                            id: "points-dropdown",
+                                            class: "form-select form-select-sm",
+                                            style: "width: auto;",
+                                            option { value: "", "Select point..." }
+                                            {
+                                                d.points
+                                                    .iter()
+                                                    .enumerate()
+                                                    .map(|(idx, pt)| {
+                                                        rsx! {
+                                                            option { key: "{pt.uuid}", value: "{idx}", "Point {idx + 1}" }
+                                                        }
+                                                    })
+                                            }
+                                        }
+                                        button {
+                                            id: "seek-go-btn",
+                                            class: "btn btn-sm btn-primary",
+                                            "Go (g)"
+                                        }
+                                        button {
+                                            id: "seek-prev-btn",
+                                            class: "btn btn-sm btn-secondary",
+                                            "Previous Point (k)"
+                                        }
+                                        button {
+                                            id: "seek-next-btn",
+                                            class: "btn btn-sm btn-secondary",
+                                            "Next Point (j)"
+                                        }
+                                        span { class: "ms-2", "Speed:" }
+                                        select {
+                                            id: "playback-speed",
+                                            class: "form-select form-select-sm",
+                                            style: "width: auto;",
+                                            option { value: "0.25", "0.25x" }
+                                            option { value: "0.5", "0.5x" }
+                                            option { value: "0.75", "0.75x" }
+                                            option { value: "1", selected: true, "1x" }
+                                            option { value: "1.25", "1.25x" }
+                                            option { value: "1.5", "1.5x" }
+                                            option { value: "1.75", "1.75x" }
+                                            option { value: "2", "2x" }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Include YouTube IFrame API script and video player JavaScript
+                        script { src: "https://www.youtube.com/iframe_api" }
+                        script { src: "https://polyfill.io/v3/polyfill.min.js?features=es6" }
+                        script {
+                            id: "MathJax-script",
+                            src: "https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js",
+                            r#async: true,
+                        }
+                        script { src: "{base_url}/static/js/kalman_filter.js" }
+                        {
+                            {
+                                let cameras = d.available_cameras.clone();
+                                let points = d.points.clone();
+                                let match_id_str = match_id.as_ref().map(|s| s.as_str()).unwrap_or("");
+                                let url_str = url.as_str();
+                                if !cameras.is_empty() {
+                                    let cameras_json = serde_json::to_string(&cameras)
+                                        .unwrap_or_else(|_| "[]".to_string());
+                                    let points_json = serde_json::to_string(
+                                            &points
+                                                .iter()
+                                                .map(|p| {
+                                                    serde_json::json!(
+                                                        { "uuid" : p.uuid, "stamp" : p.stamp, "end_stamp" : p
+                                                        .end_stamp, "stones_at_start" : p.stones_at_start, }
+                                                    )
+                                                })
+                                                .collect::<Vec<_>>(),
+                                        )
+                                        .unwrap_or_else(|_| "[]".to_string());
+                                    #[cfg(target_arch = "wasm32")]
+                                    {
+                                        let cameras_json_for_effect = cameras_json.clone();
+                                        let points_json_for_effect = points_json.clone();
+                                        let match_id_str_for_effect = match_id_str.to_string();
+                                        let url_str_for_effect = url_str.to_string();
+                                        use_effect(move || {
+                                            let cameras_json = cameras_json_for_effect.clone();
+                                            let points_json = points_json_for_effect.clone();
+                                            let match_id_str = match_id_str_for_effect.clone();
+                                            let url_str = url_str_for_effect.clone();
+                                            spawn(async move {
+                                                let _ = dioxus::prelude::document::eval(
+                                                        r#"
+                                                                                        window.MathJax = {
+                                                                                            tex: {
+                                                                                                inlineMath: [['$', '$'], ['\\(', '\\)']],
+                                                                                                displayMath: [['$$', '$$'], ['\\[', '\\]']]
+                                                                                            }
+                                                                                        };
+                                                                                    "#,
+                                                    )
+                                                    .await;
+                                                let js_init = format!(
+                                                    r#"
+                                                                                        console.log('Match page video player initialized', {{
+                                                                                            matchId: '{}',
+                                                                                            tournamentUrl: '{}',
+                                                                                            availableCameras: {},
+                                                                                            pointsData: {}
+                                                                                        }});
+                                                                                        "#,
+                                                    match_id_str.replace('\'', "\\'"),
+                                                    url_str.replace('\'', "\\'"),
+                                                    cameras_json,
+                                                    points_json,
+                                                );
+                                                let _ = dioxus::prelude::document::eval(&js_init).await;
+                                            });
+                                        });
+                                    }
+                                }
+                                rsx! {}
+                            }
                         }
                     }
                 }
-            }
 
-            div { class: "row mt-3",
-                div { class: "col-12",
-                    h3 { "Points" }
-                    if d.points.is_empty() {
-                        p { class: "text-muted", "No points recorded yet." }
-                    } else {
-                        div { class: "table-responsive",
-                            table { class: "table table-striped",
-                                thead {
-                                    tr {
-                                        th { "Set" }
-                                        th { "Winner" }
+                // Head Ref Notes Sidebar
+                div { class: "col-md-4",
+                    div { class: "card",
+                        div { class: "card-header",
+                            h5 { class: "mb-0", "Head Ref Notes" }
+                        }
+                        div { class: "card-body",
+                            div { class: "mb-3",
+                                h6 { class: "mb-1", "Start Notes" }
+                                if let Some(notes) = &d.match_data.initial_notes {
+                                    if !notes.is_empty() {
+                                        div { class: "small text-muted border-start border-3 ps-2",
+                                            "{notes}"
+                                        }
+                                    } else {
+                                        div { class: "text-muted small", "None" }
                                     }
+                                } else {
+                                    div { class: "text-muted small", "None" }
                                 }
-                                tbody {
-                                    for pt in d.points.iter() {
-                                        tr { key: "{pt.uuid}",
-                                            td { "{pt.set_number.unwrap_or(0)}" }
-                                            td { "{pt.winner.as_deref().unwrap_or(\"-\")}" }
+                            }
+                            div { class: "mb-3",
+                                h6 { class: "mb-1", "Finalize Notes" }
+                                if let Some(notes) = &d.match_data.final_notes {
+                                    if !notes.is_empty() {
+                                        div { class: "small text-muted border-start border-3 ps-2",
+                                            "{notes}"
+                                        }
+                                    } else {
+                                        div { class: "text-muted small", "None" }
+                                    }
+                                } else {
+                                    div { class: "text-muted small", "None" }
+                                }
+                            }
+                            if d.is_head_ref && !d.match_notes.is_empty() {
+                                div {
+                                    h6 { class: "mb-1", "Match Notes" }
+                                    div { style: "max-height: 300px; overflow-y: auto;",
+                                        {
+                                            d.match_notes
+                                                .iter()
+                                                .map(|note| {
+                                                    let target_display = match note.target.as_str() {
+                                                        "team1" => d.match_data.team1_name.clone(),
+                                                        "team2" => d.match_data.team2_name.clone(),
+                                                        "match" => "".to_string(),
+                                                        _ => {
+                                                            note.player_display
+                                                                .as_ref()
+                                                                .or(note.player_name.as_ref())
+                                                                .cloned()
+                                                                .unwrap_or_else(|| note.target.clone())
+                                                        }
+                                                    };
+                                                    let prefix = if note.target == "match" {
+                                                        "".to_string()
+                                                    } else {
+                                                        format!("{}: ", target_display)
+                                                    };
+                                                    rsx! {
+                                                        div {
+                                                            class: "small text-muted border-start border-3 ps-2 mb-2",
+                                                            key: "{note.created_at.as_deref().unwrap_or(\"\")}",
+                                                            {
+                                                                if !target_display.is_empty()
+                                                                    && (note.team_id.is_some() || note.player_id.is_some())
+                                                                {
+                                                                    rsx! {
+                                                                        Link {
+                                                                            to: if note.team_id.is_some() { Route::TeamProfile {
+                                                                                id: note.team_id.as_ref().unwrap().clone(),
+                                                                            } } else { Route::PlayerProfile {
+                                                                                id: note.player_id.as_ref().unwrap().clone(),
+                                                                            } },
+                                                                            class: "text-decoration-none",
+                                                                            "{target_display}"
+                                                                        }
+                                                                        ": {note.text}"
+                                                                    }
+                                                                } else {
+                                                                    rsx! { "{prefix}{note.text}" }
+                                                                }
+                                                            }
+                                                            if let Some(created) = &note.created_at {
+                                                                div { class: "text-muted", style: "font-size: 0.75rem;",
+                                                                    "{created.chars().take(16).collect::<String>().replace('T', \" \")}"
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                })
                                         }
                                     }
+                                }
+                            } else if d.is_head_ref {
+                                div {
+                                    h6 { class: "mb-1", "Match Notes" }
+                                    div { class: "text-muted small", "None" }
                                 }
                             }
                         }

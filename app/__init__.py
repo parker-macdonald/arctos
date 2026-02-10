@@ -167,14 +167,16 @@ def create_app(config=None):
     def add_cors_for_api(response):
         from flask import request
 
-        # Add CORS for /_api (including /<tournament>/_api/validate-dsl) and, in dev, for /static/
+        # When ARCTOS_CORS_DEV=1, add CORS for all requests (any path with Origin).
+        # Otherwise only for /_api and (in dev) /static/
+        cors_dev_all = os.environ.get("ARCTOS_CORS_DEV") == "1"
         is_api = "/_api" in request.path
         is_static_cors = (
-            os.environ.get("ARCTOS_CORS_DEV") == "1"
+            cors_dev_all
             and request.endpoint == "static"
             and request.path.startswith("/static/")
         )
-        if not is_api and not is_static_cors:
+        if not cors_dev_all and not is_api and not is_static_cors:
             return response
         origin_header = request.headers.get("Origin")
         origin = _cors_allowed_origin(origin_header) if origin_header else None
@@ -186,13 +188,12 @@ def create_app(config=None):
     def handle_api_preflight():
         from flask import request, make_response
 
-        # Preflight for /_api (including /<tournament>/_api/validate-dsl) and for /static/ in CORS dev
+        # When ARCTOS_CORS_DEV=1, handle OPTIONS preflight for any path.
+        # Otherwise only for /_api and (in dev) /static/
+        cors_dev_all = os.environ.get("ARCTOS_CORS_DEV") == "1"
         is_api = "/_api" in request.path
-        is_static_cors = (
-            os.environ.get("ARCTOS_CORS_DEV") == "1"
-            and request.path.startswith("/static/")
-        )
-        if request.method != "OPTIONS" or (not is_api and not is_static_cors):
+        is_static_cors = cors_dev_all and request.path.startswith("/static/")
+        if request.method != "OPTIONS" or (not cors_dev_all and not is_api and not is_static_cors):
             return None
         origin_header = request.headers.get("Origin")
         origin = _cors_allowed_origin(origin_header) if origin_header else None

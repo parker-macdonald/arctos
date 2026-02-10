@@ -43,6 +43,9 @@ enum Route {
     #[route("/:url/bracket")]
     Bracket { url: String },
 
+    #[route("/:url/bracket-setup")]
+    BracketSetup { url: String },
+
     #[route("/:url/settings")]
     TournamentSettings { url: String },
 
@@ -58,14 +61,14 @@ enum Route {
     #[route("/:url/invitations")]
     Invitations { url: String },
 
-    #[route("/:url/start-match")]
-    StartMatch { url: String },
+    #[route("/:url/start-match/:match_id")]
+    StartMatch { url: String, match_id: String },
 
-    #[route("/:url/run-match")]
-    RunMatch { url: String },
+    #[route("/:url/run-match/:match_id")]
+    RunMatch { url: String, match_id: String },
 
-    #[route("/:url/finalize-match")]
-    FinalizeMatch { url: String },
+    #[route("/:url/finalize-match/:match_id")]
+    FinalizeMatch { url: String, match_id: String },
 
     #[route("/:url/scoreboard")]
     Scoreboard { url: String },

@@ -22,24 +22,20 @@ fn get_query_param(name: &str) -> Option<String> {
 }
 
 #[component]
-pub fn FinalizeMatch(url: String) -> Element {
-    let match_id = get_query_param("id");
+pub fn FinalizeMatch(url: String, match_id: String) -> Element {
     let match_id_for_data = match_id.clone();
     let url_for_data = url.clone();
     let data = use_resource(move || {
         let u = url_for_data.clone();
         let id = match_id_for_data.clone();
         async move {
-            if let Some(id) = id {
-                api::finalize_match_data(&u, &id).await.map_err(|e| e.to_string())
-            } else {
-                Err("Match ID required".to_string())
-            }
+            api::finalize_match_data(&u, &id).await.map_err(|e| e.to_string())
         }
     });
     let val = data.value();
     let mut match_winner = use_signal(|| None::<String>);
     let mut final_notes = use_signal(String::new);
+    let mut signature_error = use_signal(|| None::<String>);
     let team1_canvas_id = "team1_signature_canvas";
     let team2_canvas_id = "team2_signature_canvas";
     let navigator = use_navigator();
@@ -47,19 +43,16 @@ pub fn FinalizeMatch(url: String) -> Element {
     let schedule_url = url.clone();
     let home_url = url.clone();
     let submit_url = url.clone();
+    let mut signature_setup_done = use_signal(|| false);
 
     use_effect(move || {
-        setup_signature_canvas_by_id(team1_canvas_id);
-        setup_signature_canvas_by_id(team2_canvas_id);
+        let snapshot = val.read().clone();
+        if snapshot.is_some() && !signature_setup_done() {
+            signature_setup_done.set(true);
+            setup_signature_canvas_by_id(team1_canvas_id);
+            setup_signature_canvas_by_id(team2_canvas_id);
+        }
     });
-
-    if match_id.is_none() {
-        return rsx! {
-            h1 { "Finalize Match" }
-            Link { to: Route::Schedule { url: schedule_url.clone() }, "← Schedule" }
-            p { class: "text-muted", "Add ?id=<match-uuid> to the URL." }
-        };
-    }
 
     match data_snapshot {
         Some(Ok(d)) => rsx! {
@@ -68,8 +61,22 @@ pub fn FinalizeMatch(url: String) -> Element {
                     h1 { "Finalize Match" }
                     nav { aria_label: "breadcrumb",
                         ol { class: "breadcrumb",
-                            li { class: "breadcrumb-item", Link { to: Route::TournamentHome { url: home_url.clone() }, "{d.tournament.name}" } }
-                            li { class: "breadcrumb-item", Link { to: Route::Schedule { url: schedule_url.clone() }, "Schedule" } }
+                            li { class: "breadcrumb-item",
+                                Link {
+                                    to: Route::TournamentHome {
+                                        url: home_url.clone(),
+                                    },
+                                    "{d.tournament.name}"
+                                }
+                            }
+                            li { class: "breadcrumb-item",
+                                Link {
+                                    to: Route::Schedule {
+                                        url: schedule_url.clone(),
+                                    },
+                                    "Schedule"
+                                }
+                            }
                             li { class: "breadcrumb-item active", "Finalize Match" }
                         }
                     }
@@ -96,7 +103,7 @@ pub fn FinalizeMatch(url: String) -> Element {
                                         }
                                     }
                                     tbody {
-                                        for (idx, point) in d.points.iter().enumerate() {
+                                        for (idx , point) in d.points.iter().enumerate() {
                                             {
                                                 let stones = d.stones_elapsed_map.get(&point.uuid).copied().unwrap_or(0);
                                                 let notes = d.point_notes_map.get(&point.uuid).cloned().unwrap_or_default();
@@ -216,6 +223,11 @@ pub fn FinalizeMatch(url: String) -> Element {
                             form {
                                 onsubmit: move |ev| {
                                     ev.prevent_default();
+                                    signature_error.set(None);
+                                    if !both_canvases_signed(team1_canvas_id, team2_canvas_id) {
+                                        signature_error.set(Some("Both team captains must sign before submitting the match.".to_string()));
+                                        return;
+                                    }
                                     let winner = match_winner().clone();
                                     if winner.is_none() {
                                         return;
@@ -253,7 +265,9 @@ pub fn FinalizeMatch(url: String) -> Element {
                                                     value: "TEAM1",
                                                     onchange: move |_| match_winner.set(Some("TEAM1".to_string())),
                                                 }
-                                                label { class: "form-check-label", r#for: "winner-team1",
+                                                label {
+                                                    class: "form-check-label",
+                                                    r#for: "winner-team1",
                                                     strong { "{d.match_info.team1_name}" }
                                                 }
                                             }
@@ -268,7 +282,9 @@ pub fn FinalizeMatch(url: String) -> Element {
                                                     value: "TEAM2",
                                                     onchange: move |_| match_winner.set(Some("TEAM2".to_string())),
                                                 }
-                                                label { class: "form-check-label", r#for: "winner-team2",
+                                                label {
+                                                    class: "form-check-label",
+                                                    r#for: "winner-team2",
                                                     strong { "{d.match_info.team2_name}" }
                                                 }
                                             }
@@ -279,8 +295,13 @@ pub fn FinalizeMatch(url: String) -> Element {
                                 div { class: "row mb-4",
                                     div { class: "col-md-6",
                                         h6 { "{d.match_info.team1_name} Captain Signature" }
-                                        div { class: "border p-3", style: "height: 150px;",
-                                            canvas { id: "{team1_canvas_id}", style: "width: 100%; height: 100%;" }
+                                        div {
+                                            class: "border p-3",
+                                            style: "height: 150px;",
+                                            canvas {
+                                                id: "{team1_canvas_id}",
+                                                style: "width: 100%; height: 100%;",
+                                            }
                                         }
                                         div { class: "mt-2",
                                             button {
@@ -293,8 +314,13 @@ pub fn FinalizeMatch(url: String) -> Element {
                                     }
                                     div { class: "col-md-6",
                                         h6 { "{d.match_info.team2_name} Captain Signature" }
-                                        div { class: "border p-3", style: "height: 150px;",
-                                            canvas { id: "{team2_canvas_id}", style: "width: 100%; height: 100%;" }
+                                        div {
+                                            class: "border p-3",
+                                            style: "height: 150px;",
+                                            canvas {
+                                                id: "{team2_canvas_id}",
+                                                style: "width: 100%; height: 100%;",
+                                            }
                                         }
                                         div { class: "mt-2",
                                             button {
@@ -308,7 +334,11 @@ pub fn FinalizeMatch(url: String) -> Element {
                                 }
 
                                 div { class: "mb-3",
-                                    label { r#for: "final_notes", class: "form-label", "Final Notes" }
+                                    label {
+                                        r#for: "final_notes",
+                                        class: "form-label",
+                                        "Final Notes"
+                                    }
                                     textarea {
                                         class: "form-control",
                                         id: "final_notes",
@@ -319,8 +349,15 @@ pub fn FinalizeMatch(url: String) -> Element {
                                     }
                                 }
 
+                                if let Some(ref err) = signature_error() {
+                                    div { class: "alert alert-warning mb-3", "{err}" }
+                                }
                                 div { class: "d-grid",
-                                    button { r#type: "submit", class: "btn btn-primary", "Finalize Match" }
+                                    button {
+                                        r#type: "submit",
+                                        class: "btn btn-primary",
+                                        "Finalize Match"
+                                    }
                                 }
                             }
                         }
@@ -328,8 +365,12 @@ pub fn FinalizeMatch(url: String) -> Element {
                 }
             }
         },
-        Some(Err(e)) => rsx! { p { class: "text-danger", "{e}" } },
-        None => rsx! { p { "Loading…" } },
+        Some(Err(e)) => rsx! {
+            p { class: "text-danger", "{e}" }
+        },
+        None => rsx! {
+            p { "Loading…" }
+        },
     }
 }
 
@@ -363,12 +404,17 @@ fn setup_signature_canvas_by_id(canvas_id: &str) {
         return;
     }
     let ctx = ctx.unwrap();
+    ctx.set_stroke_style(&js_sys::JsString::from("#000000").into());
+    ctx.set_line_width(2.0);
+    ctx.set_line_cap("round");
+    ctx.set_line_join("round");
     let drawing = Rc::new(RefCell::new(false));
     let drawing_move = drawing.clone();
     let ctx_move = ctx.clone();
     let canvas_move = canvas.clone();
     let on_mousedown = Closure::<dyn FnMut(_)>::new(move |e: web_sys::MouseEvent| {
         *drawing_move.borrow_mut() = true;
+        let _ = canvas_move.set_attribute("data-signed", "true");
         let rect = canvas_move.get_bounding_client_rect();
         ctx_move.begin_path();
         ctx_move
@@ -417,6 +463,7 @@ fn setup_signature_canvas_by_id(canvas_id: &str) {
         e.prevent_default();
         if let Some(touch) = e.touches().get(0) {
             *drawing_move.borrow_mut() = true;
+            let _ = canvas_move.set_attribute("data-signed", "true");
             let rect = canvas_move.get_bounding_client_rect();
             ctx_move.begin_path();
             ctx_move.move_to(
@@ -488,6 +535,9 @@ fn clear_canvas_by_id(canvas_id: &str) {
             ctx.clear_rect(0.0, 0.0, canvas.width() as f64, canvas.height() as f64);
         }
     }
+    if let Some(el) = document.get_element_by_id(canvas_id) {
+        let _ = el.remove_attribute("data-signed");
+    }
 }
 
 fn canvas_data_url(canvas_id: &str) -> Option<String> {
@@ -496,4 +546,19 @@ fn canvas_data_url(canvas_id: &str) -> Option<String> {
     let element = document.get_element_by_id(canvas_id)?;
     let canvas: web_sys::HtmlCanvasElement = element.dyn_into().ok()?;
     canvas.to_data_url().ok()
+}
+
+fn both_canvases_signed(team1_id: &str, team2_id: &str) -> bool {
+    let doc = match web_sys::window().and_then(|w| w.document()) {
+        Some(d) => d,
+        None => return false,
+    };
+    let signed = |id: &str| -> bool {
+        doc.get_element_by_id(id)
+            .and_then(|el| el.dyn_into::<web_sys::HtmlElement>().ok())
+            .and_then(|el| el.get_attribute("data-signed"))
+            .as_deref()
+            == Some("true")
+    };
+    signed(team1_id) && signed(team2_id)
 }

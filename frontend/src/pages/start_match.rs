@@ -3,6 +3,7 @@ use crate::types::StartMatchPlayer;
 use crate::Route;
 use dioxus::prelude::*;
 use std::collections::HashSet;
+use serde_json::Value;
 
 fn get_query_param(name: &str) -> Option<String> {
     #[cfg(target_arch = "wasm32")]
@@ -20,19 +21,14 @@ fn get_query_param(name: &str) -> Option<String> {
 }
 
 #[component]
-pub fn StartMatch(url: String) -> Element {
-    let match_id = get_query_param("id");
+pub fn StartMatch(url: String, match_id: String) -> Element {
     let match_id_for_data = match_id.clone();
     let url_for_data = url.clone();
     let data = use_resource(move || {
         let u = url_for_data.clone();
         let id = match_id_for_data.clone();
         async move {
-            if let Some(id) = id {
-                api::start_match_data(&u, &id).await.map_err(|e| e.to_string())
-            } else {
-                Err("Match ID required".to_string())
-            }
+            api::start_match_data(&u, &id).await.map_err(|e| e.to_string())
         }
     });
     let val = data.value();
@@ -42,8 +38,8 @@ pub fn StartMatch(url: String) -> Element {
     let mut team2_selected = use_signal(HashSet::<String>::new);
     let mut team1_search = use_signal(String::new);
     let mut team2_search = use_signal(String::new);
-    let team1_notes = use_signal(Vec::<String>::new);
-    let team2_notes = use_signal(Vec::<String>::new);
+    let mut notes_modal_show = use_signal(|| false);
+    let mut notes_modal_content = use_signal(|| None as Option<Result<Vec<Value>, String>>);
     let mut match_notes = use_signal(String::new);
     let navigator = use_navigator();
     let submit_url = url.clone();
@@ -64,20 +60,15 @@ pub fn StartMatch(url: String) -> Element {
         }
     });
 
-    if match_id.is_none() {
-        return rsx! {
-            h1 { "Start Match" }
-            Link { to: Route::Schedule { url: schedule_url.clone() }, "← Schedule" }
-            p { class: "text-muted", "Add ?id=<match-uuid> to the URL, or go to Schedule and click Start on a match." }
-        };
-    }
-
     match data_snapshot {
         Some(Ok(d)) => {
             let match_uuid = d.match_info.uuid.clone();
-            let match_uuid_submit = match_uuid.clone();
             let match_uuid_notes1 = match_uuid.clone();
             let match_uuid_notes2 = match_uuid.clone();
+            let team1_name = d.match_info.team1_name.clone();
+            let team2_name = d.match_info.team2_name.clone();
+            // Use route param for POST so backend receives the same id we navigated to
+            let route_match_id_for_submit = match_id.clone();
             let all_players_team1 = d.all_players.clone();
             let all_players_team2 = d.all_players.clone();
             rsx! {
@@ -86,8 +77,22 @@ pub fn StartMatch(url: String) -> Element {
                         h1 { "Start Match" }
                         nav { aria_label: "breadcrumb",
                             ol { class: "breadcrumb",
-                                li { class: "breadcrumb-item", Link { to: Route::TournamentHome { url: home_url.clone() }, "{d.tournament.name}" } }
-                                li { class: "breadcrumb-item", Link { to: Route::Schedule { url: schedule_url.clone() }, "Schedule" } }
+                                li { class: "breadcrumb-item",
+                                    Link {
+                                        to: Route::TournamentHome {
+                                            url: home_url.clone(),
+                                        },
+                                        "{d.tournament.name}"
+                                    }
+                                }
+                                li { class: "breadcrumb-item",
+                                    Link {
+                                        to: Route::Schedule {
+                                            url: schedule_url.clone(),
+                                        },
+                                        "Schedule"
+                                    }
+                                }
                                 li { class: "breadcrumb-item active", "Start Match" }
                             }
                         }
@@ -97,64 +102,93 @@ pub fn StartMatch(url: String) -> Element {
                 div { class: "row",
                     div { class: "col-md-8",
                         div { class: "card",
-                            div { class: "card-header", h5 { class: "mb-0", "Match Setup" } }
+                            div { class: "card-header",
+                                h5 { class: "mb-0", "Match Setup" }
+                            }
                             div { class: "card-body",
                                 form {
                                     onsubmit: move |ev| {
                                         ev.prevent_default();
+                                        let team1_count = team1_selected().len();
+                                        let team2_count = team2_selected().len();
+                                        #[cfg(target_arch = "wasm32")]
+                                        {
+                                            if team1_count == 0 || team2_count == 0 {
+                                                let mut message = "".to_string();
+                                                if team1_count == 0 && team2_count == 0 {
+                                                    message.push_str("Both teams have zero players. ");
+                                                } else if team1_count == 0 {
+                                                    message.push_str("Team 1 has zero players. ");
+                                                } else {
+                                                    message.push_str("Team 2 has zero players. ");
+                                                }
+                                                message
+                                                    .push_str(
+                                                        "This typically only happens if a team doesn't show up. Are you sure you want to start the match?",
+                                                    );
+                                                if let Some(window) = web_sys::window() {
+                                                    let ok = window.confirm_with_message(&message).unwrap_or(false);
+                                                    if !ok {
+                                                        return;
+                                                    }
+                                                }
+                                            }
+                                        }
                                         let nav = navigator.clone();
                                         let team1_players: Vec<String> = team1_selected().iter().cloned().collect();
                                         let team2_players: Vec<String> = team2_selected().iter().cloned().collect();
                                         let match_notes = match_notes().clone();
                                         let u = submit_url.clone();
-                                        let match_id = match_uuid_submit.clone();
+                                        let match_id_for_req = route_match_id_for_submit.clone();
                                         spawn(async move {
                                             let req = crate::types::StartMatchRequest {
-                                                match_id,
+                                                match_id: match_id_for_req,
                                                 team1_players,
                                                 team2_players,
                                                 match_notes,
                                                 stones_per_set: None,
                                             };
                                             if let Ok(resp) = api::start_match(&u, &req).await {
-                                                let _ = nav.push(format!("/{}/run-match?id={}", u, resp.match_id));
+                                                nav.push(Route::RunMatch {
+                                                    url: u.clone(),
+                                                    match_id: resp.match_id.clone(),
+                                                });
                                             }
                                         });
                                     },
-                                    input { r#type: "hidden", name: "match_id", value: "{match_uuid}" }
+                                    input {
+                                        r#type: "hidden",
+                                        name: "match_id",
+                                        value: "{match_uuid}",
+                                    }
                                     div { class: "row mb-4",
                                         div { class: "col-md-6",
                                             div { class: "d-flex justify-content-between align-items-center",
-                                                h6 { class: "mb-0", "Team 1: {d.match_info.team1_name}" }
+                                                h6 { class: "mb-0",
+                                                    "Team 1: {d.match_info.team1_name}"
+                                                }
                                                 button {
                                                     r#type: "button",
                                                     class: "btn btn-sm btn-outline-info",
                                                     onclick: move |_| {
+                                                        notes_modal_show.set(true);
+                                                        notes_modal_content.set(None);
                                                         let u = notes_url_team1.clone();
                                                         let match_id = match_uuid_notes1.clone();
                                                         let ids = team1_selected().iter().cloned().collect::<Vec<_>>().join(",");
-                                                        let mut team1_notes = team1_notes;
+                                                        let mut notes_modal_content = notes_modal_content;
                                                         spawn(async move {
-                                                            let url = format!(
-                                                                "{}/{}/get-selection-notes?match_id={}&team=team1&player_ids={}",
-                                                                api::base_url(),
-                                                                u,
-                                                                match_id,
-                                                                urlencoding::encode(&ids)
-                                                            );
-                                                            if let Ok(resp) = reqwest::Client::new().get(url).send().await {
-                                                                if let Ok(val) = resp.json::<serde_json::Value>().await {
-                                                                    let notes = val.get("notes").cloned().unwrap_or_default();
-                                                                    let mut texts = Vec::new();
-                                                                    if let Some(arr) = notes.as_array() {
-                                                                        for n in arr {
-                                                                            if let Some(text) = n.get("text").and_then(|t| t.as_str()) {
-                                                                                texts.push(text.to_string());
-                                                                            }
-                                                                        }
+                                                            match api::get_selection_notes(&u, &match_id, "team1", &ids).await {
+                                                                Ok(val) => {
+                                                                    if let Some(false) = val.get("success").and_then(|v| v.as_bool()) {
+                                                                        let err = val.get("error").and_then(|e| e.as_str()).unwrap_or("Failed to load notes").to_string();
+                                                                        notes_modal_content.set(Some(Err(err)));
+                                                                    } else {
+                                                                        let notes = val.get("notes").and_then(|n| n.as_array()).cloned().unwrap_or_default();
+                                                                        notes_modal_content.set(Some(Ok(notes)));
                                                                     }
-                                                                    team1_notes.set(texts);
                                                                 }
+                                                                Err(e) => notes_modal_content.set(Some(Err(e))),
                                                             }
                                                         });
                                                     },
@@ -162,8 +196,12 @@ pub fn StartMatch(url: String) -> Element {
                                                 }
                                             }
                                             div { class: "mb-3",
-                                                label { class: "form-label", "Select Players (max {d.tournament.max_team_size_field.unwrap_or(0)}):" }
-                                                div { class: "border p-3", style: "max-height: 200px; overflow-y: auto;",
+                                                label { class: "form-label",
+                                                    "Select Players (max {d.tournament.max_team_size_field.unwrap_or(0)}):"
+                                                }
+                                                div {
+                                                    class: "border p-3",
+                                                    style: "max-height: 200px; overflow-y: auto;",
                                                     StartMatchPlayerList {
                                                         players: d.all_players.clone(),
                                                         team_ids: team1_all(),
@@ -177,12 +215,24 @@ pub fn StartMatch(url: String) -> Element {
                                                                 selected.remove(&id);
                                                             }
                                                             team1_selected.set(selected);
-                                                        }
+                                                        },
                                                     }
+                                                }
+                                                p {
+                                                    class: if team1_selected().len() > d.tournament.max_team_size_field.unwrap_or(0) as usize {
+                                                        "small text-danger mb-0 mt-1"
+                                                    } else {
+                                                        "small text-muted mb-0 mt-1"
+                                                    },
+                                                    "{team1_selected().len()}/{d.tournament.max_team_size_field.unwrap_or(0)} players selected"
                                                 }
                                             }
                                             div { class: "mb-3",
-                                                label { r#for: "team1_search", class: "form-label", "Add Player:" }
+                                                label {
+                                                    r#for: "team1_search",
+                                                    class: "form-label",
+                                                    "Add Player:"
+                                                }
                                                 div { class: "input-group",
                                                     input {
                                                         r#type: "text",
@@ -218,7 +268,7 @@ pub fn StartMatch(url: String) -> Element {
                                                                 ids.push(id);
                                                                 team1_all.set(ids);
                                                             }
-                                                        }
+                                                        },
                                                     }
                                                 }
                                             }
@@ -226,36 +276,31 @@ pub fn StartMatch(url: String) -> Element {
 
                                         div { class: "col-md-6",
                                             div { class: "d-flex justify-content-between align-items-center",
-                                                h6 { class: "mb-0", "Team 2: {d.match_info.team2_name}" }
+                                                h6 { class: "mb-0",
+                                                    "Team 2: {d.match_info.team2_name}"
+                                                }
                                                 button {
                                                     r#type: "button",
                                                     class: "btn btn-sm btn-outline-info",
                                                     onclick: move |_| {
+                                                        notes_modal_show.set(true);
+                                                        notes_modal_content.set(None);
                                                         let u = notes_url_team2.clone();
                                                         let match_id = match_uuid_notes2.clone();
                                                         let ids = team2_selected().iter().cloned().collect::<Vec<_>>().join(",");
-                                                        let mut team2_notes = team2_notes;
+                                                        let mut notes_modal_content = notes_modal_content;
                                                         spawn(async move {
-                                                            let url = format!(
-                                                                "{}/{}/get-selection-notes?match_id={}&team=team2&player_ids={}",
-                                                                api::base_url(),
-                                                                u,
-                                                                match_id,
-                                                                urlencoding::encode(&ids)
-                                                            );
-                                                            if let Ok(resp) = reqwest::Client::new().get(url).send().await {
-                                                                if let Ok(val) = resp.json::<serde_json::Value>().await {
-                                                                    let notes = val.get("notes").cloned().unwrap_or_default();
-                                                                    let mut texts = Vec::new();
-                                                                    if let Some(arr) = notes.as_array() {
-                                                                        for n in arr {
-                                                                            if let Some(text) = n.get("text").and_then(|t| t.as_str()) {
-                                                                                texts.push(text.to_string());
-                                                                            }
-                                                                        }
+                                                            match api::get_selection_notes(&u, &match_id, "team2", &ids).await {
+                                                                Ok(val) => {
+                                                                    if let Some(false) = val.get("success").and_then(|v| v.as_bool()) {
+                                                                        let err = val.get("error").and_then(|e| e.as_str()).unwrap_or("Failed to load notes").to_string();
+                                                                        notes_modal_content.set(Some(Err(err)));
+                                                                    } else {
+                                                                        let notes = val.get("notes").and_then(|n| n.as_array()).cloned().unwrap_or_default();
+                                                                        notes_modal_content.set(Some(Ok(notes)));
                                                                     }
-                                                                    team2_notes.set(texts);
                                                                 }
+                                                                Err(e) => notes_modal_content.set(Some(Err(e))),
                                                             }
                                                         });
                                                     },
@@ -263,8 +308,12 @@ pub fn StartMatch(url: String) -> Element {
                                                 }
                                             }
                                             div { class: "mb-3",
-                                                label { class: "form-label", "Select Players (max {d.tournament.max_team_size_field.unwrap_or(0)}):" }
-                                                div { class: "border p-3", style: "max-height: 200px; overflow-y: auto;",
+                                                label { class: "form-label",
+                                                    "Select Players (max {d.tournament.max_team_size_field.unwrap_or(0)}):"
+                                                }
+                                                div {
+                                                    class: "border p-3",
+                                                    style: "max-height: 200px; overflow-y: auto;",
                                                     StartMatchPlayerList {
                                                         players: d.all_players.clone(),
                                                         team_ids: team2_all(),
@@ -278,12 +327,24 @@ pub fn StartMatch(url: String) -> Element {
                                                                 selected.remove(&id);
                                                             }
                                                             team2_selected.set(selected);
-                                                        }
+                                                        },
                                                     }
+                                                }
+                                                p {
+                                                    class: if team2_selected().len() > d.tournament.max_team_size_field.unwrap_or(0) as usize {
+                                                        "small text-danger mb-0 mt-1"
+                                                    } else {
+                                                        "small text-muted mb-0 mt-1"
+                                                    },
+                                                    "{team2_selected().len()}/{d.tournament.max_team_size_field.unwrap_or(0)} players selected"
                                                 }
                                             }
                                             div { class: "mb-3",
-                                                label { r#for: "team2_search", class: "form-label", "Add Player:" }
+                                                label {
+                                                    r#for: "team2_search",
+                                                    class: "form-label",
+                                                    "Add Player:"
+                                                }
                                                 div { class: "input-group",
                                                     input {
                                                         r#type: "text",
@@ -319,14 +380,18 @@ pub fn StartMatch(url: String) -> Element {
                                                                 ids.push(id);
                                                                 team2_all.set(ids);
                                                             }
-                                                        }
+                                                        },
                                                     }
                                                 }
                                             }
                                         }
                                     }
                                     div { class: "mb-4",
-                                        label { r#for: "match_notes", class: "form-label", "Match Notes" }
+                                        label {
+                                            r#for: "match_notes",
+                                            class: "form-label",
+                                            "Match Notes"
+                                        }
                                         textarea {
                                             class: "form-control",
                                             id: "match_notes",
@@ -338,7 +403,13 @@ pub fn StartMatch(url: String) -> Element {
                                         }
                                     }
                                     div { class: "d-grid",
-                                        button { r#type: "submit", class: "btn btn-success btn-lg", "Start Match" }
+                                        button {
+                                            r#type: "submit",
+                                            class: "btn btn-success btn-lg",
+                                            disabled: team1_selected().len() > d.tournament.max_team_size_field.unwrap_or(0) as usize
+                                                || team2_selected().len() > d.tournament.max_team_size_field.unwrap_or(0) as usize,
+                                            "Start Match"
+                                        }
                                     }
                                 }
                             }
@@ -346,40 +417,110 @@ pub fn StartMatch(url: String) -> Element {
                     }
                     div { class: "col-md-4",
                         div { class: "card",
-                            div { class: "card-header", h5 { class: "mb-0", "Match Info" } }
+                            div { class: "card-header",
+                                h5 { class: "mb-0", "Match Info" }
+                            }
                             div { class: "card-body",
-                                p { strong { "Match: " } "{d.match_info.name}" }
-                                p { strong { "Field: " } "{d.match_info.field.as_deref().unwrap_or(\"TBA\")}" }
-                                p { strong { "Set Type: " } "{d.match_info.set_type.as_deref().unwrap_or(\"Standard\")}" }
-                                p { strong { "Refs: " } "{d.match_info.refs.as_deref().unwrap_or(\"TBA\")}" }
-                            }
-                        }
-                        if !team1_notes().is_empty() {
-                            div { class: "card mt-3",
-                                div { class: "card-header", h5 { class: "mb-0", "Team 1 Notes" } }
-                                div { class: "card-body",
-                                    for note in team1_notes().iter() {
-                                        p { class: "small text-muted mb-1", "{note}" }
-                                    }
+                                p {
+                                    strong { "Match: " }
+                                    "{d.match_info.name}"
                                 }
-                            }
-                        }
-                        if !team2_notes().is_empty() {
-                            div { class: "card mt-3",
-                                div { class: "card-header", h5 { class: "mb-0", "Team 2 Notes" } }
-                                div { class: "card-body",
-                                    for note in team2_notes().iter() {
-                                        p { class: "small text-muted mb-1", "{note}" }
-                                    }
+                                p {
+                                    strong { "Field: " }
+                                    "{d.match_info.field.as_deref().unwrap_or(\"TBA\")}"
+                                }
+                                p {
+                                    strong { "Set Type: " }
+                                    "{d.match_info.set_type.as_deref().unwrap_or(\"Standard\")}"
+                                }
+                                p {
+                                    strong { "Refs: " }
+                                    "{d.match_info.refs.as_deref().unwrap_or(\"TBA\")}"
                                 }
                             }
                         }
                     }
                 }
+
+            if notes_modal_show() {
+                div {
+                    class: "modal show",
+                    style: "display: block; background: rgba(0,0,0,0.5);",
+                    role: "dialog",
+                    tabindex: "-1",
+                    onclick: move |_| notes_modal_show.set(false),
+                    div {
+                        class: "modal-dialog",
+                        onclick: move |ev| { ev.stop_propagation(); },
+                        div { class: "modal-content",
+                            div { class: "modal-header",
+                                h5 { class: "modal-title", "Relevant Notes" }
+                                button {
+                                    r#type: "button",
+                                    class: "btn-close",
+                                    aria_label: "Close",
+                                    onclick: move |_| notes_modal_show.set(false),
+                                }
+                            }
+                            div { class: "modal-body",
+                                match notes_modal_content().as_ref() {
+                                    None => rsx! { div { class: "text-muted", "Loading…" } },
+                                    Some(Err(e)) => rsx! { div { class: "text-danger", "{e}" } },
+                                    Some(Ok(notes)) => {
+                                        let rows: Vec<(String, String)> = if notes.is_empty() {
+                                            vec![(String::new(), "No notes for this selection.".to_string())]
+                                        } else {
+                                            notes.iter().map(|n| {
+                                                let text = n.get("text").and_then(|t| t.as_str()).unwrap_or("").to_string();
+                                                let target = n.get("player_display").and_then(|p| p.as_str())
+                                                    .or_else(|| n.get("player_name").and_then(|p| p.as_str()))
+                                                    .or_else(|| n.get("target").and_then(|t| t.as_str()))
+                                                    .map(|t| {
+                                                        if t == "team1" { team1_name.clone() } else if t == "team2" { team2_name.clone() } else { t.to_string() }
+                                                    })
+                                                    .unwrap_or_else(|| "Match".to_string());
+                                                (target, text)
+                                            }).collect()
+                                        };
+                                        rsx! {
+                                            div {
+                                                for (note_target, note_text) in rows.iter() {
+                                                    div {
+                                                        class: if note_text.as_str() == "No notes for this selection." { "text-muted" } else { "small text-muted border-start border-3 ps-2 mb-1" },
+                                                        if note_text.as_str() == "No notes for this selection." {
+                                                            "{note_text}"
+                                                        } else {
+                                                            "{note_target}: {note_text}"
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            div { class: "modal-footer",
+                                button {
+                                    r#type: "button",
+                                    class: "btn btn-secondary",
+                                    onclick: move |_| notes_modal_show.set(false),
+                                    "Close"
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                div { }
+            }
             }
         }
-        Some(Err(e)) => rsx! { p { class: "text-danger", "{e}" } },
-        None => rsx! { p { "Loading…" } },
+        Some(Err(e)) => rsx! {
+            p { class: "text-danger", "{e}" }
+        },
+        None => rsx! {
+            p { "Loading…" }
+        },
     }
 }
 
@@ -396,7 +537,9 @@ fn StartMatchSearchResults(
     rsx! {
         for p in players
             .iter()
-            .filter(|p| p.name.to_lowercase().contains(&q) || p.id.to_lowercase().contains(&q))
+            .filter(|p| {
+                p.name.to_lowercase().contains(&q) || p.id.to_lowercase().contains(&q)
+            })
             .take(5)
         {
             {
@@ -404,10 +547,21 @@ fn StartMatchSearchResults(
                 rsx! {
                     div { class: "d-flex justify-content-between align-items-center border rounded p-2 mb-1",
                         div {
-                            strong { "{p.name}" }
-                            span { class: "text-muted ms-2", "@{p.id}" }
+                            {
+                                let display = match (&p.jersey_name, &p.jersey_number) {
+                                    (Some(jn), Some(num)) => format!("{} #{}", jn, num),
+                                    (Some(jn), None) => jn.clone(),
+                                    (None, Some(num)) => format!("{} #{}", p.name, num),
+                                    (None, None) => p.name.clone(),
+                                };
+                                rsx! {
+                                    strong { "{display}" }
+                                    span { class: "text-muted ms-2", "@{p.id}" }
+                                }
+                            }
                         }
                         button {
+                            r#type: "button",
                             class: "btn btn-sm btn-outline-secondary",
                             onclick: move |_| on_add.call(id.clone()),
                             "Add"
@@ -451,11 +605,10 @@ fn StartMatchPlayerList(
                                     r#type: "checkbox",
                                     id: "{id}",
                                     checked: is_selected,
-                                    disabled: disabled,
+                                    disabled,
                                     onchange: move |_| on_toggle.call((id_for_toggle.clone(), !is_selected)),
                                 }
-                                label { class: "form-check-label",
-                                    r#for: "{id}",
+                                label { class: "form-check-label", r#for: "{id}",
                                     {
                                         let mut label = p.jersey_name.clone().unwrap_or_else(|| p.name.clone());
                                         if let Some(num) = &p.jersey_number {
