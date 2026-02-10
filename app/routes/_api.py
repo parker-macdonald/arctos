@@ -15,6 +15,7 @@ from app.serializers.match_note_serializer import MatchNoteSerializer
 from app.error_values import Ok, Err
 from app.routes.tournaments import update_match_previous_link
 from app.utils.scheduling import recompute_all_match_times, compute_dynamic_match_nominal_start_time
+from app.utils.datetime_helpers import to_iso_z
 from app.domain.enums import RegistrationStatus, MatchStatus, ScheduleType, SetType
 from models import (
     Player,
@@ -58,6 +59,18 @@ def me():
     if u is None:
         return jsonify({"error": "Not authenticated"}), 401
     return jsonify(u)
+
+@bp.route("/server-time", methods=["GET"])
+def server_time():
+    """Return current server time in unix timestamp format."""
+    import time
+
+    return jsonify(
+        {
+            "server_time": time.time(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+    )
 
 
 @bp.route("/login", methods=["POST"])
@@ -568,6 +581,153 @@ def tournament_invitations_api(tournament_url):
             ],
         }
     )
+
+
+@bp.route("/tournaments/<tournament_url>/bracket-setup-data", methods=["GET"])
+@login_required
+def tournament_bracket_setup_data_api(tournament_url):
+    """Raw bracket configuration for the SPA bracket-setup page.
+
+    This returns the underlying TOML data (already parsed) so that the
+    Dioxus frontend can render and edit bracket annotations while the
+    existing HTML form endpoint continues to handle multipart uploads.
+    """
+    # Only TOs may access bracket setup data
+    if not _check_to(tournament_url):
+        return jsonify({"error": "Forbidden"}), 403
+
+    tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
+
+    brackets_data = []
+    if tournament.bracket:
+        try:
+            import tomli
+
+            parsed = tomli.loads(tournament.bracket)
+            brackets_data = parsed.get("brackets", [])
+        except Exception:
+            # If parsing fails, just return an empty brackets list so the UI
+            # can present a clean state rather than a hard error.
+            brackets_data = []
+
+    return jsonify(
+        {
+            "tournament": _tournament_to_dict(tournament),
+            "brackets": brackets_data,
+        }
+    )
+
+
+@bp.route("/tournaments/<tournament_url>/bracket-setup", methods=["POST"])
+@login_required
+def tournament_bracket_setup_save_api(tournament_url):
+    """Save bracket configuration from the SPA."""
+    if not _check_to(tournament_url):
+        return jsonify({"error": "Forbidden"}), 403
+
+    tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
+
+    if not request.is_json:
+        return jsonify({"error": "Content-Type must be application/json"}), 415
+
+    data = request.get_json(silent=True) or {}
+    brackets = data.get("brackets", [])
+
+    def escape_toml_string(s):
+        """Escape special characters in TOML strings."""
+        s = str(s)
+        s = s.replace("\\", "\\\\")
+        s = s.replace('"', '\\"')
+        s = s.replace("\n", "\\n")
+        s = s.replace("\t", "\\t")
+        return s
+
+    toml_lines = []
+    for bracket in brackets:
+        name = (bracket.get("name") or "").strip()
+        image = (bracket.get("image") or "").strip()
+        if not name or not image:
+            continue
+
+        toml_lines.append("[[brackets]]")
+        toml_lines.append(f'name = "{escape_toml_string(name)}"')
+        toml_lines.append(f'image = "{escape_toml_string(image)}"')
+        toml_lines.append("")
+
+        teams = bracket.get("teams") or []
+        for team in teams:
+            team_ref = (team.get("team") or "").strip()
+            if not team_ref:
+                continue
+            try:
+                x = int(team.get("x", 0) or 0)
+                y = int(team.get("y", 0) or 0)
+                halign = (team.get("halign") or "center").strip() or "center"
+                valign = (team.get("valign") or "center").strip() or "center"
+                size = int(team.get("size", 20) or 20)
+            except (ValueError, TypeError):
+                continue
+
+            toml_lines.append("[[brackets.teams]]")
+            toml_lines.append(f'team = "{escape_toml_string(team_ref)}"')
+            toml_lines.append(f"x = {x}")
+            toml_lines.append(f"y = {y}")
+            toml_lines.append(f'halign = "{escape_toml_string(halign)}"')
+            toml_lines.append(f'valign = "{escape_toml_string(valign)}"')
+            toml_lines.append(f"size = {size}")
+            toml_lines.append("")
+
+    tournament.bracket = "\n".join(toml_lines)
+    db.session.commit()
+
+    return jsonify({"success": True})
+
+
+@bp.route("/tournaments/<tournament_url>/bracket-upload-bytes", methods=["POST"])
+@login_required
+def tournament_bracket_upload_bytes_api(tournament_url):
+    """Upload a single bracket image from the SPA using raw bytes.
+
+    The client sends the file contents as the request body and passes
+    `filename` and `bracket_index` as query parameters.
+    """
+    if not _check_to(tournament_url):
+        return jsonify({"error": "Forbidden"}), 403
+
+    tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
+
+    from flask import current_app
+    import os
+    from datetime import datetime, timezone
+
+    original_name = request.args.get("filename", "bracket.png")
+    bracket_index = request.args.get("bracket_index", "0")
+
+    # Derive a safe extension from the original filename
+    _, ext = os.path.splitext(original_name)
+    if not ext:
+        ext = ".png"
+
+    # Normalize bracket index to digits only
+    safe_index = "".join(ch for ch in bracket_index if ch.isdigit()) or "0"
+
+    upload_dir = os.path.join(
+        current_app.root_path, "../static", "uploads", "brackets"
+    )
+    os.makedirs(upload_dir, exist_ok=True)
+
+    filename = f"bracket_{tournament_url}_{safe_index}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}{ext}"
+    file_path = os.path.join(upload_dir, filename)
+
+    try:
+        data = request.get_data() or b""
+        with open(file_path, "wb") as f:
+            f.write(data)
+    except Exception as e:
+        return jsonify({"error": f"Error saving image: {e}"}), 500
+
+    rel_path = f"uploads/brackets/{filename}"
+    return jsonify({"success": True, "path": rel_path})
 
 
 @bp.route("/tournaments/<tournament_url>/bracket", methods=["GET"])
@@ -1106,9 +1266,26 @@ def tournament_schedule(tournament_url):
     )
 
 
+def _team_pseudonym_and_photo(tournament_url, team_id):
+    """Return (pseudonym, profile_photo) for a team in an event."""
+    if not team_id:
+        return None, None
+    reg = TeamRegistration.query.filter_by(
+        event=tournament_url, team=team_id
+    ).first()
+    pseudonym = reg.pseudonym if reg and reg.pseudonym else None
+    team = Team.query.get(team_id)
+    profile_photo = team.profile_photo if team else None
+    if not pseudonym and team:
+        pseudonym = team.name
+    if not pseudonym:
+        pseudonym = team_id
+    return pseudonym, profile_photo
+
+
 @bp.route("/tournaments/<tournament_url>/results", methods=["GET"])
 def tournament_results(tournament_url):
-    """Completed/skipped matches and points."""
+    """Tournament results: teams with aggregate stats (no per-match data)."""
     tournament, err = _require_tournament(tournament_url)
     if err:
         return jsonify({"error": "Not found"}), err
@@ -1116,32 +1293,110 @@ def tournament_results(tournament_url):
         Match.event == tournament_url,
         Match.status.in_([MatchStatus.COMPLETED, MatchStatus.SKIPPED]),
     ).all()
+    # Exclude ribbon and BREAK/JOIN for stats (same as Flask results page)
+    count_matches = [
+        m
+        for m in matches
+        if getattr(m, "schedule_type", None) not in (ScheduleType.BREAK, ScheduleType.JOIN)
+        and not getattr(m, "ribbon", False)
+    ]
     points_by_match = {}
-    if matches:
-        match_ids = [m.uuid for m in matches]
+    if count_matches:
+        match_ids = [m.uuid for m in count_matches]
         for p in Point.query.filter(Point.match.in_(match_ids)).all():
-            points_by_match.setdefault(p.match, []).append(
-                {
-                    "uuid": p.uuid,
-                    "set_number": p.set_number,
-                    "winner": p.winner,
-                    "rerolled": p.rerolled,
+            points_by_match.setdefault(p.match, []).append(p)
+    team_stats = {}
+    for m in count_matches:
+        t1 = m.team1 or m.team1_initial
+        t2 = m.team2 or m.team2_initial
+        for tid, is_team1 in [(t1, True), (t2, False)]:
+            if not tid or tid == "TBA" or "::" in str(tid):
+                continue
+            if tid not in team_stats:
+                if str(tid).startswith("tag::") or "::" in str(tid):
+                    pseudonym, profile_photo = tid, None
+                else:
+                    pseudonym, profile_photo = _team_pseudonym_and_photo(tournament_url, tid)
+                team_stats[tid] = {
+                    "id": tid,
+                    "pseudonym": pseudonym or tid,
+                    "profile_photo": profile_photo,
+                    "matches_won": 0,
+                    "matches_lost": 0,
+                    "points_won": 0,
+                    "points_lost": 0,
                 }
-            )
+        winner = m.match_winner.value if m.match_winner else None
+        if winner and t1 and t2 and t1 != "TBA" and t2 != "TBA":
+            if winner == "TEAM1":
+                team_stats[t1]["matches_won"] += 1
+                team_stats[t2]["matches_lost"] += 1
+            elif winner == "TEAM2":
+                team_stats[t2]["matches_won"] += 1
+                team_stats[t1]["matches_lost"] += 1
+        points_list = points_by_match.get(m.uuid, [])
+        t1p = sum(1 for p in points_list if getattr(p, "winner", None) == "TEAM1" and not getattr(p, "rerolled", False))
+        t2p = sum(1 for p in points_list if getattr(p, "winner", None) == "TEAM2" and not getattr(p, "rerolled", False))
+        if t1 and t1 != "TBA":
+            team_stats[t1]["points_won"] += t1p
+            team_stats[t1]["points_lost"] += t2p
+        if t2 and t2 != "TBA":
+            team_stats[t2]["points_won"] += t2p
+            team_stats[t2]["points_lost"] += t1p
+    teams_list = list(team_stats.values())
+    return jsonify({"tournament": _tournament_to_dict(tournament), "teams": teams_list})
+
+
+@bp.route("/tournaments/<tournament_url>/results/team/<team_id>", methods=["GET"])
+def tournament_results_team_matches(tournament_url, team_id):
+    """Matches for one team in this tournament (for expandable row)."""
+    tournament, err = _require_tournament(tournament_url)
+    if err:
+        return jsonify({"error": "Not found"}), err
+    matches = (
+        Match.query.filter(
+            Match.event == tournament_url,
+            Match.status.in_([MatchStatus.COMPLETED, MatchStatus.SKIPPED]),
+            (Match.team1 == team_id) | (Match.team2 == team_id),
+        )
+        .order_by(Match.completed_time, Match.uuid)
+        .all()
+    )
+    match_ids = [m.uuid for m in matches]
+    points_by_match = {}
+    if match_ids:
+        for p in Point.query.filter(Point.match.in_(match_ids)).all():
+            points_by_match.setdefault(p.match, []).append(p)
     match_list = []
     for m in matches:
+        team1_name = _team_name_for_match(tournament_url, m, "team1")
+        team2_name = _team_name_for_match(tournament_url, m, "team2")
+        points_list = points_by_match.get(m.uuid, [])
+        set_scores = {}
+        for p in points_list:
+            if getattr(p, "rerolled", False):
+                continue
+            sn = getattr(p, "set_number", None) or 1
+            set_scores.setdefault(sn, {"set_number": sn, "team1_points": 0, "team2_points": 0})
+            w = getattr(p, "winner", None)
+            if w == "TEAM1":
+                set_scores[sn]["team1_points"] += 1
+            elif w == "TEAM2":
+                set_scores[sn]["team2_points"] += 1
+        sets_list = sorted(set_scores.values(), key=lambda x: x["set_number"])
+        your_side = "TEAM1" if m.team1 == team_id else "TEAM2"
         match_list.append(
             {
                 "uuid": m.uuid,
                 "name": m.name,
-                "field": m.field,
-                "team1": m.team1,
-                "team2": m.team2,
+                "team1_name": team1_name,
+                "team2_name": team2_name,
                 "match_winner": m.match_winner.value if m.match_winner else None,
-                "points": points_by_match.get(m.uuid, []),
+                "your_side": your_side,
+                "sets": sets_list,
             }
         )
-    return jsonify({"tournament": _tournament_to_dict(tournament), "matches": match_list})
+    return jsonify({"matches": match_list})
 
 
 @bp.route("/tournaments/<tournament_url>/fields", methods=["GET"])
@@ -1311,9 +1566,212 @@ def tournament_match_detail(tournament_url):
             "winner": p.winner,
             "rerolled": p.rerolled,
             "stamp": _dt_iso(p.stamp),
+            "end_stamp": _dt_iso(p.end_stamp),
+            "stones_at_start": p.stones_at_start if match.set_type == SetType.STONES else None,
         }
         for p in points
     ]
+    
+    # Get camera data (same logic as match_page route)
+    available_cameras = []
+    camera_url = None
+    from app.utils.camera_helpers import parse_camera_urls
+    import os
+    from flask import current_app
+    
+    stream_starts = {}
+    recorded_videos = []
+    camera_urls = []
+    
+    if match.camera_stream_starts:
+        try:
+            stream_starts_data = json.loads(match.camera_stream_starts)
+            for camera_id, recording_data in stream_starts_data.items():
+                recordings = (
+                    recording_data
+                    if isinstance(recording_data, list)
+                    else [recording_data]
+                )
+                for recording in recordings:
+                    if isinstance(recording, dict) and "video_path" in recording:
+                        video_path = recording.get("video_path", "")
+                        if video_path:
+                            video_full_path = os.path.join(
+                                current_app.root_path, "../static", video_path
+                            )
+                            if os.path.exists(video_full_path):
+                                recorded_videos.append(
+                                    {
+                                        "camera_id": camera_id,
+                                        "video_path": video_path,
+                                        "point_timestamps": recording.get("point_timestamps"),
+                                        "type": "recorded",
+                                        "start_time": recording.get("start_time"),
+                                        "start_timestamp": recording.get("start_timestamp"),
+                                        "session_id": recording.get("session_id"),
+                                    }
+                                )
+        except (json.JSONDecodeError, TypeError):
+            pass
+    
+    # Get YouTube cameras from field configuration
+    if match.field:
+        field_obj = Field.query.filter_by(
+            event=tournament_url, name=match.field
+        ).first()
+        if field_obj and field_obj.camera:
+            camera_urls = parse_camera_urls(field_obj.camera)
+            if camera_urls:
+                for idx, url in enumerate(camera_urls):
+                    stream_start_str = stream_starts.get(str(idx))
+                    available_cameras.append(
+                        {
+                            "index": idx,
+                            "url": url,
+                            "stream_start_time": stream_start_str if stream_start_str else None,
+                            "type": "youtube",
+                        }
+                    )
+    
+    # Add recorded videos (only for completed matches)
+    if match.status == MatchStatus.COMPLETED and recorded_videos:
+        for idx, recording in enumerate(recorded_videos):
+            start_time = recording.get("start_time")
+            if not start_time and recording.get("start_timestamp"):
+                start_time = datetime.fromtimestamp(
+                    int(recording["start_timestamp"]) / 1000, tz=timezone.utc
+                ).isoformat()
+            available_cameras.append(
+                {
+                    "index": len(camera_urls) + idx,
+                    "url": None,
+                    "stream_start_time": start_time,
+                    "type": "recorded",
+                    "video_path": recording["video_path"],
+                    "camera_id": recording.get("camera_id", "unknown"),
+                    "session_id": recording.get("session_id", ""),
+                    "point_timestamps": recording.get("point_timestamps"),
+                }
+            )
+    
+    if available_cameras:
+        first_cam = available_cameras[0]
+        if first_cam.get("type") == "youtube":
+            camera_url = first_cam["url"]
+    
+    # Get match notes
+    initial_notes = match.initial_notes or ""
+    final_notes = match.final_notes or ""
+    match_notes = []
+    point_notes_map = {}
+    
+    # Check if user is head ref
+    is_head_ref = False
+    if current_user.is_authenticated:
+        from app.utils.user_helpers import is_player
+        if is_player(current_user):
+            is_head_ref = can_head_ref_match(tournament_url, current_user.id, match=match)
+    
+    # Get match-level notes (point_id is None) - only for head refs
+    if is_head_ref:
+        notes = (
+            MatchNote.query.filter_by(match=match.uuid, point_id=None)
+            .order_by(MatchNote.created_at.desc())
+            .all()
+        )
+        from app.utils.player_helpers import get_player_display_name
+        for note in notes:
+            player_name = None
+            player_display = None
+            if note.player_id:
+                player_name, player_display = get_player_display_name(
+                    note.player_id, tournament_url
+                )
+            team_id = None
+            if note.target == "team1":
+                team_id = match.team1
+            elif note.target == "team2":
+                team_id = match.team2
+            
+            match_notes.append(
+                {
+                    "text": note.text,
+                    "target": note.target,
+                    "player_id": note.player_id,
+                    "player_name": player_name,
+                    "player_display": player_display,
+                    "team_id": team_id,
+                    "created_at": _dt_iso(note.created_at),
+                }
+            )
+    
+    # Build match_players for player-targeted notes (jersey/name search + profile photo)
+    match_players = []
+    from app.utils.player_helpers import get_player_display_from_registration
+    for team_players_json, _ in [(match.team1_players, "team1"), (match.team2_players, "team2")]:
+        if not team_players_json:
+            continue
+        try:
+            player_ids = json.loads(team_players_json)
+            for pid in player_ids:
+                pr = PlayerRegistration.query.filter_by(
+                    event=tournament_url, player=pid, status=RegistrationStatus.CONFIRMED
+                ).first()
+                if pr:
+                    player = Player.query.get(pid)
+                    if player:
+                        display = get_player_display_from_registration(player, pr)
+                        match_players.append({
+                            "player_id": player.id,
+                            "name": player.name or "",
+                            "display": display,
+                            "profile_photo": getattr(player, "profile_photo", None),
+                        })
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    # Get point-specific notes - point notes (target='match') visible to everyone
+    if points:
+        point_ids = [p.uuid for p in points]
+        if point_ids:
+            point_notes_query = (
+                MatchNote.query.filter_by(match=match.uuid)
+                .filter(MatchNote.point_id.in_(point_ids))
+                .order_by(MatchNote.created_at.asc())
+            )
+            if not is_head_ref:
+                point_notes_query = point_notes_query.filter_by(target="match")
+            
+            point_notes = point_notes_query.all()
+            from app.utils.player_helpers import get_player_display_name
+            for n in point_notes:
+                if not is_head_ref and n.target != "match":
+                    continue
+                
+                player_name = None
+                player_display = None
+                if n.player_id:
+                    player_name, player_display = get_player_display_name(
+                        n.player_id, tournament_url
+                    )
+                team_id = None
+                if n.target == "team1":
+                    team_id = match.team1
+                elif n.target == "team2":
+                    team_id = match.team2
+                
+                point_notes_map.setdefault(n.point_id, []).append(
+                    {
+                        "text": n.text,
+                        "target": n.target,
+                        "player_id": n.player_id,
+                        "player_name": player_name,
+                        "player_display": player_display,
+                        "team_id": team_id,
+                        "created_at": _dt_iso(n.created_at),
+                    }
+                )
+    
     return jsonify(
         {
             "match": {
@@ -1341,8 +1799,84 @@ def tournament_match_detail(tournament_url):
                 "ribbon": match.ribbon,
                 "skip_condition": match.skip_condition,
                 "nsets": match.nsets,
+                "initial_notes": initial_notes,
+                "final_notes": final_notes,
             },
             "points": points_data,
+            "available_cameras": available_cameras,
+            "camera_url": camera_url,
+            "match_notes": match_notes,
+            "point_notes_map": point_notes_map,
+            "is_head_ref": is_head_ref,
+            "match_players": match_players,
+        }
+    )
+
+
+@bp.route("/tournaments/<tournament_url>/match-state", methods=["GET"])
+def tournament_match_state(tournament_url):
+    """Get current match state for polling (CORS-friendly). Public endpoint."""
+    match_id = request.args.get("match_id") or request.args.get("id")
+    if not match_id:
+        return jsonify({"error": "Match ID required"}), 400
+
+    match = Match.query.filter_by(uuid=match_id, event=tournament_url).first()
+    if not match:
+        return jsonify({"error": "Match not found"}), 404
+
+    points = Point.query.filter_by(match=match.uuid).order_by(Point.stamp).all()
+
+    team1_score = sum(1 for p in points if p.winner == "TEAM1" and not p.rerolled)
+    team2_score = sum(1 for p in points if p.winner == "TEAM2" and not p.rerolled)
+
+    sets = sorted(set(p.set_number for p in points))
+    scores_by_set = {}
+    for set_num in sets:
+        set_points = [p for p in points if p.set_number == set_num]
+        scores_by_set[set_num] = {
+            "team1_score": sum(
+                1 for p in set_points if p.winner == "TEAM1" and not p.rerolled
+            ),
+            "team2_score": sum(
+                1 for p in set_points if p.winner == "TEAM2" and not p.rerolled
+            ),
+        }
+
+    points_data = []
+    for p in points:
+        stamp_iso = to_iso_z(p.stamp).unwrap_or(None)
+        end_stamp_iso = to_iso_z(p.end_stamp).unwrap_or(None)
+        points_data.append(
+            {
+                "uuid": p.uuid,
+                "set_number": p.set_number,
+                "winner": p.winner,
+                "rerolled": p.rerolled,
+                "stamp": stamp_iso,
+                "end_stamp": end_stamp_iso,
+                "stones_at_start": (
+                    p.stones_at_start if match.set_type == SetType.STONES else None
+                ),
+            }
+        )
+
+    finalized_at = None
+    if (
+        match.status in (MatchStatus.COMPLETED, MatchStatus.SKIPPED)
+        and match.finalized_at
+    ):
+        finalized_at = match.finalized_at.isoformat()
+
+    return jsonify(
+        {
+            "match_id": match.uuid,
+            "status": match.status.value if hasattr(match.status, "value") else str(match.status),
+            "team1_score": team1_score,
+            "team2_score": team2_score,
+            "scores_by_set": scores_by_set,
+            "points": points_data,
+            "finalized_at": finalized_at,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
     )
 

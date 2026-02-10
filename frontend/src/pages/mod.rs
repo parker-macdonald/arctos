@@ -42,6 +42,7 @@ mod tournament_home;
 mod tournament_register;
 mod tournament_setup;
 mod tournament_settings;
+mod bracket_setup;
 
 pub use about::About;
 pub use add_injury::AddInjury;
@@ -78,6 +79,7 @@ pub use team_token_input::TeamTokenInput;
 pub use scoreboard::Scoreboard;
 pub use start_match::StartMatch;
 pub use stones::Stones;
+pub use bracket_setup::BracketSetup;
 pub use team_profile::TeamProfile;
 pub use teams_list::TeamsList;
 pub use terms::Terms;

@@ -309,6 +309,27 @@ pub async fn results(tournament_url: &str) -> Result<ResultsResponse, String> {
     response_json(r).await
 }
 
+pub async fn results_team_matches(
+    tournament_url: &str,
+    team_id: &str,
+) -> Result<crate::types::TeamMatchesResponse, String> {
+    let c = client();
+    let url = format!(
+        "{}/_api/tournaments/{}/results/team/{}",
+        base(),
+        tournament_url,
+        urlencoding::encode(team_id)
+    );
+    let r = with_credentials(c.get(&url))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if r.status().as_u16() == 404 {
+        return Err("Not found".to_string());
+    }
+    response_json(r).await
+}
+
 pub async fn match_detail(
     tournament_url: &str,
     match_id: Option<&str>,
@@ -412,6 +433,21 @@ pub async fn server_time() -> Result<ServerTimeResponse, String> {
     response_json(r).await
 }
 
+pub async fn bracket_setup_data(url: &str) -> Result<BracketSetupResponse, String> {
+    let c = client();
+    let r = with_credentials(
+        c.get(format!(
+            "{}/_api/tournaments/{}/bracket-setup-data",
+            base(),
+            url
+        )),
+    )
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    response_json(r).await
+}
+
 pub async fn scoreboard_state(
     tournament_url: &str,
     field_name: &str,
@@ -507,7 +543,7 @@ pub async fn delete_injury(player_id: &str, injury_id: u32) -> Result<(), String
 pub async fn match_state(tournament_url: &str, match_id: &str) -> Result<Value, String> {
     let c = client();
     let r = with_credentials(c.get(format!(
-        "{}/{}/match-state?id={}",
+        "{}/_api/tournaments/{}/match-state?match_id={}",
         base(),
         tournament_url,
         match_id
@@ -661,6 +697,190 @@ pub async fn delete_point(tournament_url: &str, point_id: &str) -> Result<Value,
     .await
     .map_err(|e| e.to_string())?;
     response_json(r).await
+}
+
+pub async fn get_point_notes(
+    tournament_url: &str,
+    match_id: &str,
+    point_id: &str,
+) -> Result<Value, String> {
+    let c = client();
+    let url = format!(
+        "{}/{}/get-point-notes?match_id={}&point_id={}",
+        base(),
+        tournament_url,
+        urlencoding::encode(match_id),
+        urlencoding::encode(point_id),
+    );
+    let r = with_credentials(c.get(url))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    response_json(r).await
+}
+
+/// Get selection notes for a team and selected player IDs (start-match page).
+/// Uses credentials so the backend @login_required sees the session.
+pub async fn get_selection_notes(
+    tournament_url: &str,
+    match_id: &str,
+    team: &str,
+    player_ids: &str,
+) -> Result<Value, String> {
+    let c = client();
+    let url = format!(
+        "{}/{}/get-selection-notes?match_id={}&team={}&player_ids={}",
+        base(),
+        tournament_url,
+        urlencoding::encode(match_id),
+        urlencoding::encode(team),
+        urlencoding::encode(player_ids),
+    );
+    let r = with_credentials(c.get(url))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    response_json(r).await
+}
+
+pub async fn add_point_note(
+    tournament_url: &str,
+    match_id: &str,
+    point_id: &str,
+    text: &str,
+    target: &str,
+    player_id: Option<&str>,
+) -> Result<Value, String> {
+    let c = client();
+    let body = serde_json::json!({
+        "match_id": match_id,
+        "point_id": point_id,
+        "text": text,
+        "target": target,
+        "player_id": player_id,
+    });
+    let r = with_credentials(
+        c.post(format!("{}/{}/add-point-note", base(), tournament_url)).json(&body),
+    )
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    let data: Value = response_json(r).await?;
+    let success = data.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+    if !success {
+        return Err(
+            data.get("error")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Request failed")
+                .to_string(),
+        );
+    }
+    Ok(data)
+}
+
+pub async fn update_stones(
+    tournament_url: &str,
+    match_id: &str,
+    stones_remaining: u32,
+) -> Result<Value, String> {
+    let c = client();
+    let body = serde_json::json!({
+        "match_id": match_id,
+        "stones_remaining": stones_remaining,
+    });
+    let r = with_credentials(
+        c.post(format!(
+            "{}/{}/match-actions/update-stones",
+            base(),
+            tournament_url
+        ))
+        .json(&body),
+    )
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    let data: Value = response_json(r).await?;
+    let success = data.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+    if !success {
+        return Err(
+            data.get("error")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Request failed")
+                .to_string(),
+        );
+    }
+    Ok(data)
+}
+
+pub async fn save_bracket_setup(
+    tournament_url: &str,
+    brackets: &[crate::types::BracketConfig],
+) -> Result<(), String> {
+    let c = client();
+    let body = serde_json::json!({ "brackets": brackets });
+    let r = with_credentials(
+        c.post(format!(
+            "{}/_api/tournaments/{}/bracket-setup",
+            base(),
+            tournament_url
+        ))
+        .json(&body),
+    )
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    let v: serde_json::Value = response_json(r).await?;
+    if v.get("success").and_then(|v| v.as_bool()).unwrap_or(false) {
+        Ok(())
+    } else {
+        Err(v.get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Failed to save bracket configuration")
+            .to_string())
+    }
+}
+
+/// Upload a single bracket image as raw bytes and return its relative static path.
+#[cfg(target_arch = "wasm32")]
+pub async fn upload_bracket_image_bytes(
+    tournament_url: &str,
+    bracket_index: u32,
+    filename: &str,
+    bytes: bytes::Bytes,
+) -> Result<String, String> {
+    let c = client();
+    let r = with_credentials(
+        c.post(format!(
+            "{}/_api/tournaments/{}/bracket-upload-bytes",
+            base(),
+            tournament_url
+        ))
+        .query(&[
+            ("bracket_index", bracket_index.to_string()),
+            ("filename", filename.to_string()),
+        ])
+        .body(bytes),
+    )
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    let v: serde_json::Value = response_json(r).await?;
+    if v
+        .get("success")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
+        if let Some(path) = v.get("path").and_then(|v| v.as_str()) {
+            Ok(path.to_string())
+        } else {
+            Err("Upload succeeded but no path returned".to_string())
+        }
+    } else {
+        Err(v.get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Failed to upload bracket image")
+            .to_string())
+    }
 }
 
 pub async fn update_field(

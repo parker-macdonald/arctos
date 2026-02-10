@@ -287,6 +287,8 @@ pub struct PointData {
     pub winner: Option<String>,
     pub rerolled: bool,
     pub stamp: Option<String>,
+    pub end_stamp: Option<String>,
+    pub stones_at_start: Option<u32>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -301,9 +303,69 @@ pub struct MatchResultItem {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TeamResultRow {
+    pub id: String,
+    pub pseudonym: String,
+    pub profile_photo: Option<String>,
+    pub matches_won: u32,
+    pub matches_lost: u32,
+    pub points_won: u32,
+    pub points_lost: u32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ResultsResponse {
     pub tournament: Tournament,
-    pub matches: Vec<MatchResultItem>,
+    pub teams: Vec<TeamResultRow>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SetScore {
+    pub set_number: u32,
+    pub team1_points: u32,
+    pub team2_points: u32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TeamMatchDetail {
+    pub uuid: String,
+    pub name: String,
+    pub team1_name: String,
+    pub team2_name: String,
+    pub match_winner: Option<String>,
+    /// Which side this team played: "TEAM1" or "TEAM2"
+    pub your_side: Option<String>,
+    pub sets: Vec<SetScore>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TeamMatchesResponse {
+    pub matches: Vec<TeamMatchDetail>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct BracketTeamConfig {
+    pub team: String,
+    pub x: i32,
+    pub y: i32,
+    pub halign: Option<String>,
+    pub valign: Option<String>,
+    pub size: Option<u32>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct BracketConfig {
+    pub name: String,
+    pub image: String,
+    #[serde(default)]
+    pub teams: Vec<BracketTeamConfig>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct BracketSetupResponse {
+    pub tournament: Tournament,
+    #[serde(default)]
+    pub brackets: Vec<BracketConfig>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -332,6 +394,41 @@ pub struct MatchDetailData {
     pub ribbon: bool,
     pub skip_condition: Option<String>,
     pub nsets: Option<u32>,
+    pub initial_notes: Option<String>,
+    pub final_notes: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CameraData {
+    pub index: u32,
+    pub url: Option<String>,
+    pub stream_start_time: Option<String>,
+    #[serde(rename = "type")]
+    pub camera_type: String,
+    pub video_path: Option<String>,
+    pub camera_id: Option<String>,
+    pub session_id: Option<String>,
+    pub point_timestamps: Option<Vec<f64>>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MatchNoteData {
+    pub text: String,
+    pub target: String,
+    pub player_id: Option<String>,
+    pub player_name: Option<String>,
+    pub player_display: Option<String>,
+    pub team_id: Option<String>,
+    pub created_at: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MatchPlayerForNotes {
+    pub player_id: String,
+    pub name: String,
+    pub display: String,
+    #[serde(default)]
+    pub profile_photo: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -339,6 +436,13 @@ pub struct MatchDetailResponse {
     #[serde(rename = "match")]
     pub match_data: MatchDetailData,
     pub points: Vec<PointData>,
+    pub available_cameras: Vec<CameraData>,
+    pub camera_url: Option<String>,
+    pub match_notes: Vec<MatchNoteData>,
+    pub point_notes_map: std::collections::HashMap<String, Vec<MatchNoteData>>,
+    pub is_head_ref: bool,
+    #[serde(default)]
+    pub match_players: Vec<MatchPlayerForNotes>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
