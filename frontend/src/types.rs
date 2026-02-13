@@ -1004,3 +1004,22 @@ pub struct ExportScheduleResponse {
 pub struct ImportScheduleRequest {
     pub toml: String,
 }
+
+// Record page API
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RecordMatchStatusResponse {
+    pub hasActiveMatch: bool,
+    pub match_id: Option<String>,
+    pub match_name: Option<String>,
+    pub start_time: Option<String>,
+    pub status: Option<String>,
+    pub points: Option<Vec<RecordPointData>>,
+    pub reason: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RecordPointData {
+    pub uuid: String,
+    pub stamp: Option<String>,
+    pub end_stamp: Option<String>,
+}

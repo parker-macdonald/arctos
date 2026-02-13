@@ -262,6 +262,26 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                     })
                     .collect();
 
+                // Stones display: during an active point show stones_at_start - elapsed (ticks down); otherwise show stones_remaining.
+                let display_stones = if set_type_stones {
+                    if let Some(ref cp) = current_point() {
+                        points
+                            .iter()
+                            .find(|p| p.get("uuid").and_then(|u| u.as_str()) == Some(cp.as_str()))
+                            .and_then(|pt| {
+                                let at_start = pt.get("stones_at_start").and_then(|s| s.as_u64())?;
+                                let stamp = pt.get("stamp").and_then(|s| s.as_str());
+                                let elapsed = stones_elapsed_beats(stamp, None) as u64;
+                                Some((at_start.saturating_sub(elapsed)) as u32)
+                            })
+                            .unwrap_or(stones_remaining())
+                    } else {
+                        stones_remaining()
+                    }
+                } else {
+                    stones_remaining()
+                };
+
                 let url_start = url.clone();
                 let id_start = match_id.clone();
                 let mut current_point = current_point;
@@ -288,6 +308,12 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                                 for p in points.iter_mut() {
                                     if p.get("uuid").and_then(|v| v.as_str()) == Some(point_id.as_str()) {
                                         p["end_stamp"] = serde_json::json!(end_iso);
+                                        if set_type_stones {
+                                            let at_start = p.get("stones_at_start").and_then(|s| s.as_u64()).unwrap_or(0);
+                                            let stamp = p.get("stamp").and_then(|s| s.as_str());
+                                            let elapsed = stones_elapsed_beats(stamp, Some(end_iso.as_str())) as u64;
+                                            stones_remaining.set((at_start.saturating_sub(elapsed)) as u32);
+                                        }
                                         break;
                                     }
                                 }
@@ -388,6 +414,12 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                                 for p in points.iter_mut() {
                                     if p.get("uuid").and_then(|v| v.as_str()) == Some(point_id.as_str()) {
                                         p["end_stamp"] = serde_json::json!(end_iso);
+                                        if set_type_stones {
+                                            let at_start = p.get("stones_at_start").and_then(|s| s.as_u64()).unwrap_or(0);
+                                            let stamp = p.get("stamp").and_then(|s| s.as_str());
+                                            let elapsed = stones_elapsed_beats(stamp, Some(end_iso.as_str())) as u64;
+                                            stones_remaining.set((at_start.saturating_sub(elapsed)) as u32);
+                                        }
                                         break;
                                     }
                                 }
@@ -836,7 +868,7 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                                                                 class: "form-control-plaintext text-center display-4 m-0 p-0",
                                                                 id: "stones-remaining",
                                                                 style: "width: 6ch; line-height: 1; font-size: 3rem; height: 64px;",
-                                                                value: "{stones_remaining()}",
+                                                                value: "{display_stones}",
                                                                 oninput: move |ev| {
                                                                     if let Ok(n) = ev.value().parse::<u32>() {
                                                                         stones_remaining.set(n);

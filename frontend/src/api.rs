@@ -424,6 +424,147 @@ pub async fn camera_url(tournament_url: &str, field_name: &str) -> Result<String
         .ok_or_else(|| "No URL in response".to_string())
 }
 
+pub async fn record_match_status(
+    tournament_url: &str,
+    field_name: &str,
+    current_match_id: Option<&str>,
+) -> Result<RecordMatchStatusResponse, String> {
+    let c = client();
+    let mut req = c
+        .get(format!("{}/_api/record/match-status", base()))
+        .query(&[("tournament", tournament_url), ("field", field_name)]);
+    if let Some(mid) = current_match_id {
+        req = req.query(&[("current_match_id", mid)]);
+    }
+    let r = req.send().await.map_err(|e| e.to_string())?;
+    response_json(r).await
+}
+
+/// Metadata for a single chunk upload (record page).
+#[cfg(target_arch = "wasm32")]
+#[derive(Clone)]
+pub struct RecordChunkMeta {
+    pub tournament_url: String,
+    pub field: String,
+    pub match_id: String,
+    pub session_id: String,
+    pub point_id: Option<String>,
+    pub chunk_start_timestamp: f64,
+    pub recording_session_start_time: f64,
+    pub chunk_length_ms: u32,
+    pub camera_name: String,
+    pub key: Option<String>,
+}
+
+#[cfg(target_arch = "wasm32")]
+pub async fn record_upload_chunk(meta: &RecordChunkMeta, chunk_blob: &web_sys::Blob) -> Result<(), String> {
+    use wasm_bindgen::JsCast;
+    use web_sys::window;
+
+    let form = web_sys::FormData::new().map_err(|_| "FormData::new failed")?;
+    form.append_with_str("tournament", &meta.tournament_url)
+        .map_err(|_| "append tournament failed")?;
+    form.append_with_str("field", &meta.field)
+        .map_err(|_| "append field failed")?;
+    form.append_with_str("match_id", &meta.match_id)
+        .map_err(|_| "append match_id failed")?;
+    form.append_with_str("session_id", &meta.session_id)
+        .map_err(|_| "append session_id failed")?;
+    form.append_with_str("chunk_start_timestamp", &meta.chunk_start_timestamp.to_string())
+        .map_err(|_| "append chunk_start_timestamp failed")?;
+    form.append_with_str("recording_session_start_time", &meta.recording_session_start_time.to_string())
+        .map_err(|_| "append recording_session_start_time failed")?;
+    form.append_with_str("chunk_duration", &meta.chunk_length_ms.to_string())
+        .map_err(|_| "append chunk_duration failed")?;
+    form.append_with_str("camera_name", &meta.camera_name)
+        .map_err(|_| "append camera_name failed")?;
+    if let Some(ref pid) = meta.point_id {
+        form.append_with_str("point_id", pid)
+            .map_err(|_| "append point_id failed")?;
+    }
+    if let Some(ref k) = meta.key {
+        form.append_with_str("key", k).map_err(|_| "append key failed")?;
+    }
+    form.append_with_blob("chunk", chunk_blob)
+        .map_err(|_| "append chunk failed")?;
+
+    let window = window().ok_or("no window")?;
+    let url = format!("{}/_api/record/upload-chunk", base());
+    let opts = web_sys::RequestInit::new();
+    opts.set_method("POST");
+    let form_js = wasm_bindgen::JsValue::from(form);
+    opts.set_body(form_js.as_ref());
+
+    let request = web_sys::Request::new_with_str_and_init(&url, &opts)
+        .map_err(|_| "Request::new_with_str_and_init failed")?;
+    let resp = wasm_bindgen_futures::JsFuture::from(window.fetch_with_request(&request))
+        .await
+        .map_err(|_| "fetch failed")?;
+    let resp: web_sys::Response = resp.dyn_into().map_err(|_| "response cast failed")?;
+    if !resp.ok() {
+        let text = wasm_bindgen_futures::JsFuture::from(resp.text().map_err(|_| "text() failed")?)
+            .await
+            .map_err(|_| "text await failed")?;
+        let msg = text.as_string().unwrap_or_else(|| "Unknown error".to_string());
+        return Err(format!("Upload failed: {}", msg));
+    }
+    Ok(())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub async fn record_upload_chunk(
+    _meta: &crate::api::RecordChunkMeta,
+    _chunk_blob: &[u8],
+) -> Result<(), String> {
+    Err("record_upload_chunk only supported on wasm".to_string())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub struct RecordChunkMeta {
+    pub tournament_url: String,
+    pub field: String,
+    pub match_id: String,
+    pub session_id: String,
+    pub point_id: Option<String>,
+    pub chunk_start_timestamp: f64,
+    pub recording_session_start_time: f64,
+    pub chunk_length_ms: u32,
+    pub camera_name: String,
+    pub key: Option<String>,
+}
+
+pub async fn record_finalize(
+    tournament_url: &str,
+    field_name: &str,
+    session_id: &str,
+    match_id: &str,
+    camera_name: &str,
+    key: Option<&str>,
+) -> Result<(), String> {
+    let c = client();
+    let mut body = serde_json::json!({
+        "tournament": tournament_url,
+        "field": field_name,
+        "session_id": session_id,
+        "match_id": match_id,
+        "camera_name": camera_name,
+    });
+    if let Some(k) = key {
+        body["key"] = serde_json::json!(k);
+    }
+    let r = c
+        .post(format!("{}/_api/record/finalize", base()))
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !r.status().is_success() {
+        let text = r.text().await.unwrap_or_default();
+        return Err(format!("Finalize failed: {}", text));
+    }
+    Ok(())
+}
+
 pub async fn server_time() -> Result<ServerTimeResponse, String> {
     let c = client();
     let r = with_credentials(c.get(format!("{}/_api/server-time", base())))

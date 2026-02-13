@@ -1030,7 +1030,7 @@ def camera_url_api():
             "tournaments.record_page",
             tournament_url=tournament_url,
             field=field_name,
-            key=access_key,
+            camera_key=access_key,
             _external=True,
         )
 
