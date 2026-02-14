@@ -7,10 +7,10 @@ from datetime import datetime, timezone
 
 
 def finalize_recording_worker(
-    logger, tournament_url, field_name, session_id, match_id, camera_name, chunk_dir
+    logger, tournament_url, field_name, match_id, camera_name, chunk_dir
 ):
     # Check if first chunk exists
-    first_chunk_path = path.join(chunk_dir, "chunk_000000.webm")
+    first_chunk_path = path.join(chunk_dir, "chunk_0.webm")
     if not path.exists(first_chunk_path):
         return
 
@@ -66,31 +66,6 @@ def finalize_recording_worker(
                 ),
             ]
         )
-    #        with open(path.join(chunk_dir, f"{chunks[0]['point_id']}.webm"), 'ab') as c:
-    #            for chunk in chunks:
-    #                with open(path.join(chunk_dir, chunk['filename']), 'rb') as f:
-    #                    c.write(f.read())
-    # Fix timestamps - works for both WebM and MP4 (even with .webm extension)
-
-    #        probe_result = subprocess.run(['ffprobe',
-    #            '-v', 'error',
-    #            '-select_streams', 'v:0',
-    #            '-show_entries', 'stream=codec_name',
-    #            '-of', 'default=noprint_wrappers=1:nokey=1',
-    #            path.join(chunk_dir, f"{chunks[0]['point_id']}.webm")
-    #        ], capture_output=True, text=True)
-
-    #        codec_name = probe_result.stdout.strip() if probe_result.returncode == 0 else ''
-
-    #        subprocess.run(['ffmpeg',
-    #            '-i', path.join(chunk_dir, f"{chunks[0]['point_id']}.webm"),
-    #            '-map', '0',
-    #            '-c', 'copy',
-    #            '-loglevel', 'error',
-    #            '-y',
-    #            path.join(chunk_dir, f"{chunks[0]['point_id']}_fixedstamps.{'mp4' if codec_name == 'h264' else 'webm'}")
-    #        ])
-    #        print('Subprocess call complete!')
 
     pts = Point.query.filter_by(match=match_id).order_by(Point.stamp.asc()).all()
     print(f"len(pts) is {len(pts)}")
@@ -294,7 +269,7 @@ def finalize_recording_worker(
     print(f"STREAM STARTS: {stream_starts}")
     stream_starts[camera_name] = {
         "video_path": path.join(
-            "uploads/videos", tournament_url, field_name, session_id, "final_video.webm"
+            "uploads/videos", tournament_url, field_name, match_id, camera_name, "final_video.webm"
         ),
         "point_timestamps": [i[1] for i in in_video_times],
         "type": "recorded",

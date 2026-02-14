@@ -73,8 +73,8 @@ enum Route {
     #[route("/:url/scoreboard")]
     Scoreboard { url: String },
 
-    #[route("/:url/record?:field&:camera_key")]
-    Record { url: String, field: String, camera_key: String },
+    #[route("/:url/record?:field&:camera_key&:camera_name")]
+    Record { url: String, field: String, camera_key: String, camera_name: String },
 
     #[route("/:url/match")]
     MatchPage { url: String },

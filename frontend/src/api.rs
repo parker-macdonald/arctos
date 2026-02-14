@@ -483,7 +483,7 @@ pub async fn record_upload_chunk(meta: &RecordChunkMeta, chunk_blob: &web_sys::B
             .map_err(|_| "append point_id failed")?;
     }
     if let Some(ref k) = meta.key {
-        form.append_with_str("key", k).map_err(|_| "append key failed")?;
+        form.append_with_str("camera_key", k).map_err(|_| "append key failed")?;
     }
     form.append_with_blob("chunk", chunk_blob)
         .map_err(|_| "append chunk failed")?;
@@ -536,7 +536,6 @@ pub struct RecordChunkMeta {
 pub async fn record_finalize(
     tournament_url: &str,
     field_name: &str,
-    session_id: &str,
     match_id: &str,
     camera_name: &str,
     key: Option<&str>,
@@ -545,12 +544,11 @@ pub async fn record_finalize(
     let mut body = serde_json::json!({
         "tournament": tournament_url,
         "field": field_name,
-        "session_id": session_id,
         "match_id": match_id,
         "camera_name": camera_name,
     });
     if let Some(k) = key {
-        body["key"] = serde_json::json!(k);
+        body["camera_key"] = serde_json::json!(k);
     }
     let r = c
         .post(format!("{}/_api/record/finalize", base()))

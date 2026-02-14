@@ -133,15 +133,20 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
     // Tick for live stones elapsed and time elapsed (re-render every 500ms / 1s when needed).
     let live_tick = use_signal(|| 0u32);
     #[cfg(target_arch = "wasm32")]
+    let live_tick_interval = use_signal(|| None as Option<Interval>);
+    #[cfg(target_arch = "wasm32")]
     {
-        let has_current = current_point().is_some();
         let mut live_tick = live_tick;
+        let mut live_tick_interval = live_tick_interval;
         use_effect(move || {
             let _ = current_point();
+            if live_tick_interval.read().is_some() {
+                return;
+            }
             let handle = Interval::new(500, move || {
                 live_tick.set(live_tick() + 1);
             });
-            std::mem::forget(handle);
+            live_tick_interval.set(Some(handle));
         });
     }
 

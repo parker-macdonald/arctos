@@ -32,14 +32,36 @@ enum UploadQueueItem {
         meta: RecordChunkMeta,
         blob: web_sys::Blob,
     },
-    FinalizeMatch {
-        match_id: String,
-        session_id: String,
-    },
+    FinalizeMatch { match_id: String },
+}
+
+/// Full page reload to the record URL with the new camera_name query param (wasm only).
+#[cfg(target_arch = "wasm32")]
+fn reload_record_page_with_camera_name(_url: &str, field: &str, camera_key: &str, camera_name: &str) {
+    if let Some(window) = web_sys::window() {
+        let loc = window.location();
+        let pathname: String = loc.pathname().unwrap_or_default();
+        let base = pathname
+            .trim_end_matches("/record")
+            .trim_end_matches('/');
+        let new_url = format!(
+            "{}/record?field={}&camera_key={}&camera_name={}",
+            base,
+            urlencoding::encode(field),
+            urlencoding::encode(camera_key),
+            urlencoding::encode(camera_name),
+        );
+        let _ = loc.assign(&new_url);
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn reload_record_page_with_camera_name(_url: &str, _field: &str, _camera_key: &str, _camera_name: &str) {
+    // No-op on non-wasm; record page is used in browser only.
 }
 
 #[component]
-pub fn Record(url: String, field: ReadSignal<String>, camera_key: ReadSignal<String>) -> Element {
+pub fn Record(url: String, field: ReadSignal<String>, camera_key: ReadSignal<String>, camera_name: ReadSignal<String>) -> Element {
     let route: Route = use_route();
     let route_clone1 = route.clone();
     let route_clone2 = route.clone();
@@ -78,7 +100,23 @@ pub fn Record(url: String, field: ReadSignal<String>, camera_key: ReadSignal<Str
 
     let mut status = use_signal(|| RecordStatus::Checking);
     let mut match_status_data = use_signal(|| None::<RecordMatchStatusResponse>);
-    let mut camera_name = use_signal(|| "camera-1".to_string());
+    // 1. Create a clone specifically for the initial name memo
+    let route_for_memo = route.clone();
+    let initial_camera_name = use_memo(move || {
+        if let Route::Record { camera_name, .. } = &route_for_memo {
+            if !camera_name.is_empty() {
+                return camera_name.clone();
+            }
+        }
+        "camera-1".to_string()
+    });
+
+    let mut camera_name = use_signal(|| initial_camera_name());
+    let mut is_editing_name = use_signal(|| false);
+    let mut temp_name = use_signal(|| initial_camera_name()); 
+
+    // 2. The original `route` is still available here to be moved into this closure
+
     let mut is_recording = use_signal(|| false);
     let mut is_uploading = use_signal(|| false);
     let mut upload_count = use_signal(|| 0u32);
@@ -137,7 +175,7 @@ pub fn Record(url: String, field: ReadSignal<String>, camera_key: ReadSignal<Str
                     tournament_url,
                     field,
                     key,
-                    camera_name_str,
+                    camera_name_str.clone(),
                     status_sig,
                     match_status_data_sig,
                     is_recording_sig,
@@ -188,13 +226,47 @@ pub fn Record(url: String, field: ReadSignal<String>, camera_key: ReadSignal<Str
                         div { class: "card",
                             div { class: "card-body",
                                 div { class: "mb-3",
-                                    label { r#for: "camera-name", class: "form-label", "Camera Name" }
-                                    input {
-                                        id: "camera-name",
-                                        r#type: "text",
-                                        class: "form-control",
-                                        value: "{camera_name()}",
-                                        oninput: move |ev| camera_name.set(ev.value()),
+                                    label { class: "form-label", "Camera Name" }
+                                    if is_editing_name() {
+                                        div { class: "input-group",
+                                            input {
+                                                r#type: "text",
+                                                class: "form-control",
+                                                value: "{temp_name()}",
+                                                oninput: move |ev| temp_name.set(ev.value()),
+                                            }
+                                            button { 
+                                                class: "btn btn-success", 
+                                                onclick: move |_| {
+                                                    let new_name = temp_name();
+                                                    if let Route::Record { url, field, camera_key, .. } = route.clone() {
+                                                        reload_record_page_with_camera_name(&url, &field, &camera_key, &new_name);
+                                                    }
+                                                    is_editing_name.set(false);
+                                                },
+                                                "Save" 
+                                            }
+                                            button { 
+                                                class: "btn btn-outline-secondary", 
+                                                onclick: move |_| {
+                                                    is_editing_name.set(false);
+                                                    temp_name.set(camera_name()); // Reset
+                                                },
+                                                "Cancel" 
+                                            }
+                                        }
+                                    } else {
+                                        div { class: "d-flex align-items-center gap-2",
+                                            span { class: "form-control-plaintext fs-5 fw-bold", "{camera_name()}" }
+                                            button { 
+                                                class: "btn btn-sm btn-outline-primary",
+                                                onclick: move |_| {
+                                                    temp_name.set(camera_name());
+                                                    is_editing_name.set(true);
+                                                },
+                                                "Edit"
+                                            }
+                                        }
                                     }
                                 }
                                 div { class: "mb-3",
@@ -447,6 +519,7 @@ fn point_in_progress(point: &RecordPointData, now_ms: f64) -> bool {
         None => return false,
     };
     if now_ms < start_ms {
+        web_sys::console::log_1(&format!("point not in progress: now_ms < start_ms: {} < {}", now_ms, start_ms).into());
         return false;
     }
     let end_plus_10 = point
@@ -497,33 +570,60 @@ async fn run_recording_loop(
 
     let key_ref = key.clone();
 
-    // Recorder state: recorder, status, started_at (ms). Storage is in storage1/storage2.
+    // Recorder state: recorder, status, started_at (ms), current_session_id (new id each time this recorder is started).
     struct RecorderState {
         recorder: Option<MediaRecorder>,
         status: RecorderStatus,
         started_at: Option<f64>,
+        current_session_id: String,
     }
+
+    // MediaRecorder with timeslice often emits a tiny first blob (WebM init segment) then the real 2s chunk.
+    // Merge the first small blob with the second so the first stored chunk is playable.
+    const INIT_SEGMENT_MAX_BYTES: f64 = 100_000.0;
 
     let make_recorder = |stream: &web_sys::MediaStream,
                         storage_queue: Rc<RefCell<Vec<StoredChunk>>>,
-                        session_start: Rc<RefCell<f64>>| {
+                        session_start: Rc<RefCell<f64>>,
+                        pending_init: Rc<RefCell<Option<web_sys::Blob>>>| {
         let r = MediaRecorder::new_with_media_stream_and_media_recorder_options(stream, &options)
             .ok()?;
         let sq = storage_queue.clone();
         let ss = session_start.clone();
+        let pending = pending_init.clone();
         let closure = Closure::wrap(Box::new(move |ev: web_sys::BlobEvent| {
-            if let Some(blob) = ev.data() {
-                let start = *ss.borrow();
-                let mut q = sq.borrow_mut();
-                let idx = q.len() as u32;
-                let chunk_start = start + (idx as f64) * 2000.0;
-                q.push(StoredChunk {
-                    blob,
-                    chunk_start_timestamp: chunk_start,
-                    chunk_duration_ms: 2000,
-                    recording_session_start_time: start,
-                });
+            let blob = match ev.data() {
+                Some(b) => b,
+                None => return,
+            };
+            let start = *ss.borrow();
+            let mut q = sq.borrow_mut();
+            let size = blob.size();
+
+            // First blob is often the init segment (small). Buffer it and merge with the next blob.
+            if q.is_empty() && size < INIT_SEGMENT_MAX_BYTES {
+                pending.borrow_mut().replace(blob);
+                return;
             }
+            let blob_to_push: web_sys::Blob = if let Some(init_blob) = pending.borrow_mut().take() {
+                let arr = js_sys::Array::new();
+                arr.push(init_blob.as_ref());
+                arr.push(blob.as_ref());
+                let opts = web_sys::BlobPropertyBag::new();
+                opts.set_type("video/webm");
+                web_sys::Blob::new_with_blob_sequence_and_options(&arr.into(), &opts)
+                    .unwrap_or_else(|_| blob)
+            } else {
+                blob
+            };
+            let idx = q.len() as u32;
+            let chunk_start = start + (idx as f64) * 2000.0;
+            q.push(StoredChunk {
+                blob: blob_to_push,
+                chunk_start_timestamp: chunk_start,
+                chunk_duration_ms: 2000,
+                recording_session_start_time: start,
+            });
         }) as Box<dyn FnMut(web_sys::BlobEvent)>);
         r.set_ondataavailable(Some(closure.as_ref().unchecked_ref()));
         closure.forget();
@@ -534,22 +634,26 @@ async fn run_recording_loop(
         recorder: None,
         status: RecorderStatus::Idle,
         started_at: None,
+        current_session_id: String::new(),
     }));
     let state2 = Rc::new(RefCell::new(RecorderState {
         recorder: None,
         status: RecorderStatus::Idle,
         started_at: None,
+        current_session_id: String::new(),
     }));
 
     let storage1 = Rc::new(RefCell::new(Vec::<StoredChunk>::new()));
     let session_start1 = Rc::new(RefCell::new(0.0f64));
+    let pending_init1 = Rc::new(RefCell::new(None::<web_sys::Blob>));
     let storage2 = Rc::new(RefCell::new(Vec::<StoredChunk>::new()));
     let session_start2 = Rc::new(RefCell::new(0.0f64));
+    let pending_init2 = Rc::new(RefCell::new(None::<web_sys::Blob>));
 
-    if let Some(r) = make_recorder(&stream, storage1.clone(), session_start1.clone()) {
+    if let Some(r) = make_recorder(&stream, storage1.clone(), session_start1.clone(), pending_init1.clone()) {
         state1.borrow_mut().recorder = Some(r);
     }
-    if let Some(r) = make_recorder(&stream, storage2.clone(), session_start2.clone()) {
+    if let Some(r) = make_recorder(&stream, storage2.clone(), session_start2.clone(), pending_init2.clone()) {
         state2.borrow_mut().recorder = Some(r);
     }
 
@@ -572,7 +676,7 @@ async fn run_recording_loop(
         .await;
     });
 
-    let mut current_match: Option<(String, String)> = None; // (match_id, session_id)
+    let mut current_match: Option<String> = None; // match_id
     let mut last_poll_data: Option<RecordMatchStatusResponse> = None;
     let mut point_was_in_progress = false;
     let chunk_index_global = AtomicU32::new(0);
@@ -581,7 +685,7 @@ async fn run_recording_loop(
         let poll_result = api::record_match_status(
             &tournament_url,
             &field,
-            current_match.as_ref().map(|(id, _)| id.as_str()),
+            current_match.as_ref().map(|id| id.as_str()),
         )
         .await;
 
@@ -613,10 +717,10 @@ async fn run_recording_loop(
             .any(|p| point_in_progress(p, now_ms));
         let latest_point = latest_point_in_progress(points, now_ms);
         let point_id_opt = latest_point.map(|p| p.uuid.clone());
-        web_sys::console::log_1(&format!("data match id: {:?}", data.match_id).into());
-        web_sys::console::log_1(&format!("current match: {:?}", current_match).into());
-        if !data.hasActiveMatch || data.match_id.as_ref().map(|s| s.as_str()) != current_match.as_ref().map(|(id, _)| id.as_str()) {
-            if let Some((match_id, session_id)) = current_match.take() {
+        // web_sys::console::log_1(&format!("data match id: {:?}", data.match_id).into());
+        // web_sys::console::log_1(&format!("current match: {:?}", current_match).into());
+        if !data.hasActiveMatch || data.match_id.as_ref().map(|s| s.as_str()) != current_match.as_ref().map(|id| id.as_str()) {
+            if let Some(match_id) = current_match.take() {
                 if let Some(r1) = state1.borrow_mut().recorder.take() {
                     let _ = r1.stop();
                 }
@@ -625,23 +729,22 @@ async fn run_recording_loop(
                 }
                 storage1.borrow_mut().clear();
                 storage2.borrow_mut().clear();
+                pending_init1.borrow_mut().take();
+                pending_init2.borrow_mut().take();
                 state1.borrow_mut().status = RecorderStatus::Idle;
                 state2.borrow_mut().status = RecorderStatus::Idle;
                 state1.borrow_mut().started_at = None;
                 state2.borrow_mut().started_at = None;
-                upload_queue.borrow_mut().push_back(UploadQueueItem::FinalizeMatch {
-                    match_id,
-                    session_id,
-                });
+                upload_queue.borrow_mut().push_back(UploadQueueItem::FinalizeMatch { match_id });
                 is_recording_sig.set(false);
             }
             if data.hasActiveMatch {
                 if let Some(ref match_id) = data.match_id {
-                    let session_id = uuid_style_id();
-                    current_match = Some((match_id.clone(), session_id.clone()));
+                    current_match = Some(match_id.clone());
                     is_recording_sig.set(true);
                     *session_start1.borrow_mut() = now_ms;
                     state1.borrow_mut().started_at = Some(now_ms);
+                    state1.borrow_mut().current_session_id = uuid_style_id();
                     if let Some(r) = state1.borrow().recorder.as_ref() {
                         let state_str: String = js_sys::Reflect::get(r.as_ref(), &"state".into())
                             .ok()
@@ -656,14 +759,14 @@ async fn run_recording_loop(
             gloo_timers::future::TimeoutFuture::new(1000).await;
             continue;
         }
-        let (match_id, session_id) = current_match.as_ref().expect("current_match is None").clone();
+        let match_id = current_match.as_ref().expect("current_match is None").clone();
 
-        // 1. Handle storage queues: if RECORDING, drain storage into upload queue
+        // 1. Handle storage queues: if RECORDING, drain storage into upload queue (use this recorder's session_id)
         let base_meta = RecordChunkMeta {
             tournament_url: tournament_url.clone(),
             field: field.clone(),
             match_id: match_id.clone(),
-            session_id: session_id.clone(),
+            session_id: String::new(), // overridden per state below
             point_id: point_id_opt.clone(),
             chunk_start_timestamp: 0.0,
             recording_session_start_time: 0.0,
@@ -676,10 +779,12 @@ async fn run_recording_loop(
             (&state2, storage2.clone()),
         ] {
             if state.borrow().status == RecorderStatus::Recording {
+                let chunk_session_id = state.borrow().current_session_id.clone();
                 let drained: Vec<StoredChunk> = storage_rc.borrow_mut().drain(..).collect();
                 for st in drained {
-                    let idx = chunk_index_global.fetch_add(1, Ordering::Relaxed);
+                    let _idx = chunk_index_global.fetch_add(1, Ordering::Relaxed);
                     let meta = RecordChunkMeta {
+                        session_id: chunk_session_id.clone(),
                         chunk_start_timestamp: st.chunk_start_timestamp,
                         recording_session_start_time: st.recording_session_start_time,
                         chunk_length_ms: st.chunk_duration_ms,
@@ -697,9 +802,9 @@ async fn run_recording_loop(
 
         // 3. No point in progress: cycle recorders
         if !point_in_progress_now {
-            let t1 = state1.borrow().started_at.unwrap_or(0.0);
-            let t2 = state2.borrow().started_at.unwrap_or(0.0);
-            let (longer, shorter) = if t1 >= t2 {
+            let t1 = state1.borrow().started_at.unwrap_or(now_ms);
+            let t2 = state2.borrow().started_at.unwrap_or(now_ms);
+            let (longer, shorter) = if t1 <= t2 {
                 (&state1, &state2)
             } else {
                 (&state2, &state1)
@@ -708,13 +813,16 @@ async fn run_recording_loop(
             let shorter_run_secs = (now_ms - shorter.borrow().started_at.unwrap_or(0.0)) / 1000.0;
 
             if longer_run_secs > 10.0 {
+                web_sys::console::log_1(&format!("longer recorder running for too long: {}s (t1: {}s, t2: {}s)", longer_run_secs, now_ms-t1, now_ms-t2).into());
                 if let Some(r) = longer.borrow_mut().recorder.take() {
                     let _ = r.stop();
                 }
                 if std::ptr::eq(longer.as_ref(), state1.as_ref()) {
                     storage1.borrow_mut().clear();
+                    pending_init1.borrow_mut().take();
                 } else {
                     storage2.borrow_mut().clear();
+                    pending_init2.borrow_mut().take();
                 }
                 longer.borrow_mut().status = RecorderStatus::Idle;
                 longer.borrow_mut().started_at = None;
@@ -724,10 +832,16 @@ async fn run_recording_loop(
                     session_start2.clone()
                 };
                 *session_start_longer.borrow_mut() = now_ms;
-                if let Some(new_r) = make_recorder(&stream, if std::ptr::eq(longer.as_ref(), state1.as_ref()) { storage1.clone() } else { storage2.clone() }, session_start_longer) {
+                let pending_longer = if std::ptr::eq(longer.as_ref(), state1.as_ref()) {
+                    pending_init1.clone()
+                } else {
+                    pending_init2.clone()
+                };
+                if let Some(new_r) = make_recorder(&stream, if std::ptr::eq(longer.as_ref(), state1.as_ref()) { storage1.clone() } else { storage2.clone() }, session_start_longer, pending_longer) {
                     let _ = new_r.start_with_time_slice(2000);
                     longer.borrow_mut().recorder = Some(new_r);
                     longer.borrow_mut().started_at = Some(now_ms);
+                    longer.borrow_mut().current_session_id = uuid_style_id();
                 }
             } else if longer_run_secs > 5.0 {
                 let is_inactive = shorter
@@ -743,6 +857,7 @@ async fn run_recording_loop(
                     })
                     .unwrap_or(true);
                 if is_inactive {
+                    web_sys::console::log_1(&format!("shorter recorder is inactive, starting it").into());
                     let session_start_shorter = if std::ptr::eq(shorter.as_ref(), state1.as_ref()) {
                         session_start1.clone()
                     } else {
@@ -753,6 +868,7 @@ async fn run_recording_loop(
                         let _ = r.start_with_time_slice(2000);
                     }
                     shorter.borrow_mut().started_at = Some(now_ms);
+                    shorter.borrow_mut().current_session_id = uuid_style_id();
                 }
             }
         }
@@ -772,8 +888,10 @@ async fn run_recording_loop(
             }
             if std::ptr::eq(other_state.as_ref(), state1.as_ref()) {
                 storage1.borrow_mut().clear();
+                pending_init1.borrow_mut().take();
             } else {
                 storage2.borrow_mut().clear();
+                pending_init2.borrow_mut().take();
             }
             other_state.borrow_mut().status = RecorderStatus::Idle;
             other_state.borrow_mut().started_at = None;
@@ -787,7 +905,7 @@ async fn run_recording_loop(
         point_was_in_progress = point_in_progress_now;
 
         match_status_data_sig.set(Some(data));
-        gloo_timers::future::TimeoutFuture::new(1000).await;
+        gloo_timers::future::TimeoutFuture::new(500).await;
     }
 }
 
@@ -811,11 +929,10 @@ async fn run_upload_worker(
                     let _ = api::record_upload_chunk(&meta, &blob).await;
                     upload_count_sig.set(upload_count_sig() + 1);
                 }
-                UploadQueueItem::FinalizeMatch { match_id, session_id } => {
+                UploadQueueItem::FinalizeMatch { match_id } => {
                     let _ = api::record_finalize(
                         &tournament_url,
                         &field,
-                        &session_id,
                         &match_id,
                         &camera_name,
                         key.as_deref(),
@@ -829,15 +946,5 @@ async fn run_upload_worker(
 }
 
 fn uuid_style_id() -> String {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
-    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-    format!(
-        "{:08x}-{:04x}-4{:03x}-{:04x}-{:012x}",
-        (n >> 32) as u32,
-        (n >> 16) as u16 & 0xfff,
-        (n >> 12) as u16 & 0xfff,
-        (n >> 0) as u16 & 0xfff,
-        (n & 0xffff_ffff_ffff) as u64
-    )
+    uuid::Uuid::new_v4().to_string()
 }
