@@ -164,14 +164,14 @@ def validate_camera_key(
 
 def get_camera_key_from_request() -> str | None:
     """Extract camera access key from request (query params, JSON body, or form data)."""
-    key = (request.args.get("key") or "").strip()
+    key = (request.args.get("camera_key") or "").strip()
     if key:
         return key
     if request.is_json and request.json:
-        key = (request.json.get("key") or "").strip()
+        key = (request.json.get("camera_key") or "").strip()
         if key:
             return key
-    key = (request.form.get("key") or "").strip()
+    key = (request.form.get("camera_key") or "").strip()
     if key:
         return key
     return None

@@ -17,6 +17,9 @@ from flask_executor import Executor
 
 from datetime import datetime, timedelta, timezone
 import json
+
+from flask_login.utils import urlencode
+from urllib3.util import url
 from models import (
     Tournament,
     Match,
@@ -1025,7 +1028,7 @@ def camera_url_api():
         # Generate the camera URL with key
         access_key = generate_camera_key(tournament_url, field_name)
         from flask import url_for
-
+        print(field_name)
         camera_url = url_for(
             "tournaments.record_page",
             tournament_url=tournament_url,
@@ -1209,25 +1212,27 @@ def record_upload_chunk():
     import os
     from flask import current_app
     from datetime import datetime
+    import fcntl
 
     tournament_url = request.form.get("tournament")
     field_name = request.form.get("field")
-    match_id = request.form.get("match_id", "")
+    match_id = request.form.get("match_id")
     session_id = request.form.get("session_id")
-    chunk_index = request.form.get("chunk_index")
-    start_timestamp = request.form.get("start_timestamp")
     chunk_start_timestamp = request.form.get(
         "chunk_start_timestamp"
     )  # Absolute world time when chunk started
+    start_timestamp = request.form.get("start_timestamp")
+    recording_session_start_time = request.form.get("recording_session_start_time")
     chunk_duration = request.form.get("chunk_duration")  # Duration in milliseconds
-    point_id = request.form.get("point_id", "")
+    camera_name = request.form.get("camera_name")
+    point_id = request.form.get("point_id")
 
     # Validate camera access key
     is_valid, error_response = require_camera_key(tournament_url, field_name)
     if not is_valid:
         return error_response[0], error_response[1]
 
-    if not tournament_url or not field_name or not session_id or chunk_index is None:
+    if not tournament_url or not field_name or not session_id or not match_id:
         return jsonify({"error": "Missing required parameters"}), 400
 
     # Verify field exists
@@ -1242,18 +1247,19 @@ def record_upload_chunk():
     if chunk_file.filename == "":
         return jsonify({"error": "Empty chunk file"}), 400
 
-    # Create directory structure: static/uploads/videos/{tournament}/{field}/{session_id}/
     upload_dir = os.path.join(
         current_app.root_path,
         "../static/uploads/videos",
         tournament_url,
         field_name,
-        session_id,
+        match_id,
+        camera_name,
     )
     os.makedirs(upload_dir, exist_ok=True)
 
     # Save chunk with index in filename for ordering
-    chunk_filename = f"chunk_{int(chunk_index):06d}.webm"
+    chunk_index = len(list(filter(lambda x: not x.endswith(".json"), os.listdir(upload_dir))))
+    chunk_filename = f"chunk_{chunk_index}.webm"
     chunk_path = os.path.join(upload_dir, chunk_filename)
     chunk_file.save(chunk_path)
 
@@ -1263,98 +1269,53 @@ def record_upload_chunk():
 
     # Use file locking to prevent concurrent write issues
     try:
-        import fcntl
-
-        use_locking = True
-    except ImportError:
-        # fcntl not available (e.g., on Windows)
-        use_locking = False
-
-    if use_locking:
-        try:
-            # Open file in read-write mode, create if it doesn't exist
-            file_mode = "r+" if os.path.exists(chunks_meta_path) else "w+"
-            with open(chunks_meta_path, file_mode) as lock_file:
-                # Acquire exclusive lock
-                try:
-                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                except IOError:
-                    # If we can't get the lock immediately, wait for it
-                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
-
-                # Read existing metadata
-                lock_file.seek(0)
-                content = lock_file.read()
-                if content.strip():
-                    try:
-                        chunks_meta = json.loads(content)
-                    except (json.JSONDecodeError, ValueError):
-                        chunks_meta = {}
-
-                # Store chunk metadata
-                chunk_meta = {
-                    "chunk_index": int(chunk_index),
-                    "filename": chunk_filename,
-                    "chunk_start_timestamp": (
-                        float(chunk_start_timestamp) if chunk_start_timestamp else None
-                    ),  # Absolute world time in milliseconds
-                    "chunk_duration": (
-                        float(chunk_duration) if chunk_duration else None
-                    ),  # Duration in milliseconds
-                    "point_id": point_id if point_id else None,
-                    "upload_timestamp": datetime.now(timezone.utc).isoformat(),
-                }
-                chunks_meta[str(chunk_index)] = (
-                    chunk_meta  # Use string key for consistency
-                )
-
-                # Write metadata back
-                lock_file.seek(0)
-                lock_file.truncate(0)
-                json.dump(chunks_meta, lock_file, indent=2)
-                lock_file.flush()
-                # Lock is released when file is closed
-        except (IOError, OSError) as e:
-            # Fallback if file locking fails (e.g., on NFS)
-            use_locking = False
-
-    if not use_locking:
-        # Fallback: read-modify-write without locking (less safe but works on all platforms)
-        # This is still better than nothing, but concurrent uploads might lose some metadata
-        if os.path.exists(chunks_meta_path):
+        # Open file in read-write mode, create if it doesn't exist
+        file_mode = "r+" if os.path.exists(chunks_meta_path) else "w+"
+        with open(chunks_meta_path, file_mode) as lock_file:
+            # Acquire exclusive lock
             try:
-                with open(chunks_meta_path, "r") as f:
-                    chunks_meta = json.load(f)
-            except (json.JSONDecodeError, IOError):
-                chunks_meta = {}
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except IOError:
+                # If we can't get the lock immediately, wait for it
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
 
-        chunk_meta = {
-            "chunk_index": int(chunk_index),
-            "filename": chunk_filename,
-            "chunk_start_timestamp": (
-                float(chunk_start_timestamp) if chunk_start_timestamp else None
-            ),
-            "chunk_duration": float(chunk_duration) if chunk_duration else None,
-            "point_id": point_id if point_id else None,
-            "upload_timestamp": datetime.now(timezone.utc).isoformat(),
-        }
-        chunks_meta[str(chunk_index)] = chunk_meta
+            # Read existing metadata
+            lock_file.seek(0)
+            content = lock_file.read()
+            if content.strip():
+                try:
+                    chunks_meta = json.loads(content)
+                except (json.JSONDecodeError, ValueError):
+                    chunks_meta = {}
 
-        with open(chunks_meta_path, "w") as f:
-            json.dump(chunks_meta, f, indent=2)
+            # Store chunk metadata
+            chunk_meta = {
+                "filename": chunk_filename,
+                "session_id": session_id,
+                "chunk_start_timestamp": (
+                    float(chunk_start_timestamp)
+                ),  # Absolute world time in milliseconds
+                "chunk_duration": (
+                    float(chunk_duration)
+                ),  # Duration in milliseconds
+                "point_id": point_id,
+                "camera_name": camera_name,
+                "recording_session_start_time": (
+                    float(recording_session_start_time)
+                ),
+            }
+            chunks_meta[str(chunk_index)] = (
+                chunk_meta  # Use string key for consistency
+            )
 
-    # Save metadata file (first chunk only)
-    if chunk_index == "0" or chunk_index == 0:
-        metadata = {
-            "tournament": tournament_url,
-            "field": field_name,
-            "match_id": match_id,
-            "session_id": session_id,
-            "start_timestamp": start_timestamp,
-        }
-        metadata_path = os.path.join(upload_dir, "metadata.json")
-        with open(metadata_path, "w") as f:
-            json.dump(metadata, f, indent=2)
+            # Write metadata back
+            lock_file.seek(0)
+            lock_file.truncate(0)
+            json.dump(chunks_meta, lock_file, indent=2)
+            lock_file.flush()
+            # Lock is released when file is closed
+    except (IOError, OSError) as e:
+        print("error writing :sob:")
 
     return jsonify(
         {"success": True, "chunk_index": chunk_index, "session_id": session_id}
@@ -1366,7 +1327,6 @@ def record_finalize():
     data = request.json
     tournament_url = data.get("tournament")
     field_name = data.get("field")
-    session_id = data.get("session_id")
     match_id = data.get("match_id")
     camera_name = data.get("camera_name")
 
@@ -1375,30 +1335,30 @@ def record_finalize():
     if not is_valid:
         return error_response[0], error_response[1]
 
-    if not tournament_url or not field_name or not session_id:
+    if not tournament_url or not field_name or not match_id or not camera_name:
         return jsonify({"error": "Missing required parameters"}), 400
 
     # Verify field exists
     if not Field.query.filter_by(event=tournament_url, name=field_name).first():
         return jsonify({"error": "Field not found"}), 404
 
-    # Directory where chunks are stored
+    # Directory where chunks are stored (same layout as upload-chunk: tournament/field/match_id/camera_name)
     chunk_dir = path.join(
         current_app.root_path,
         "../static/uploads/videos",
         tournament_url,
         field_name,
-        session_id,
+        match_id,
+        camera_name,
     )
     if not path.exists(chunk_dir):
-        return jsonify({"error": "Session directory not found"}), 404
+        return jsonify({"error": "Recording directory not found"}), 404
 
     _ = executor.submit(
         finalize_recording_worker,
         current_app.logger,
         tournament_url,
         field_name,
-        session_id,
         match_id,
         camera_name,
         chunk_dir,
@@ -1409,7 +1369,6 @@ def record_finalize():
         {
             "success": True,
             "message": "all recordings uploaded; processing has begun",
-            "session_id": session_id,
             "match_id": match_id,
         }
     )
