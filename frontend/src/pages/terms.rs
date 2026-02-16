@@ -1,29 +1,22 @@
+use crate::api;
 use dioxus::prelude::*;
-use pulldown_cmark::{Options, Parser};
-
-const TERMS_MD: &str = include_str!("../../../docs/terms.md");
-
-fn markdown_to_html(md: &str) -> String {
-    let mut options = Options::empty();
-    options.insert(Options::ENABLE_STRIKETHROUGH);
-    options.insert(Options::ENABLE_TABLES);
-    let parser = Parser::new_ext(md, options);
-    let mut html = String::new();
-    pulldown_cmark::html::push_html(&mut html, parser);
-    html
-}
 
 #[component]
 pub fn Terms() -> Element {
-    let html = markdown_to_html(TERMS_MD);
+    let data = use_resource(|| async move { api::markdown_page("terms").await.map_err(|e| e.to_string()) });
+    let val = data.value();
+
     rsx! {
-        div { class: "row",
-            div { class: "col-lg-8 mx-auto",
-                h1 { "Terms of Service" }
-                div { class: "markdown-content card card-body",
-                    dangerous_inner_html: "{html}"
+        if let Some(Ok(d)) = val.read().as_ref() {
+            div { class: "row",
+                div { class: "col-lg-10 mx-auto",
+                    div { dangerous_inner_html: "{d.html}" }
                 }
             }
+        } else if let Some(Err(e)) = val.read().as_ref() {
+            p { class: "text-danger", "{e}" }
+        } else {
+            p { "Loading…" }
         }
     }
 }

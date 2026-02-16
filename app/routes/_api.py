@@ -3342,7 +3342,9 @@ def list_tags(tournament_url):
 
 @bp.route("/markdown/<slug>", methods=["GET"])
 def markdown_page(slug):
-    """Return markdown page content by slug."""
+    """Return markdown page content by slug, rendered to HTML with the markdown filter."""
+    from app.filters import render_markdown
+
     mapping = {
         "docs": ("docs.md", "User Docs"),
         "privacy-policy": ("privacy-policy.md", "Privacy Policy"),
@@ -3361,7 +3363,8 @@ def markdown_page(slug):
     if not path.exists():
         return jsonify({"error": "Not found"}), 404
     content = path.read_text(encoding="utf-8")
-    return jsonify({"title": title, "markdown": content})
+    html = str(render_markdown(content))
+    return jsonify({"title": title, "html": html})
 
 
 @bp.route("/players/<player_id>", methods=["PUT"])

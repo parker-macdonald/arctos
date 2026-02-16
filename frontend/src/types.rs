@@ -816,7 +816,7 @@ pub struct TagsListResponse {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MarkdownPageResponse {
     pub title: String,
-    pub markdown: String,
+    pub html: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
