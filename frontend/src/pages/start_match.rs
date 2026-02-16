@@ -53,9 +53,11 @@ pub fn StartMatch(url: String, match_id: String) -> Element {
         if let Some(Ok(d)) = val.read().as_ref() {
             if team1_all().is_empty() {
                 team1_all.set(d.team1_players.iter().map(|p| p.id.clone()).collect());
+                team1_selected.set(d.team1_players.iter().map(|p| p.id.clone()).collect::<HashSet<_>>());
             }
             if team2_all().is_empty() {
                 team2_all.set(d.team2_players.iter().map(|p| p.id.clone()).collect());
+                team2_selected.set(d.team2_players.iter().map(|p| p.id.clone()).collect::<HashSet<_>>());
             }
         }
     });
@@ -67,6 +69,12 @@ pub fn StartMatch(url: String, match_id: String) -> Element {
             let match_uuid_notes2 = match_uuid.clone();
             let team1_name = d.match_info.team1_name.clone();
             let team2_name = d.match_info.team2_name.clone();
+            let team1_has_unpaid = team1_selected().iter().any(|id| {
+                d.all_players.iter().find(|p| &p.id == id).map(|p| !p.paid).unwrap_or(false)
+            });
+            let team2_has_unpaid = team2_selected().iter().any(|id| {
+                d.all_players.iter().find(|p| &p.id == id).map(|p| !p.paid).unwrap_or(false)
+            });
             // Use route param for POST so backend receives the same id we navigated to
             let route_match_id_for_submit = match_id.clone();
             let all_players_team1 = d.all_players.clone();
@@ -226,6 +234,9 @@ pub fn StartMatch(url: String, match_id: String) -> Element {
                                                     },
                                                     "{team1_selected().len()}/{d.tournament.max_team_size_field.unwrap_or(0)} players selected"
                                                 }
+                                                if team1_has_unpaid {
+                                                    p { class: "small text-danger mb-0 mt-1", "Unpaid players selected" }
+                                                }
                                             }
                                             div { class: "mb-3",
                                                 label {
@@ -338,6 +349,9 @@ pub fn StartMatch(url: String, match_id: String) -> Element {
                                                     },
                                                     "{team2_selected().len()}/{d.tournament.max_team_size_field.unwrap_or(0)} players selected"
                                                 }
+                                                if team2_has_unpaid {
+                                                    p { class: "small text-danger mb-0 mt-1", "Unpaid players selected" }
+                                                }
                                             }
                                             div { class: "mb-3",
                                                 label {
@@ -407,7 +421,9 @@ pub fn StartMatch(url: String, match_id: String) -> Element {
                                             r#type: "submit",
                                             class: "btn btn-success btn-lg",
                                             disabled: team1_selected().len() > d.tournament.max_team_size_field.unwrap_or(0) as usize
-                                                || team2_selected().len() > d.tournament.max_team_size_field.unwrap_or(0) as usize,
+                                                || team2_selected().len() > d.tournament.max_team_size_field.unwrap_or(0) as usize
+                                                || team1_has_unpaid
+                                                || team2_has_unpaid,
                                             "Start Match"
                                         }
                                     }
@@ -590,7 +606,7 @@ fn StartMatchPlayerList(
                     {
                         let is_selected = selected_ids.contains(&p.id);
                         let is_on_other = other_selected_ids.contains(&p.id);
-                        let disabled = !p.paid || is_on_other;
+                        let disabled = is_on_other;
                         let injuries = if p.injuries.is_empty() {
                             None
                         } else {

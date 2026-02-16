@@ -1,12 +1,52 @@
 use crate::api;
 use crate::Route;
 use crate::stones_filter::BayesianOffsetFilter;
+use crate::types::{PointData, PointTimestamp};
 use dioxus::prelude::*;
 use serde_json::Value;
 #[cfg(target_arch = "wasm32")]
 use gloo_timers::callback::Interval;
 #[cfg(target_arch = "wasm32")]
 use chrono;
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::JsCast;
+
+/// Resolve in-video start time for a point: by uuid if present, else by index (legacy).
+fn in_video_start_for_point(
+    ts: &[PointTimestamp],
+    points: &[PointData],
+    point_index: usize,
+) -> Option<f64> {
+    let uuid = points.get(point_index).map(|p| &p.uuid)?;
+    for t in ts {
+        if t.point_uuid.as_ref() == Some(uuid) {
+            return Some(t.in_video_start);
+        }
+    }
+    // Legacy: no uuids, use index
+    ts.get(point_index).map(|t| t.in_video_start)
+}
+
+/// Compute seek time in the new camera to match "same time in real life" from current camera.
+/// Returns None if we can't resolve (e.g. legacy data without uuids, or point not in new camera).
+fn same_time_seek_target(
+    current_ts: &[PointTimestamp],
+    new_ts: Option<&[PointTimestamp]>,
+    current_video_time_secs: f64,
+) -> Option<f64> {
+    let new_ts = new_ts?;
+    // Latest point (by in_video_start) that we're at or past
+    let entry = current_ts
+        .iter()
+        .filter(|t| t.in_video_start <= current_video_time_secs)
+        .last()?;
+    let point_uuid = entry.point_uuid.as_ref()?;
+    let offset = current_video_time_secs - entry.in_video_start;
+    let new_entry = new_ts
+        .iter()
+        .find(|t| t.point_uuid.as_ref() == Some(point_uuid))?;
+    Some(new_entry.in_video_start + offset)
+}
 
 fn get_query_param(name: &str) -> Option<String> {
     #[cfg(target_arch = "wasm32")]
@@ -16,11 +56,91 @@ fn get_query_param(name: &str) -> Option<String> {
         let params = web_sys::UrlSearchParams::new_with_str(&search).ok()?;
         params.get(name)
     }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let _ = name;
-        None
+#[cfg(not(target_arch = "wasm32"))]
+{
+    let _ = name;
+    None
+}
+}
+
+/// Seek the local video player to the given time in seconds (wasm only).
+#[cfg(target_arch = "wasm32")]
+fn seek_video_to(secs: f64) {
+    if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
+        if let Some(el) = doc.get_element_by_id("local-video-player") {
+            if let Ok(media) = el.dyn_into::<web_sys::HtmlMediaElement>() {
+                media.set_current_time(secs);
+            }
+        }
     }
+}
+
+/// Step the local video player forward or backward by one frame (~1/30s) (wasm only).
+#[cfg(target_arch = "wasm32")]
+fn step_video_frame(forward: bool) {
+    if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
+        if let Some(el) = doc.get_element_by_id("local-video-player") {
+            if let Ok(media) = el.dyn_into::<web_sys::HtmlMediaElement>() {
+                let t: f64 = media.current_time();
+                let delta = if forward { 1.0 / 30.0 } else { -1.0 / 30.0 };
+                media.set_current_time((t + delta).max(0.0));
+            }
+        }
+    }
+}
+
+/// Toggle play/pause on the local video player (wasm only).
+#[cfg(target_arch = "wasm32")]
+fn toggle_video_play_pause() {
+    if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
+        if let Some(el) = doc.get_element_by_id("local-video-player") {
+            if let Ok(media) = el.dyn_into::<web_sys::HtmlMediaElement>() {
+                if media.paused() {
+                    let _ = media.play();
+                } else {
+                    let _ = media.pause();
+                }
+            }
+        }
+    }
+}
+
+/// Set the local video player playback rate (wasm only).
+#[cfg(target_arch = "wasm32")]
+fn set_video_playback_speed(rate: f64) {
+    if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
+        if let Some(el) = doc.get_element_by_id("local-video-player") {
+            if let Ok(media) = el.dyn_into::<web_sys::HtmlMediaElement>() {
+                media.set_playback_rate(rate);
+            }
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn seek_video_to(_secs: f64) {}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn step_video_frame(_forward: bool) {}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn toggle_video_play_pause() {}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn set_video_playback_speed(_rate: f64) {}
+
+/// Get current time in seconds of the local video player (wasm only).
+#[cfg(target_arch = "wasm32")]
+fn get_video_current_time() -> Option<f64> {
+    let doc = web_sys::window()?.document()?;
+    let el = doc.get_element_by_id("local-video-player")?;
+    let media = el.dyn_into::<web_sys::HtmlMediaElement>().ok()?;
+    Some(media.current_time())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn get_video_current_time() -> Option<f64> {
+    None
 }
 
 /// Compute stones elapsed for a point using Bayesian filter for server time
@@ -264,6 +384,63 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
     let navigator = use_navigator();
     let mut selected_camera_idx = use_signal(|| 0usize);
     let mut camera_dropdown_open = use_signal(|| false);
+    let mut selected_point_index = use_signal(|| 0usize);
+    let mut point_timestamps_for_keys = use_signal(|| Vec::<PointTimestamp>::new());
+    let mut n_cameras_for_keys = use_signal(|| 0usize);
+    let mut n_points_for_keys = use_signal(|| 0usize);
+    let mut playback_speed = use_signal(|| "1".to_string());
+    // Throttle frame step to 5 fps when holding f/b (min 200ms between steps).
+    let mut last_frame_step_time_ms = use_signal(|| 0.0f64);
+    // When switching camera, seek to this time (secs) once the new video is ready.
+    let mut pending_seek_time = use_signal(|| None::<f64>);
+
+    use_effect(move || {
+        let _ = (val.read().as_ref(), selected_camera_idx());
+        if let Some(Ok(d)) = val.read().as_ref() {
+            let idx = selected_camera_idx().min(d.available_cameras.len().saturating_sub(1));
+            if let Some(cam) = d.available_cameras.get(idx) {
+                point_timestamps_for_keys.set(cam.point_timestamps.clone().unwrap_or_default());
+            } else {
+                point_timestamps_for_keys.set(Vec::new());
+            }
+            n_cameras_for_keys.set(d.available_cameras.len());
+            n_points_for_keys.set(d.points.len());
+        } else {
+            point_timestamps_for_keys.set(Vec::new());
+            n_cameras_for_keys.set(0);
+            n_points_for_keys.set(0);
+        }
+    });
+
+    // When switching camera with pending same-time seek, poll video until ready then seek.
+    #[cfg(target_arch = "wasm32")]
+    {
+        let pending_seek_time_eff = pending_seek_time;
+        use_effect(move || {
+            let pending = pending_seek_time_eff();
+            let _ = selected_camera_idx();
+            if let Some(secs) = pending {
+                let mut set_pending = pending_seek_time_eff;
+                spawn(async move {
+                    const HAVE_CURRENT_DATA: u16 = 2;
+                    for _ in 0..100 {
+                        gloo_timers::future::TimeoutFuture::new(100).await;
+                        if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
+                            if let Some(el) = doc.get_element_by_id("local-video-player") {
+                                if let Ok(media) = el.dyn_into::<web_sys::HtmlMediaElement>() {
+                                    if media.ready_state() >= HAVE_CURRENT_DATA {
+                                        media.set_current_time(secs);
+                                        set_pending.set(None);
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+        });
+    }
 
     // Initialize video player JavaScript when cameras are available
     #[cfg(target_arch = "wasm32")]
@@ -315,12 +492,136 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
             }
         });
     }
-    
+
+    let keydown_handler = move |ev: Event<KeyboardData>| {
+        #[cfg(target_arch = "wasm32")]
+        {
+            if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
+                if let Some(active) = doc.active_element() {
+                    if let Ok(html_el) = active.dyn_into::<web_sys::HtmlElement>() {
+                        let tag = html_el.tag_name().to_uppercase();
+                        if tag == "INPUT" || tag == "TEXTAREA" || tag == "SELECT" {
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+        let key = ev.key().to_string();
+        let shift = ev.modifiers().contains(Modifiers::SHIFT);
+        match key.as_str() {
+            "g" | "G" => {
+                ev.prevent_default();
+                if let Some(Ok(d)) = val.read().as_ref() {
+                    let ts = point_timestamps_for_keys();
+                    let pi = selected_point_index().min(d.points.len().saturating_sub(1));
+                    if let Some(t) = in_video_start_for_point(&ts, &d.points, pi) {
+                        seek_video_to(t);
+                    }
+                }
+            }
+            "p" | "P" => {
+                ev.prevent_default();
+                let new_idx = selected_point_index().saturating_sub(1);
+                selected_point_index.set(new_idx);
+                if let Some(Ok(d)) = val.read().as_ref() {
+                    let ts = point_timestamps_for_keys();
+                    if let Some(t) = in_video_start_for_point(&ts, &d.points, new_idx) {
+                        seek_video_to(t);
+                    }
+                }
+            }
+            "n" | "N" => {
+                ev.prevent_default();
+                let n = n_points_for_keys();
+                let new_idx = (selected_point_index() + 1).min(n.saturating_sub(1));
+                selected_point_index.set(new_idx);
+                if let Some(Ok(d)) = val.read().as_ref() {
+                    let ts = point_timestamps_for_keys();
+                    if let Some(t) = in_video_start_for_point(&ts, &d.points, new_idx) {
+                        seek_video_to(t);
+                    }
+                }
+            }
+            " " => {
+                ev.prevent_default();
+                toggle_video_play_pause();
+            }
+            "f" | "F" => {
+                ev.prevent_default();
+                #[cfg(target_arch = "wasm32")]
+                {
+                    let now = js_sys::Date::now();
+                    if now - last_frame_step_time_ms() >= 100.0 {
+                        last_frame_step_time_ms.set(now);
+                        step_video_frame(true);
+                    }
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                step_video_frame(true);
+            }
+            "b" | "B" => {
+                ev.prevent_default();
+                #[cfg(target_arch = "wasm32")]
+                {
+                    let now = js_sys::Date::now();
+                    if now - last_frame_step_time_ms() >= 100.0 {
+                        last_frame_step_time_ms.set(now);
+                        step_video_frame(false);
+                    }
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                step_video_frame(false);
+            }
+            "c" | "C" => {
+                ev.prevent_default();
+                let n = n_cameras_for_keys();
+                if n > 1 {
+                    let current_idx = selected_camera_idx();
+                    let new_idx = if shift {
+                        (current_idx + n - 1) % n
+                    } else {
+                        (current_idx + 1) % n
+                    };
+                    if new_idx != current_idx {
+                        #[cfg(target_arch = "wasm32")]
+                        if let Some(Ok(d)) = val.read().as_ref() {
+                            let current_ts = point_timestamps_for_keys();
+                            let new_cam = d.available_cameras.get(new_idx);
+                            let new_ts = new_cam.and_then(|c| c.point_timestamps.as_deref());
+                            if let Some(t) = get_video_current_time()
+                                .and_then(|now| same_time_seek_target(&current_ts, new_ts, now))
+                            {
+                                pending_seek_time.set(Some(t));
+                            }
+                        }
+                        selected_camera_idx.set(new_idx);
+                    }
+                }
+            }
+            _ => {}
+        }
+    };
+
     rsx! {
+        style { "#match-page-keyboard:focus {{ outline: none; }}" }
+        div {
+            id: "match-page-keyboard",
+            tabindex: "-1",
+            onkeydown: keydown_handler,
+            onmounted: move |ev: Event<MountedData>| {
+                spawn(async move {
+                    let _ = ev.data().set_focus(true).await;
+                });
+            },
         if let Some(Ok(d)) = val.read().as_ref() {
             {
                 let has_cameras = d.available_cameras.len() > 0 || d.camera_url.is_some();
                 let footage_section = has_cameras.then(|| {
+                    let points = d.points.clone();
+                    let points_go = points.clone();
+                    let points_prev = points.clone();
+                    let points_next = points.clone();
                     let idx = selected_camera_idx().min(d.available_cameras.len().saturating_sub(1));
                     let current = d.available_cameras.get(idx);
                     let is_recorded = current.map(|c| c.camera_type == "recorded").unwrap_or(false);
@@ -344,9 +645,9 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                                         {
                                             if let Some(cam) = current {
                                                 if cam.camera_type == "recorded" {
-                                                    { format!("📹 Recorded: {}", cam.camera_id.as_deref().unwrap_or("unknown")) }
+                                                    { format!("📹 Camera: {}", cam.camera_id.as_deref().unwrap_or("unknown")) }
                                                 } else {
-                                                    { format!("📹 Camera {}", cam.index + 1) }
+                                                    { format!("📹 Camera: {}", cam.index + 1) }
                                                 }
                                             } else {
                                                 "📹 Camera".to_string()
@@ -363,6 +664,7 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                                                     .enumerate()
                                                     .map(|(idx, cam)| {
                                                         let idx = idx;
+                                                        let new_ts = cam.point_timestamps.clone();
                                                         rsx! {
                                                             li { key: "{cam.index}",
                                                                 a {
@@ -370,13 +672,26 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                                                                     href: "#",
                                                                     onclick: move |ev| {
                                                                         ev.prevent_default();
-                                                                        selected_camera_idx.set(idx);
+                                                                        let current_idx = selected_camera_idx();
+                                                                        if idx != current_idx {
+                                                                            #[cfg(target_arch = "wasm32")]
+                                                                            {
+                                                                                let current_ts = point_timestamps_for_keys();
+                                                                                let new_ts_ref = new_ts.as_deref();
+                                                                                if let Some(t) = get_video_current_time()
+                                                                                    .and_then(|now| same_time_seek_target(&current_ts, new_ts_ref, now))
+                                                                                {
+                                                                                    pending_seek_time.set(Some(t));
+                                                                                }
+                                                                            }
+                                                                            selected_camera_idx.set(idx);
+                                                                        }
                                                                         camera_dropdown_open.set(false);
                                                                     },
                                                                     {
                                                                         if cam.camera_type == "recorded" {
                                                                             format!(
-                                                                                "Recorded: {}",
+                                                                                "Camera: {}",
                                                                                 cam.camera_id.as_deref().unwrap_or("unknown"),
                                                                             )
                                                                         } else {
@@ -394,7 +709,7 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                             } else if let Some(cam) = current {
                                 span { class: "text-muted small",
                                     if cam.camera_type == "recorded" {
-                                        { format!("📹 Recorded: {}", cam.camera_id.as_deref().unwrap_or("unknown")) }
+                                        { format!("📹 Camera: {}", cam.camera_id.as_deref().unwrap_or("unknown")) }
                                     } else {
                                         { format!("📹 Camera {}", cam.index + 1) }
                                     }
@@ -430,9 +745,15 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                                         id: "points-dropdown",
                                         class: "form-select form-select-sm",
                                         style: "width: auto;",
+                                        value: "{selected_point_index().min(points.len().saturating_sub(1))}",
+                                        onchange: move |ev| {
+                                            if let Ok(i) = ev.value().parse::<usize>() {
+                                                selected_point_index.set(i);
+                                            }
+                                        },
                                         option { value: "", "Select point..." }
                                         {
-                                            d.points
+                                            points
                                                 .iter()
                                                 .enumerate()
                                                 .map(|(idx, pt)| {
@@ -445,27 +766,59 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                                     button {
                                         id: "seek-go-btn",
                                         class: "btn btn-sm btn-primary",
+                                        onclick: move |_| {
+                                            let ts = point_timestamps_for_keys();
+                                            let pi = selected_point_index().min(points_go.len().saturating_sub(1));
+                                            if let Some(t) = in_video_start_for_point(&ts, &points_go, pi) {
+                                                seek_video_to(t);
+                                            }
+                                        },
                                         "Go (g)"
                                     }
                                     button {
                                         id: "seek-prev-btn",
                                         class: "btn btn-sm btn-secondary",
-                                        "Previous Point (k)"
+                                        onclick: move |_| {
+                                            let new_idx = selected_point_index().saturating_sub(1);
+                                            selected_point_index.set(new_idx);
+                                            let ts = point_timestamps_for_keys();
+                                            if let Some(t) = in_video_start_for_point(&ts, &points_prev, new_idx) {
+                                                seek_video_to(t);
+                                            }
+                                        },
+                                        "Previous Point (p)"
                                     }
                                     button {
                                         id: "seek-next-btn",
                                         class: "btn btn-sm btn-secondary",
-                                        "Next Point (j)"
+                                        onclick: move |_| {
+                                            let n = n_points_for_keys();
+                                            let new_idx = (selected_point_index() + 1).min(n.saturating_sub(1));
+                                            selected_point_index.set(new_idx);
+                                            let ts = point_timestamps_for_keys();
+                                            if let Some(t) = in_video_start_for_point(&ts, &points_next, new_idx) {
+                                                seek_video_to(t);
+                                            }
+                                        },
+                                        "Next Point (n)"
                                     }
                                     span { class: "ms-2", "Speed:" }
                                     select {
                                         id: "playback-speed",
                                         class: "form-select form-select-sm",
                                         style: "width: auto;",
+                                        value: "{playback_speed()}",
+                                        onchange: move |ev| {
+                                            let v = ev.value();
+                                            playback_speed.set(v.clone());
+                                            if let Ok(rate) = v.parse::<f64>() {
+                                                set_video_playback_speed(rate);
+                                            }
+                                        },
                                         option { value: "0.25", "0.25x" }
                                         option { value: "0.5", "0.5x" }
                                         option { value: "0.75", "0.75x" }
-                                        option { value: "1", selected: true, "1x" }
+                                        option { value: "1", "1x" }
                                         option { value: "1.25", "1.25x" }
                                         option { value: "1.5", "1.5x" }
                                         option { value: "1.75", "1.75x" }
@@ -722,25 +1075,6 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                                                         },
                                                         class: "btn btn-warning",
                                                         "Run Match"
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                // TO actions
-                                if user.user_type == "TO" {
-                                    if let Some(id) = &match_id {
-                                        div { class: "row mt-3",
-                                            div { class: "col-12",
-                                                div { class: "d-flex gap-2",
-                                                    Link {
-                                                        to: Route::EditMatch {
-                                                            tournament_url: url.clone(),
-                                                            match_id: id.clone(),
-                                                        },
-                                                        class: "btn btn-primary",
-                                                        "Edit Match"
                                                     }
                                                 }
                                             }
@@ -1175,6 +1509,7 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
             p { "Add ?id=... or ?name=... to the URL" }
         } else {
             p { "Loading…" }
+        }
         }
     }
 }

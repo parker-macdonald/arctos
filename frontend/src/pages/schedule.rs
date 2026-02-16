@@ -731,6 +731,7 @@ fn CreateMatchModal(
         }
         let expr_captured = expr.clone();
         let url = tournament_url_val.clone();
+        #[cfg(target_arch = "wasm32")]
         spawn(async move {
             gloo_timers::future::TimeoutFuture::new(3000).await;
             let current = skip_condition();
@@ -1241,7 +1242,18 @@ fn CreateMatchModal(
                                 div { class: "col-md-6",
                                     div { class: "mb-3",
                                         label { class: "form-label", "Field" }
-                                        select { class: "form-select", value: "{field}", onchange: move |e| on_field_change(e.value()),
+                                        input {
+                                            class: "form-control",
+                                            "type": "text",
+                                            list: "field-list-create",
+                                            value: "{field}",
+                                            placeholder: "Select or type field name",
+                                            oninput: move |e| {
+                                                let val = e.value();
+                                                on_field_change(val);
+                                            },
+                                        }
+                                        datalist { id: "field-list-create",
                                             option { value: "", "Select Field" }
                                             for f in &data.fields {
                                                 option { value: "{f.name}", "{f.name}" }
@@ -3456,6 +3468,7 @@ fn EditMatchModal(
         }
         let expr_captured = expr.clone();
         let url = tournament_url_val_edit.clone();
+        #[cfg(target_arch = "wasm32")]
         spawn(async move {
             gloo_timers::future::TimeoutFuture::new(3000).await;
             let current = skip_condition();
@@ -3472,6 +3485,8 @@ fn EditMatchModal(
                 }
             }
         });
+        #[cfg(not(target_arch = "wasm32"))]
+        let _ = (expr_captured, url);
     });
 
     rsx! {
@@ -3504,7 +3519,18 @@ fn EditMatchModal(
                                 div { class: "col-md-6",
                                     div { class: "mb-3",
                                         label { class: "form-label", "Field" }
-                                        select { class: "form-select", value: "{field}", onchange: move |e| on_field_change_edit(e.value()),
+                                        input {
+                                            class: "form-control",
+                                            "type": "text",
+                                            list: "field-list-edit",
+                                            value: "{field}",
+                                            placeholder: "Select or type field name",
+                                            oninput: move |e| {
+                                                let val = e.value();
+                                                on_field_change_edit(val);
+                                            },
+                                        }
+                                        datalist { id: "field-list-edit",
                                             option { value: "", "Select Field" }
                                             for f in &data.fields {
                                                 option { value: "{f.name}", "{f.name}" }

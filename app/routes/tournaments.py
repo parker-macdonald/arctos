@@ -1040,12 +1040,12 @@ def camera_url_api():
         # Generate the camera URL with key
         access_key = generate_camera_key(tournament_url, field_name)
         from flask import url_for
+        from urllib.parse import quote
 
-        print(field_name)
         camera_url = url_for(
             "tournaments.record_page",
             tournament_url=tournament_url,
-            field=field_name,
+            field=quote(field_name),
             camera_key=access_key,
             _external=True,
         )
@@ -1455,7 +1455,7 @@ def update_tournament_settings(tournament_url):
 
     db.session.commit()
     flash("Tournament settings updated successfully!", "success")
-    return redirect(f"/{tournament_url}/settings")
+    return redirect(f"/{tournament_url}")
 
 
 @bp.route("/<tournament_url>/add-match", methods=["POST"])

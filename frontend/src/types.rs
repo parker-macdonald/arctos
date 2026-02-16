@@ -398,6 +398,51 @@ pub struct MatchDetailData {
     pub final_notes: Option<String>,
 }
 
+/// Per-point in-video start time. Includes point_uuid so cameras can have different point sets.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PointTimestamp {
+    /// Point UUID; None for legacy data (array of numbers).
+    pub point_uuid: Option<String>,
+    pub in_video_start: f64,
+}
+
+fn deserialize_point_timestamps<'de, D>(
+    d: D,
+) -> Result<Option<Vec<PointTimestamp>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::Deserialize;
+    let opt: Option<serde_json::Value> = Option::deserialize(d)?;
+    let Some(val) = opt else {
+        return Ok(None);
+    };
+    let arr = match &val {
+        serde_json::Value::Array(a) => a.clone(),
+        _ => return Ok(None),
+    };
+    let mut out = Vec::new();
+    for item in arr {
+        match item {
+            serde_json::Value::Number(n) => {
+                let t = n.as_f64().unwrap_or(0.0);
+                out.push(PointTimestamp {
+                    point_uuid: None,
+                    in_video_start: t,
+                });
+            }
+            serde_json::Value::Object(o) => {
+                let pt: PointTimestamp =
+                    serde_json::from_value(serde_json::Value::Object(o))
+                        .map_err(serde::de::Error::custom)?;
+                out.push(pt);
+            }
+            _ => {}
+        }
+    }
+    Ok(Some(out))
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CameraData {
     pub index: u32,
@@ -408,7 +453,8 @@ pub struct CameraData {
     pub video_path: Option<String>,
     pub camera_id: Option<String>,
     pub session_id: Option<String>,
-    pub point_timestamps: Option<Vec<f64>>,
+    #[serde(default, deserialize_with = "deserialize_point_timestamps")]
+    pub point_timestamps: Option<Vec<PointTimestamp>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

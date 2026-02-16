@@ -5,6 +5,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::JsCast as _;
+#[cfg(target_arch = "wasm32")]
+use js_sys;
 
 fn get_query_param(name: &str) -> Option<String> {
     #[cfg(target_arch = "wasm32")]
@@ -404,7 +406,10 @@ fn setup_signature_canvas_by_id(canvas_id: &str) {
         return;
     }
     let ctx = ctx.unwrap();
+    #[cfg(target_arch = "wasm32")]
     ctx.set_stroke_style(&js_sys::JsString::from("#000000").into());
+    #[cfg(not(target_arch = "wasm32"))]
+    let _ = ctx;
     ctx.set_line_width(2.0);
     ctx.set_line_cap("round");
     ctx.set_line_join("round");
