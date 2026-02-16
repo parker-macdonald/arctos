@@ -262,7 +262,9 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
     let val = data.value();
     let base_url = api::base_url();
     let navigator = use_navigator();
-    
+    let mut selected_camera_idx = use_signal(|| 0usize);
+    let mut camera_dropdown_open = use_signal(|| false);
+
     // Initialize video player JavaScript when cameras are available
     #[cfg(target_arch = "wasm32")]
     {
@@ -300,12 +302,7 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                         
                         let js_init = format!(
                             r#"
-                            console.log('Match page video player initialized', {{
-                                matchId: '{}',
-                                tournamentUrl: '{}',
-                                availableCameras: {},
-                                pointsData: {}
-                            }});
+                            console.log('Match page video player initialized ' + JSON.stringify({{ matchId: '{}', tournamentUrl: '{}', availableCameras: {}, pointsData: {} }}));
                             "#,
                             match_id_val.replace('\'', "\\'"),
                             url_val.replace('\'', "\\'"),
@@ -321,6 +318,166 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
     
     rsx! {
         if let Some(Ok(d)) = val.read().as_ref() {
+            {
+                let has_cameras = d.available_cameras.len() > 0 || d.camera_url.is_some();
+                let footage_section = has_cameras.then(|| {
+                    let idx = selected_camera_idx().min(d.available_cameras.len().saturating_sub(1));
+                    let current = d.available_cameras.get(idx);
+                    let is_recorded = current.map(|c| c.camera_type == "recorded").unwrap_or(false);
+                    let video_src = current.and_then(|c| c.video_path.as_ref()).map(|p| {
+                        let base = base_url.trim_end_matches('/');
+                        let path = p.trim_start_matches('/');
+                        format!("{}/{}", base, path)
+                    });
+                    rsx! {
+                        div { class: "card mt-3",
+                        div { class: "card-header d-flex justify-content-between align-items-center",
+                            h5 { class: "mb-0", "Match Footage" }
+                            if d.available_cameras.len() > 1 {
+                                div { class: "dropdown",
+                                    button {
+                                        class: "btn btn-sm btn-outline-secondary dropdown-toggle",
+                                        "type": "button",
+                                        id: "camera-selector-dropdown",
+                                        "aria-expanded": "{camera_dropdown_open()}",
+                                        onclick: move |_| camera_dropdown_open.toggle(),
+                                        {
+                                            if let Some(cam) = current {
+                                                if cam.camera_type == "recorded" {
+                                                    { format!("📹 Recorded: {}", cam.camera_id.as_deref().unwrap_or("unknown")) }
+                                                } else {
+                                                    { format!("📹 Camera {}", cam.index + 1) }
+                                                }
+                                            } else {
+                                                "📹 Camera".to_string()
+                                            }
+                                        }
+                                    }
+                                    if camera_dropdown_open() {
+                                        ul {
+                                            class: "dropdown-menu dropdown-menu-end show",
+                                            "aria-labelledby": "camera-selector-dropdown",
+                                            {
+                                                d.available_cameras
+                                                    .iter()
+                                                    .enumerate()
+                                                    .map(|(idx, cam)| {
+                                                        let idx = idx;
+                                                        rsx! {
+                                                            li { key: "{cam.index}",
+                                                                a {
+                                                                    class: "dropdown-item",
+                                                                    href: "#",
+                                                                    onclick: move |ev| {
+                                                                        ev.prevent_default();
+                                                                        selected_camera_idx.set(idx);
+                                                                        camera_dropdown_open.set(false);
+                                                                    },
+                                                                    {
+                                                                        if cam.camera_type == "recorded" {
+                                                                            format!(
+                                                                                "Recorded: {}",
+                                                                                cam.camera_id.as_deref().unwrap_or("unknown"),
+                                                                            )
+                                                                        } else {
+                                                                            format!("Camera {}", cam.index + 1)
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    })
+                                            }
+                                        }
+                                    }
+                                }
+                            } else if let Some(cam) = current {
+                                span { class: "text-muted small",
+                                    if cam.camera_type == "recorded" {
+                                        { format!("📹 Recorded: {}", cam.camera_id.as_deref().unwrap_or("unknown")) }
+                                    } else {
+                                        { format!("📹 Camera {}", cam.index + 1) }
+                                    }
+                                }
+                            }
+                        }
+                        div { class: "card-body",
+                            div { id: "video-stream-container",
+                                if is_recorded {
+                                    if let Some(ref src) = video_src {
+                                        div {
+                                            id: "local-video-container",
+                                            video {
+                                                id: "local-video-player",
+                                                src: "{src}",
+                                                controls: true,
+                                                style: "width: 100%; max-width: 100%; aspect-ratio: 16/9;",
+                                                "Your browser does not support the video tag."
+                                            }
+                                        }
+                                    } else {
+                                        p { class: "text-muted", "No video path" }
+                                    }
+                                } else {
+                                    div {
+                                        id: "youtube-stream-not-started",
+                                        p { class: "text-muted", "📹 Stream not started (YouTube camera)" }
+                                    }
+                                }
+                                div { class: "mt-3 d-flex align-items-center flex-wrap gap-2",
+                                    span { "Seek to point:" }
+                                    select {
+                                        id: "points-dropdown",
+                                        class: "form-select form-select-sm",
+                                        style: "width: auto;",
+                                        option { value: "", "Select point..." }
+                                        {
+                                            d.points
+                                                .iter()
+                                                .enumerate()
+                                                .map(|(idx, pt)| {
+                                                    rsx! {
+                                                        option { key: "{pt.uuid}", value: "{idx}", "Point {idx + 1}" }
+                                                    }
+                                                })
+                                        }
+                                    }
+                                    button {
+                                        id: "seek-go-btn",
+                                        class: "btn btn-sm btn-primary",
+                                        "Go (g)"
+                                    }
+                                    button {
+                                        id: "seek-prev-btn",
+                                        class: "btn btn-sm btn-secondary",
+                                        "Previous Point (k)"
+                                    }
+                                    button {
+                                        id: "seek-next-btn",
+                                        class: "btn btn-sm btn-secondary",
+                                        "Next Point (j)"
+                                    }
+                                    span { class: "ms-2", "Speed:" }
+                                    select {
+                                        id: "playback-speed",
+                                        class: "form-select form-select-sm",
+                                        style: "width: auto;",
+                                        option { value: "0.25", "0.25x" }
+                                        option { value: "0.5", "0.5x" }
+                                        option { value: "0.75", "0.75x" }
+                                        option { value: "1", selected: true, "1x" }
+                                        option { value: "1.25", "1.25x" }
+                                        option { value: "1.5", "1.5x" }
+                                        option { value: "1.75", "1.75x" }
+                                        option { value: "2", "2x" }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+                rsx! {
             div { class: "row",
                 div { class: "col-12",
                     h1 { "{d.match_data.name}" }
@@ -835,151 +992,13 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                         }
                     }
 
-                    // Match Footage Section
-                    if !d.available_cameras.is_empty() || d.camera_url.is_some() {
-                        div { class: "card mt-3",
-                            div { class: "card-header d-flex justify-content-between align-items-center",
-                                h5 { class: "mb-0", "Match Footage" }
-                                if d.available_cameras.len() > 1 {
-                                    div { class: "dropdown",
-                                        button {
-                                            class: "btn btn-sm btn-outline-secondary dropdown-toggle",
-                                            "type": "button",
-                                            id: "camera-selector-dropdown",
-                                            "data-bs-toggle": "dropdown",
-                                            "aria-expanded": "false",
-                                            "📹 Camera {d.available_cameras[0].index + 1}"
-                                        }
-                                        ul {
-                                            class: "dropdown-menu dropdown-menu-end",
-                                            "aria-labelledby": "camera-selector-dropdown",
-                                            {
-                                                d.available_cameras
-                                                    .iter()
-                                                    .enumerate()
-                                                    .map(|(idx, cam)| {
-                                                        rsx! {
-                                                            li { key: "{cam.index}",
-                                                                a {
-                                                                    class: "dropdown-item camera-option",
-                                                                    href: "#",
-                                                                    "data-camera-index": "{cam.index}",
-                                                                    "data-camera-url": cam.url.as_deref().unwrap_or(""),
-                                                                    "data-stream-start": cam.stream_start_time.as_deref().unwrap_or(""),
-                                                                    "data-camera-type": "{cam.camera_type}",
-                                                                    "data-video-path": cam.video_path.as_deref().unwrap_or(""),
-                                                                    "data-camera-id": cam.camera_id.as_deref().unwrap_or(""),
-                                                                    onclick: move |_| {}, // Camera switching handled by JavaScript, // Camera switching handled by JavaScript,
-                                                                    {
-                                                                        if cam.camera_type == "recorded" {
-                                                                            format!(
-                                                                                "Recorded: {} ({})",
-                                                                                cam.camera_id.as_deref().unwrap_or("unknown"),
-                                                                                cam
-                                                                                    .session_id
-                                                                                    .as_deref()
-                                                                                    .map(|s| &s[..8.min(s.len())])
-                                                                                    .unwrap_or("unknown"),
-                                                                            )
-                                                                        } else {
-                                                                            format!("Camera {}", cam.index + 1)
-                                                                        }
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-                                                    })
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            div { class: "card-body",
-                                div { id: "video-stream-container",
-                                    div {
-                                        id: "youtube-stream-not-started",
-                                        style: "display: none;",
-                                        p { class: "text-muted", "📹 Stream not started" }
-                                    }
-                                    div {
-                                        id: "youtube-player-container",
-                                        style: "display: none;",
-                                        div {
-                                            id: "youtube-player",
-                                            style: "width: 100%; max-width: 100%; aspect-ratio: 16 / 9;",
-                                        }
-                                    }
-                                    div {
-                                        id: "local-video-container",
-                                        style: "display: none;",
-                                        video {
-                                            id: "local-video-player",
-                                            controls: true,
-                                            style: "width: 100%; max-width: 100%;",
-                                            "Your browser does not support the video tag."
-                                        }
-                                    }
-                                    div { class: "mt-3 d-flex align-items-center flex-wrap gap-2",
-                                        span { "Seek to point:" }
-                                        select {
-                                            id: "points-dropdown",
-                                            class: "form-select form-select-sm",
-                                            style: "width: auto;",
-                                            option { value: "", "Select point..." }
-                                            {
-                                                d.points
-                                                    .iter()
-                                                    .enumerate()
-                                                    .map(|(idx, pt)| {
-                                                        rsx! {
-                                                            option { key: "{pt.uuid}", value: "{idx}", "Point {idx + 1}" }
-                                                        }
-                                                    })
-                                            }
-                                        }
-                                        button {
-                                            id: "seek-go-btn",
-                                            class: "btn btn-sm btn-primary",
-                                            "Go (g)"
-                                        }
-                                        button {
-                                            id: "seek-prev-btn",
-                                            class: "btn btn-sm btn-secondary",
-                                            "Previous Point (k)"
-                                        }
-                                        button {
-                                            id: "seek-next-btn",
-                                            class: "btn btn-sm btn-secondary",
-                                            "Next Point (j)"
-                                        }
-                                        span { class: "ms-2", "Speed:" }
-                                        select {
-                                            id: "playback-speed",
-                                            class: "form-select form-select-sm",
-                                            style: "width: auto;",
-                                            option { value: "0.25", "0.25x" }
-                                            option { value: "0.5", "0.5x" }
-                                            option { value: "0.75", "0.75x" }
-                                            option { value: "1", selected: true, "1x" }
-                                            option { value: "1.25", "1.25x" }
-                                            option { value: "1.5", "1.5x" }
-                                            option { value: "1.75", "1.75x" }
-                                            option { value: "2", "2x" }
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                    // Match Footage Section (rendered via footage_section above)
+                    { footage_section }
 
-                        // Include YouTube IFrame API script and video player JavaScript
+                    // Include YouTube IFrame API script and video player JavaScript
                         script { src: "https://www.youtube.com/iframe_api" }
                         script { src: "https://polyfill.io/v3/polyfill.min.js?features=es6" }
-                        script {
-                            id: "MathJax-script",
-                            src: "https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js",
-                            r#async: true,
-                        }
-                        script { src: "{base_url}/static/js/kalman_filter.js" }
+
                         {
                             {
                                 let cameras = d.available_cameras.clone();
@@ -1026,12 +1045,7 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                                                     .await;
                                                 let js_init = format!(
                                                     r#"
-                                                                                        console.log('Match page video player initialized', {{
-                                                                                            matchId: '{}',
-                                                                                            tournamentUrl: '{}',
-                                                                                            availableCameras: {},
-                                                                                            pointsData: {}
-                                                                                        }});
+                                                                                        console.log('Match page video player initialized ' + JSON.stringify({{ matchId: '{}', tournamentUrl: '{}', availableCameras: {}, pointsData: {} }}));
                                                                                         "#,
                                                     match_id_str.replace('\'', "\\'"),
                                                     url_str.replace('\'', "\\'"),
@@ -1047,7 +1061,6 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                             }
                         }
                     }
-                }
 
                 // Head Ref Notes Sidebar
                 div { class: "col-md-4",
@@ -1152,6 +1165,8 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                             }
                         }
                     }
+                }
+            }
                 }
             }
         } else if let Some(Err(e)) = val.read().as_ref() {

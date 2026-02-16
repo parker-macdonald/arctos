@@ -37,6 +37,42 @@ enum UploadQueueItem {
     FinalizeMatch { match_id: String },
 }
 
+/// LocalStorage key for the selected camera device ID (wasm only).
+#[cfg(target_arch = "wasm32")]
+const RECORD_CAMERA_DEVICE_ID_KEY: &str = "arctos_record_camera_id";
+
+#[cfg(target_arch = "wasm32")]
+fn get_stored_camera_device_id() -> Option<String> {
+    web_sys::window()
+        .and_then(|w| w.local_storage().ok().flatten())
+        .and_then(|s| s.get_item(RECORD_CAMERA_DEVICE_ID_KEY).ok().flatten())
+        .filter(|s| !s.is_empty())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn set_stored_camera_device_id(device_id: &str) {
+    if let Some(storage) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
+        let _ = storage.set_item(RECORD_CAMERA_DEVICE_ID_KEY, device_id);
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn reload_record_page() {
+    if let Some(window) = web_sys::window() {
+        let _ = window.location().reload();
+    }
+}
+
+/// Persist camera device ID and do a full page reload so the new camera is used (wasm only).
+#[cfg(target_arch = "wasm32")]
+fn on_camera_selection_changed(device_id: &str) {
+    set_stored_camera_device_id(device_id);
+    reload_record_page();
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn on_camera_selection_changed(_device_id: &str) {}
+
 /// Full page reload to the record URL with the new camera_name query param (wasm only).
 #[cfg(target_arch = "wasm32")]
 fn reload_record_page_with_camera_name(_url: &str, field: &str, camera_key: &str, camera_name: &str) {
@@ -279,7 +315,7 @@ pub fn Record(url: String, field: ReadSignal<String>, camera_key: ReadSignal<Str
                                         onchange: move |ev| {
                                             let value = ev.value();
                                             if !value.is_empty() {
-                                                selected_camera_id.set(Some(value));
+                                                on_camera_selection_changed(&value);
                                             }
                                         },
                                         if available_cameras().is_empty() {
@@ -315,7 +351,6 @@ pub fn Record(url: String, field: ReadSignal<String>, camera_key: ReadSignal<Str
                                         if is_recording() {
                                             div { class: "alert alert-danger",
                                                 "● Recording... "
-                                                span { id: "recording-time", "00:00" }
                                             }
                                         }
                                         if is_uploading() {
@@ -327,7 +362,7 @@ pub fn Record(url: String, field: ReadSignal<String>, camera_key: ReadSignal<Str
                                 }
                                 if matches!(status(), RecordStatus::NoMatch) && !is_recording() {
                                     div { class: "alert alert-secondary", id: "record-no-match",
-                                        "ℹ No active match on this field. Waiting for match to start..."
+                                        "No active match on this field. Waiting for match to start..."
                                     }
                                 }
                             }
@@ -448,12 +483,23 @@ async fn initialize_camera_and_enumerate(
 
     available_cameras.set(cameras.clone());
 
-    let stream = if let Some((first_id, _)) = cameras.first() {
-        selected_camera_id.set(Some(first_id.clone()));
+    let chosen_id = cameras.first().and_then(|(first_id, _)| {
+        let stored = get_stored_camera_device_id();
+        if let Some(ref id) = stored {
+            if cameras.iter().any(|(did, _)| did == id) {
+                return Some(id.clone());
+            }
+        }
+        Some(first_id.clone())
+    });
+
+    let stream = if let Some(device_id) = chosen_id {
+        selected_camera_id.set(Some(device_id.clone()));
+        set_stored_camera_device_id(&device_id);
         let mut specific_constraints = MediaStreamConstraints::new();
         let mut video_constraint = js_sys::Object::new();
         let device_id_obj = js_sys::Object::new();
-        js_sys::Reflect::set(&device_id_obj, &"exact".into(), &first_id.into()).ok();
+        js_sys::Reflect::set(&device_id_obj, &"exact".into(), &device_id.into()).ok();
         js_sys::Reflect::set(&video_constraint, &"deviceId".into(), &device_id_obj.into()).ok();
         specific_constraints.video(&video_constraint.into());
         specific_constraints.audio(&true.into());
