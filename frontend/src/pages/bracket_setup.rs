@@ -191,18 +191,6 @@ pub fn BracketSetup(url: String) -> Element {
                                                         }
                                                     }
                                                 }
-                                                input {
-                                                    class: "form-control",
-                                                    r#type: "text",
-                                                    value: "{bracket_image}",
-                                                    placeholder: "uploads/brackets/your_image.png",
-                                                    oninput: move |e| {
-                                                        let mut vec = brackets_state.write();
-                                                        if let Some(b) = vec.get_mut(idx) {
-                                                            b.image = e.value();
-                                                        }
-                                                    }
-                                                }
                                             }
                                         }
                                     }

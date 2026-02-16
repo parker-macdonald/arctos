@@ -1072,6 +1072,10 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                     }
                 }
             });
+                // Refs by pseudonym (refs_display), same as teams; fallback to refs_initial then refs
+                let reflist_str = d.match_data.refs_display.as_deref()
+                    .or(d.match_data.r#refs_initial.as_deref())
+                    .or(d.match_data.r#refs.as_deref());
                 rsx! {
             div { class: "row",
                 div { class: "col-12",
@@ -1176,14 +1180,14 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                                             }
                                         }
                                     }
-                                    // Refs display
-                                    if let Some(refs) = &d.match_data.refs_initial {
-                                        if !refs.is_empty() {
+                                    // Refs display (by pseudonym, same as teams)
+                                    if let Some(refs_list) = reflist_str {
+                                        if !refs_list.is_empty() {
                                             div { class: "d-flex align-items-center mb-2",
                                                 strong { class: "me-2", "Refs:" }
                                                 span {
                                                     {
-                                                        refs.split(',')
+                                                        refs_list.split(',')
                                                             .filter_map(|ref_trimmed| {
                                                                 let ref_trimmed = ref_trimmed.trim();
                                                                 if ref_trimmed.is_empty() {
@@ -1193,7 +1197,7 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                                                             })
                                                             .enumerate()
                                                             .map(|(idx, ref_trimmed)| {
-                                                                let refs_vec: Vec<&str> = refs
+                                                                let refs_vec: Vec<&str> = refs_list
                                                                     .split(',')
                                                                     .filter(|s| !s.trim().is_empty())
                                                                     .collect();
@@ -1287,38 +1291,33 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                                 }
                             }
 
-                            // Action buttons
-                            if let Some(Some(user)) = user_info.value().read().as_ref() {
-                                if user.user_type == "player" {
-                                    // Head ref actions
-                                    if d.match_data.status == "READY_TO_START" {
-                                        div { class: "row mt-3",
-                                            div { class: "col-12",
-                                                div { class: "d-flex gap-2",
-                                                    Link {
-                                                        to: Route::StartMatch {
-                                                            url: url.clone(),
-                                                            match_id: d.match_data.uuid.clone(),
-                                                        },
-                                                        class: "btn btn-success",
-                                                        "Start Match"
-                                                    }
-                                                }
+                            // Action buttons: only for head refs, and only when status matches
+                            if d.is_head_ref && d.match_data.status == "READY_TO_START" {
+                                div { class: "row mt-3",
+                                    div { class: "col-12",
+                                        div { class: "d-flex gap-2",
+                                            Link {
+                                                to: Route::StartMatch {
+                                                    url: url.clone(),
+                                                    match_id: d.match_data.uuid.clone(),
+                                                },
+                                                class: "btn btn-success",
+                                                "Start Match"
                                             }
                                         }
-                                    } else if d.match_data.status == "IN_PROGRESS" {
-                                        div { class: "row mt-3",
-                                            div { class: "col-12",
-                                                div { class: "d-flex gap-2",
-                                                    Link {
-                                                        to: Route::RunMatch {
-                                                            url: url.clone(),
-                                                            match_id: d.match_data.uuid.clone(),
-                                                        },
-                                                        class: "btn btn-warning",
-                                                        "Run Match"
-                                                    }
-                                                }
+                                    }
+                                }
+                            } else if d.is_head_ref && d.match_data.status == "IN_PROGRESS" {
+                                div { class: "row mt-3",
+                                    div { class: "col-12",
+                                        div { class: "d-flex gap-2",
+                                            Link {
+                                                to: Route::RunMatch {
+                                                    url: url.clone(),
+                                                    match_id: d.match_data.uuid.clone(),
+                                                },
+                                                class: "btn btn-warning",
+                                                "Run Match"
                                             }
                                         }
                                     }

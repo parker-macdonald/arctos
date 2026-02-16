@@ -50,7 +50,7 @@
     grid-template-columns: 80px repeat(var(--num-fields, 1), minmax(220px, 1fr));
     min-width: fit-content;
     /* Larger time scale; wider min column to reduce wrapping on narrow screens */
-    --slot-height: 6rem; /* ~96px */
+    --slot-height: 7rem; /* ~100px */
     --header-height: 56px;
 }
 
