@@ -318,9 +318,12 @@ def finalize_recording_worker(
             seg_start_sec = segment_files[segment_index][1]
             in_video_start = video_offset[segment_index] + (pt_start_sec - seg_start_sec)
             in_video_start = max(0.0, in_video_start)
-            point_timestamps.append(round(in_video_start, 3))
+            point_timestamps.append({
+                "point_uuid": str(pt.uuid),
+                "in_video_start": round(in_video_start, 3),
+            })
 
-        print(f"finalize_recording: point_timestamps (in-video start sec): {point_timestamps}", flush=True)
+        print(f"finalize_recording: point_timestamps (by uuid): {point_timestamps}", flush=True)
         _log.info("finalize_recording: point_timestamps=%s", point_timestamps)
 
         metadata_path = path.join(chunk_dir, "metadata.json")

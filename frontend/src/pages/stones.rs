@@ -304,7 +304,7 @@ fn StonesPlayerWasm(stones_val: ReadSignal<Option<Result<StonesResponse, String>
                     p { strong { "Important Notes:" } }
                     ul {
                         li { "The speed of sound is about 343 m/s (~110 ms to cross a 40 m field). If stones sound out of sync, try standing equidistant from speakers." }
-                        li { "It should only take a few (3–5) stones to sync. If not syncing, click \"Reset Bayesian filter\" on all devices at roughly the same time." }
+                        li { "It should only take a few (3–5) stones to sync. If not syncing, click \"Reset Sync\" on all devices at roughly the same time." }
                         li { "Bluetooth can add up to ~250 ms delay; prefer wired connections if latency differs between devices." }
                         li { "When changing the audio device, the first few stones may be out of sync while the buffer clears." }
                         li { "Custom files: keep them under 1.5 s and avoid dead space at the start." }
@@ -401,7 +401,7 @@ fn StonesPlayerWasm(stones_val: ReadSignal<Option<Result<StonesResponse, String>
                                 button {
                                     class: "btn btn-danger mb-3 ms-2",
                                     onclick: on_reset,
-                                    "Reset Bayesian filter"
+                                    "Reset Sync"
                                 }
                                 if let Some(ref msg) = *custom_status.read() {
                                     p { class: "form-text mt-2 text-danger", "{msg}" }

@@ -139,9 +139,6 @@ pub fn BracketSetup(url: String) -> Element {
                                                             class: "img-thumbnail",
                                                             style: "max-width: 200px; max-height: 200px;"
                                                         }
-                                                        div { class: "form-text",
-                                                            "Current path: {bracket_image}"
-                                                        }
                                                     }
                                                 }
                                                 input {

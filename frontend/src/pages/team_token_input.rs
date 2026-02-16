@@ -6,6 +6,8 @@ use crate::types::*;
 use dioxus::prelude::*;
 use std::cell::RefCell;
 use std::rc::Rc;
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::JsCast as _;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum TokenKind {
@@ -212,6 +214,13 @@ pub fn TeamTokenInput(
     let mut show_autocomplete = use_signal(|| false);
     let mut ac_pos = use_signal(|| 0usize);
     let mut focused_chip = use_signal(|| None::<usize>);
+    
+    // Generate a unique ID for this component instance (generated once)
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let container_id = use_memo(move || {
+        let id = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        format!("team-token-container-{}", id)
+    });
 
     let value_rc = Rc::new(value.clone());
     let team_options_rc = Rc::new(team_options);
@@ -280,10 +289,33 @@ pub fn TeamTokenInput(
 
     rsx! {
         div {
+            id: "{container_id()}",
             class: "team-token-input form-control",
             role: "combobox",
             "aria-expanded": "{show_autocomplete()}",
             tabindex: 0,
+            onfocus: move |_| {
+                show_autocomplete.set(true);
+                // Focus the inner input field when the outer div receives focus
+                let container_id_local = container_id();
+                #[cfg(target_arch = "wasm32")]
+                {
+                    spawn(async move {
+                        gloo_timers::future::TimeoutFuture::new(0).await;
+                        if let Some(window) = web_sys::window() {
+                            if let Some(doc) = window.document() {
+                                if let Ok(Some(container)) = doc.query_selector(&format!("#{}", container_id_local)) {
+                                    if let Ok(Some(input_el)) = container.query_selector(".team-token-input-field") {
+                                        if let Ok(input) = input_el.dyn_into::<web_sys::HtmlInputElement>() {
+                                            let _ = input.focus();
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    });
+                }
+            },
             onkeydown: move |ev: Event<KeyboardData>| {
                 let key = ev.key().to_string();
                 if show_autocomplete() && options_len > 0 {
@@ -347,7 +379,6 @@ pub fn TeamTokenInput(
                     return;
                 }
             },
-            onfocus: move |_| { show_autocomplete.set(true); },
             onblur: move |_| {
                 #[cfg(target_arch = "wasm32")]
                 {
@@ -443,7 +474,10 @@ pub fn TeamTokenInput(
                         ac_pos.set(0);
                         focused_chip.set(None);
                     },
-                    onfocus: move |_| { focused_chip.set(None); },
+                    onfocus: move |_| {
+                        focused_chip.set(None);
+                        show_autocomplete.set(true);
+                    },
                 }
             }
 

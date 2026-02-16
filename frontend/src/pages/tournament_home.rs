@@ -165,7 +165,6 @@ pub fn TournamentHome(url: String) -> Element {
                             div { class: "card-body",
                                 div { class: "d-grid gap-2",
                                     Link { to: Route::TournamentSettings { url: url.clone() }, class: "btn btn-outline-secondary", "Settings" }
-                                    Link { to: Route::TournamentSetup { url: url.clone() }, class: "btn btn-outline-secondary", "Setup" }
                                     Link { to: Route::BracketSetup { url: url.clone() }, class: "btn btn-outline-secondary", "Bracket Setup" }
                                     Link { to: Route::Manage { url: url.clone() }, class: "btn btn-outline-warning", "Registration Management" }
                                     button {

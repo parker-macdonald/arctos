@@ -49,9 +49,6 @@ enum Route {
     #[route("/:url/settings")]
     TournamentSettings { url: String },
 
-    #[route("/:url/setup")]
-    TournamentSetup { url: String },
-
     #[route("/:url/register")]
     TournamentRegister { url: String },
 
@@ -93,15 +90,6 @@ enum Route {
 
     #[route("/teams/:team_id/edit")]
     EditTeamProfile { team_id: String },
-
-    #[route("/:tournament_url/fields/:field_id/edit")]
-    EditField { tournament_url: String, field_id: u32 },
-
-    #[route("/:tournament_url/tags/:tag_id/edit")]
-    EditTag { tournament_url: String, tag_id: u32 },
-
-    #[route("/:tournament_url/matches/:match_id/edit")]
-    EditMatch { tournament_url: String, match_id: String },
 
     #[route("/:tournament_url/register/player/edit")]
     EditPlayerRegistration { tournament_url: String },
