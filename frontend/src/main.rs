@@ -34,9 +34,6 @@ enum Route {
     #[route("/auth/google/complete-profile")]
     GoogleCompleteProfile {},
 
-    #[route("/markdown/:slug")]
-    MarkdownPage { slug: String },
-
     #[route("/:url")]
     TournamentHome { url: String },
 
