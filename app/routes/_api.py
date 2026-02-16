@@ -2924,6 +2924,51 @@ def update_field_api(tournament_url, field_id):
         for match in matches_to_update:
             match.field = new_field_name
 
+    # Optional: set stream start times for cameras (e.g. from YouTube API or user input).
+    # Merge with existing: only update indices present in the request; never remove other keys.
+    stream_start_times = data.get("stream_start_times")
+    if stream_start_times is not None and isinstance(stream_start_times, list):
+        from app.utils.camera_helpers import calculate_stream_timestamp
+        for match in matches_to_update:
+            stream_starts = {}
+            if match.camera_stream_starts:
+                try:
+                    loaded = json.loads(match.camera_stream_starts)
+                    if isinstance(loaded, dict):
+                        stream_starts = dict(loaded)
+                except (TypeError, ValueError):
+                    pass
+            for idx, val in enumerate(stream_start_times):
+                if idx >= len(camera_urls):
+                    break
+                if val is not None and isinstance(val, str) and val.strip():
+                    stream_starts[str(idx)] = val.strip()
+                elif str(idx) in stream_starts:
+                    del stream_starts[str(idx)]
+            match.camera_stream_starts = (
+                json.dumps(stream_starts) if stream_starts else None
+            )
+        # Recompute point stream_timestamp for matches we updated
+        for match in matches_to_update:
+            points = Point.query.filter_by(match=match.uuid).all()
+            stream_starts = {}
+            if match.camera_stream_starts:
+                try:
+                    stream_starts = json.loads(match.camera_stream_starts)
+                except (TypeError, ValueError):
+                    pass
+            for point in points:
+                if (
+                    point.camera_index is not None
+                    and point.stamp
+                    and str(point.camera_index) in stream_starts
+                ):
+                    new_ts = calculate_stream_timestamp(
+                        point.stamp, stream_starts[str(point.camera_index)]
+                    )
+                    if new_ts is not None:
+                        point.stream_timestamp = new_ts
+
     db.session.commit()
     return jsonify({"success": True})
 
