@@ -6,6 +6,7 @@ use serde_json::Value;
 use gloo_timers::callback::Interval;
 
 /// Parse ISO timestamp to epoch seconds (for stones elapsed).
+/// Handles RFC3339 (with Z or offset), and naive ISO from Python (e.g. "2025-02-16T19:34:56.123456").
 fn parse_iso_epoch(s: &str) -> Option<i64> {
     let s = s.trim();
     chrono::DateTime::parse_from_rfc3339(s)
@@ -20,12 +21,18 @@ fn parse_iso_epoch(s: &str) -> Option<i64> {
             chrono::DateTime::parse_from_rfc3339(&with_z).ok().map(|dt| dt.timestamp())
         })
         .or_else(|| {
-            chrono::NaiveDateTime::parse_from_str(
-                s.trim_end_matches('Z').trim_end_matches('z'),
-                "%Y-%m-%dT%H:%M:%S",
-            )
-            .ok()
-            .map(|t| t.and_utc().timestamp())
+            // Naive ISO from Python isoformat() (no Z), possibly with fractional seconds
+            let without_tz = s.trim_end_matches('z').trim_end_matches('Z').trim();
+            let base = if let Some(dot) = without_tz.find('.') {
+                &without_tz[..dot]
+            } else if let Some(plus) = without_tz.find('+') {
+                &without_tz[..plus]
+            } else {
+                without_tz
+            };
+            chrono::NaiveDateTime::parse_from_str(base, "%Y-%m-%dT%H:%M:%S")
+                .ok()
+                .map(|t| t.and_utc().timestamp())
         })
 }
 
@@ -162,7 +169,7 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
     let mut point_notes_seeded = use_signal(|| false);
     // Local stones remaining (for STONES set type); synced from match/state when not ticking.
     let mut stones_remaining = use_signal(|| 100u32);
-    // Time elapsed (seconds) from match start.
+    // Time elapsed (seconds) from match confirmed start (UTC); correct after reload.
     let mut time_elapsed_secs = use_signal(|| 0u64);
 
     use_effect(move || {
@@ -205,24 +212,23 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                     .unwrap_or("-");
                 let field_display = m.field.as_deref().unwrap_or("TBA");
                 let length_display = m.nominal_length.map(|n| format!("{} min", n));
-                // Compute time elapsed from confirmed_start_time or nominal_start_time
-                let start_iso = m
-                    .confirmed_start_time
-                    .as_deref()
-                    .or(m.nominal_start_time.as_deref());
+                // Elapsed since match confirmed start (UTC). Difference with current time is
+                // timezone-independent; correct after page reload.
+                let start_iso = m.confirmed_start_time.as_deref();
                 let _ = live_tick();
                 let now_secs = now_epoch_secs() as u64;
-                let start_secs = start_iso
-                    .and_then(parse_iso_epoch)
-                    .map(|t| t as u64)
-                    .unwrap_or(now_secs);
-                time_elapsed_secs.set(now_secs.saturating_sub(start_secs));
-                let elapsed = time_elapsed_secs();
-                let time_elapsed_str = format!(
-                    "{:02}:{:02}",
-                    elapsed / 60,
-                    elapsed % 60
-                );
+                let time_elapsed_str = match start_iso.and_then(parse_iso_epoch) {
+                    Some(start_secs) => {
+                        let start_u = start_secs.max(0) as u64;
+                        let elapsed = now_secs.saturating_sub(start_u);
+                        time_elapsed_secs.set(elapsed);
+                        format!("{:02}:{:02}", elapsed / 60, elapsed % 60)
+                    }
+                    None => {
+                        time_elapsed_secs.set(0);
+                        "—".to_string()
+                    }
+                };
 
                 let state_opt = state_signal();
                 let state_value: Option<&Value> = state_opt.as_ref().and_then(|r| r.as_ref().ok());
@@ -865,14 +871,14 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                                             div { class: "col-md-6",
                                                 div { class: "row",
                                                     if set_type_stones {
-                                                        div { class: "col-6 text-center",
+                                                        div { class: "col-6 text-center d-flex flex-column align-items-center",
                                                             h4 { class: "mb-1", "Stone Count" }
                                                             p { class: "small mb-0", "(click to edit)" }
                                                             input {
                                                                 r#type: "number",
                                                                 class: "form-control-plaintext text-center display-4 m-0 p-0",
                                                                 id: "stones-remaining",
-                                                                style: "width: 6ch; line-height: 1; font-size: 3rem; height: 64px;",
+                                                                style: "width: 6ch; line-height: 1; font-size: 3rem; height: 64px; min-width: 6ch;",
                                                                 value: "{display_stones}",
                                                                 oninput: move |ev| {
                                                                     if let Ok(n) = ev.value().parse::<u32>() {
