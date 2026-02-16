@@ -1022,6 +1022,67 @@ pub async fn upload_bracket_image_bytes(
     }
 }
 
+/// Fetch YouTube stream start time (ISO UTC) for a video ID or URL. Returns Ok(None) if not available.
+pub async fn youtube_stream_start(video_id_or_url: &str) -> Result<Option<String>, String> {
+    let video_id = extract_youtube_video_id(video_id_or_url).unwrap_or_else(|| video_id_or_url.to_string());
+    if video_id.is_empty() {
+        return Ok(None);
+    }
+    let c = client();
+    let url = format!("{}/youtube-stream-start", base());
+    let r = with_credentials(c.get(&url).query(&[("video_id", video_id.as_str())]))
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    let data: Value = response_json(r).await?;
+    let start = data.get("start_time");
+    Ok(start.and_then(|v| v.as_str()).map(String::from))
+}
+
+fn extract_youtube_video_id(s: &str) -> Option<String> {
+    let s = s.trim();
+    if s.is_empty() {
+        return None;
+    }
+    // youtu.be/ID
+    if let Some(rest) = s.strip_prefix("https://youtu.be/") {
+        let id = rest.split(&['?', '&', '#'][..]).next().unwrap_or(rest);
+        if id.len() >= 11 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+            return Some(id[..11].to_string());
+        }
+    }
+    if let Some(rest) = s.strip_prefix("http://youtu.be/") {
+        let id = rest.split(&['?', '&', '#'][..]).next().unwrap_or(rest);
+        if id.len() >= 11 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+            return Some(id[..11].to_string());
+        }
+    }
+    // youtube.com/watch?v=ID or embed/ID or v/ID
+    if s.contains("youtube.com") {
+        if let Some(v) = s.find("v=") {
+            let after = &s[v + 2..];
+            let id = after.split(&['&', '#'][..]).next().unwrap_or(after);
+            if id.len() >= 11 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+                return Some(id[..11].to_string());
+            }
+        }
+        for prefix in ["/embed/", "/v/"] {
+            if let Some(i) = s.find(prefix) {
+                let after = &s[i + prefix.len()..];
+                let id = after.split(&['?', '&', '#'][..]).next().unwrap_or(after);
+                if id.len() >= 11 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+                    return Some(id[..11].to_string());
+                }
+            }
+        }
+    }
+    // Bare 11-char ID
+    if s.len() == 11 && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        return Some(s.to_string());
+    }
+    None
+}
+
 pub async fn update_field(
     tournament_url: &str,
     field_id: u32,

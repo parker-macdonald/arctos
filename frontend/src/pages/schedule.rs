@@ -1702,7 +1702,7 @@ fn FieldsModal(
                                                             let on_change = on_change.clone();
                                                             spawn(async move {
                                                                 let cams = if cam.trim().is_empty() { vec![] } else { vec![cam] };
-                                                                let req = UpdateFieldRequest { name, camera_urls: cams };
+                                                                let req = UpdateFieldRequest { name, camera_urls: cams, stream_start_times: None };
                                                                 if let Ok(_) = api::update_field(&u, fid, &req).await {
                                                                     editing_field_id.set(None);
                                                                     on_change.call(());

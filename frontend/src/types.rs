@@ -840,6 +840,9 @@ pub struct GoogleCompleteProfileRequest {
 pub struct UpdateFieldRequest {
     pub name: String,
     pub camera_urls: Vec<String>,
+    /// Per-camera stream start times (ISO UTC). None = no change; Some(None) = clear; Some(Some(s)) = set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stream_start_times: Option<Vec<Option<String>>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

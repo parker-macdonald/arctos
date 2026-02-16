@@ -143,6 +143,47 @@ fn get_video_current_time() -> Option<f64> {
     None
 }
 
+/// Seek the YouTube iframe player to the given time in seconds (wasm only).
+#[cfg(target_arch = "wasm32")]
+fn seek_youtube_to(secs: f64) {
+    let script = format!(
+        r#"if (window.__arctosYtPlayer && window.__arctosYtPlayer.seekTo) {{ window.__arctosYtPlayer.seekTo({}, true); }}"#,
+        secs
+    );
+    spawn(async move {
+        let _ = dioxus::prelude::document::eval(&script).await;
+    });
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn seek_youtube_to(_secs: f64) {}
+
+/// Compute seek time in seconds for YouTube: (point_stamp - stream_start_time). Returns None if missing/invalid.
+fn youtube_seek_seconds(point_stamp: Option<&str>, stream_start_time: Option<&str>) -> Option<f64> {
+    let point_str = point_stamp?.trim();
+    let stream_str = stream_start_time?.trim();
+    if point_str.is_empty() || stream_str.is_empty() {
+        return None;
+    }
+    let ensure_z = |s: &str| -> String {
+        if s.ends_with('Z') || s.contains('+') {
+            s.to_string()
+        } else {
+            format!("{}Z", s)
+        }
+    };
+    let point_parsed = chrono::DateTime::parse_from_rfc3339(&ensure_z(point_str))
+        .or_else(|_| chrono::DateTime::parse_from_rfc3339(point_str))
+        .ok()?;
+    let stream_parsed = chrono::DateTime::parse_from_rfc3339(&ensure_z(stream_str))
+        .or_else(|_| chrono::DateTime::parse_from_rfc3339(stream_str))
+        .ok()?;
+    let diff = point_parsed.signed_duration_since(stream_parsed);
+    let secs = diff.num_milliseconds() as f64 / 1000.0;
+    web_sys::console::log_1(&format!("point_parsed: {:?}, stream_parsed: {:?}, diff: {:?}, secs: {:?}", point_parsed, stream_parsed, diff, secs).into());
+    Some(secs.max(0.0))
+}
+
 /// Compute stones elapsed for a point using Bayesian filter for server time
 #[cfg(target_arch = "wasm32")]
 fn compute_stones_elapsed(
@@ -393,6 +434,10 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
     let mut last_frame_step_time_ms = use_signal(|| 0.0f64);
     // When switching camera, seek to this time (secs) once the new video is ready.
     let mut pending_seek_time = use_signal(|| None::<f64>);
+    // Fetched YouTube stream start times per camera index (when API does not provide them).
+    let fetched_stream_starts = use_signal(|| Vec::<Option<String>>::new());
+    // Match UUID we have already triggered stream-start fetches for (so we only query once per load).
+    let stream_starts_fetched_for_match = use_signal(|| None::<String>);
 
     use_effect(move || {
         let _ = (val.read().as_ref(), selected_camera_idx());
@@ -411,6 +456,59 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
             n_points_for_keys.set(0);
         }
     });
+
+    // Fetch YouTube stream start for each camera that has a URL but no stream_start_time from API.
+    // Only runs once when the match page loads (keyed by match uuid).
+    #[cfg(target_arch = "wasm32")]
+    {
+        let val_fetch = val.clone();
+        let mut fetched_stream_starts = fetched_stream_starts;
+        let mut stream_starts_fetched_for_match = stream_starts_fetched_for_match;
+        use_effect(move || {
+            let match_uuid = val_fetch.read().as_ref()
+                .and_then(|r| r.as_ref().ok())
+                .map(|d| d.match_data.uuid.clone());
+            let Some(match_uuid) = match_uuid else { return };
+            if stream_starts_fetched_for_match().as_deref() == Some(match_uuid.as_str()) {
+                return;
+            }
+            stream_starts_fetched_for_match.set(Some(match_uuid.clone()));
+            let cameras = val_fetch.read().as_ref()
+                .and_then(|r| r.as_ref().ok())
+                .map(|d| d.available_cameras.clone());
+            let Some(cameras) = cameras else { return };
+            let n = cameras.len();
+            if n == 0 {
+                fetched_stream_starts.set(vec![]);
+                return;
+            }
+            let mut current = vec![None::<String>; n];
+            fetched_stream_starts.set(current.clone());
+            for (idx, cam) in cameras.iter().enumerate() {
+                let url = match &cam.url {
+                    Some(u) if !u.trim().is_empty() => u.clone(),
+                    _ => continue,
+                };
+                if cam.stream_start_time.is_some() {
+                    continue;
+                }
+                if cam.camera_type == "recorded" {
+                    continue;
+                }
+                let mut set_fetched = fetched_stream_starts;
+                spawn(async move {
+                    if let Ok(Some(iso)) = api::youtube_stream_start(&url).await {
+                        let mut v = set_fetched();
+                        if v.len() <= idx {
+                            v.resize(idx + 1, None);
+                        }
+                        v[idx] = Some(iso);
+                        set_fetched.set(v);
+                    }
+                });
+            }
+        });
+    }
 
     // When switching camera with pending same-time seek, poll video until ready then seek.
     #[cfg(target_arch = "wasm32")]
@@ -442,6 +540,96 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
         });
     }
 
+    // Initialize YouTube iframe player when selected camera is YouTube and has a URL.
+    #[cfg(target_arch = "wasm32")]
+    {
+        let val_yt = val.clone();
+        use_effect(move || {
+            let _ = selected_camera_idx();
+            let binding = val_yt.read();
+            let camera_url: Option<String> = binding
+                .as_ref()
+                .and_then(|r| r.as_ref().ok())
+                .and_then(|d| {
+                    let idx = selected_camera_idx().min(d.available_cameras.len().saturating_sub(1));
+                    let cam = d.available_cameras.get(idx)?;
+                    if cam.camera_type != "recorded" {
+                        cam.url.clone()
+                    } else {
+                        None
+                    }
+                });
+            if let Some(url) = camera_url {
+                let url_escaped = url.replace('\\', "\\\\").replace('\'', "\\'").replace('\n', " ");
+                let script = format!(
+                    r#"
+(function() {{
+  var url = '{}';
+  function extractVideoId(u) {{
+    if (!u) return null;
+    var m = u.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/v\/)([^&\n?#]+)/) || u.match(/^([a-zA-Z0-9_-]{{11}})$/);
+    return m ? m[1] : null;
+  }}
+  var videoId = extractVideoId(url);
+  if (!videoId) {{ console.warn('Arctos: no YouTube video ID in', url); return; }}
+  function createNew() {{
+    var el = document.getElementById('youtube-player');
+    if (!el) return;
+    if (window.__arctosYtPlayer) {{
+      try {{ window.__arctosYtPlayer.loadVideoById(videoId); return; }} catch (e) {{ window.__arctosYtPlayer = null; }}
+    }}
+    window.__arctosYtPlayer = new YT.Player('youtube-player', {{
+      videoId: videoId,
+      host: 'https://www.youtube-nocookie.com',
+      playerVars: {{ autoplay: 1, controls: 1, rel: 0, modestbranding: 1, enablejsapi: 1, origin: window.location.origin, iv_load_policy: 1, playsinline: 1 }},
+      events: {{ onReady: function() {{}}, onError: function(e) {{ console.error('YouTube player error', e.data); }} }}
+    }});
+  }}
+  window.onYouTubeIframeAPIReady = function() {{ createNew(); }};
+  if (window.YT && window.YT.Player) createNew();
+}})();
+"#,
+                    url_escaped
+                );
+                spawn(async move {
+                    let _ = dioxus::prelude::document::eval(&script).await;
+                });
+            }
+        });
+    }
+
+    // When match is not completed and we have a YouTube stream start, seek to live (end of stream) after player loads.
+    #[cfg(target_arch = "wasm32")]
+    {
+        let val_live = val.clone();
+        use_effect(move || {
+            let _ = selected_camera_idx();
+            let _ = fetched_stream_starts();
+            if let Some(Ok(d)) = val_live.read().as_ref() {
+                if d.match_data.status == "COMPLETED" {
+                    return;
+                }
+                let idx = selected_camera_idx().min(d.available_cameras.len().saturating_sub(1));
+                let cam = match d.available_cameras.get(idx) {
+                    Some(c) if c.camera_type != "recorded" => c,
+                    _ => return,
+                };
+                let stream_start = cam
+                    .stream_start_time
+                    .clone()
+                    .or_else(|| fetched_stream_starts().get(idx).cloned().flatten());
+                let Some(stream_start) = stream_start else { return };
+                spawn(async move {
+                    gloo_timers::future::TimeoutFuture::new(3000).await;
+                    let now_iso = chrono::Utc::now().to_rfc3339();
+                    if let Some(secs) = youtube_seek_seconds(Some(&now_iso), Some(&stream_start)) {
+                        seek_youtube_to(secs);
+                    }
+                });
+            }
+        });
+    }
+
     // Initialize video player JavaScript when cameras are available
     #[cfg(target_arch = "wasm32")]
     {
@@ -456,16 +644,7 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                     let match_id_str = match_id_for_effect.clone();
                     let url_str = url_for_effect.clone();
                     spawn(async move {
-                        // Initialize MathJax
-                        let _ = dioxus::prelude::document::eval(r#"
-                            window.MathJax = {
-                                tex: {
-                                    inlineMath: [['$', '$'], ['\\(', '\\)']],
-                                    displayMath: [['$$', '$$'], ['\\[', '\\]']]
-                                }
-                            };
-                        "#).await;
-                        
+
                         // Initialize video player (placeholder - full implementation requires YouTube IFrame API)
                         let cameras_json = serde_json::to_string(&cameras).unwrap_or_else(|_| "[]".to_string());
                         let points_json = serde_json::to_string(&points.iter().map(|p| serde_json::json!({
@@ -513,10 +692,19 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
             "g" | "G" => {
                 ev.prevent_default();
                 if let Some(Ok(d)) = val.read().as_ref() {
-                    let ts = point_timestamps_for_keys();
                     let pi = selected_point_index().min(d.points.len().saturating_sub(1));
-                    if let Some(t) = in_video_start_for_point(&ts, &d.points, pi) {
-                        seek_video_to(t);
+                    let idx = selected_camera_idx().min(d.available_cameras.len().saturating_sub(1));
+                    let cam = d.available_cameras.get(idx);
+                    if cam.map(|c| c.camera_type == "recorded").unwrap_or(false) {
+                        let ts = point_timestamps_for_keys();
+                        if let Some(t) = in_video_start_for_point(&ts, &d.points, pi) {
+                            seek_video_to(t);
+                        }
+                    } else if let Some(cam) = cam {
+                        let stamp = d.points.get(pi).and_then(|p| p.stamp.as_deref());
+                        if let Some(secs) = youtube_seek_seconds(stamp, cam.stream_start_time.as_deref()) {
+                            seek_youtube_to(secs);
+                        }
                     }
                 }
             }
@@ -525,9 +713,18 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                 let new_idx = selected_point_index().saturating_sub(1);
                 selected_point_index.set(new_idx);
                 if let Some(Ok(d)) = val.read().as_ref() {
-                    let ts = point_timestamps_for_keys();
-                    if let Some(t) = in_video_start_for_point(&ts, &d.points, new_idx) {
-                        seek_video_to(t);
+                    let idx = selected_camera_idx().min(d.available_cameras.len().saturating_sub(1));
+                    let cam = d.available_cameras.get(idx);
+                    if cam.map(|c| c.camera_type == "recorded").unwrap_or(false) {
+                        let ts = point_timestamps_for_keys();
+                        if let Some(t) = in_video_start_for_point(&ts, &d.points, new_idx) {
+                            seek_video_to(t);
+                        }
+                    } else if let Some(cam) = cam {
+                        let stamp = d.points.get(new_idx).and_then(|p| p.stamp.as_deref());
+                        if let Some(secs) = youtube_seek_seconds(stamp, cam.stream_start_time.as_deref()) {
+                            seek_youtube_to(secs);
+                        }
                     }
                 }
             }
@@ -537,9 +734,18 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                 let new_idx = (selected_point_index() + 1).min(n.saturating_sub(1));
                 selected_point_index.set(new_idx);
                 if let Some(Ok(d)) = val.read().as_ref() {
-                    let ts = point_timestamps_for_keys();
-                    if let Some(t) = in_video_start_for_point(&ts, &d.points, new_idx) {
-                        seek_video_to(t);
+                    let idx = selected_camera_idx().min(d.available_cameras.len().saturating_sub(1));
+                    let cam = d.available_cameras.get(idx);
+                    if cam.map(|c| c.camera_type == "recorded").unwrap_or(false) {
+                        let ts = point_timestamps_for_keys();
+                        if let Some(t) = in_video_start_for_point(&ts, &d.points, new_idx) {
+                            seek_video_to(t);
+                        }
+                    } else if let Some(cam) = cam {
+                        let stamp = d.points.get(new_idx).and_then(|p| p.stamp.as_deref());
+                        if let Some(secs) = youtube_seek_seconds(stamp, cam.stream_start_time.as_deref()) {
+                            seek_youtube_to(secs);
+                        }
                     }
                 }
             }
@@ -617,16 +823,25 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
         if let Some(Ok(d)) = val.read().as_ref() {
             {
                 let has_cameras = d.available_cameras.len() > 0 || d.camera_url.is_some();
-                let footage_section = has_cameras.then(|| {
-                    let points = d.points.clone();
+                let cameras = d.available_cameras.clone();
+                let points_for_footage = d.points.clone();
+                let base_url_footage = base_url.clone();
+                let footage_section = has_cameras.then(move || {
+                    let points = points_for_footage.clone();
                     let points_go = points.clone();
                     let points_prev = points.clone();
                     let points_next = points.clone();
-                    let idx = selected_camera_idx().min(d.available_cameras.len().saturating_sub(1));
-                    let current = d.available_cameras.get(idx);
+                    let idx = selected_camera_idx().min(cameras.len().saturating_sub(1));
+                    let current = cameras.get(idx);
                     let is_recorded = current.map(|c| c.camera_type == "recorded").unwrap_or(false);
+                    let stream_start_time = current
+                        .and_then(|c| c.stream_start_time.clone())
+                        .or_else(|| fetched_stream_starts().get(idx).cloned().flatten());
+                    let stream_start_go = stream_start_time.clone();
+                    let stream_start_prev = stream_start_time.clone();
+                    let stream_start_next = stream_start_time.clone();
                     let video_src = current.and_then(|c| c.video_path.as_ref()).map(|p| {
-                        let base = base_url.trim_end_matches('/');
+                        let base = base_url_footage.trim_end_matches('/');
                         let path = p.trim_start_matches('/');
                         format!("{}/{}", base, path)
                     });
@@ -634,7 +849,7 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                         div { class: "card mt-3",
                         div { class: "card-header d-flex justify-content-between align-items-center",
                             h5 { class: "mb-0", "Match Footage" }
-                            if d.available_cameras.len() > 1 {
+                            if cameras.len() > 1 {
                                 div { class: "dropdown",
                                     button {
                                         class: "btn btn-sm btn-outline-secondary dropdown-toggle",
@@ -657,9 +872,10 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                                     if camera_dropdown_open() {
                                         ul {
                                             class: "dropdown-menu dropdown-menu-end show",
+                                            style: "z-index: 9999;",
                                             "aria-labelledby": "camera-selector-dropdown",
                                             {
-                                                d.available_cameras
+                                                cameras
                                                     .iter()
                                                     .enumerate()
                                                     .map(|(idx, cam)| {
@@ -735,8 +951,13 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                                     }
                                 } else {
                                     div {
-                                        id: "youtube-stream-not-started",
-                                        p { class: "text-muted", "📹 Stream not started (YouTube camera)" }
+                                        id: "youtube-player-container",
+                                        style: "width: 100%; max-width: 100%; aspect-ratio: 16/9;",
+                                        div {
+                                            id: "youtube-player",
+                                            style: "width: 100%; height: 100%;",
+                                            "Loading YouTube player…"
+                                        }
                                     }
                                 }
                                 div { class: "mt-3 d-flex align-items-center flex-wrap gap-2",
@@ -767,10 +988,17 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                                         id: "seek-go-btn",
                                         class: "btn btn-sm btn-primary",
                                         onclick: move |_| {
-                                            let ts = point_timestamps_for_keys();
                                             let pi = selected_point_index().min(points_go.len().saturating_sub(1));
-                                            if let Some(t) = in_video_start_for_point(&ts, &points_go, pi) {
-                                                seek_video_to(t);
+                                            if is_recorded {
+                                                let ts = point_timestamps_for_keys();
+                                                if let Some(t) = in_video_start_for_point(&ts, &points_go, pi) {
+                                                    seek_video_to(t);
+                                                }
+                                            } else {
+                                                let stamp = points_go.get(pi).and_then(|p| p.stamp.as_deref());
+                                                if let Some(secs) = youtube_seek_seconds(stamp, stream_start_go.as_deref()) {
+                                                    seek_youtube_to(secs);
+                                                }
                                             }
                                         },
                                         "Go (g)"
@@ -781,9 +1009,16 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                                         onclick: move |_| {
                                             let new_idx = selected_point_index().saturating_sub(1);
                                             selected_point_index.set(new_idx);
-                                            let ts = point_timestamps_for_keys();
-                                            if let Some(t) = in_video_start_for_point(&ts, &points_prev, new_idx) {
-                                                seek_video_to(t);
+                                            if is_recorded {
+                                                let ts = point_timestamps_for_keys();
+                                                if let Some(t) = in_video_start_for_point(&ts, &points_prev, new_idx) {
+                                                    seek_video_to(t);
+                                                }
+                                            } else {
+                                                let stamp = points_prev.get(new_idx).and_then(|p| p.stamp.as_deref());
+                                                if let Some(secs) = youtube_seek_seconds(stamp, stream_start_prev.as_deref()) {
+                                                    seek_youtube_to(secs);
+                                                }
                                             }
                                         },
                                         "Previous Point (p)"
@@ -795,9 +1030,16 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                                             let n = n_points_for_keys();
                                             let new_idx = (selected_point_index() + 1).min(n.saturating_sub(1));
                                             selected_point_index.set(new_idx);
-                                            let ts = point_timestamps_for_keys();
-                                            if let Some(t) = in_video_start_for_point(&ts, &points_next, new_idx) {
-                                                seek_video_to(t);
+                                            if is_recorded {
+                                                let ts = point_timestamps_for_keys();
+                                                if let Some(t) = in_video_start_for_point(&ts, &points_next, new_idx) {
+                                                    seek_video_to(t);
+                                                }
+                                            } else {
+                                                let stamp = points_next.get(new_idx).and_then(|p| p.stamp.as_deref());
+                                                if let Some(secs) = youtube_seek_seconds(stamp, stream_start_next.as_deref()) {
+                                                    seek_youtube_to(secs);
+                                                }
                                             }
                                         },
                                         "Next Point (n)"
@@ -1329,7 +1571,7 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                     // Match Footage Section (rendered via footage_section above)
                     { footage_section }
 
-                    // Include YouTube IFrame API script and video player JavaScript
+                    // YouTube IFrame API (script from youtube.com; use host: youtube-nocookie.com when creating player)
                         script { src: "https://www.youtube.com/iframe_api" }
                         script { src: "https://polyfill.io/v3/polyfill.min.js?features=es6" }
 
@@ -1366,17 +1608,6 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                                             let match_id_str = match_id_str_for_effect.clone();
                                             let url_str = url_str_for_effect.clone();
                                             spawn(async move {
-                                                let _ = dioxus::prelude::document::eval(
-                                                        r#"
-                                                                                        window.MathJax = {
-                                                                                            tex: {
-                                                                                                inlineMath: [['$', '$'], ['\\(', '\\)']],
-                                                                                                displayMath: [['$$', '$$'], ['\\[', '\\]']]
-                                                                                            }
-                                                                                        };
-                                                                                    "#,
-                                                    )
-                                                    .await;
                                                 let js_init = format!(
                                                     r#"
                                                                                         console.log('Match page video player initialized ' + JSON.stringify({{ matchId: '{}', tournamentUrl: '{}', availableCameras: {}, pointsData: {} }}));
