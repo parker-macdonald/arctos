@@ -206,9 +206,12 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                 }
                 let team1 = m.team1_name.as_str();
                 let team2 = m.team2_name.as_str();
+                // Refs by pseudonym (refs_display), same as team1_name/team2_name
                 let refs_display = m
-                    .refs_initial
+                    .refs_display
                     .as_deref()
+                    .or(m.r#refs_initial.as_deref())
+                    .or(m.r#refs.as_deref())
                     .unwrap_or("-");
                 let field_display = m.field.as_deref().unwrap_or("TBA");
                 let length_display = m.nominal_length.map(|n| format!("{} min", n));

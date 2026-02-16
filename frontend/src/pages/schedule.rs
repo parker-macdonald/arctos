@@ -13,6 +13,40 @@ use wasm_bindgen::JsCast as _;
 /// CSS for schedule page: timeline layout and team-token inputs (used by modals in both table and timeline view).
 const SCHEDULE_PAGE_CSS: &str = include_str!("schedule_timeline.css");
 
+/// Browser timezone offset in minutes (local = utc + offset). Used for table and timeline.
+fn schedule_tz_offset_minutes() -> i64 {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let date = js_sys::Date::new_0();
+        let offset = date.get_timezone_offset();
+        -offset as i64
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        0_i64
+    }
+}
+
+/// Effective start time for timeline/date nav: confirmed when set, else nominal.
+fn effective_start_str(m: &MatchSetupData) -> Option<&str> {
+    m.confirmed_start_time.as_deref().or(m.nominal_start_time.as_deref())
+}
+
+/// Format ISO timestamp in user's local time, without seconds (e.g. "14:30" or "2025-02-16 14:30").
+fn format_time_local(iso: &str, tz_offset_minutes: i64) -> String {
+    let utc_dt = if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(iso) {
+        dt.naive_utc()
+    } else if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(iso, "%Y-%m-%dT%H:%M:%S%.f") {
+        dt
+    } else if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(iso, "%Y-%m-%dT%H:%M") {
+        dt
+    } else {
+        return iso.to_string();
+    };
+    let local = utc_dt + chrono::Duration::minutes(tz_offset_minutes);
+    local.format("%H:%M").to_string()
+}
+
 #[component]
 pub fn Schedule(url: String) -> Element {
     let url_data = url.clone();
@@ -168,7 +202,8 @@ pub fn Schedule(url: String) -> Element {
                                         style: "width: 10rem;",
                                         placeholder: "Highlight Team...",
                                         value: "{highlight_team}",
-                                        oninput: move |e| highlight_team.set(e.value())
+                                        oninput: move |e| highlight_team.set(e.value()),
+                                        onkeydown: move |ev: Event<KeyboardData>| ev.stop_propagation(),
                                     }
                                     div { class: "btn-group btn-group-sm",
                                         button {
@@ -2006,13 +2041,14 @@ fn TagsModal(
 
 #[component]
 fn TableView(
-    data: ScheduleSetupResponse, 
-    selected_field: String, 
-    highlight_team: String, 
+    data: ScheduleSetupResponse,
+    selected_field: String,
+    highlight_team: String,
     edit_mode: bool,
     tournament_url: String,
-    on_edit_match: EventHandler<String>
+    on_edit_match: EventHandler<String>,
 ) -> Element {
+    let tz_offset = schedule_tz_offset_minutes();
     // ... existing filter logic ...
     let matches: Vec<&MatchSetupData> = data.matches.iter().filter(|m| {
         if m.status == "SKIPPED" { return false; }
@@ -2118,8 +2154,8 @@ fn TableView(
                                 }
                                 td { "{m.field.as_deref().unwrap_or(\"\")}" }
                                 td {
-                                    if let Some(t) = &m.nominal_start_time {
-                                        "{format_time(t)}"
+                                    if let Some(t) = m.confirmed_start_time.as_ref().or(m.nominal_start_time.as_ref()) {
+                                        "{format_time_local(t, tz_offset)}"
                                     } else { "-" }
                                 }
                                 td { "{schedule_type_display}" }
@@ -2307,7 +2343,7 @@ fn ScheduleTimeline(
     let dates_with_matches: Vec<chrono::NaiveDate> = {
         let mut dates: Vec<chrono::NaiveDate> = data.matches.iter()
             .filter(|m| m.status != "SKIPPED")
-            .filter_map(|m| m.nominal_start_time.as_ref())
+            .filter_map(|m| effective_start_str(m))
             .filter_map(|s| parse_schedule_time_to_local(s, tz_offset_minutes))
             .map(|dt| dt.date())
             .collect();
@@ -2387,20 +2423,21 @@ fn ScheduleTimeline(
     let current_visible_date = visible_date_signal();
 
     // Build timeline events (non-join matches)
-    // Note: We filter by date later when rendering, not here, so all events are available
+    // Use confirmed_start_time/completed_time when set; else nominal_start_time and start + nominal_length
     let mut timeline_events: Vec<TimelineEvent> = data.matches.iter()
         .filter(|m| m.status != "SKIPPED")
         .filter(|m| m.schedule_type.as_deref() != Some("JOIN"))
         .filter_map(|m| {
-            if m.nominal_start_time.is_none() || m.field.is_none() {
-                return None;
-            }
-            
-            let start_str = m.nominal_start_time.as_ref()?;
+            let start_str = effective_start_str(m)?;
             let start_dt = parse_schedule_time_to_local(start_str, tz_offset_minutes)?;
-            let length_min = m.nominal_length.unwrap_or(30) as i64;
-            let end_dt = start_dt + chrono::Duration::minutes(length_min);
-            
+            let (end_dt, length_min) = if let Some(end_str) = m.completed_time.as_ref() {
+                let end_dt = parse_schedule_time_to_local(end_str, tz_offset_minutes)?;
+                let len = (end_dt - start_dt).num_minutes().max(0);
+                (end_dt, len)
+            } else {
+                let length_min = m.nominal_length.unwrap_or(30) as i64;
+                (start_dt + chrono::Duration::minutes(length_min), length_min)
+            };
             let field_name = m.field.as_ref()?;
             let field = data.fields.iter().find(|f| &f.name == field_name)?;
             
@@ -2484,7 +2521,7 @@ fn ScheduleTimeline(
         })
         .collect();
 
-    // Helper: get start_slot and end_slot for an event on current_visible_date
+    // Helper: get start_slot and end_slot for an event (for which row to render in; still slot-based)
     let event_slots = |e: &TimelineEvent| -> (usize, usize) {
         let start_slot = {
             if e.start_time.date() != current_visible_date {
@@ -2517,9 +2554,13 @@ fn ScheduleTimeline(
         (start_slot, end_slot)
     };
 
-    // Compute lanes for overlapping events per field (ignore JOIN and SKIPPED for overlap)
+    // True iff two events overlap in time (using exact start/end, not slots)
+    let events_overlap = |a: &TimelineEvent, b: &TimelineEvent| -> bool {
+        a.start_time < b.end_time && b.start_time < a.end_time
+    };
+
+    // Compute lanes using exact time overlap (not slot-based), so only actually overlapping events share width
     for field in &visible_fields {
-        // Only non-JOIN, non-SKIPPED events participate in lane assignment
         let field_event_indices: Vec<usize> = timeline_events.iter()
             .enumerate()
             .filter(|(_, e)| {
@@ -2535,50 +2576,32 @@ fn ScheduleTimeline(
             continue;
         }
 
-        // Sort by start time
         let mut sorted_indices = field_event_indices.clone();
         sorted_indices.sort_by_key(|&idx| timeline_events[idx].start_time);
 
-        // Track which lanes are occupied at each slot
-        let mut slot_lanes: Vec<std::collections::HashSet<usize>> =
-            vec![std::collections::HashSet::new(); slots_per_day];
-
-        // Assign lanes to events
-        for &idx in &sorted_indices {
+        // Assign lane: first lane L such that no already-placed event that overlaps this one (in time) uses L
+        for (k, &idx) in sorted_indices.iter().enumerate() {
             let event = &timeline_events[idx];
-            let (start_slot, end_slot) = event_slots(event);
-
-            // Find first available lane that doesn't conflict
+            let occupied_lanes: std::collections::HashSet<usize> = sorted_indices[..k].iter()
+                .filter(|&&i| events_overlap(event, &timeline_events[i]))
+                .map(|&i| timeline_events[i].lane_index)
+                .collect();
             let mut assigned_lane = 0;
-            'lane_search: loop {
-                let mut has_conflict = false;
-                for slot in start_slot..end_slot.min(slots_per_day) {
-                    if slot_lanes[slot].contains(&assigned_lane) {
-                        has_conflict = true;
-                        break;
-                    }
-                }
-                if !has_conflict {
-                    break 'lane_search;
-                }
+            while occupied_lanes.contains(&assigned_lane) {
                 assigned_lane += 1;
             }
-
-            for slot in start_slot..end_slot.min(slots_per_day) {
-                slot_lanes[slot].insert(assigned_lane);
-            }
-
             timeline_events[idx].lane_index = assigned_lane;
         }
 
-        // num_lanes per event = lanes used in this event's time range only (not field-wide)
+        // num_lanes per event = 1 + max lane among all events that overlap this one (in time)
         for &idx in &field_event_indices {
-            let (start_slot, end_slot) = event_slots(&timeline_events[idx]);
-            let max_lane_in_range = (start_slot..end_slot.min(slots_per_day))
-                .flat_map(|slot| slot_lanes[slot].iter().copied())
+            let event = &timeline_events[idx];
+            let max_lane = field_event_indices.iter()
+                .filter(|&&i| events_overlap(event, &timeline_events[i]))
+                .map(|&i| timeline_events[i].lane_index)
                 .max()
                 .unwrap_or(0);
-            timeline_events[idx].num_lanes = (max_lane_in_range + 1).max(1);
+            timeline_events[idx].num_lanes = (max_lane + 1).max(1);
         }
     }
 
@@ -2601,8 +2624,8 @@ fn ScheduleTimeline(
                 return None;
             }
             
-            // Get time from first match (in local time)
-            let time_str = matches[0].nominal_start_time.as_ref()?;
+            // Get time from first match (effective start in local time)
+            let time_str = effective_start_str(matches[0])?;
             let time_dt = parse_schedule_time_to_local(time_str, tz_offset_minutes)?;
             
             // Build per-field join matches (field_id -> match_uuid)
@@ -2638,10 +2661,12 @@ fn ScheduleTimeline(
         })
         .collect();
     
-    // Pre-compute join line data with slots
+    // Pre-compute join line data with slots and exact top offset within slot (to-the-minute)
     #[allow(dead_code)]
     struct JoinLineData {
         slot: usize,
+        /// Fraction of slot height (0..1) for vertical position within the slot
+        top_fraction: f64,
         join: JoinGroup,
         time_str: String,
         start_col_idx: usize,
@@ -2649,7 +2674,7 @@ fn ScheduleTimeline(
         // (visible field column index, match uuid)
         field_items: Vec<(usize, String)>,
     }
-    
+
     let join_lines_data: Vec<JoinLineData> = join_groups.iter()
         .filter_map(|join| {
             let date = join.time.date();
@@ -2663,8 +2688,10 @@ fn ScheduleTimeline(
             }
             let total_minutes = (hour - FIRST_HOUR) * 60 + minute;
             let slot = (total_minutes as i64 / SLOT_MINUTES) as usize;
+            let minutes_within_slot = (total_minutes as i64) % SLOT_MINUTES;
+            let top_fraction = (minutes_within_slot as f64) / (SLOT_MINUTES as f64);
             let time_str = join.time.format("%H:%M").to_string();
-            
+
             let field_items: Vec<(usize, String)> = visible_fields
                 .iter()
                 .enumerate()
@@ -2675,16 +2702,17 @@ fn ScheduleTimeline(
                         .map(|(_, mid)| (col_idx, mid.clone()))
                 })
                 .collect();
-            
+
             if field_items.is_empty() {
                 return None;
             }
-            
+
             let start_col_idx = field_items.iter().map(|(c, _)| *c).min().unwrap_or(0);
             let end_col_idx = field_items.iter().map(|(c, _)| *c).max().unwrap_or(0);
-            
+
             Some(JoinLineData {
                 slot,
+                top_fraction,
                 join: join.clone(),
                 time_str,
                 start_col_idx,
@@ -2853,27 +2881,29 @@ fn ScheduleTimeline(
                                             })
                                             .collect();
                                         
-                                        // Pre-compute event rendering data if there are events
+                                        // Pre-compute event rendering data: exact-to-the-minute top and height (fraction of slot)
                                         let event_render_data_opt = if !events_in_slot.is_empty() {
                                             let max_lanes = events_in_slot.first().map(|e| e.num_lanes).unwrap_or(1);
                                             Some(events_in_slot.iter().map(|event| {
-                                                // Size blocks from nominal length so a 30-min match is exactly 1 slot.
-                                                let duration_slots: usize =
-                                                    ((event.length_min + SLOT_MINUTES - 1) / SLOT_MINUTES).max(1) as usize;
+                                                let start_min = (event.start_time.hour() - FIRST_HOUR) * 60 + event.start_time.minute();
+                                                let minutes_within_slot = (start_min as i64) % SLOT_MINUTES;
+                                                let top_fraction = (minutes_within_slot as f64) / (SLOT_MINUTES as f64);
+                                                let duration_min = (event.end_time - event.start_time).num_minutes().max(1);
+                                                let duration_slots_fraction = (duration_min as f64) / (SLOT_MINUTES as f64);
                                                 let width_pct = 100.0 / max_lanes as f64;
                                                 let left_pct = (event.lane_index as f64) * width_pct;
-                                                (event.id.clone(), width_pct, left_pct, duration_slots)
+                                                (event.id.clone(), width_pct, left_pct, top_fraction, duration_slots_fraction)
                                             }).collect::<Vec<_>>())
                                         } else {
                                             None
                                         };
                                         
-                                        // Join at this (slot, col_idx): horizontal line in cell; label in edit mode
+                                        // Join at this (slot, col_idx): horizontal line in cell; label in edit mode (positioned to-the-minute)
                                         let join_in_cell = join_lines_data.iter().find_map(|jl| {
                                             if jl.slot != slot { return None; }
                                             jl.field_items.iter()
                                                 .find(|(c, _)| *c == col_idx)
-                                                .map(|(_, mid)| (jl.join.name.clone(), mid.clone()))
+                                                .map(|(_, mid)| (jl.join.name.clone(), mid.clone(), jl.top_fraction))
                                         });
                                         
                                         rsx! {
@@ -2882,12 +2912,12 @@ fn ScheduleTimeline(
                                                     class: "schedule-timeline-event-container",
                                                     for (idx, event) in events_in_slot.iter().enumerate() {
                                                         {
-                                                            let (event_id, width_pct, left_pct, duration_slots) = &event_render_data[idx];
+                                                            let (event_id, width_pct, left_pct, top_fraction, duration_slots_fraction) = &event_render_data[idx];
                                                             let event_id_clone = event_id.clone();
                                                             let (_, status_label) = status_color_and_label(&event.status);
 
                                                             let is_break = event.schedule_type.as_deref() == Some("BREAK");
-                                                            let event_style = format!("background-color: #ffffff; width: {}%; left: {}%; height: calc({} * var(--slot-height)); position: absolute; top: 0;", width_pct, left_pct, duration_slots);
+                                                            let event_style = format!("background-color: #ffffff; width: {}%; left: {}%; top: calc(var(--slot-height) * {}); height: calc(var(--slot-height) * {}); position: absolute;", width_pct, left_pct, top_fraction, duration_slots_fraction);
                                                             let event_title = if is_break { event.name.clone() } else { format!("{} - {} vs {}", event.name, event.team1, event.team2) };
                                                             let url_clone = tournament_url.clone();
                                                             let nav = navigator.clone();
@@ -2992,9 +3022,10 @@ fn ScheduleTimeline(
                                             else {
                                                 div {}
                                             }
-                                            if let Some((join_name, match_id)) = join_in_cell {
+                                            if let Some((join_name, match_id, join_top_fraction)) = join_in_cell {
                                                 div {
                                                     class: "schedule-timeline-join-in-cell",
+                                                    style: format!("top: calc(var(--slot-height) * {});", join_top_fraction),
                                                     div { class: "schedule-timeline-join-line-in-cell" }
                                                     if edit_mode {
                                                         div {
@@ -3961,10 +3992,3 @@ fn team_ref_display(raw: &str) -> (u8, String) {
     }
 }
 
-fn format_time(iso: &str) -> String {
-    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(iso) {
-        dt.format("%H:%M").to_string()
-    } else {
-        iso.to_string()
-    }
-}

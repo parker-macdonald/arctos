@@ -390,7 +390,13 @@ pub struct MatchDetailData {
     pub schedule_type: Option<String>,
     pub nominal_length: Option<u32>,
     pub previous_match: Option<String>,
-    pub refs_initial: Option<String>,
+    #[serde(rename = "refs", default)]
+    pub r#refs: Option<String>,
+    #[serde(rename = "refs_initial", default)]
+    pub r#refs_initial: Option<String>,
+    /// Refs by display name (pseudonym), like team1_name/team2_name.
+    #[serde(rename = "refs_display", default)]
+    pub refs_display: Option<String>,
     pub ribbon: bool,
     pub skip_condition: Option<String>,
     pub nsets: Option<u32>,

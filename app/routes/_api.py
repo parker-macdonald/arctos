@@ -1621,6 +1621,32 @@ def _team_name_for_match(tournament_url, match, team_key):
     return t.name if t else team_id
 
 
+def _team_display_name(tournament_url, team_id):
+    """Resolve a team id to display name (pseudonym preferred, else team name)."""
+    if not team_id or not str(team_id).strip():
+        return None
+    reg = TeamRegistration.query.filter_by(event=tournament_url, team=team_id).first()
+    if reg and reg.pseudonym:
+        return reg.pseudonym
+    t = Team.query.get(team_id)
+    return t.name if t else team_id
+
+
+def _refs_display_for_match(tournament_url, match):
+    """Refs as comma-separated display names (pseudonym for each ref team), like team1_name/team2_name."""
+    if not match.refs:
+        return match.refs_initial
+    parts = []
+    for tid in (match.refs or "").split(","):
+        tid = tid.strip()
+        if not tid:
+            continue
+        name = _team_display_name(tournament_url, tid)
+        if name:
+            parts.append(name)
+    return ",".join(parts) if parts else match.refs_initial
+
+
 @bp.route("/tournaments/<tournament_url>/match", methods=["GET"])
 def tournament_match_detail(tournament_url):
     """Match detail by id= or name=. Returns match metadata and points."""
@@ -1910,7 +1936,9 @@ def tournament_match_detail(tournament_url):
                 ),
                 "nominal_length": match.nominal_length,
                 "previous_match": match.previous_match,
+                "refs": match.refs,
                 "refs_initial": match.refs_initial,
+                "refs_display": _refs_display_for_match(tournament_url, match),
                 "ribbon": match.ribbon,
                 "skip_condition": match.skip_condition,
                 "nsets": match.nsets,
