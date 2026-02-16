@@ -127,10 +127,10 @@ pub fn Layout() -> Element {
                                 if register_dropdown_open() {
                                     ul { class: "dropdown-menu dropdown-menu-end show",
                                         li {
-                                            Link { to: Route::Register {}, class: "dropdown-item", "Register as Player" }
+                                            Link { to: Route::RegisterPlayer {}, class: "dropdown-item", "Register as Player" }
                                         }
                                         li {
-                                            Link { to: Route::Register {}, class: "dropdown-item", "Register as Team" }
+                                            Link { to: Route::RegisterTeam {}, class: "dropdown-item", "Register as Team" }
                                         }
                                     }
                                 }

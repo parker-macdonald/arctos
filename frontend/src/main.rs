@@ -22,6 +22,12 @@ enum Route {
     #[route("/register")]
     Register {},
 
+    #[route("/register/player")]
+    RegisterPlayer {},
+
+    #[route("/register/team")]
+    RegisterTeam {},
+
     #[route("/auth/google/choose-account-type")]
     GoogleChooseAccountType {},
 
@@ -90,12 +96,6 @@ enum Route {
 
     #[route("/teams/:team_id/edit")]
     EditTeamProfile { team_id: String },
-
-    #[route("/:tournament_url/register/player/edit")]
-    EditPlayerRegistration { tournament_url: String },
-
-    #[route("/:tournament_url/register/team/edit")]
-    EditTeamRegistration { tournament_url: String },
 
     #[route("/players")]
     PlayersList {},

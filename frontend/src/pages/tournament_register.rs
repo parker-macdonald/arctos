@@ -14,6 +14,7 @@ pub fn TournamentRegister(url: String) -> Element {
     let backend = api::base_url();
     let register_player_action = format!("{}/{}/register-player", backend, url);
     let register_team_action = format!("{}/{}/register-team", backend, url);
+    let mut show_help_modal = use_signal(|| false);
     rsx! {
         if let Some(Ok(d)) = val.read().as_ref() {
             div { class: "row",
@@ -48,7 +49,10 @@ pub fn TournamentRegister(url: String) -> Element {
                                         div { class: "mb-3",
                                             label { r#for: "team", class: "form-label",
                                                 "Team "
-                                                a { href: "#", class: "text-decoration-none ms-2", "data-bs-toggle": "modal", "data-bs-target": "#teamRegistrationHelpModal",
+                                                button {
+                                                    r#type: "button",
+                                                    class: "btn btn-link p-0 ms-2 text-decoration-none border-0 align-baseline",
+                                                    onclick: move |_| show_help_modal.set(true),
                                                     small { "(help, my team isn't listed!)" }
                                                 }
                                             }
@@ -155,69 +159,53 @@ pub fn TournamentRegister(url: String) -> Element {
                         }
                     }
                 }
+            }
 
-                div { class: "col-md-4",
-                    div { class: "card",
-                        div { class: "card-header", h5 { class: "mb-0", "Tournament Information" } }
-                        div { class: "card-body",
-                            p { strong { "Date: " }
-                                if let Some(end) = &d.tournament.end_date {
-                                    if end != &d.tournament.start_date {
-                                        "{d.tournament.start_date} - {end}"
-                                    } else {
-                                        "{d.tournament.start_date}"
+            if show_help_modal() {
+                div {
+                        class: "modal show d-block",
+                        style: "background: rgba(0,0,0,0.5);",
+                        tabindex: "-1",
+                        role: "dialog",
+                        aria_modal: "true",
+                        onclick: move |_| show_help_modal.set(false),
+                        div {
+                            class: "modal-dialog modal-dialog-centered",
+                            onclick: move |ev: Event<MouseData>| { ev.stop_propagation(); },
+                            div { class: "modal-content",
+                                div { class: "modal-header",
+                                    h5 { class: "modal-title", id: "teamRegistrationHelpModalLabel", "Registration Help" }
+                                    button {
+                                        r#type: "button",
+                                        class: "btn-close",
+                                        aria_label: "Close",
+                                        onclick: move |_| show_help_modal.set(false),
                                     }
-                                } else {
-                                    "{d.tournament.start_date}"
+                                }
+                                div { class: "modal-body",
+                                    p { "The registration process works in three steps:" }
+                                    ol {
+                                        li { strong { "Teams register first:" } " A team account must register for the tournament before players can join that team." }
+                                        li { strong { "Players register under the team:" } " Once a team is registered, players can select that team from the dropdown and register to join them." }
+                                        li { strong { "Team accepts the player:" } " After a player requests to join a team, the team must approve the player's request before they are officially on the roster." }
+                                    }
+                                    p { class: "mb-0",
+                                        strong { "Don't see your team in the dropdown?" }
+                                        " They may not have registered yet. Check the tournament homepage to see all registered teams. Ask your team to register the team first, then come back to complete your player registration."
+                                    }
+                                }
+                                div { class: "modal-footer",
+                                    button {
+                                        r#type: "button",
+                                        class: "btn btn-secondary",
+                                        onclick: move |_| show_help_modal.set(false),
+                                        "Close"
+                                    }
                                 }
                             }
-                            p { strong { "Location: " } "{d.tournament.location.as_deref().unwrap_or(\"TBA\")}" }
-                            p { strong { "Fields: " } "{d.tournament.num_fields.unwrap_or(1)}" }
-                            if let Some(max) = d.tournament.n_max_teams {
-                                p { strong { "Max Teams: " } "{max}" }
-                            }
-                            if let Some(max_team) = d.tournament.max_team_size_roster {
-                                p { strong { "Max Team Size: " } "{max_team}" }
-                            }
-                        }
-                    }
-
-                    if let Some(about) = &d.tournament.about {
-                        if !about.is_empty() {
-                            div { class: "card mt-3",
-                                div { class: "card-header", h5 { class: "mb-0", "About" } }
-                                div { class: "card-body", "{about}" }
-                            }
                         }
                     }
                 }
-            }
-
-            div { class: "modal fade", id: "teamRegistrationHelpModal", tabindex: "-1", aria_labelledby: "teamRegistrationHelpModalLabel", aria_hidden: "true",
-                div { class: "modal-dialog",
-                    div { class: "modal-content",
-                        div { class: "modal-header",
-                            h5 { class: "modal-title", id: "teamRegistrationHelpModalLabel", "Registration Help" }
-                            button { r#type: "button", class: "btn-close", "data-bs-dismiss": "modal", aria_label: "Close" }
-                        }
-                        div { class: "modal-body",
-                            p { "The registration process works in three steps:" }
-                            ol {
-                                li { strong { "Teams register first:" } " A team account must register for the tournament before players can join that team." }
-                                li { strong { "Players register under the team:" } " Once a team is registered, players can select that team from the dropdown and register to join them." }
-                                li { strong { "Team accepts the player:" } " After a player requests to join a team, the team must approve the player's request before they are officially on the roster." }
-                            }
-                            p { class: "mb-0",
-                                strong { "Don't see your team in the dropdown?" }
-                                " They may not have registered yet. Check the tournament homepage to see all registered teams. Ask your team to register the team first, then come back to complete your player registration."
-                            }
-                        }
-                        div { class: "modal-footer",
-                            button { r#type: "button", class: "btn btn-secondary", "data-bs-dismiss": "modal", "Close" }
-                        }
-                    }
-                }
-            }
         } else if let Some(Err(e)) = val.read().as_ref() {
             p { class: "text-danger", "{e}" }
         } else {

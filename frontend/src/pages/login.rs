@@ -1,5 +1,6 @@
 use crate::api;
 use crate::pages::layout::use_auth_invalidate;
+use crate::Route;
 use dioxus::prelude::*;
 
 #[component]
@@ -91,9 +92,9 @@ pub fn Login() -> Element {
                         div { class: "text-center",
                             p {
                                 "Don't have an account? "
-                                a { href: "/app/register?type=player", "Register as Player" }
+                                Link { to: Route::RegisterPlayer {}, "Register as Player" }
                                 " or "
-                                a { href: "/app/register?type=team", "Register as Team" }
+                                Link { to: Route::RegisterTeam {}, "Register as Team" }
                             }
                         }
                         if let Some(e) = err.read().as_ref() {
