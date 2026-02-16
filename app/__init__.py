@@ -193,7 +193,9 @@ def create_app(config=None):
         cors_dev_all = os.environ.get("ARCTOS_CORS_DEV") == "1"
         is_api = "/_api" in request.path
         is_static_cors = cors_dev_all and request.path.startswith("/static/")
-        if request.method != "OPTIONS" or (not cors_dev_all and not is_api and not is_static_cors):
+        if request.method != "OPTIONS" or (
+            not cors_dev_all and not is_api and not is_static_cors
+        ):
             return None
         origin_header = request.headers.get("Origin")
         origin = _cors_allowed_origin(origin_header) if origin_header else None

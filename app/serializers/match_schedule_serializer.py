@@ -251,15 +251,11 @@ class MatchScheduleSerializer:
             if has_explicit_ids:
                 refs = ", ".join(refs_list)
 
-        schedule_type = (
-            str(data.get("schedule_type", "STATIC")).strip() or "STATIC"
-        )
+        schedule_type = str(data.get("schedule_type", "STATIC")).strip() or "STATIC"
         skip_condition_raw = str(data.get("skip_condition", "")).strip() or None
         # Only accept skip_condition for SAFE and FAST; ignore for other types
         skip_condition = (
-            skip_condition_raw
-            if schedule_type in ("SAFE", "FAST")
-            else None
+            skip_condition_raw if schedule_type in ("SAFE", "FAST") else None
         )
 
         result = {

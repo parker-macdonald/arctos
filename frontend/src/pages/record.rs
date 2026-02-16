@@ -24,6 +24,8 @@ struct StoredChunk {
     chunk_start_timestamp: f64,
     chunk_duration_ms: u32,
     recording_session_start_time: f64,
+    /// Point in progress when this chunk was recorded (set at capture time, not drain time).
+    point_id: Option<String>,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -578,51 +580,34 @@ async fn run_recording_loop(
         current_session_id: String,
     }
 
-    // MediaRecorder with timeslice often emits a tiny first blob (WebM init segment) then the real 2s chunk.
-    // Merge the first small blob with the second so the first stored chunk is playable.
-    const INIT_SEGMENT_MAX_BYTES: f64 = 100_000.0;
-
+    // Use a persistent chunk_count for chunk_start_timestamp (storage is drained often so queue length is not a valid index).
+    // point_id is read at chunk capture time so chunks get the point that was in progress when recorded, not when drained.
     let make_recorder = |stream: &web_sys::MediaStream,
                         storage_queue: Rc<RefCell<Vec<StoredChunk>>>,
                         session_start: Rc<RefCell<f64>>,
-                        pending_init: Rc<RefCell<Option<web_sys::Blob>>>| {
+                        chunk_count: Rc<RefCell<u32>>,
+                        current_point_id: Rc<RefCell<Option<String>>>| {
         let r = MediaRecorder::new_with_media_stream_and_media_recorder_options(stream, &options)
             .ok()?;
         let sq = storage_queue.clone();
         let ss = session_start.clone();
-        let pending = pending_init.clone();
+        let cc = chunk_count.clone();
+        let cpid = current_point_id.clone();
         let closure = Closure::wrap(Box::new(move |ev: web_sys::BlobEvent| {
             let blob = match ev.data() {
                 Some(b) => b,
                 None => return,
             };
             let start = *ss.borrow();
-            let mut q = sq.borrow_mut();
-            let size = blob.size();
-
-            // First blob is often the init segment (small). Buffer it and merge with the next blob.
-            if q.is_empty() && size < INIT_SEGMENT_MAX_BYTES {
-                pending.borrow_mut().replace(blob);
-                return;
-            }
-            let blob_to_push: web_sys::Blob = if let Some(init_blob) = pending.borrow_mut().take() {
-                let arr = js_sys::Array::new();
-                arr.push(init_blob.as_ref());
-                arr.push(blob.as_ref());
-                let opts = web_sys::BlobPropertyBag::new();
-                opts.set_type("video/webm");
-                web_sys::Blob::new_with_blob_sequence_and_options(&arr.into(), &opts)
-                    .unwrap_or_else(|_| blob)
-            } else {
-                blob
-            };
-            let idx = q.len() as u32;
-            let chunk_start = start + (idx as f64) * 2000.0;
-            q.push(StoredChunk {
-                blob: blob_to_push,
+            let chunk_start = start + (*cc.borrow() as f64) * 1000.0;
+            *cc.borrow_mut() += 1;
+            let point_id = cpid.borrow().clone();
+            sq.borrow_mut().push(StoredChunk {
+                blob,
                 chunk_start_timestamp: chunk_start,
-                chunk_duration_ms: 2000,
+                chunk_duration_ms: 1000,
                 recording_session_start_time: start,
+                point_id,
             });
         }) as Box<dyn FnMut(web_sys::BlobEvent)>);
         r.set_ondataavailable(Some(closure.as_ref().unchecked_ref()));
@@ -645,15 +630,28 @@ async fn run_recording_loop(
 
     let storage1 = Rc::new(RefCell::new(Vec::<StoredChunk>::new()));
     let session_start1 = Rc::new(RefCell::new(0.0f64));
-    let pending_init1 = Rc::new(RefCell::new(None::<web_sys::Blob>));
+    let chunk_count1 = Rc::new(RefCell::new(0u32));
     let storage2 = Rc::new(RefCell::new(Vec::<StoredChunk>::new()));
     let session_start2 = Rc::new(RefCell::new(0.0f64));
-    let pending_init2 = Rc::new(RefCell::new(None::<web_sys::Blob>));
+    let chunk_count2 = Rc::new(RefCell::new(0u32));
+    let current_point_id = Rc::new(RefCell::new(None::<String>));
 
-    if let Some(r) = make_recorder(&stream, storage1.clone(), session_start1.clone(), pending_init1.clone()) {
+    if let Some(r) = make_recorder(
+        &stream,
+        storage1.clone(),
+        session_start1.clone(),
+        chunk_count1.clone(),
+        current_point_id.clone(),
+    ) {
         state1.borrow_mut().recorder = Some(r);
     }
-    if let Some(r) = make_recorder(&stream, storage2.clone(), session_start2.clone(), pending_init2.clone()) {
+    if let Some(r) = make_recorder(
+        &stream,
+        storage2.clone(),
+        session_start2.clone(),
+        chunk_count2.clone(),
+        current_point_id.clone(),
+    ) {
         state2.borrow_mut().recorder = Some(r);
     }
 
@@ -717,6 +715,7 @@ async fn run_recording_loop(
             .any(|p| point_in_progress(p, now_ms));
         let latest_point = latest_point_in_progress(points, now_ms);
         let point_id_opt = latest_point.map(|p| p.uuid.clone());
+        *current_point_id.borrow_mut() = point_id_opt.clone();
         // web_sys::console::log_1(&format!("data match id: {:?}", data.match_id).into());
         // web_sys::console::log_1(&format!("current match: {:?}", current_match).into());
         if !data.hasActiveMatch || data.match_id.as_ref().map(|s| s.as_str()) != current_match.as_ref().map(|id| id.as_str()) {
@@ -729,8 +728,6 @@ async fn run_recording_loop(
                 }
                 storage1.borrow_mut().clear();
                 storage2.borrow_mut().clear();
-                pending_init1.borrow_mut().take();
-                pending_init2.borrow_mut().take();
                 state1.borrow_mut().status = RecorderStatus::Idle;
                 state2.borrow_mut().status = RecorderStatus::Idle;
                 state1.borrow_mut().started_at = None;
@@ -742,7 +739,9 @@ async fn run_recording_loop(
                 if let Some(ref match_id) = data.match_id {
                     current_match = Some(match_id.clone());
                     is_recording_sig.set(true);
+                    *current_point_id.borrow_mut() = point_id_opt.clone();
                     *session_start1.borrow_mut() = now_ms;
+                    *chunk_count1.borrow_mut() = 0;
                     state1.borrow_mut().started_at = Some(now_ms);
                     state1.borrow_mut().current_session_id = uuid_style_id();
                     if let Some(r) = state1.borrow().recorder.as_ref() {
@@ -751,12 +750,12 @@ async fn run_recording_loop(
                             .and_then(|v| v.as_string())
                             .unwrap_or_default();
                         if state_str == "inactive" {
-                            let _ = r.start_with_time_slice(2000);
+                            let _ = r.start_with_time_slice(1000);
                         }
                     }
                 }
             }
-            gloo_timers::future::TimeoutFuture::new(1000).await;
+            gloo_timers::future::TimeoutFuture::new(500).await;
             continue;
         }
         let match_id = current_match.as_ref().expect("current_match is None").clone();
@@ -767,10 +766,10 @@ async fn run_recording_loop(
             field: field.clone(),
             match_id: match_id.clone(),
             session_id: String::new(), // overridden per state below
-            point_id: point_id_opt.clone(),
+            point_id: None, // overridden per chunk from st.point_id
             chunk_start_timestamp: 0.0,
             recording_session_start_time: 0.0,
-            chunk_length_ms: 2000,
+            chunk_length_ms: 1000,
             camera_name: camera_name.clone(),
             key: key_ref.clone(),
         };
@@ -788,7 +787,7 @@ async fn run_recording_loop(
                         chunk_start_timestamp: st.chunk_start_timestamp,
                         recording_session_start_time: st.recording_session_start_time,
                         chunk_length_ms: st.chunk_duration_ms,
-                        point_id: point_id_opt.clone(),
+                        point_id: st.point_id.clone(),
                         ..base_meta.clone()
                     };
                     upload_queue
@@ -819,10 +818,8 @@ async fn run_recording_loop(
                 }
                 if std::ptr::eq(longer.as_ref(), state1.as_ref()) {
                     storage1.borrow_mut().clear();
-                    pending_init1.borrow_mut().take();
                 } else {
                     storage2.borrow_mut().clear();
-                    pending_init2.borrow_mut().take();
                 }
                 longer.borrow_mut().status = RecorderStatus::Idle;
                 longer.borrow_mut().started_at = None;
@@ -831,14 +828,25 @@ async fn run_recording_loop(
                 } else {
                     session_start2.clone()
                 };
-                *session_start_longer.borrow_mut() = now_ms;
-                let pending_longer = if std::ptr::eq(longer.as_ref(), state1.as_ref()) {
-                    pending_init1.clone()
+                let chunk_count_longer = if std::ptr::eq(longer.as_ref(), state1.as_ref()) {
+                    chunk_count1.clone()
                 } else {
-                    pending_init2.clone()
+                    chunk_count2.clone()
                 };
-                if let Some(new_r) = make_recorder(&stream, if std::ptr::eq(longer.as_ref(), state1.as_ref()) { storage1.clone() } else { storage2.clone() }, session_start_longer, pending_longer) {
-                    let _ = new_r.start_with_time_slice(2000);
+                *session_start_longer.borrow_mut() = now_ms;
+                *chunk_count_longer.borrow_mut() = 0;
+                if let Some(new_r) = make_recorder(
+                    &stream,
+                    if std::ptr::eq(longer.as_ref(), state1.as_ref()) {
+                        storage1.clone()
+                    } else {
+                        storage2.clone()
+                    },
+                    session_start_longer,
+                    chunk_count_longer,
+                    current_point_id.clone(),
+                ) {
+                    let _ = new_r.start_with_time_slice(1000);
                     longer.borrow_mut().recorder = Some(new_r);
                     longer.borrow_mut().started_at = Some(now_ms);
                     longer.borrow_mut().current_session_id = uuid_style_id();
@@ -863,9 +871,15 @@ async fn run_recording_loop(
                     } else {
                         session_start2.clone()
                     };
+                    let chunk_count_shorter = if std::ptr::eq(shorter.as_ref(), state1.as_ref()) {
+                        chunk_count1.clone()
+                    } else {
+                        chunk_count2.clone()
+                    };
                     *session_start_shorter.borrow_mut() = now_ms;
+                    *chunk_count_shorter.borrow_mut() = 0;
                     if let Some(r) = shorter.borrow().recorder.as_ref() {
-                        let _ = r.start_with_time_slice(2000);
+                        let _ = r.start_with_time_slice(1000);
                     }
                     shorter.borrow_mut().started_at = Some(now_ms);
                     shorter.borrow_mut().current_session_id = uuid_style_id();
@@ -875,9 +889,9 @@ async fn run_recording_loop(
 
         // 4. Point in progress and new: set longest to RECORDING, stop the other
         if point_in_progress_now && !point_was_in_progress {
-            let t1 = state1.borrow().started_at.unwrap_or(0.0);
-            let t2 = state2.borrow().started_at.unwrap_or(0.0);
-            let (recording_state, other_state) = if t1 >= t2 {
+            let t1 = state1.borrow().started_at.unwrap_or(now_ms);
+            let t2 = state2.borrow().started_at.unwrap_or(now_ms);
+            let (recording_state, other_state) = if t1 <= t2 {
                 (&state1, &state2)
             } else {
                 (&state2, &state1)
@@ -888,10 +902,8 @@ async fn run_recording_loop(
             }
             if std::ptr::eq(other_state.as_ref(), state1.as_ref()) {
                 storage1.borrow_mut().clear();
-                pending_init1.borrow_mut().take();
             } else {
                 storage2.borrow_mut().clear();
-                pending_init2.borrow_mut().take();
             }
             other_state.borrow_mut().status = RecorderStatus::Idle;
             other_state.borrow_mut().started_at = None;

@@ -318,9 +318,11 @@ def deregister_any_player(tournament_url):
 
     player_registration = (
         PlayerRegistration.query.filter_by(event=tournament_url, player=player_id)
-        .filter(PlayerRegistration.status.in_(
-            [RegistrationStatus.PENDING_TEAM_APPROVAL, RegistrationStatus.CONFIRMED]
-        ))
+        .filter(
+            PlayerRegistration.status.in_(
+                [RegistrationStatus.PENDING_TEAM_APPROVAL, RegistrationStatus.CONFIRMED]
+            )
+        )
         .first()
     )
 
@@ -411,9 +413,11 @@ def edit_player_registration(tournament_url):
 
     player_registration = (
         PlayerRegistration.query.filter_by(event=tournament_url, player=current_user.id)
-        .filter(PlayerRegistration.status.in_(
-            [RegistrationStatus.PENDING_TEAM_APPROVAL, RegistrationStatus.CONFIRMED]
-        ))
+        .filter(
+            PlayerRegistration.status.in_(
+                [RegistrationStatus.PENDING_TEAM_APPROVAL, RegistrationStatus.CONFIRMED]
+            )
+        )
         .first()
     )
 
@@ -438,7 +442,9 @@ def edit_player_registration(tournament_url):
     current_team_reg = None
     if player_registration.team:
         current_team_reg = TeamRegistration.query.filter_by(
-            event=tournament_url, team=player_registration.team, status=RegistrationStatus.CONFIRMED
+            event=tournament_url,
+            team=player_registration.team,
+            status=RegistrationStatus.CONFIRMED,
         ).first()
 
     return render_template(
@@ -466,9 +472,11 @@ def update_player_registration(tournament_url):
 
     player_registration = (
         PlayerRegistration.query.filter_by(event=tournament_url, player=current_user.id)
-        .filter(PlayerRegistration.status.in_(
-            [RegistrationStatus.PENDING_TEAM_APPROVAL, RegistrationStatus.CONFIRMED]
-        ))
+        .filter(
+            PlayerRegistration.status.in_(
+                [RegistrationStatus.PENDING_TEAM_APPROVAL, RegistrationStatus.CONFIRMED]
+            )
+        )
         .first()
     )
 
@@ -523,7 +531,9 @@ def tournament_invitations(tournament_url):
         return redirect(f"/{tournament_url}")
 
     pending_regs = PlayerRegistration.query.filter_by(
-        event=tournament_url, team=current_user.id, status=RegistrationStatus.PENDING_TEAM_APPROVAL
+        event=tournament_url,
+        team=current_user.id,
+        status=RegistrationStatus.PENDING_TEAM_APPROVAL,
     ).all()
 
     pending_with_players = []

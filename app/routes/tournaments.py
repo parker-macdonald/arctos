@@ -249,7 +249,9 @@ def tournament_home(tournament_url):
     teams_with_counts = []
     for team_reg in team_registrations:
         player_count = PlayerRegistration.query.filter_by(
-            event=tournament_url, team=team_reg.team, status=RegistrationStatus.CONFIRMED
+            event=tournament_url,
+            team=team_reg.team,
+            status=RegistrationStatus.CONFIRMED,
         ).count()
 
         team = Team.query.get(team_reg.team)
@@ -277,7 +279,9 @@ def tournament_home(tournament_url):
         if current_user.__class__.__name__ == "Team":
             is_current_team_registered = (
                 TeamRegistration.query.filter_by(
-                    event=tournament_url, team=current_user.id, status=RegistrationStatus.CONFIRMED
+                    event=tournament_url,
+                    team=current_user.id,
+                    status=RegistrationStatus.CONFIRMED,
                 ).first()
                 is not None
             )
@@ -288,7 +292,10 @@ def tournament_home(tournament_url):
                 )
                 .filter(
                     PlayerRegistration.status.in_(
-                        [RegistrationStatus.PENDING_TEAM_APPROVAL, RegistrationStatus.CONFIRMED]
+                        [
+                            RegistrationStatus.PENDING_TEAM_APPROVAL,
+                            RegistrationStatus.CONFIRMED,
+                        ]
                     )
                 )
                 .first()
@@ -408,13 +415,10 @@ def tournament_results(tournament_url):
 
     from models import Point
 
-    matches = (
-        Match.query.filter(
-            Match.event == tournament_url,
-            Match.status.in_([MatchStatus.COMPLETED, MatchStatus.SKIPPED]),
-        )
-        .all()
-    )
+    matches = Match.query.filter(
+        Match.event == tournament_url,
+        Match.status.in_([MatchStatus.COMPLETED, MatchStatus.SKIPPED]),
+    ).all()
     points_by_match = {}
     if matches:
         match_ids = [m.uuid for m in matches]
@@ -499,7 +503,9 @@ def tournament_bracket(tournament_url):
                     if tag and tag.team:
                         # Tag has a team assigned - resolve it
                         team_reg = TeamRegistration.query.filter_by(
-                            event=tournament_url, team=tag.team, status=RegistrationStatus.CONFIRMED
+                            event=tournament_url,
+                            team=tag.team,
+                            status=RegistrationStatus.CONFIRMED,
                         ).first()
                         if team_reg:
                             team = Team.query.get(tag.team)
@@ -553,7 +559,9 @@ def tournament_bracket(tournament_url):
 
                     if team_id:
                         team_reg = TeamRegistration.query.filter_by(
-                            event=tournament_url, team=team_id, status=RegistrationStatus.CONFIRMED
+                            event=tournament_url,
+                            team=team_id,
+                            status=RegistrationStatus.CONFIRMED,
                         ).first()
                         if team_reg:
                             team = Team.query.get(team_id)
@@ -575,7 +583,9 @@ def tournament_bracket(tournament_url):
             # Check if it's a team ID
             elif team_ref:
                 team_reg = TeamRegistration.query.filter_by(
-                    event=tournament_url, team=team_ref, status=RegistrationStatus.CONFIRMED
+                    event=tournament_url,
+                    team=team_ref,
+                    status=RegistrationStatus.CONFIRMED,
                 ).first()
                 if team_reg:
                     team = Team.query.get(team_ref)
@@ -593,7 +603,9 @@ def tournament_bracket(tournament_url):
                     if tag and tag.team:
                         # Tag has a team assigned - resolve it
                         team_reg = TeamRegistration.query.filter_by(
-                            event=tournament_url, team=tag.team, status=RegistrationStatus.CONFIRMED
+                            event=tournament_url,
+                            team=tag.team,
+                            status=RegistrationStatus.CONFIRMED,
                         ).first()
                         if team_reg:
                             team = Team.query.get(tag.team)
@@ -1028,6 +1040,7 @@ def camera_url_api():
         # Generate the camera URL with key
         access_key = generate_camera_key(tournament_url, field_name)
         from flask import url_for
+
         print(field_name)
         camera_url = url_for(
             "tournaments.record_page",
@@ -1258,10 +1271,27 @@ def record_upload_chunk():
     os.makedirs(upload_dir, exist_ok=True)
 
     # Save chunk with index in filename for ordering
-    chunk_index = len(list(filter(lambda x: not x.endswith(".json"), os.listdir(upload_dir))))
+    chunk_index = len(
+        list(filter(lambda x: not x.endswith(".json"), os.listdir(upload_dir)))
+    )
     chunk_filename = f"chunk_{chunk_index}.webm"
     chunk_path = os.path.join(upload_dir, chunk_filename)
     chunk_file.save(chunk_path)
+
+    # Debug: log saved chunk size and first 4 bytes (WebM/EBML magic is 1a 45 df a3)
+    try:
+        with open(chunk_path, "rb") as f:
+            head = f.read(4)
+        file_size = os.path.getsize(chunk_path)
+        current_app.logger.info(
+            "record chunk %s: size=%s bytes, first4=%s (EBML=%s)",
+            chunk_index,
+            file_size,
+            head.hex() if len(head) == 4 else "short",
+            head == b"\x1a\x45\xdf\xa3" if len(head) == 4 else False,
+        )
+    except Exception as e:
+        current_app.logger.warning("record chunk debug read failed: %s", e)
 
     # Load or create chunks metadata with file locking to prevent race conditions
     chunks_meta_path = os.path.join(upload_dir, "chunks_meta.json")
@@ -1295,18 +1325,12 @@ def record_upload_chunk():
                 "chunk_start_timestamp": (
                     float(chunk_start_timestamp)
                 ),  # Absolute world time in milliseconds
-                "chunk_duration": (
-                    float(chunk_duration)
-                ),  # Duration in milliseconds
+                "chunk_duration": (float(chunk_duration)),  # Duration in milliseconds
                 "point_id": point_id,
                 "camera_name": camera_name,
-                "recording_session_start_time": (
-                    float(recording_session_start_time)
-                ),
+                "recording_session_start_time": (float(recording_session_start_time)),
             }
-            chunks_meta[str(chunk_index)] = (
-                chunk_meta  # Use string key for consistency
-            )
+            chunks_meta[str(chunk_index)] = chunk_meta  # Use string key for consistency
 
             # Write metadata back
             lock_file.seek(0)
@@ -2390,7 +2414,11 @@ def push_back_matches(tournament_url):
 
     non_started_matches = (
         Match.query.filter_by(event=tournament_url)
-        .filter(~Match.status.in_([MatchStatus.IN_PROGRESS, MatchStatus.COMPLETED, MatchStatus.SKIPPED]))
+        .filter(
+            ~Match.status.in_(
+                [MatchStatus.IN_PROGRESS, MatchStatus.COMPLETED, MatchStatus.SKIPPED]
+            )
+        )
         .all()
     )
 
