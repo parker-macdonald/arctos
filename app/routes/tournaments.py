@@ -1378,15 +1378,28 @@ def record_finalize():
     if not path.exists(chunk_dir):
         return jsonify({"error": "Recording directory not found"}), 404
 
-    _ = executor.submit(
-        finalize_recording_worker,
-        current_app.logger,
-        tournament_url,
-        field_name,
+    # Worker runs in a background thread; it must run inside an app context for db.session to persist.
+    app = current_app._get_current_object()
+    logger = current_app.logger
+    current_app.logger.info(
+        "record_finalize: submitting worker for match_id=%s camera_name=%s chunk_dir=%s",
         match_id,
         camera_name,
         chunk_dir,
     )
+
+    def run_finalize_with_app_context():
+        with app.app_context():
+            finalize_recording_worker(
+                logger,
+                tournament_url,
+                field_name,
+                match_id,
+                camera_name,
+                chunk_dir,
+            )
+
+    _ = executor.submit(run_finalize_with_app_context)
 
     # For now, just return success
     return jsonify(

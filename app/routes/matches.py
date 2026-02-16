@@ -585,10 +585,15 @@ def match_page(tournament_url):
 
                         # Check if video file exists
                         if video_path:
-                            # Convert relative path to absolute
-                            video_full_path = os.path.join(
-                                current_app.root_path, "../static", video_path
-                            )
+                            # Convert relative path to absolute (video_path may be "static/..." or "uploads/...")
+                            if video_path.startswith("static/"):
+                                video_full_path = os.path.join(
+                                    current_app.root_path, "..", video_path
+                                )
+                            else:
+                                video_full_path = os.path.join(
+                                    current_app.root_path, "../static", video_path
+                                )
 
                             if os.path.exists(video_full_path):
                                 recorded_videos.append(
@@ -651,8 +656,8 @@ def match_page(tournament_url):
                         }
                     )
 
-    # Add recorded videos (only for completed matches; skipped matches have no recording)
-    if match.status == MatchStatus.COMPLETED and recorded_videos:
+    # Add recorded videos whenever we have them (match may be in progress, completed, or not yet started)
+    if recorded_videos:
         # Add recorded videos with unique indices (starting after YouTube cameras)
         for idx, recording in enumerate(recorded_videos):
             available_cameras.append(

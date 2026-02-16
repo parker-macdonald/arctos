@@ -1679,9 +1679,14 @@ def tournament_match_detail(tournament_url):
                     if isinstance(recording, dict) and "video_path" in recording:
                         video_path = recording.get("video_path", "")
                         if video_path:
-                            video_full_path = os.path.join(
-                                current_app.root_path, "../static", video_path
-                            )
+                            if video_path.startswith("static/"):
+                                video_full_path = os.path.join(
+                                    current_app.root_path, "..", video_path
+                                )
+                            else:
+                                video_full_path = os.path.join(
+                                    current_app.root_path, "../static", video_path
+                                )
                             if os.path.exists(video_full_path):
                                 recorded_videos.append(
                                     {
@@ -1722,8 +1727,8 @@ def tournament_match_detail(tournament_url):
                         }
                     )
 
-    # Add recorded videos (only for completed matches)
-    if match.status == MatchStatus.COMPLETED and recorded_videos:
+    # Add recorded videos whenever we have them (match may be in progress, completed, or not yet started)
+    if recorded_videos:
         for idx, recording in enumerate(recorded_videos):
             start_time = recording.get("start_time")
             if not start_time and recording.get("start_timestamp"):
