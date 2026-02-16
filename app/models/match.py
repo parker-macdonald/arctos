@@ -205,7 +205,9 @@ class MatchNote(db.Model):
     uuid = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     match = db.Column(db.String(36), db.ForeignKey("matches.uuid"), nullable=False)
     text = db.Column(db.Text, nullable=False)
-    target = db.Column(db.Enum(MatchNoteTarget))
+    target = db.Column(
+        db.Enum(MatchNoteTarget, values_callable=lambda obj: [e.value for e in obj])
+    )
     created_by = db.Column(db.String(50), db.ForeignKey("players.id"), nullable=False)
     created_at = db.Column(
         db.DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None)

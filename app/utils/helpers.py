@@ -66,7 +66,8 @@ def can_head_ref_match(tournament_url: str, player_id: str, match=None) -> bool:
 
 def resolve_team_name_to_id(team_name, tournament_url):
     """Resolve a team name/pseudonym to (team_id, initial_display) for a tournament.
-    Returns (id, None) when found; (None, team_name) when not found so caller can store display text."""
+    Returns (id, None) when found; (None, team_name) when not found so caller can store display text.
+    """
     from models import TeamRegistration
 
     # Try exact match on team ID

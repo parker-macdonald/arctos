@@ -9,249 +9,184 @@ from datetime import datetime, timezone
 def finalize_recording_worker(
     logger, tournament_url, field_name, match_id, camera_name, chunk_dir
 ):
+    # Use absolute normalized path so ffmpeg and list files work regardless of worker cwd
+    chunk_dir = path.abspath(path.normpath(chunk_dir))
     # Check if first chunk exists
     first_chunk_path = path.join(chunk_dir, "chunk_0.webm")
     if not path.exists(first_chunk_path):
         return
 
     with open(path.join(chunk_dir, "chunks_meta.json"), "r") as f:
-        consecutive = list(
-            map(
-                lambda x: sorted(x[1], key=lambda c: c["chunk_start_timestamp"]),
-                groupby(
-                    sorted(json.load(f).values(), key=lambda x: x["point_id"]),
-                    key=lambda x: x["point_id"],
-                ),
+        all_meta = list(json.load(f).values())
+
+    if not all_meta:
+        return
+
+    # Group chunks by session_id, sort each group by chunk_start_timestamp (ms)
+    def session_key(x):
+        return x.get("session_id") or ""
+
+    sorted_meta = sorted(
+        all_meta, key=lambda c: (c.get("session_id") or "", c["chunk_start_timestamp"])
+    )
+    sessions = []
+    for sid, group in groupby(sorted_meta, key=session_key):
+        if not sid:
+            continue
+        chunks = list(group)
+        sessions.append((sid, sorted(chunks, key=lambda c: c["chunk_start_timestamp"])))
+
+    if not sessions:
+        return
+
+    # Sort sessions by first chunk's start time
+    sessions.sort(key=lambda s: s[1][0]["chunk_start_timestamp"])
+
+    pts = Point.query.filter_by(match=match_id).order_by(Point.stamp.asc()).all()
+    point_by_uuid = {str(pt.uuid): pt for pt in pts}
+
+    segment_files = (
+        []
+    )  # (segment_path, segment_start_sec, clip_end_sec, point_ids_in_segment)
+    EXTRA_TAIL_SEC = 5.0
+
+    raw_basename = lambda sid: f"session_{sid}_raw.webm"
+    segment_basename = lambda sid: f"session_{sid}_segment.webm"
+
+    EBML_MAGIC = bytes([0x1A, 0x45, 0xDF, 0xA3])
+
+    for session_id, session_chunks in sessions:
+        # 1. Binary-concatenate chunks in order. Skip the first chunk if it doesn't start with WebM
+        #    EBML header (some browsers / wasm MediaRecorder send continuation first, init second).
+        session_chunks = sorted(session_chunks, key=lambda c: c["chunk_start_timestamp"])
+        raw_name = raw_basename(session_id)
+        raw_path = path.join(chunk_dir, raw_name)
+        try:
+            with open(raw_path, "wb") as out:
+                for i, c in enumerate(session_chunks):
+                    chunk_path = path.join(chunk_dir, c["filename"])
+                    if not path.exists(chunk_path):
+                        continue
+                    with open(chunk_path, "rb") as inp:
+                        data = inp.read()
+                    if i == 0 and len(data) >= 4 and data[:4] != EBML_MAGIC:
+                        if logger:
+                            logger.info(
+                                "finalize_recording: session %s skipping first chunk (no EBML header)",
+                                session_id,
+                            )
+                        continue
+                    out.write(data)
+        except OSError as e:
+            if logger:
+                logger.warning("finalize_recording: session %s binary concat failed: %s", session_id, e)
+            continue
+        if not path.exists(raw_path) or path.getsize(raw_path) == 0:
+            if logger:
+                logger.warning("finalize_recording: session %s produced empty raw file", session_id)
+            continue
+
+        segment_start_ms = min(c["chunk_start_timestamp"] for c in session_chunks)
+        segment_start_sec = segment_start_ms / 1000.0
+
+        # Point IDs that appear in this session (non-empty)
+        point_ids_in_session = set()
+        for c in session_chunks:
+            pid = c.get("point_id")
+            if pid and str(pid).strip():
+                point_ids_in_session.add(str(pid).strip())
+
+        # Clip end: 5 seconds after the end of the last point in this segment
+        if point_ids_in_session:
+            last_end_ts = None
+            for pid in point_ids_in_session:
+                if pid not in point_by_uuid:
+                    continue
+                pt = point_by_uuid[pid]
+                end_ts = pt.end_stamp.replace(tzinfo=timezone.utc).timestamp()
+                if last_end_ts is None or end_ts > last_end_ts:
+                    last_end_ts = end_ts
+            if last_end_ts is not None:
+                clip_end_sec = (last_end_ts - segment_start_sec) + EXTRA_TAIL_SEC
+            else:
+                clip_end_sec = None  # use full duration
+        else:
+            clip_end_sec = None
+
+        if clip_end_sec is not None:
+            # Get raw duration to cap clip_end_sec (run in chunk_dir so path has no spaces)
+            probe = subprocess.run(
+                [
+                    "ffprobe",
+                    "-i", raw_name,
+                    "-show_entries", "format=duration",
+                    "-v", "quiet", "-of", "csv=p=0",
+                ],
+                capture_output=True,
+                text=True,
+                cwd=chunk_dir,
             )
-        )
+            raw_duration = (
+                float(probe.stdout.strip())
+                if probe.returncode == 0 and probe.stdout.strip()
+                else 0.0
+            )
+            clip_end_sec = (
+                min(clip_end_sec, raw_duration) if raw_duration > 0 else raw_duration
+            )
 
-    # concatenate the chunks from each point into a single playable video
-    for idx, chunks in enumerate(consecutive):
-        print(f"chunk {idx} has length {len(chunks)}")
-        probe_result = subprocess.run(
-            [
-                "ffprobe",
-                "-v",
-                "error",
-                "-select_streams",
-                "v:0",
-                "-show_entries",
-                "stream=codec_name",
-                "-of",
-                "default=noprint_wrappers=1:nokey=1",
-                path.join(chunk_dir, f"{chunks[0]['filename']}"),
-            ],
-            capture_output=True,
-            text=True,
-        )
+        segment_name = segment_basename(session_id)
+        # Re-encode to VP9 and optionally trim to clip_end_sec (cwd=chunk_dir).
+        # Force -f webm so binary-concatenated MediaRecorder output is read as one stream.
+        cmd = [
+            "ffmpeg", "-f", "webm", "-i", raw_name,
+            "-c:v", "libvpx-vp9", "-crf", "16", "-b:v", "0",
+            "-c:a", "libopus",
+            "-fflags", "+genpts", "-avoid_negative_ts", "make_zero",
+            "-loglevel", "error", "-y", segment_name,
+        ]
+        if clip_end_sec is not None and clip_end_sec > 0:
+            idx = cmd.index(raw_name) + 1
+            cmd = cmd[:idx] + ["-t", str(clip_end_sec)] + cmd[idx:]
+        subprocess.run(cmd, cwd=chunk_dir)
 
-        codec_name = probe_result.stdout.strip() if probe_result.returncode == 0 else ""
-        with open(path.join(chunk_dir, "clips.txt"), "w") as f:
-            for chunk in chunks:
-                print(f"file {path.join(chunk_dir, chunk['filename'])}", file=f)
+        segment_path = path.join(chunk_dir, segment_name)
+        if path.exists(segment_path):
+            segment_files.append((segment_path, segment_start_sec, point_ids_in_session))
+
+    # 2. Concatenate all segment files and build in_video_times (relative names, cwd=chunk_dir)
+    clips_txt = path.join(chunk_dir, "clips.txt")
+    with open(clips_txt, "w") as f:
+        for seg_path, _, _ in segment_files:
+            if path.exists(seg_path):
+                print(f"file {repr(path.basename(seg_path))}", file=f)
+
+    if segment_files:
         subprocess.run(
             [
                 "ffmpeg",
-                "-f",
-                "concat",
-                "-safe",
-                "0",
-                "-i",
-                path.join(chunk_dir, "clips.txt"),
-                "-c",
-                "copy",
-                path.join(
-                    chunk_dir,
-                    f"{chunks[0]['point_id']}_fixedstamps.{'mp4' if codec_name == 'h264' else 'webm'}",
-                ),
-            ]
+                "-f", "concat", "-safe", "0",
+                "-i", "clips.txt",
+                "-c", "copy", "-map", "0",
+                "-y", "final_video.webm",
+            ],
+            cwd=chunk_dir,
         )
 
-    pts = Point.query.filter_by(match=match_id).order_by(Point.stamp.asc()).all()
-    print(f"len(pts) is {len(pts)}")
-    point_table = {
-        chunks[0]["point_id"]: (chunks[0]["chunk_start_timestamp"], len(chunks))
-        for chunks in consecutive
-    }
+    # Build in_video_times: [ (point_uuid, cumulative_end_sec), ... ]
+    points_with_footage = set()
+    for _, _, pids in segment_files:
+        points_with_footage.update(pids)
+
     in_video_times = [[None, 0.01]]
-    with open(path.join(chunk_dir, "clips.txt"), "w") as clips:
-        for pt in pts:
-            output_filename = path.join(chunk_dir, f"{pt.uuid}_clipped.webm")
-            if pt.uuid not in point_table:
-                print(f"POINT {pt.uuid} NOT FOUND IN POINT TABLE!")
-                print(f"point_table={point_table}")
-                continue
-            start_stamp, end_stamp = (
-                pt.stamp.replace(tzinfo=timezone.utc).timestamp()
-                - point_table[pt.uuid][0] / 1000
-                - 3,
-                pt.end_stamp.replace(tzinfo=timezone.utc).timestamp()
-                - point_table[pt.uuid][0] / 1000
-                + 3,
-            )
-            if start_stamp < -3:
-                print(
-                    f"what the fuck?? point starts before recording? start: {start_stamp}+3, end: {end_stamp}-3, point table: {point_table}"
-                )
-                # in_video_times.append([None, in_video_times[-1][1]])
-                continue
-            start_stamp = max(0, start_stamp)
-            in_video_times[-1][0] = pt.uuid
-            if start_stamp > end_stamp:
-                # something's wrong; we don't have all the
-                # footage from this point. so just set this
-                # point's length to zero and skip adding
-                # the footage.
-                print(
-                    f"somethings wrong (start > stop)! start: {start_stamp}, end: {end_stamp} (duration {end_stamp-start_stamp}), point table entry: {point_table[pt.uuid]}"
-                )
-                print(f"point_table={point_table}")
-                in_video_times.append([None, in_video_times[-1][1]])
-                continue
-            print(
-                f"# RUNNING FFMPEG FOR POINT {pt.uuid} !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!",
-                file=clips,
-            )
-
-            # Clip the video - works for both WebM and MP4 input (even with .webm extension)
-            # Always output as WebM/VP9 for consistency, so concatenation works smoothly
-            input_file = path.join(chunk_dir, f"{pt.uuid}_fixedstamps.webm")
-            if not path.exists(input_file):
-                input_file = path.join(chunk_dir, f"{pt.uuid}_fixedstamps.mp4")
-            print(f"# input file: {input_file}", file=clips)
-            # get duration
-            # ffprobe -i 07789c82-54b2-4348-b7cb-0d99437880b5_fixedstamps.mp4 -show_entries format=duration -v quiet -of csv="p=0"
-            duration = subprocess.run(
-                [
-                    "ffprobe",
-                    "-i",
-                    input_file,
-                    "-show_entries",
-                    "format=duration",
-                    "-v",
-                    "quiet",
-                    "-of",
-                    "csv=p=0",
-                ],
-                capture_output=True,
-                text=True,
-            )
-            print(f"# duration: {duration}", file=clips)
-            duration = (
-                float(duration.stdout.strip()) if probe_result.returncode == 0 else 0.0
-            )
-            if end_stamp > duration:
-                print(
-                    f"#somethings wrong (duration)! start: {start_stamp}, end: {end_stamp} (duration {end_stamp-start_stamp}), point table entry: {point_table[pt.uuid]}",
-                    file=clips,
-                )
-                in_video_times.append([None, in_video_times[-1][1]])
-                continue
-
-            in_video_times.append(
-                [None, in_video_times[-1][1] + end_stamp - start_stamp]
-            )
-            print(f"# post final continue!", file=clips)
-            # Probe the input file to detect codec
-            probe_result = subprocess.run(
-                [
-                    "ffprobe",
-                    "-v",
-                    "error",
-                    "-select_streams",
-                    "v:0",
-                    "-show_entries",
-                    "stream=codec_name",
-                    "-of",
-                    "default=noprint_wrappers=1:nokey=1",
-                    input_file,
-                ],
-                capture_output=True,
-                text=True,
-            )
-
-            codec_name = (
-                probe_result.stdout.strip() if probe_result.returncode == 0 else ""
-            )
-            print(f"# codec: {codec_name}", file=clips)
-            # Always output as WebM/VP9 format for consistency
-            # If input is already VP9, we can copy; otherwise re-encode
-            if codec_name == "vp9":
-                # Input is already VP9, can copy video codec
-                subprocess.run(
-                    [
-                        "ffmpeg",
-                        "-ss",
-                        str(start_stamp),
-                        "-to",
-                        str(end_stamp),
-                        "-i",
-                        input_file,
-                        "-c:v",
-                        "copy",  # Copy VP9 video
-                        "-c:a",
-                        "copy",  # Copy audio
-                        "-fflags",
-                        "+genpts",
-                        "-avoid_negative_ts",
-                        "make_zero",
-                        "-loglevel",
-                        "error",
-                        "-y",
-                        output_filename,
-                    ]
-                )
-            else:
-                # Input is MP4/H.264 or VP8, re-encode to VP9/WebM
-                subprocess.run(
-                    [
-                        "ffmpeg",
-                        "-ss",
-                        str(start_stamp),
-                        "-to",
-                        str(end_stamp),
-                        "-i",
-                        input_file,
-                        "-c:v",
-                        "libvpx-vp9",
-                        "-crf",
-                        "16",
-                        "-b:v",
-                        "0",
-                        "-c:a",
-                        "libopus",  # Use opus for WebM (works with both MP4 and WebM input)
-                        "-fflags",
-                        "+genpts",
-                        "-avoid_negative_ts",
-                        "make_zero",
-                        "-loglevel",
-                        "error",
-                        "-y",
-                        output_filename,
-                    ]
-                )
-            print(f"file {output_filename}", file=clips)
-
-    # Concatenate all clips into final video
-    # All clips should now be WebM/VP9 format (from clipping step above)
-    # So we can use copy for fast concatenation
-    subprocess.run(
-        [
-            "ffmpeg",
-            "-f",
-            "concat",
-            "-safe",
-            "0",
-            "-i",
-            path.join(chunk_dir, "clips.txt"),
-            "-c",
-            "copy",  # Copy works since all clips are now WebM/VP9
-            "-map",
-            "0",
-            "-y",
-            path.join(chunk_dir, "final_video.webm"),
-        ]
-    )
+    for pt in pts:
+        if str(pt.uuid) not in points_with_footage:
+            continue
+        pt_start = pt.stamp.replace(tzinfo=timezone.utc).timestamp()
+        pt_end = pt.end_stamp.replace(tzinfo=timezone.utc).timestamp()
+        duration = max(0.0, pt_end - pt_start)
+        in_video_times[-1][0] = pt.uuid
+        in_video_times.append([None, in_video_times[-1][1] + duration])
 
     with open(path.join(chunk_dir, "metadata.json"), "r") as f:
         metadata = json.load(f)
@@ -269,7 +204,12 @@ def finalize_recording_worker(
     print(f"STREAM STARTS: {stream_starts}")
     stream_starts[camera_name] = {
         "video_path": path.join(
-            "uploads/videos", tournament_url, field_name, match_id, camera_name, "final_video.webm"
+            "uploads/videos",
+            tournament_url,
+            field_name,
+            match_id,
+            camera_name,
+            "final_video.webm",
         ),
         "point_timestamps": [i[1] for i in in_video_times],
         "type": "recorded",
@@ -277,8 +217,8 @@ def finalize_recording_worker(
     match.camera_stream_starts = json.dumps(stream_starts)
     db.session.commit()
 
-    # cleanup all the `chunks`, the raw points, and the clipped points.
-    # keep fixedstamps since that's reliably created, in case there's an issue later on in the pipeline.
+    # Cleanup: remove chunks, session raw/segment files, and clips.txt; keep final_video and metadata.
     for file in listdir(chunk_dir):
-        if ("final_video" not in file) and ("fixedstamps" not in file):
-            remove(path.join(chunk_dir, file))
+        if file == "final_video.webm" or file == "metadata.json":
+            continue
+        remove(path.join(chunk_dir, file))

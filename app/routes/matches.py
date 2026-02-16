@@ -982,7 +982,9 @@ def run_match(tournament_url):
             player_ids = json.loads(match.team1_players)
             for pid in player_ids:
                 pr = PlayerRegistration.query.filter_by(
-                    event=tournament_url, player=pid, status=RegistrationStatus.CONFIRMED
+                    event=tournament_url,
+                    player=pid,
+                    status=RegistrationStatus.CONFIRMED,
                 ).first()
                 if pr:
                     player = Player.query.get(pid)
@@ -996,7 +998,9 @@ def run_match(tournament_url):
             player_ids = json.loads(match.team2_players)
             for pid in player_ids:
                 pr = PlayerRegistration.query.filter_by(
-                    event=tournament_url, player=pid, status=RegistrationStatus.CONFIRMED
+                    event=tournament_url,
+                    player=pid,
+                    status=RegistrationStatus.CONFIRMED,
                 ).first()
                 if pr:
                     player = Player.query.get(pid)

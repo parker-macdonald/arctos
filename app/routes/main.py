@@ -2,7 +2,14 @@
 Main routes (homepage, etc.)
 """
 
-from flask import Blueprint, render_template, url_for, Response, send_from_directory, send_file
+from flask import (
+    Blueprint,
+    render_template,
+    url_for,
+    Response,
+    send_from_directory,
+    send_file,
+)
 from flask_login import current_user
 from app.services.tournament_service import TournamentService
 import os
