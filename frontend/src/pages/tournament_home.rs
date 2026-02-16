@@ -1,5 +1,5 @@
 use crate::api;
-use crate::types::{ToEntry, User};
+use crate::types::{ToEntry, UpdatePlayerRegistrationRequest, UpdateTeamRegistrationRequest, User};
 use crate::Route;
 use dioxus::prelude::*;
 use pulldown_cmark::{Options, Parser};
@@ -48,6 +48,10 @@ pub fn TournamentHome(url: String) -> Element {
     let backend = api::base_url();
     let mut delete_modal_open = use_signal(|| false);
     let mut delete_confirm_url = use_signal(|| String::new());
+    let mut show_edit_player_modal = use_signal(|| false);
+    let mut show_edit_team_modal = use_signal(|| false);
+    let mut show_deregister_player_confirm = use_signal(|| false);
+    let mut show_deregister_team_confirm = use_signal(|| false);
 
     rsx! {
         if let Some(Ok(d)) = val.read().as_ref() {
@@ -83,16 +87,22 @@ pub fn TournamentHome(url: String) -> Element {
                         if let Some(Ok(current_user)) = me_res.read().as_ref() {
                             if current_user.user_type == "team" {
                                 if d.is_current_team_registered {
-                                    a { href: "{backend}/{url}/invitations", class: "btn btn-outline-primary", "Manage Roster" }
-                                    Link { to: Route::EditTeamRegistration { tournament_url: url.clone() }, class: "btn btn-outline-secondary", "Edit Registration" }
-                                    a { href: "{backend}/{url}/deregister-team", class: "btn btn-outline-danger", "Deregister Team" }
+                                    a { href: "{backend}/{url}/invitations", class: "btn btn-outline-secondary", "Manage Roster" }
+                                    button {
+                                        class: "btn btn-outline-secondary",
+                                        onclick: move |_| show_edit_team_modal.set(true),
+                                        "Edit Registration"
+                                    }
                                 } else {
                                     Link { to: Route::TournamentRegister { url: url.clone() }, class: "btn btn-success", "Register" }
                                 }
                             } else if current_user.user_type == "player" {
                                 if d.is_current_player_registered {
-                                    Link { to: Route::EditPlayerRegistration { tournament_url: url.clone() }, class: "btn btn-outline-secondary", "Edit Registration" }
-                                    a { href: "{backend}/{url}/deregister-player", class: "btn btn-outline-danger", "Deregister Player" }
+                                    button {
+                                        class: "btn btn-outline-secondary",
+                                        onclick: move |_| show_edit_player_modal.set(true),
+                                        "Edit Registration"
+                                    }
                                 } else {
                                     Link { to: Route::TournamentRegister { url: url.clone() }, class: "btn btn-success", "Register" }
                                 }
@@ -295,6 +305,172 @@ pub fn TournamentHome(url: String) -> Element {
                 }
             }
 
+            if show_edit_player_modal() {
+                div {
+                    class: "modal show d-block",
+                    style: "background: rgba(0,0,0,0.5);",
+                    tabindex: "-1",
+                    role: "dialog",
+                    onclick: move |_| {
+                        show_edit_player_modal.set(false);
+                        show_deregister_player_confirm.set(false);
+                    },
+                    div {
+                        class: "modal-dialog modal-dialog-centered",
+                        onclick: move |ev: Event<MouseData>| { ev.stop_propagation(); },
+                        div { class: "modal-content",
+                            div { class: "modal-header",
+                                h5 { class: "modal-title", "Edit Player Registration" }
+                                button {
+                                    r#type: "button",
+                                    class: "btn-close",
+                                    aria_label: "Close",
+                                    onclick: move |_| {
+                                        show_edit_player_modal.set(false);
+                                        show_deregister_player_confirm.set(false);
+                                    },
+                                }
+                            }
+                            div { class: "modal-body", style: "position: relative;",
+                                EditPlayerRegistrationModalContent {
+                                    tournament_url: url.clone(),
+                                    on_close: move |_| show_edit_player_modal.set(false),
+                                }
+                                if show_deregister_player_confirm() {
+                                    div {
+                                        class: "position-absolute top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center",
+                                        style: "background: rgba(0,0,0,0.3); z-index: 1050; border-radius: 0.25rem;",
+                                        onclick: move |_| show_deregister_player_confirm.set(false),
+                                        div {
+                                            class: "card shadow",
+                                            onclick: move |ev: Event<MouseData>| { ev.stop_propagation(); },
+                                            div { class: "card-body",
+                                                p { class: "mb-3", "Are you sure you want to deregister? You will be removed from this tournament." }
+                                                div { class: "d-flex gap-2 justify-content-end",
+                                                    button {
+                                                        r#type: "button",
+                                                        class: "btn btn-secondary",
+                                                        onclick: move |_| show_deregister_player_confirm.set(false),
+                                                        "Cancel"
+                                                    }
+                                                    form {
+                                                        method: "post",
+                                                        action: "{backend}/{url}/deregister-player",
+                                                        style: "display: inline;",
+                                                        button {
+                                                            r#type: "submit",
+                                                            class: "btn btn-danger",
+                                                            "Deregister"
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                                div { class: "modal-footer",
+                                    button {
+                                        r#type: "button",
+                                        class: "btn btn-outline-danger",
+                                        onclick: move |_| show_deregister_player_confirm.set(true),
+                                        "Deregister Player"
+                                    }
+                                    button {
+                                        r#type: "submit",
+                                        form: "edit-player-registration-form",
+                                        class: "btn btn-primary",
+                                        "Save"
+                                    }
+                                }
+                        }
+                    }
+                }
+            }
+
+            if show_edit_team_modal() {
+                div {
+                    class: "modal show d-block",
+                    style: "background: rgba(0,0,0,0.5);",
+                    tabindex: "-1",
+                    role: "dialog",
+                    onclick: move |_| {
+                        show_edit_team_modal.set(false);
+                        show_deregister_team_confirm.set(false);
+                    },
+                    div {
+                        class: "modal-dialog modal-dialog-centered",
+                        onclick: move |ev: Event<MouseData>| { ev.stop_propagation(); },
+                        div { class: "modal-content",
+                            div { class: "modal-header",
+                                h5 { class: "modal-title", "Edit Team Registration" }
+                                button {
+                                    r#type: "button",
+                                    class: "btn-close",
+                                    aria_label: "Close",
+                                    onclick: move |_| {
+                                        show_edit_team_modal.set(false);
+                                        show_deregister_team_confirm.set(false);
+                                    },
+                                }
+                            }
+                            div { class: "modal-body", style: "position: relative;",
+                                EditTeamRegistrationModalContent {
+                                    tournament_url: url.clone(),
+                                    on_close: move |_| show_edit_team_modal.set(false),
+                                }
+                                if show_deregister_team_confirm() {
+                                    div {
+                                        class: "position-absolute top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center",
+                                        style: "background: rgba(0,0,0,0.3); z-index: 1050; border-radius: 0.25rem;",
+                                        onclick: move |_| show_deregister_team_confirm.set(false),
+                                        div {
+                                            class: "card shadow",
+                                            onclick: move |ev: Event<MouseData>| { ev.stop_propagation(); },
+                                            div { class: "card-body",
+                                                p { class: "mb-3", "Are you sure you want to deregister your team? Your team will be removed from this tournament." }
+                                                div { class: "d-flex gap-2 justify-content-end",
+                                                    button {
+                                                        r#type: "button",
+                                                        class: "btn btn-secondary",
+                                                        onclick: move |_| show_deregister_team_confirm.set(false),
+                                                        "Cancel"
+                                                    }
+                                                    form {
+                                                        method: "post",
+                                                        action: "{backend}/{url}/deregister-team",
+                                                        style: "display: inline;",
+                                                        button {
+                                                            r#type: "submit",
+                                                            class: "btn btn-danger",
+                                                            "Deregister"
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                                div { class: "modal-footer",
+                                    button {
+                                        r#type: "button",
+                                        class: "btn btn-outline-danger",
+                                        onclick: move |_| show_deregister_team_confirm.set(true),
+                                        "Deregister Team"
+                                    }
+                                    button {
+                                        r#type: "submit",
+                                        form: "edit-team-registration-form",
+                                        class: "btn btn-primary",
+                                        "Save"
+                                    }
+                                }
+                        }
+                    }
+                }
+            }
+
             if is_current_user_to(me_res.read().as_ref(), &d.to_entries) && delete_modal_open() {
                 div { class: "modal d-block", tabindex: -1, style: "background: rgba(0,0,0,0.5)",
                     div { class: "modal-dialog modal-dialog-centered",
@@ -344,6 +520,212 @@ pub fn TournamentHome(url: String) -> Element {
             p { class: "text-danger", "{e}" }
         } else {
             p { class: "text-muted", "Loading…" }
+        }
+    }
+}
+
+#[component]
+fn EditPlayerRegistrationModalContent(
+    tournament_url: String,
+    on_close: EventHandler<()>,
+) -> Element {
+    let mut jersey_name = use_signal(|| "".to_string());
+    let mut jersey_number = use_signal(|| "".to_string());
+    let mut team = use_signal(|| "".to_string());
+    let mut current_team_name = use_signal(|| "".to_string());
+    let mut status = use_signal(|| "".to_string());
+    let mut teams = use_signal(|| vec![]);
+    let mut error = use_signal(|| None::<String>);
+    let mut loading = use_signal(|| true);
+
+    let _fetch = use_resource(use_reactive(&tournament_url, move |url| {
+        let url = url.clone();
+        async move {
+            loading.set(true);
+            let reg_res = api::get_my_player_registration(&url).await;
+            let detail_res = api::tournament_detail(&url).await;
+
+            match (reg_res, detail_res) {
+                (Ok(res), Ok(detail)) => {
+                    jersey_name.set(res.registration.jersey_name.unwrap_or_default());
+                    jersey_number.set(res.registration.jersey_number.unwrap_or_default());
+                    status.set(res.registration.status.clone());
+                    if let Some(ref ct) = res.current_team {
+                        current_team_name.set(ct.pseudonym.clone().unwrap_or_else(|| ct.id.clone()));
+                    }
+                    let mut t_list = vec![];
+                    for t in detail.teams_with_counts {
+                        t_list.push((t.team_id.clone(), t.pseudonym.unwrap_or(t.team_name)));
+                    }
+                    teams.set(t_list);
+                    // Set team after teams so the dropdown has options; prefer registration.team then current_team.id
+                    let selected_team = res
+                        .registration
+                        .team
+                        .clone()
+                        .or_else(|| res.current_team.as_ref().map(|c| c.id.clone()))
+                        .unwrap_or_default();
+                    team.set(selected_team);
+                }
+                (Err(e), _) => error.set(Some(format!("Failed to load registration: {}", e))),
+                (_, Err(e)) => error.set(Some(format!("Failed to load tournament details: {}", e))),
+            }
+            loading.set(false);
+        }
+    }));
+
+    let tournament_url_for_submit = tournament_url.clone();
+    let onsubmit = move |_evt: Event<FormData>| {
+        let tournament_url = tournament_url_for_submit.clone();
+        async move {
+            loading.set(true);
+            error.set(None);
+            let t_val = team();
+            let team_opt = if t_val.is_empty() { None } else { Some(t_val) };
+            let req = UpdatePlayerRegistrationRequest {
+                jersey_name: Some(jersey_name()),
+                jersey_number: Some(jersey_number()),
+                team: team_opt,
+            };
+            match api::update_my_player_registration(&tournament_url, &req).await {
+                Ok(_) => {
+                    on_close.call(());
+                }
+                Err(e) => {
+                    error.set(Some(e));
+                    loading.set(false);
+                }
+            }
+        }
+    };
+
+    rsx! {
+        if loading() {
+            div { class: "d-flex justify-content-center",
+                div { class: "spinner-border", role: "status",
+                    span { class: "visually-hidden", "Loading..." }
+                }
+            }
+        } else {
+            if let Some(err) = error() {
+                div { class: "alert alert-danger mb-3", "{err}" }
+            }
+            form {
+                id: "edit-player-registration-form",
+                onsubmit: onsubmit,
+                div { class: "mb-3",
+                    label { class: "form-label", "Jersey Name" }
+                    input {
+                        class: "form-control",
+                        "type": "text",
+                        value: "{jersey_name}",
+                        oninput: move |e| jersey_name.set(e.value()),
+                        required: true
+                    }
+                    div { class: "form-text", "Your name for this tournament" }
+                }
+                div { class: "mb-3",
+                    label { class: "form-label", "Jersey Number" }
+                    input {
+                        class: "form-control",
+                        "type": "text",
+                        value: "{jersey_number}",
+                        oninput: move |e| jersey_number.set(e.value())
+                    }
+                }
+                div { class: "mb-3",
+                    label { class: "form-label", "Team" }
+                    select {
+                        class: "form-select",
+                        value: "{team}",
+                        onchange: move |e| team.set(e.value()),
+                        option { value: "", selected: team().is_empty(), "No Team (unattached/free merc)" }
+                        for (id, name) in teams() {
+                            option { value: "{id}", selected: id == team(), "{name}" }
+                        }
+                    }
+                    div { class: "form-text",
+                        if !current_team_name().is_empty() {
+                            span { "Current team: {current_team_name} " }
+                            if status() == "PENDING_TEAM_APPROVAL" {
+                                span { class: "badge bg-warning", "Pending Approval" }
+                            }
+                        }
+                        br {}
+                        "If you change teams, your new team must approve your request."
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn EditTeamRegistrationModalContent(
+    tournament_url: String,
+    on_close: EventHandler<()>,
+) -> Element {
+    let mut pseudonym = use_signal(|| "".to_string());
+    let mut error = use_signal(|| None::<String>);
+    let mut loading = use_signal(|| true);
+
+    let _fetch = use_resource(use_reactive(&tournament_url, move |url| {
+        let url = url.clone();
+        async move {
+            loading.set(true);
+            match api::get_my_team_registration(&url).await {
+                Ok(res) => pseudonym.set(res.registration.pseudonym.unwrap_or_default()),
+                Err(e) => error.set(Some(e)),
+            }
+            loading.set(false);
+        }
+    }));
+
+    let tournament_url_for_submit = tournament_url.clone();
+    let onsubmit = move |_evt: Event<FormData>| {
+        let tournament_url = tournament_url_for_submit.clone();
+        async move {
+            loading.set(true);
+            error.set(None);
+            let req = UpdateTeamRegistrationRequest {
+                pseudonym: Some(pseudonym()),
+            };
+            match api::update_my_team_registration(&tournament_url, &req).await {
+                Ok(_) => on_close.call(()),
+                Err(e) => {
+                    error.set(Some(e));
+                    loading.set(false);
+                }
+            }
+        }
+    };
+
+    rsx! {
+        if loading() {
+            div { class: "d-flex justify-content-center",
+                div { class: "spinner-border", role: "status",
+                    span { class: "visually-hidden", "Loading..." }
+                }
+            }
+        } else {
+            if let Some(err) = error() {
+                div { class: "alert alert-danger mb-3", "{err}" }
+            }
+            form {
+                id: "edit-team-registration-form",
+                onsubmit: onsubmit,
+                div { class: "mb-3",
+                    label { class: "form-label", "Team Name for This Tournament" }
+                    input {
+                        class: "form-control",
+                        "type": "text",
+                        value: "{pseudonym}",
+                        oninput: move |e| pseudonym.set(e.value()),
+                        required: true
+                    }
+                    div { class: "form-text", "This is how your team will be referred to in this tournament" }
+                }
+            }
         }
     }
 }

@@ -18,7 +18,7 @@ fn get_query_param(name: &str) -> Option<String> {
     }
 }
 
-fn initial_user_type() -> String {
+fn initial_user_type_from_query() -> String {
     match get_query_param("type").as_deref() {
         Some("team") => "team".to_string(),
         _ => "player".to_string(),
@@ -32,13 +32,38 @@ fn register_title(user_type: &str) -> String {
     }
 }
 
+/// Initial account type from route: None = use query param (default player).
+fn resolve_initial_type(account_type: Option<String>) -> String {
+    match account_type.as_deref() {
+        Some("team") => "team".to_string(),
+        Some("player") => "player".to_string(),
+        _ => initial_user_type_from_query(),
+    }
+}
+
 #[component]
 pub fn Register() -> Element {
+    rsx! { RegisterPage { account_type: None } }
+}
+
+#[component]
+pub fn RegisterPlayer() -> Element {
+    rsx! { RegisterPage { account_type: Some("player".to_string()) } }
+}
+
+#[component]
+pub fn RegisterTeam() -> Element {
+    rsx! { RegisterPage { account_type: Some("team".to_string()) } }
+}
+
+#[component]
+fn RegisterPage(account_type: Option<String>) -> Element {
+    let initial = resolve_initial_type(account_type.clone());
     let mut username = use_signal(|| String::new());
     let mut password = use_signal(|| String::new());
     let mut confirm_password = use_signal(|| String::new());
     let mut name = use_signal(|| String::new());
-    let mut user_type = use_signal(initial_user_type);
+    let mut user_type = use_signal(move || initial);
     let mut err = use_signal(|| None::<String>);
     let navigator = use_navigator();
     let auth_invalidate = use_auth_invalidate();
@@ -52,16 +77,14 @@ pub fn Register() -> Element {
                         div { class: "d-flex justify-content-between align-items-center",
                             h3 { class: "mb-0", "{register_title(&user_type())}" }
                             div { class: "btn-group btn-group-sm", role: "group",
-                                button {
-                                    r#type: "button",
+                                Link {
+                                    to: Route::RegisterPlayer {},
                                     class: if user_type() == "player" { "btn btn-primary" } else { "btn btn-outline-primary" },
-                                    onclick: move |_| user_type.set("player".into()),
                                     "Player"
                                 }
-                                button {
-                                    r#type: "button",
+                                Link {
+                                    to: Route::RegisterTeam {},
                                     class: if user_type() == "team" { "btn btn-primary" } else { "btn btn-outline-primary" },
-                                    onclick: move |_| user_type.set("team".into()),
                                     "Team"
                                 }
                             }
@@ -178,23 +201,9 @@ pub fn Register() -> Element {
                             p { "Already have an account? " Link { to: Route::Login {}, "Login here" } }
                             p {
                                 "Or register as a "
-                                a {
-                                    href: "/app/register?type=player",
-                                    onclick: move |ev| {
-                                        ev.prevent_default();
-                                        user_type.set("player".into());
-                                    },
-                                    "player"
-                                }
+                                Link { to: Route::RegisterPlayer {}, class: "text-decoration-none", "player" }
                                 " or "
-                                a {
-                                    href: "/app/register?type=team",
-                                    onclick: move |ev| {
-                                        ev.prevent_default();
-                                        user_type.set("team".into());
-                                    },
-                                    "team"
-                                }
+                                Link { to: Route::RegisterTeam {}, class: "text-decoration-none", "team" }
                             }
                         }
                         if let Some(e) = err.read().as_ref() {
