@@ -2,13 +2,13 @@
 Match operation routes (start, run, finalize, view).
 """
 
-from flask import Blueprint, render_template, request, redirect, flash, jsonify
+from flask import Blueprint, request, jsonify
 from flask_login import login_required, current_user
 from datetime import datetime, timezone
 import json
 from models import Match, Tournament, Point, PlayerRegistration, Player, Field, db
 from app.filters import is_head_ref
-from app.utils.helpers import check_tournament_access, can_head_ref_match
+from app.utils.helpers import can_head_ref_match
 from app.utils.dependencies import apply_match_dependencies
 from app.utils.scheduling import recompute_all_match_times
 from app.serializers.match_note_serializer import MatchNoteSerializer
@@ -409,12 +409,11 @@ def match_page(tournament_url):
     match_name = request.args.get("name")
 
     if not match_id and not match_name:
-        flash("Match ID or name required", "error")
-        return redirect(f"/{tournament_url}/schedule")
+        return jsonify({"success": False, "error": "Match ID or name required"}), 400
 
     has_access, tournament = check_tournament_access(tournament_url)
     if not has_access or not tournament:
-        return redirect("/")
+        return jsonify({"success": False, "error": "Access denied"}), 403
 
     if match_id:
         match = Match.query.filter_by(
@@ -720,39 +719,32 @@ def start_match(tournament_url):
     """Match setup page for head refs."""
     match_id = request.args.get("id")
     if not match_id:
-        flash("Match ID required", "error")
-        return redirect(f"/{tournament_url}/schedule")
+        return jsonify({"success": False, "error": "Match ID required"}), 400
 
     match = Match.query.get(match_id)
     if not match or match.event != tournament_url:
-        flash("Match not found", "error")
-        return redirect(f"/{tournament_url}/schedule")
+        return jsonify({"success": False, "error": "Match not found"}), 404
 
     if not can_head_ref_match(tournament_url, current_user.id, match=match):
-        flash("You are not authorized to start matches for this tournament", "error")
-        return redirect(f"/{tournament_url}/schedule")
+        return jsonify({"success": False, "error": "You are not authorized to start matches for this tournament"}), 403
 
     if match.status != MatchStatus.READY_TO_START:
-        flash(f"This match has non-READY status {match.status}", "error")
-        return redirect(f"/{tournament_url}/schedule")
+        return jsonify({"success": False, "error": f"This match has non-READY status {match.status}"}), 400
 
     if not match.team1 or not match.team2:
-        flash("Cannot start match - teams not yet determined", "error")
-        return redirect(f"/{tournament_url}/schedule")
+        return jsonify({"success": False, "error": "Cannot start match - teams not yet determined"}), 400
 
     # If refs_initial is specified, all refs must be resolved (available)
     # Check if refs exists and all positions are resolved (no empty string placeholders)
     if match.refs_initial:
         if not match.refs:
-            flash("Cannot start match - ref teams not yet available", "error")
-            return redirect(f"/{tournament_url}/schedule")
+            return jsonify({"success": False, "error": "Cannot start match - ref teams not yet available"}), 400
         # Check if all positions are resolved (no empty strings)
         refs_list = [r.strip() for r in match.refs.split(",")]
         refs_initial_list = [r.strip() for r in match.refs_initial.split(",")]
         # Ensure lengths match and all positions are resolved
         if len(refs_list) != len(refs_initial_list) or any(not r for r in refs_list):
-            flash("Cannot start match - ref teams not yet available", "error")
-            return redirect(f"/{tournament_url}/schedule")
+            return jsonify({"success": False, "error": "Cannot start match - ref teams not yet available"}), 400
 
     # For dynamic matches, require dependencies to be completed (or marked ready)
     if match.schedule_type != ScheduleType.STATIC:
@@ -768,11 +760,7 @@ def start_match(tournament_url):
         # Also allow if ready_to_start flag is set
         is_ready_flag = match.ready_to_start or False
         if not (all_deps_finished or is_ready_flag):
-            flash(
-                "This match cannot be started yet. Dependencies are not completed.",
-                "error",
-            )
-            return redirect(f"/{tournament_url}/schedule")
+            return jsonify({"success": False, "error": "This match cannot be started yet. Dependencies are not completed."}), 400
 
     tournament = Tournament.query.get(tournament_url)
 
@@ -946,13 +934,9 @@ def start_match_post(tournament_url):
 
     match res:
         case Ok(match_obj):
-            flash("Match started successfully!", "success")
-            return redirect(f"/{tournament_url}/run-match?id={match_obj.uuid}")
+            return jsonify({"success": True, "message": "Match started successfully!"}), 200
         case Err(err):
-            flash(public_error_message(err), "error")
-            if match_id:
-                return redirect(f"/{tournament_url}/start-match?id={match_id}")
-            return redirect(f"/{tournament_url}/schedule")
+            return jsonify({"success": False, "error": public_error_message(err)}), 400
 
 
 @bp.route("/<tournament_url>/run-match")
@@ -961,21 +945,17 @@ def run_match(tournament_url):
     """Match running page for head refs."""
     match_id = request.args.get("id")
     if not match_id:
-        flash("Match ID required", "error")
-        return redirect(f"/{tournament_url}/schedule")
+        return jsonify({"success": False, "error": "Match ID required"}), 400
 
     match = Match.query.get(match_id)
     if not match or match.event != tournament_url:
-        flash("Match not found", "error")
-        return redirect(f"/{tournament_url}/schedule")
+        return jsonify({"success": False, "error": "Match not found"}), 404
 
     if match.status in (MatchStatus.COMPLETED, MatchStatus.SKIPPED):
-        flash("This match has already been completed or skipped", "error")
-        return redirect(f"/{tournament_url}/schedule")
+        return jsonify({"success": False, "error": "This match has already been completed or skipped"}), 400
 
     if not can_head_ref_match(tournament_url, current_user.id, match=match):
-        flash("You are not authorized to run matches for this tournament", "error")
-        return redirect(f"/{tournament_url}/schedule")
+        return jsonify({"success": False, "error": "You are not authorized to run matches for this tournament"}), 403
 
     tournament = Tournament.query.get(tournament_url)
     points = Point.query.filter_by(match=match.uuid).order_by(Point.stamp).all()
@@ -1039,21 +1019,17 @@ def finalize_match(tournament_url):
     """Match finalization page."""
     match_id = request.args.get("id")
     if not match_id:
-        flash("Match ID required", "error")
-        return redirect(f"/{tournament_url}/schedule")
+        return jsonify({"success": False, "error": "Match ID required"}), 400
 
     match = Match.query.get(match_id)
     if not match or match.event != tournament_url:
-        flash("Match not found", "error")
-        return redirect(f"/{tournament_url}/schedule")
+        return jsonify({"success": False, "error": "Match not found"}), 404
 
     if match.status in (MatchStatus.COMPLETED, MatchStatus.SKIPPED):
-        flash("This match has already been completed/skipped", "error")
-        return redirect(f"/{tournament_url}/schedule")
+        return jsonify({"success": False, "error": "This match has already been completed/skipped"}), 400
 
     if not can_head_ref_match(tournament_url, current_user.id, match=match):
-        flash("You are not authorized to finalize matches for this tournament", "error")
-        return redirect(f"/{tournament_url}/schedule")
+        return jsonify({"success": False, "error": "You are not authorized to finalize matches for this tournament"}), 403
 
     tournament = Tournament.query.get(tournament_url)
     points = Point.query.filter_by(match=match.uuid).order_by(Point.stamp).all()
@@ -1124,25 +1100,21 @@ def finalize_match_post(tournament_url):
     """Handle match finalization."""
     match_id = request.form.get("match_id")
     if not match_id:
-        flash("Match ID required", "error")
-        return redirect(f"/{tournament_url}/schedule")
+        return jsonify({"success": False, "error": "Match ID required"}), 400
 
     match = Match.query.get(match_id)
     if not match or match.event != tournament_url:
-        flash("Match not found", "error")
-        return redirect(f"/{tournament_url}/schedule")
+        return jsonify({"success": False, "error": "Match not found"}), 404
 
     if not can_head_ref_match(tournament_url, current_user.id, match=match):
-        flash("You are not authorized to finalize matches for this tournament", "error")
-        return redirect(f"/{tournament_url}/schedule")
+        return jsonify({"success": False, "error": "You are not authorized to finalize matches for this tournament"}), 403
 
     match.status = MatchStatus.COMPLETED
     # Note: end_time may need to be added to Match model if not present
 
     match_winner = request.form.get("match_winner")
     if not match_winner:
-        flash("Please select a match winner", "error")
-        return redirect(f"/{tournament_url}/finalize-match?id={match_id}")
+        return jsonify({"success": False, "error": "Please select a match winner"}), 400
 
     # Record completion time on the match using UTC
     match.completed_time = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -1194,8 +1166,7 @@ def finalize_match_post(tournament_url):
     except Exception as e:
         print(f"Error recomputing match times: {e}")
 
-    flash("Match finalized successfully!", "success")
-    return redirect(f"/{tournament_url}/schedule")
+    return jsonify({"success": True, "message": "Match finalized successfully!"}), 200
 
 
 @bp.route("/<tournament_url>/get-points")

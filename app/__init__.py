@@ -90,7 +90,7 @@ def create_app(config=None):
 
     # Initialize login manager
     login_manager.init_app(app)
-    login_manager.login_view = "auth.login"
+    login_manager.login_view = "main.app_spa"
 
     @login_manager.unauthorized_handler
     def unauthorized():
@@ -115,8 +115,6 @@ def create_app(config=None):
     # Register blueprints
     from app.routes.main import bp as main_bp
     from app.routes.auth import bp as auth_bp
-    from app.routes.players import bp as players_bp
-    from app.routes.teams import bp as teams_bp
     from app.routes.tournaments import bp as tournaments_bp
     from app.routes.matches import bp as matches_bp
     from app.routes.notes import bp as notes_bp
@@ -126,8 +124,6 @@ def create_app(config=None):
     app.register_blueprint(main_bp)
     app.register_blueprint(_api_bp)
     app.register_blueprint(auth_bp)
-    app.register_blueprint(players_bp)
-    app.register_blueprint(teams_bp)
     app.register_blueprint(tournaments_bp)
     app.register_blueprint(matches_bp)
     app.register_blueprint(notes_bp)
@@ -252,9 +248,8 @@ def create_app(config=None):
 
     @app.errorhandler(413)
     def too_large(e):
-        from flask import flash, redirect
+        from flask import jsonify
 
-        flash("File too large. Maximum size is 10MB.", "error")
-        return redirect(url_for("main.index"))
+        return jsonify({"success": False, "error": "File too large. Maximum size is 10MB."}), 413
 
     return app
