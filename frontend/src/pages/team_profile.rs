@@ -1,27 +1,51 @@
 use crate::api;
 use crate::Route;
 use dioxus::prelude::*;
-use pulldown_cmark::{html, Options, Parser};
 
-fn render_markdown(markdown: &str) -> String {
-    let mut options = Options::empty();
-    options.insert(Options::ENABLE_STRIKETHROUGH);
-    let parser = Parser::new_ext(markdown, options);
-    let mut html_output = String::new();
-    html::push_html(&mut html_output, parser);
-    html_output
+/// Page component for the router. Reads id from use_route() so navigation
+/// between profiles updates the view (router reuses the same component and
+/// does not pass new props).
+#[component]
+pub fn TeamProfilePage(id: String) -> Element {
+    let route = use_route::<Route>();
+    let id = match &route {
+        Route::TeamProfilePage { id } => id.clone(),
+        _ => return rsx! { div { class: "alert alert-danger", "Invalid route" } },
+    };
+    let mut id_signal = use_signal(|| id.clone());
+    id_signal.set(id);
+    rsx! {
+        TeamProfile { id: id_signal }
+    }
 }
 
 #[component]
-pub fn TeamProfile(id: String) -> Element {
-    let team_id = id.clone();
-    let data = use_resource(move || {
-        let i = team_id.clone();
+pub fn TeamProfile(id: Signal<String>) -> Element {
+    let data = use_resource(use_reactive(&id, move |sid| {
+        let i = sid().clone();
         async move { api::team_profile(&i).await.map_err(|e| e.to_string()) }
-    });
+    }));
     let me = use_resource(move || async move { api::me().await });
     let val = data.value();
     let backend = api::base_url();
+    let mut about_markdown = use_signal(|| Option::<String>::None);
+    use_effect(move || {
+        let v = val.read();
+        if let Some(Ok(d)) = v.as_ref() {
+            about_markdown.set(d.team.about.clone());
+        } else {
+            about_markdown.set(None);
+        }
+    });
+    let about_html = use_resource(use_reactive(&about_markdown, move |md| {
+        let md = md().clone();
+        async move {
+            match md.as_deref() {
+                Some(m) if !m.is_empty() => api::render_markdown(m).await,
+                _ => Ok(String::new()),
+            }
+        }
+    }));
     rsx! {
         if let Some(Ok(d)) = val.read().as_ref() {
             div { class: "row",
@@ -61,7 +85,15 @@ pub fn TeamProfile(id: String) -> Element {
                             if let Some(about) = &d.team.about {
                                 if !about.is_empty() {
                                     p { strong { "About: " } }
-                                    div { dangerous_inner_html: "{render_markdown(about)}" }
+                                    if let Some(Ok(html)) = about_html.value().read().as_ref() {
+                                        if html.is_empty() {
+                                            div { class: "markdown-content", style: "white-space: pre-wrap;", "{about}" }
+                                        } else {
+                                            div { dangerous_inner_html: "{html}" }
+                                        }
+                                    } else {
+                                        div { class: "markdown-content", style: "white-space: pre-wrap;", "{about}" }
+                                    }
                                 }
                             }
                         }

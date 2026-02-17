@@ -45,7 +45,7 @@ pub fn EditPlayerProfile(player_id: String) -> Element {
 
             match api::update_player_profile(&player_id, &req).await {
                 Ok(_) => {
-                    nav.push(Route::PlayerProfile { id: player_id.clone() });
+                    nav.push(Route::PlayerProfilePage { id: player_id.clone() });
                 }
                 Err(e) => {
                     error.set(Some(e));
@@ -62,7 +62,7 @@ pub fn EditPlayerProfile(player_id: String) -> Element {
                     nav { "aria-label": "breadcrumb",
                         ol { class: "breadcrumb",
                             li { class: "breadcrumb-item",
-                                Link { to: Route::PlayerProfile { id: player_id.clone() }, "{name}" }
+                                Link { to: Route::PlayerProfilePage { id: player_id.clone() }, "{name}" }
                             }
                             li { class: "breadcrumb-item active", "Edit Profile" }
                         }
@@ -139,7 +139,7 @@ pub fn EditPlayerProfile(player_id: String) -> Element {
                                         button { class: "btn btn-primary", "type": "submit", "Update Profile" }
                                         Link {
                                             class: "btn btn-outline-secondary",
-                                            to: Route::PlayerProfile { id: player_id.clone() },
+                                            to: Route::PlayerProfilePage { id: player_id.clone() },
                                             "Cancel"
                                         }
                                     }

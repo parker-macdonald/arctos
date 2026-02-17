@@ -1,9 +1,35 @@
 use crate::api;
 use crate::Route;
 use dioxus::prelude::*;
+use wasm_bindgen::JsCast;
+
+fn get_form_value(id: &str) -> String {
+    let doc = web_sys::window().and_then(|w| w.document()).unwrap();
+    doc.get_element_by_id(id)
+        .and_then(|e| e.dyn_into::<web_sys::HtmlInputElement>().ok())
+        .map(|e| e.value())
+        .unwrap_or_default()
+}
+
+fn get_form_select_value(id: &str) -> String {
+    let doc = web_sys::window().and_then(|w| w.document()).unwrap();
+    doc.get_element_by_id(id)
+        .and_then(|e| e.dyn_into::<web_sys::HtmlSelectElement>().ok())
+        .map(|e| e.value())
+        .unwrap_or_default()
+}
+
+fn get_form_check(id: &str) -> bool {
+    let doc = web_sys::window().and_then(|w| w.document()).unwrap();
+    doc.get_element_by_id(id)
+        .and_then(|e| e.dyn_into::<web_sys::HtmlInputElement>().ok())
+        .map(|e| e.checked())
+        .unwrap_or(false)
+}
 
 #[component]
 pub fn TournamentRegister(url: String) -> Element {
+    let navigator = use_navigator();
     let url_for_data = url.clone();
     let data = use_resource(move || {
         let u = url_for_data.clone();
@@ -12,9 +38,8 @@ pub fn TournamentRegister(url: String) -> Element {
     let me = use_resource(move || async move { api::me().await });
     let val = data.value();
     let backend = api::base_url();
-    let register_player_action = format!("{}/{}/register-player", backend, url);
-    let register_team_action = format!("{}/{}/register-team", backend, url);
     let mut show_help_modal = use_signal(|| false);
+    let mut register_error = use_signal(|| None::<String>);
     rsx! {
         if let Some(Ok(d)) = val.read().as_ref() {
             div { class: "row",
@@ -36,7 +61,33 @@ pub fn TournamentRegister(url: String) -> Element {
                             div { class: "card",
                                 div { class: "card-header", h5 { class: "mb-0", "Player Registration" } }
                                 div { class: "card-body",
-                                    form { method: "POST", action: "{register_player_action}",
+                                    if let Some(err) = register_error() {
+                                        div { class: "alert alert-danger mb-3", "{err}" }
+                                    }
+                                    form {
+                                        id: "player-register-form",
+                                        onsubmit: move |ev| {
+                                            ev.prevent_default();
+                                            register_error.set(None);
+                                            let u = url.clone();
+                                            spawn(async move {
+                                                let jersey_name = get_form_value("jersey_name");
+                                                let jersey_number = get_form_value("jersey_number");
+                                                let team = get_form_select_value("team");
+                                                let agree_terms = get_form_check("agree_terms");
+                                                match api::register_player(&u, &jersey_name, &jersey_number, &team, agree_terms).await {
+                                                    Ok(res) if res.success => {
+                                                        navigator.push(Route::TournamentHome { url: u });
+                                                    }
+                                                    Ok(res) => {
+                                                        register_error.set(Some(res.error.unwrap_or_else(|| "Registration failed.".to_string())));
+                                                    }
+                                                    Err(e) => {
+                                                        register_error.set(Some(e));
+                                                    }
+                                                }
+                                            });
+                                        },
                                         div { class: "mb-3",
                                             label { r#for: "jersey_name", class: "form-label", "Jersey Name" }
                                             input { r#type: "text", class: "form-control", id: "jersey_name", name: "jersey_name", required: true }
@@ -100,7 +151,31 @@ pub fn TournamentRegister(url: String) -> Element {
                             div { class: "card",
                                 div { class: "card-header", h5 { class: "mb-0", "Team Registration" } }
                                 div { class: "card-body",
-                                    form { method: "POST", action: "{register_team_action}",
+                                    if let Some(err) = register_error() {
+                                        div { class: "alert alert-danger mb-3", "{err}" }
+                                    }
+                                    form {
+                                        id: "team-register-form",
+                                        onsubmit: move |ev| {
+                                            ev.prevent_default();
+                                            register_error.set(None);
+                                            let u = url.clone();
+                                            spawn(async move {
+                                                let pseudonym = get_form_value("pseudonym");
+                                                let agree_terms = get_form_check("agree_terms_team");
+                                                match api::register_team(&u, &pseudonym, agree_terms).await {
+                                                    Ok(res) if res.success => {
+                                                        navigator.push(Route::TournamentHome { url: u });
+                                                    }
+                                                    Ok(res) => {
+                                                        register_error.set(Some(res.error.unwrap_or_else(|| "Registration failed.".to_string())));
+                                                    }
+                                                    Err(e) => {
+                                                        register_error.set(Some(e));
+                                                    }
+                                                }
+                                            });
+                                        },
                                         div { class: "mb-3",
                                             label { r#for: "pseudonym", class: "form-label", "Team Name for This Tournament" }
                                             input { r#type: "text", class: "form-control", id: "pseudonym", name: "pseudonym", required: true }
@@ -123,8 +198,8 @@ pub fn TournamentRegister(url: String) -> Element {
                                             if !link.is_empty() {
                                                 div { class: "mb-3",
                                                     div { class: "form-check",
-                                                        input { class: "form-check-input", r#type: "checkbox", id: "agree_terms", name: "agree_terms", required: true }
-                                                        label { class: "form-check-label", r#for: "agree_terms",
+                                                        input { class: "form-check-input", r#type: "checkbox", id: "agree_terms_team", name: "agree_terms", required: true }
+                                                        label { class: "form-check-label", r#for: "agree_terms_team",
                                                             "I agree to the "
                                                             a { href: "{link}", target: "_blank", class: "text-decoration-none", "tournament terms and conditions" }
                                                         }

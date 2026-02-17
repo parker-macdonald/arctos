@@ -2,7 +2,6 @@ use crate::api;
 use crate::types::{ToEntry, UpdatePlayerRegistrationRequest, UpdateTeamRegistrationRequest, User};
 use crate::Route;
 use dioxus::prelude::*;
-use pulldown_cmark::{Options, Parser};
 
 fn is_current_user_to(me: Option<&Result<User, String>>, to_entries: &[ToEntry]) -> bool {
     me.and_then(|r| r.as_ref().ok())
@@ -26,20 +25,12 @@ fn format_date_display(start: &str, end: Option<&String>) -> String {
     }
 }
 
-fn markdown_to_html(md: &str) -> String {
-    let mut options = Options::empty();
-    options.insert(Options::ENABLE_STRIKETHROUGH);
-    options.insert(Options::ENABLE_TABLES);
-    let parser = Parser::new_ext(md, options);
-    let mut html = String::new();
-    pulldown_cmark::html::push_html(&mut html, parser);
-    html
-}
-
 #[component]
 pub fn TournamentHome(url: String) -> Element {
     let url_for_data = url.clone();
+    let mut refresh = use_signal(|| 0u32);
     let data = use_resource(move || {
+        let _ = refresh();
         let u = url_for_data.clone();
         async move { api::tournament_detail(&u).await.map_err(|e| e.to_string()) }
     });
@@ -52,6 +43,26 @@ pub fn TournamentHome(url: String) -> Element {
     let mut show_edit_team_modal = use_signal(|| false);
     let mut show_deregister_player_confirm = use_signal(|| false);
     let mut show_deregister_team_confirm = use_signal(|| false);
+    let url_for_deregister_player = url.clone();
+    let url_for_deregister_team = url.clone();
+    let mut about_markdown = use_signal(|| Option::<String>::None);
+    use_effect(move || {
+        let v = val.read();
+        if let Some(Ok(d)) = v.as_ref() {
+            about_markdown.set(d.tournament.about.clone());
+        } else {
+            about_markdown.set(None);
+        }
+    });
+    let about_html = use_resource(use_reactive(&about_markdown, move |md| {
+        let md = md().clone();
+        async move {
+            match md.as_deref() {
+                Some(m) if !m.is_empty() => api::render_markdown(m).await,
+                _ => Ok(String::new()),
+            }
+        }
+    }));
 
     rsx! {
         if let Some(Ok(d)) = val.read().as_ref() {
@@ -160,7 +171,15 @@ pub fn TournamentHome(url: String) -> Element {
                             if let Some(about) = &d.tournament.about {
                                 if !about.is_empty() {
                                     hr {}
-                                    div { class: "markdown-content", dangerous_inner_html: "{markdown_to_html(about)}" }
+                                    if let Some(Ok(html)) = about_html.value().read().as_ref() {
+                                        if html.is_empty() {
+                                            div { class: "markdown-content", style: "white-space: pre-wrap;", "{about}" }
+                                        } else {
+                                            div { dangerous_inner_html: "{html}" }
+                                        }
+                                    } else {
+                                        div { class: "markdown-content", style: "white-space: pre-wrap;", "{about}" }
+                                    }
                                 }
                             } else {
                                 p { class: "text-muted", "Tournament details coming soon!" }
@@ -222,7 +241,7 @@ pub fn TournamentHome(url: String) -> Element {
                                                                 }
                                                             }
                                                             div {
-                                                                Link { to: Route::TeamProfile { id: team.team_id.clone() }, class: "text-decoration-none",
+                                                                Link { to: Route::TeamProfilePage { id: team.team_id.clone() }, class: "text-decoration-none",
                                                                     strong { "{team.pseudonym.as_deref().unwrap_or(&team.team_name)}" }
                                                                 }
                                                             }
@@ -276,7 +295,7 @@ pub fn TournamentHome(url: String) -> Element {
                                                                 }
                                                             }
                                                             div {
-                                                                Link { to: Route::PlayerProfile { id: p.player_id.clone() }, class: "text-decoration-none",
+                                                                Link { to: Route::PlayerProfilePage { id: p.player_id.clone() }, class: "text-decoration-none",
                                                                     strong { "{p.player_name}" }
                                                                 }
                                                             }
@@ -353,15 +372,20 @@ pub fn TournamentHome(url: String) -> Element {
                                                         onclick: move |_| show_deregister_player_confirm.set(false),
                                                         "Cancel"
                                                     }
-                                                    form {
-                                                        method: "post",
-                                                        action: "{backend}/{url}/deregister-player",
-                                                        style: "display: inline;",
-                                                        button {
-                                                            r#type: "submit",
-                                                            class: "btn btn-danger",
-                                                            "Deregister"
-                                                        }
+                                                    button {
+                                                        r#type: "button",
+                                                        class: "btn btn-danger",
+                                                        onclick: move |_| {
+                                                            show_deregister_player_confirm.set(false);
+                                                            show_edit_player_modal.set(false);
+                                                            let u = url_for_deregister_player.clone();
+                                                            spawn(async move {
+                                                                if api::deregister_player(&u).await.is_ok() {
+                                                                    refresh.set(refresh() + 1);
+                                                                }
+                                                            });
+                                                        },
+                                                        "Deregister"
                                                     }
                                                 }
                                             }
@@ -436,15 +460,20 @@ pub fn TournamentHome(url: String) -> Element {
                                                         onclick: move |_| show_deregister_team_confirm.set(false),
                                                         "Cancel"
                                                     }
-                                                    form {
-                                                        method: "post",
-                                                        action: "{backend}/{url}/deregister-team",
-                                                        style: "display: inline;",
-                                                        button {
-                                                            r#type: "submit",
-                                                            class: "btn btn-danger",
-                                                            "Deregister"
-                                                        }
+                                                    button {
+                                                        r#type: "button",
+                                                        class: "btn btn-danger",
+                                                        onclick: move |_| {
+                                                            show_deregister_team_confirm.set(false);
+                                                            show_edit_team_modal.set(false);
+                                                            let u = url_for_deregister_team.clone();
+                                                            spawn(async move {
+                                                                if api::deregister_team(&u).await.is_ok() {
+                                                                    refresh.set(refresh() + 1);
+                                                                }
+                                                            });
+                                                        },
+                                                        "Deregister"
                                                     }
                                                 }
                                             }

@@ -1,9 +1,38 @@
 use crate::api;
 use crate::Route;
 use dioxus::prelude::*;
+use wasm_bindgen::JsCast;
+
+fn get_form_value(id: &str) -> String {
+    let window = web_sys::window().unwrap();
+    let doc = window.document().unwrap();
+    doc.get_element_by_id(id)
+        .and_then(|e| e.dyn_into::<web_sys::HtmlInputElement>().ok())
+        .map(|e| e.value())
+        .unwrap_or_default()
+}
+
+fn get_form_textarea(id: &str) -> String {
+    let window = web_sys::window().unwrap();
+    let doc = window.document().unwrap();
+    doc.get_element_by_id(id)
+        .and_then(|e| e.dyn_into::<web_sys::HtmlTextAreaElement>().ok())
+        .map(|e| e.value())
+        .unwrap_or_default()
+}
+
+fn get_form_check(id: &str) -> bool {
+    let window = web_sys::window().unwrap();
+    let doc = window.document().unwrap();
+    doc.get_element_by_id(id)
+        .and_then(|e| e.dyn_into::<web_sys::HtmlInputElement>().ok())
+        .map(|e| e.checked())
+        .unwrap_or(false)
+}
 
 #[component]
 pub fn TournamentSettings(url: String) -> Element {
+    let navigator = use_navigator();
     let url_for_data = url.clone();
     let data = use_resource(move || {
         let u = url_for_data.clone();
@@ -11,7 +40,6 @@ pub fn TournamentSettings(url: String) -> Element {
     });
     let val = data.value();
     let backend = api::base_url();
-    let update_url = format!("{}/{}/update-settings", backend, url);
     rsx! {
         if let Some(Ok(d)) = val.read().as_ref() {
             div { class: "row",
@@ -33,7 +61,54 @@ pub fn TournamentSettings(url: String) -> Element {
                             h5 { class: "mb-0", "Tournament Information" }
                         }
                         div { class: "card-body",
-                            form { method: "POST", action: "{update_url}",
+                            form {
+                                id: "tournament-settings-form",
+                                onsubmit: move |ev| {
+                                    ev.prevent_default();
+                                    let params: Vec<(String, String)> = vec![
+                                        ("name".into(), get_form_value("name")),
+                                        ("location".into(), get_form_value("location")),
+                                        ("start_date".into(), get_form_value("start_date")),
+                                        ("end_date".into(), get_form_value("end_date")),
+                                        ("num_fields".into(), get_form_value("num_fields")),
+                                        ("n_max_teams".into(), get_form_value("n_max_teams")),
+                                        ("max_team_size_roster".into(), get_form_value("max_team_size_roster")),
+                                        ("max_team_size_field".into(), get_form_value("max_team_size_field")),
+                                        ("team_reg_fee".into(), get_form_value("team_reg_fee")),
+                                        ("player_reg_fee".into(), get_form_value("player_reg_fee")),
+                                        ("about".into(), get_form_textarea("about")),
+                                        ("terms_link".into(), get_form_value("terms_link")),
+                                        ("head_refs_allowed_list".into(), get_form_value("head_refs_allowed_list")),
+                                    ];
+                                    let mut params = params;
+                                    if get_form_check("head_refs_allow_anyone") {
+                                        params.push(("head_refs_allow_anyone".into(), "on".to_string()));
+                                    }
+                                    if get_form_check("head_refs_allow_reffing_teams") {
+                                        params.push(("head_refs_allow_reffing_teams".into(), "on".to_string()));
+                                    }
+                                    if get_form_check("published") {
+                                        params.push(("published".into(), "on".to_string()));
+                                    }
+                                    if get_form_check("schedule_published") {
+                                        params.push(("schedule_published".into(), "on".to_string()));
+                                    }
+                                    if get_form_check("registration_open") {
+                                        params.push(("registration_open".into(), "on".to_string()));
+                                    }
+                                    let url_clone = url.clone();
+                                    let nav = navigator.clone();
+                                    spawn(async move {
+                                        match api::update_tournament_settings(&url_clone, &params).await {
+                                            Ok(res) => {
+                                                if res.success {
+                                                    nav.push(Route::TournamentHome { url: url_clone });
+                                                }
+                                            }
+                                            Err(_) => {}
+                                        }
+                                    });
+                                },
                                 div { class: "row",
                                     div { class: "col-md-6",
                                         div { class: "mb-3",
@@ -59,7 +134,7 @@ pub fn TournamentSettings(url: String) -> Element {
                                     div { class: "col-md-6",
                                         div { class: "mb-3",
                                             label { r#for: "end_date", class: "form-label", "End Date" }
-                                            input { r#type: "date", class: "form-control", id: "end_date", name: "end_date", value: "{d.tournament.end_date.as_deref().unwrap_or(\"\")}" }
+                                            input { r#type: "date", class: "form-control", id: "end_date", name: "end_date", value: "{d.tournament.end_date.as_deref().map(|s| s.split('T').next().unwrap_or(s)).unwrap_or(\"\")}" }
                                         }
                                     }
                                     div { class: "col-md-6",

@@ -2,17 +2,7 @@ use crate::api;
 use crate::types::PlayerInjury;
 use crate::Route;
 use dioxus::prelude::*;
-use pulldown_cmark::{html, Options, Parser};
 use serde_json::json;
-
-fn render_markdown(markdown: &str) -> String {
-    let mut options = Options::empty();
-    options.insert(Options::ENABLE_STRIKETHROUGH);
-    let parser = Parser::new_ext(markdown, options);
-    let mut html_output = String::new();
-    html::push_html(&mut html_output, parser);
-    html_output
-}
 
 #[derive(Clone, Debug, PartialEq)]
 struct EditableInjury {
@@ -53,31 +43,66 @@ fn editable_injury_from_api(inj: &PlayerInjury) -> EditableInjury {
     }
 }
 
+/// Page component for the router. Reads id from use_route() so navigation
+/// between profiles updates the view (router reuses the same component and
+/// does not pass new props).
 #[component]
-pub fn PlayerProfile(id: String) -> Element {
-    let player_id = id.clone();
-    let data = use_resource(move || {
-        let i = player_id.clone();
+pub fn PlayerProfilePage(id: String) -> Element {
+    let route = use_route::<Route>();
+    let id = match &route {
+        Route::PlayerProfilePage { id } => id.clone(),
+        _ => return rsx! { div { class: "alert alert-danger", "Invalid route" } },
+    };
+    let mut id_signal = use_signal(|| id.clone());
+    id_signal.set(id);
+    rsx! {
+        PlayerProfile { id: id_signal }
+    }
+}
+
+#[component]
+pub fn PlayerProfile(id: Signal<String>) -> Element {
+    let data = use_resource(use_reactive(&id, move |sid| {
+        let i = sid().clone();
         async move { api::player_profile(&i).await.map_err(|e| e.to_string()) }
-    });
+    }));
+    let mut injuries_state = use_signal(|| Vec::<EditableInjury>::new());
+    let mut injuries_initialized_for = use_signal(|| None::<String>);
     let me = use_resource(move || async move { api::me().await });
     let val = data.value();
     let backend = api::base_url();
-    let mut injuries_state = use_signal(|| Vec::<EditableInjury>::new());
-    let mut injuries_initialized = use_signal(|| false);
     let mut injury_error = use_signal(|| None::<String>);
     let mut injury_saving = use_signal(|| false);
+    let mut bio_markdown = use_signal(|| Option::<String>::None);
+    use_effect(move || {
+        let v = val.read();
+        if let Some(Ok(d)) = v.as_ref() {
+            bio_markdown.set(d.player.bio.clone());
+        } else {
+            bio_markdown.set(None);
+        }
+    });
+    let bio_html = use_resource(use_reactive(&bio_markdown, move |md| {
+        let md = md().clone();
+        async move {
+            match md.as_deref() {
+                Some(m) if !m.is_empty() => api::render_markdown(m).await,
+                _ => Ok(String::new()),
+            }
+        }
+    }));
 
     use_effect(move || {
-        if !injuries_initialized() {
-            if let Some(Ok(d)) = val.read().as_ref() {
+        if let Some(Ok(d)) = val.read().as_ref() {
+            let player_id = d.player.id.clone();
+            if injuries_initialized_for().as_deref() != Some(player_id.as_str()) {
                 let list = d
                     .injuries
                     .iter()
                     .map(editable_injury_from_api)
                     .collect::<Vec<_>>();
                 injuries_state.set(list);
-                injuries_initialized.set(true);
+                injuries_initialized_for.set(Some(player_id));
             }
         }
     });
@@ -130,9 +155,19 @@ pub fn PlayerProfile(id: String) -> Element {
                                 p { strong { "Phone: " } "{phone}" }
                             }
                             if let Some(bio) = &d.player.bio {
-                                div { class: "mt-3",
-                                    h6 { strong { "Bio:" } }
-                                    div { dangerous_inner_html: "{render_markdown(bio)}" }
+                                if !bio.is_empty() {
+                                    div { class: "mt-3",
+                                        h6 { strong { "Bio:" } }
+                                        if let Some(Ok(html)) = bio_html.value().read().as_ref() {
+                                            if html.is_empty() {
+                                                div { class: "markdown-content", style: "white-space: pre-wrap;", "{bio}" }
+                                            } else {
+                                                div { dangerous_inner_html: "{html}" }
+                                            }
+                                        } else {
+                                            div { class: "markdown-content", style: "white-space: pre-wrap;", "{bio}" }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -162,7 +197,7 @@ pub fn PlayerProfile(id: String) -> Element {
                                                     td { a { href: "/app/{r.event}", "{r.event}" } }
                                                     td {
                                                         if let Some(team) = &r.team {
-                                                            Link { to: Route::TeamProfile { id: team.clone() }, "{team}" }
+                                                            Link { to: Route::TeamProfilePage { id: team.clone() }, "{team}" }
                                                         } else {
                                                             "Unattached"
                                                         }

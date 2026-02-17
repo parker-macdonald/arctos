@@ -3367,6 +3367,53 @@ def markdown_page(slug):
     return jsonify({"title": title, "html": html})
 
 
+# CSS for .markdown-content (matches python-markdown output: headings, lists, code, tables, etc.)
+MARKDOWN_CONTENT_CSS = """
+.markdown-content { line-height: 1.6; }
+.markdown-content h1, .markdown-content h2, .markdown-content h3,
+.markdown-content h4, .markdown-content h5, .markdown-content h6 {
+    margin-top: 1em; margin-bottom: 0.5em; font-weight: 600;
+}
+.markdown-content h1 { font-size: 1.5em; }
+.markdown-content h2 { font-size: 1.3em; }
+.markdown-content h3 { font-size: 1.15em; }
+.markdown-content p { margin-bottom: 0.75em; }
+.markdown-content ul, .markdown-content ol { margin-bottom: 0.75em; padding-left: 1.5em; }
+.markdown-content li { margin-bottom: 0.25em; }
+.markdown-content blockquote {
+    border-left: 4px solid var(--bs-secondary, #6c757d);
+    padding-left: 1em; margin: 0.75em 0; color: var(--bs-secondary);
+}
+.markdown-content code { padding: 0.2em 0.4em; font-size: 0.9em; background: rgba(0,0,0,0.06); border-radius: 4px; }
+.markdown-content pre { padding: 0.75em; overflow-x: auto; background: rgba(0,0,0,0.06); border-radius: 4px; margin-bottom: 0.75em; }
+.markdown-content pre code { padding: 0; background: none; }
+.markdown-content table { border-collapse: collapse; margin-bottom: 0.75em; width: 100%; }
+.markdown-content th, .markdown-content td { border: 1px solid var(--bs-border-color, #dee2e6); padding: 0.4em 0.6em; text-align: left; }
+.markdown-content th { font-weight: 600; background: rgba(0,0,0,0.04); }
+.markdown-content a { color: var(--bs-link-color, #0d6efd); text-decoration: none; }
+.markdown-content a:hover { text-decoration: underline; }
+.markdown-content img { max-width: 100%; height: auto; }
+.markdown-content hr { margin: 1em 0; border: 0; border-top: 1px solid var(--bs-border-color, #dee2e6); }
+"""
+
+
+@bp.route("/render-markdown", methods=["POST"])
+def render_markdown_api():
+    """Render markdown to HTML using the same filter as templates (python-markdown + sanitization)."""
+    from app.filters import render_markdown as render_markdown_filter
+
+    data = request.get_json()
+    if not data or "markdown" not in data:
+        return jsonify({"error": "JSON body must include 'markdown'"}), 400
+    text = data.get("markdown")
+    if text is None:
+        text = ""
+    elif not isinstance(text, str):
+        text = str(text)
+    html = str(render_markdown_filter(text))
+    return jsonify({"html": html, "css": MARKDOWN_CONTENT_CSS})
+
+
 @bp.route("/players/<player_id>", methods=["PUT"])
 @login_required
 def update_player_profile(player_id):

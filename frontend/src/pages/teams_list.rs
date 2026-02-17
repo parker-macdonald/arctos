@@ -55,7 +55,7 @@ pub fn TeamsList() -> Element {
                 } else {
                     for t in d.teams.iter() {
                         div { key: "{t.id}", class: "col-md-6 col-lg-4 mb-4",
-                            Link { to: Route::TeamProfile { id: t.id.clone() }, class: "text-decoration-none text-reset",
+                            Link { to: Route::TeamProfilePage { id: t.id.clone() }, class: "text-decoration-none text-reset",
                                 div { class: "card h-100 team-card-link",
                                     div { class: "card-body",
                                         div { class: "d-flex",

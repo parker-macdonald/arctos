@@ -45,7 +45,7 @@ pub fn EditInjury(player_id: String, injury_id: u32) -> Element {
 
             match api::update_injury(&player_id, injury_id, &req).await {
                 Ok(_) => {
-                    nav.push(Route::PlayerProfile { id: player_id.clone() });
+                    nav.push(Route::PlayerProfilePage { id: player_id.clone() });
                 }
                 Err(e) => {
                     error.set(Some(e));
@@ -65,7 +65,7 @@ pub fn EditInjury(player_id: String, injury_id: u32) -> Element {
             loading.set(true);
             match api::delete_injury(&player_id, injury_id).await {
                 Ok(_) => {
-                    nav.push(Route::PlayerProfile { id: player_id.clone() });
+                    nav.push(Route::PlayerProfilePage { id: player_id.clone() });
                 }
                 Err(e) => {
                     error.set(Some(e));
@@ -82,7 +82,7 @@ pub fn EditInjury(player_id: String, injury_id: u32) -> Element {
                 nav { "aria-label": "breadcrumb",
                     ol { class: "breadcrumb",
                         li { class: "breadcrumb-item",
-                            Link { to: Route::PlayerProfile { id: player_id.clone() }, "Profile" }
+                            Link { to: Route::PlayerProfilePage { id: player_id.clone() }, "Profile" }
                         }
                         li { class: "breadcrumb-item active", "Edit Injury" }
                     }
@@ -147,7 +147,7 @@ pub fn EditInjury(player_id: String, injury_id: u32) -> Element {
                                 div { class: "d-grid gap-2",
                                     button { class: "btn btn-primary", "type": "submit", "Update Injury" }
                                     button { class: "btn btn-danger", "type": "button", onclick: ondelete, "Delete Injury" }
-                                    Link { class: "btn btn-outline-secondary", to: Route::PlayerProfile { id: player_id.clone() }, "Cancel" }
+                                    Link { class: "btn btn-outline-secondary", to: Route::PlayerProfilePage { id: player_id.clone() }, "Cancel" }
                                 }
                             }
                         }

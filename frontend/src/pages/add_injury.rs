@@ -29,7 +29,7 @@ pub fn AddInjury(player_id: String) -> Element {
 
             match api::create_injury(&player_id, &req).await {
                 Ok(_) => {
-                    nav.push(Route::PlayerProfile { id: player_id.clone() });
+                    nav.push(Route::PlayerProfilePage { id: player_id.clone() });
                 }
                 Err(e) => {
                     error.set(Some(e));
@@ -46,7 +46,7 @@ pub fn AddInjury(player_id: String) -> Element {
                 nav { "aria-label": "breadcrumb",
                     ol { class: "breadcrumb",
                         li { class: "breadcrumb-item",
-                            Link { to: Route::PlayerProfile { id: player_id.clone() }, "Profile" }
+                            Link { to: Route::PlayerProfilePage { id: player_id.clone() }, "Profile" }
                         }
                         li { class: "breadcrumb-item active", "Add Injury" }
                     }
@@ -103,7 +103,7 @@ pub fn AddInjury(player_id: String) -> Element {
                             }
                             div { class: "d-grid gap-2",
                                 button { class: "btn btn-primary", "type": "submit", disabled: "{loading}", "Add Injury" }
-                                Link { class: "btn btn-outline-secondary", to: Route::PlayerProfile { id: player_id.clone() }, "Cancel" }
+                                Link { class: "btn btn-outline-secondary", to: Route::PlayerProfilePage { id: player_id.clone() }, "Cancel" }
                             }
                         }
                     }

@@ -176,7 +176,7 @@ pub fn Results(url: String) -> Element {
                                             }
                                             td {
                                                 Link {
-                                                    to: Route::TeamProfile { id: row_team.id.clone() },
+                                                    to: Route::TeamProfilePage { id: row_team.id.clone() },
                                                     class: "text-decoration-none d-inline-flex align-items-center",
                                                     onclick: move |ev: Event<MouseData>| { ev.stop_propagation(); },
                                                     if let Some(ph) = &row_team.profile_photo {
