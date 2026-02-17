@@ -2,12 +2,9 @@
 Tournament management routes.
 """
 
-from tracemalloc import start
 from flask import (
     Blueprint,
-    render_template,
     request,
-    redirect,
     flash,
     jsonify,
     current_app,
@@ -17,6 +14,9 @@ from flask_executor import Executor
 
 from datetime import datetime, timedelta, timezone
 import json
+
+from flask_login.utils import urlencode
+from urllib3.util import url
 from models import (
     Tournament,
     Match,
@@ -29,7 +29,6 @@ from models import (
     db,
 )
 from app.utils.helpers import (
-    check_tournament_access,
     resolve_team_name_to_id,
     resolve_tag_to_team,
     validate_permission_key,
@@ -171,12 +170,6 @@ def is_not_TO(
     return False
 
 
-@bp.route("/new-tournament")
-@login_required
-def new_tournament():
-    """Create new tournament page."""
-    return render_template("new_tournament.html")
-
 
 @bp.route("/create-tournament", methods=["POST"])
 @login_required
@@ -188,15 +181,13 @@ def create_tournament():
 
     # Validate permission key
     if not validate_permission_key(url, permission_key):
-        flash(
-            "Invalid permission key. Please contact reid@xz.ax to request a permission key for your tournament URL slug.",
-            "error",
-        )
-        return redirect("/new-tournament")
+        return jsonify({
+            "success": False,
+            "error": "Invalid permission key. Please contact reid@xz.ax to request a permission key for your tournament URL slug.",
+        }), 400
 
     if Tournament.query.filter_by(url=url).first():
-        flash("Tournament URL already exists", "error")
-        return redirect("/new-tournament")
+        return jsonify({"success": False, "error": "Tournament URL already exists"}), 400
 
     tournament = Tournament(
         url=url,
@@ -215,670 +206,11 @@ def create_tournament():
     db.session.add(to_entry)
     db.session.commit()
 
-    flash(f'Tournament "{name}" created successfully!', "success")
-    return redirect(f"/{url}")
+    return jsonify({"success": True, "message": f'Tournament "{name}" created successfully!'}), 200
 
 
-@bp.route("/<tournament_url>")
-def tournament_home(tournament_url):
-    """Tournament homepage."""
-    tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
 
-    if not tournament.published:
-        if not current_user.is_authenticated:
-            flash("This tournament is not yet published", "error")
-            return redirect("/")
 
-        is_to = TO.query.filter_by(
-            user_id=current_user.id,
-            user_type=current_user.__class__.__name__.lower(),
-            event=tournament_url,
-        ).first()
-
-        if not is_to:
-            flash("This tournament is not yet published", "error")
-            return redirect("/")
-
-    team_registrations = TeamRegistration.query.filter_by(
-        event=tournament_url, status=RegistrationStatus.CONFIRMED
-    ).all()
-
-    teams_with_counts = []
-    for team_reg in team_registrations:
-        player_count = PlayerRegistration.query.filter_by(
-            event=tournament_url, team=team_reg.team, status=RegistrationStatus.CONFIRMED
-        ).count()
-
-        team = Team.query.get(team_reg.team)
-        teams_with_counts.append(
-            {"team_registration": team_reg, "player_count": player_count, "team": team}
-        )
-
-    unattached_players = []
-    player_registrations = PlayerRegistration.query.filter_by(
-        event=tournament_url, team=None, status=RegistrationStatus.CONFIRMED
-    ).all()
-
-    for player_reg in player_registrations:
-        from models import Player
-
-        player = Player.query.get(player_reg.player)
-        if player:
-            unattached_players.append({"registration": player_reg, "player": player})
-
-    to_entries = TO.query.filter_by(event=tournament_url).all()
-
-    is_current_team_registered = False
-    is_current_player_registered = False
-    if current_user.is_authenticated:
-        if current_user.__class__.__name__ == "Team":
-            is_current_team_registered = (
-                TeamRegistration.query.filter_by(
-                    event=tournament_url, team=current_user.id, status=RegistrationStatus.CONFIRMED
-                ).first()
-                is not None
-            )
-        elif current_user.__class__.__name__ == "Player":
-            is_current_player_registered = (
-                PlayerRegistration.query.filter_by(
-                    event=tournament_url, player=current_user.id
-                )
-                .filter(
-                    PlayerRegistration.status.in_(
-                        [RegistrationStatus.PENDING_TEAM_APPROVAL, RegistrationStatus.CONFIRMED]
-                    )
-                )
-                .first()
-                is not None
-            )
-
-    return render_template(
-        "tournament_home.html",
-        tournament=tournament,
-        teams_with_counts=teams_with_counts,
-        unattached_players=unattached_players,
-        to_entries=to_entries,
-        is_current_team_registered=is_current_team_registered,
-        is_current_player_registered=is_current_player_registered,
-    )
-
-
-@bp.route("/<tournament_url>/schedule")
-def tournament_schedule(tournament_url):
-    """Tournament schedule page."""
-    tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
-
-    from app.utils.helpers import can_head_ref_match
-
-    is_head_ref_flag = False
-    if current_user.is_authenticated and current_user.__class__.__name__ == "Player":
-        is_head_ref_flag = can_head_ref_match(
-            tournament_url, current_user.id, match=None
-        )
-
-    if not tournament.schedule_published:
-        if not current_user.is_authenticated:
-            flash("The tournament schedule is not yet published", "error")
-            return redirect(f"/{tournament_url}")
-
-        is_to = TO.query.filter_by(
-            user_id=current_user.id,
-            user_type=current_user.__class__.__name__.lower(),
-            event=tournament_url,
-        ).first()
-
-        if not is_to and not is_head_ref_flag:
-            flash("The tournament schedule is not yet published", "error")
-            return redirect(f"/{tournament_url}")
-
-    matches = (
-        Match.query.filter_by(event=tournament_url)
-        .order_by(Match.nominal_start_time)
-        .all()
-    )
-    fields = Field.query.filter_by(event=tournament_url).order_by(Field.name).all()
-
-    # Optional filters/highlighting
-    filter_field = request.args.get("field", "").strip() or None
-    highlight_team = request.args.get("team", "").strip() or None
-
-    # Get all teams for autocomplete (team IDs and pseudonyms)
-    from models import TeamRegistration
-
-    team_registrations = TeamRegistration.query.filter_by(
-        event=tournament_url, status=RegistrationStatus.CONFIRMED
-    ).all()
-
-    # Build list of team options (ID and pseudonym)
-    team_options = []
-    seen_teams = set()
-    for team_reg in team_registrations:
-        if team_reg.team not in seen_teams:
-            team_options.append({"id": team_reg.team, "pseudonym": team_reg.pseudonym})
-            seen_teams.add(team_reg.team)
-
-    # Also include any team IDs/pseudonyms from match initial values
-    for match in matches:
-        if match.team1_initial and match.team1_initial not in seen_teams:
-            # Check if it's a dependency reference (ends with "::winner", "::loser", or legacy " winner"/" loser")
-            if not (
-                match.team1_initial.endswith("::winner")
-                or match.team1_initial.endswith("::loser")
-                or match.team1_initial.endswith(" winner")
-                or match.team1_initial.endswith(" loser")
-            ):
-                team_options.append(
-                    {"id": match.team1_initial, "pseudonym": match.team1_initial}
-                )
-                seen_teams.add(match.team1_initial)
-        if match.team2_initial and match.team2_initial not in seen_teams:
-            # Check if it's a dependency reference (ends with "::winner", "::loser", or legacy " winner"/" loser")
-            if not (
-                match.team2_initial.endswith("::winner")
-                or match.team2_initial.endswith("::loser")
-                or match.team2_initial.endswith(" winner")
-                or match.team2_initial.endswith(" loser")
-            ):
-                team_options.append(
-                    {"id": match.team2_initial, "pseudonym": match.team2_initial}
-                )
-                seen_teams.add(match.team2_initial)
-
-    return render_template(
-        "tournament_schedule.html",
-        tournament=tournament,
-        matches=matches,
-        fields=fields,
-        is_head_ref=is_head_ref_flag,
-        filter_field=filter_field,
-        highlight_team=highlight_team,
-        team_options=team_options,
-    )
-
-
-@bp.route("/<tournament_url>/results")
-def tournament_results(tournament_url):
-    """Tournament results page."""
-    has_access, tournament = check_tournament_access(tournament_url)
-    if not has_access or not tournament:
-        return redirect("/")
-
-    from models import Point
-
-    matches = (
-        Match.query.filter(
-            Match.event == tournament_url,
-            Match.status.in_([MatchStatus.COMPLETED, MatchStatus.SKIPPED]),
-        )
-        .all()
-    )
-    points_by_match = {}
-    if matches:
-        match_ids = [m.uuid for m in matches]
-        all_points = Point.query.filter(Point.match.in_(match_ids)).all()
-        for p in all_points:
-            points_by_match.setdefault(p.match, []).append(p)
-    return render_template(
-        "tournament_results.html",
-        tournament=tournament,
-        matches=matches,
-        points_by_match=points_by_match,
-    )
-
-
-@bp.route("/<tournament_url>/bracket")
-def tournament_bracket(tournament_url):
-    """Tournament bracket visualization page."""
-    has_access, tournament = check_tournament_access(tournament_url)
-    if not has_access or not tournament:
-        return redirect("/")
-
-    # Check if user is a TO
-    is_to = False
-    if current_user.is_authenticated:
-        is_to = (
-            TO.query.filter_by(
-                user_id=current_user.id,
-                user_type=current_user.__class__.__name__.lower(),
-                event=tournament_url,
-            ).first()
-            is not None
-        )
-
-    # Only show bracket if bracket data exists and (schedule is published or user is TO)
-    if not tournament.bracket:
-        flash("Bracket is not available", "error")
-        return redirect(f"/{tournament_url}")
-
-    if not tournament.schedule_published and not is_to:
-        flash("Bracket is not available", "error")
-        return redirect(f"/{tournament_url}")
-
-    try:
-        import tomli
-
-        bracket_data = tomli.loads(tournament.bracket)
-    except Exception as e:
-        flash(f"Error parsing bracket data: {str(e)}", "error")
-        return redirect(f"/{tournament_url}")
-
-    # Process brackets and resolve team references
-    processed_brackets = []
-    brackets = bracket_data.get("brackets", [])
-
-    for bracket in brackets:
-        bracket_name = bracket.get("name", "")
-        bracket_image = bracket.get("image", "")
-        teams = bracket.get("teams", [])
-
-        processed_teams = []
-        for team_entry in teams:
-            team_ref = team_entry.get("team", "")
-            x = team_entry.get("x", 0)
-            y = team_entry.get("y", 0)
-            halign = team_entry.get("halign", "center")
-            valign = team_entry.get("valign", "center")
-            size = team_entry.get("size", 20)
-
-            # Resolve team reference
-            team_info = None
-            is_reference = False
-            is_tag = False
-            match_name = None
-
-            # Check if it's a tag reference first: tag::TAG_NAME
-            if team_ref.lower().startswith("tag::"):
-                tag_name = team_ref[5:].strip()
-                if tag_name:
-                    tag = Tag.query.filter_by(
-                        event=tournament_url, name=tag_name
-                    ).first()
-                    if tag and tag.team:
-                        # Tag has a team assigned - resolve it
-                        team_reg = TeamRegistration.query.filter_by(
-                            event=tournament_url, team=tag.team, status=RegistrationStatus.CONFIRMED
-                        ).first()
-                        if team_reg:
-                            team = Team.query.get(tag.team)
-                            team_info = {
-                                "id": tag.team,
-                                "pseudonym": team_reg.pseudonym,
-                                "profile_photo": team.profile_photo if team else None,
-                                "display_text": team_reg.pseudonym,
-                            }
-                        else:
-                            team_info = {
-                                "display_text": f"tag::{tag_name}",
-                            }
-                            is_tag = True
-                    elif tag:
-                        # Tag exists but no team assigned
-                        team_info = {
-                            "display_text": f"tag::{tag_name}",
-                        }
-                        is_tag = True
-            # Check if it's a match reference (match_name::winner or match_name::loser)
-            elif "::" in team_ref:
-                parts = team_ref.split("::", 1)
-                match_name = parts[0].strip()
-                ref_type = parts[1].strip() if len(parts) > 1 else ""
-
-                # Find the match
-                match = Match.query.filter_by(
-                    event=tournament_url, name=match_name
-                ).first()
-                if (
-                    match
-                    and match.status == MatchStatus.COMPLETED
-                    and match.match_winner
-                ):
-                    # Determine winner/loser team
-                    if ref_type == "winner":
-                        team_id = (
-                            match.team1
-                            if match.match_winner == "TEAM1"
-                            else match.team2
-                        )
-                    elif ref_type == "loser":
-                        team_id = (
-                            match.team2
-                            if match.match_winner == "TEAM1"
-                            else match.team1
-                        )
-                    else:
-                        team_id = None
-
-                    if team_id:
-                        team_reg = TeamRegistration.query.filter_by(
-                            event=tournament_url, team=team_id, status=RegistrationStatus.CONFIRMED
-                        ).first()
-                        if team_reg:
-                            team = Team.query.get(team_id)
-                            team_info = {
-                                "id": team_id,
-                                "pseudonym": team_reg.pseudonym,
-                                "profile_photo": team.profile_photo if team else None,
-                                "display_text": team_reg.pseudonym,
-                            }
-                            is_reference = True
-                elif match:
-                    # Match exists but not completed - show reference text
-                    team_info = {"display_text": team_ref.replace("::", " ")}
-                    is_reference = True
-                else:
-                    # Match doesn't exist - show reference text anyway
-                    team_info = {"display_text": team_ref.replace("::", " ")}
-                    is_reference = True
-            # Check if it's a team ID
-            elif team_ref:
-                team_reg = TeamRegistration.query.filter_by(
-                    event=tournament_url, team=team_ref, status=RegistrationStatus.CONFIRMED
-                ).first()
-                if team_reg:
-                    team = Team.query.get(team_ref)
-                    team_info = {
-                        "id": team_ref,
-                        "pseudonym": team_reg.pseudonym,
-                        "profile_photo": team.profile_photo if team else None,
-                        "display_text": team_reg.pseudonym,
-                    }
-                else:
-                    # Backwards-compat: legacy plain tag name without 'tag::' prefix
-                    tag = Tag.query.filter_by(
-                        event=tournament_url, name=team_ref
-                    ).first()
-                    if tag and tag.team:
-                        # Tag has a team assigned - resolve it
-                        team_reg = TeamRegistration.query.filter_by(
-                            event=tournament_url, team=tag.team, status=RegistrationStatus.CONFIRMED
-                        ).first()
-                        if team_reg:
-                            team = Team.query.get(tag.team)
-                            team_info = {
-                                "id": tag.team,
-                                "pseudonym": team_reg.pseudonym,
-                                "profile_photo": team.profile_photo if team else None,
-                                "display_text": team_reg.pseudonym,
-                            }
-                        else:
-                            team_info = {"display_text": f"tag::{tag.name}"}
-                            is_tag = True
-                    elif tag:
-                        # Tag exists but no team assigned
-                        team_info = {"display_text": f"tag::{tag.name}"}
-                        is_tag = True
-
-            processed_teams.append(
-                {
-                    "team_info": team_info,
-                    "x": x,
-                    "y": y,
-                    "halign": halign,
-                    "valign": valign,
-                    "size": size,
-                    "is_reference": is_reference,
-                    "is_tag": is_tag,
-                    "match_name": match_name if is_reference else None,
-                }
-            )
-
-        processed_brackets.append(
-            {"name": bracket_name, "image": bracket_image, "teams": processed_teams}
-        )
-
-    return render_template(
-        "tournament_bracket.html", tournament=tournament, brackets=processed_brackets
-    )
-
-
-@bp.route("/<tournament_url>/bracket-setup")
-@login_required
-def bracket_setup(tournament_url):
-    """Bracket setup page for TOs."""
-    if is_not_TO(tournament_url):
-        return redirect(f"/{tournament_url}")
-
-    tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
-
-    # Parse existing bracket data if it exists
-    brackets_data = []
-    if tournament.bracket:
-        try:
-            import tomli
-
-            parsed = tomli.loads(tournament.bracket)
-            brackets_data = parsed.get("brackets", [])
-        except Exception:
-            pass
-
-    # Get matches for reference dropdown
-    matches = Match.query.filter_by(event=tournament_url).order_by(Match.name).all()
-
-    # Get teams for team selection
-    team_registrations = TeamRegistration.query.filter_by(
-        event=tournament_url, status=RegistrationStatus.CONFIRMED
-    ).all()
-
-    # Get tags
-    tags = Tag.query.filter_by(event=tournament_url).order_by(Tag.name).all()
-
-    return render_template(
-        "bracket_setup.html",
-        tournament=tournament,
-        brackets_data=brackets_data,
-        matches=matches,
-        team_registrations=team_registrations,
-        tags=tags,
-    )
-
-
-@bp.route("/<tournament_url>/bracket-setup", methods=["POST"])
-@login_required
-def update_bracket_setup(tournament_url):
-    """Update bracket configuration."""
-    if is_not_TO(tournament_url):
-        return redirect(f"/{tournament_url}")
-
-    tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
-
-    import tomli
-    import os
-    from flask import current_app
-    from datetime import datetime
-
-    # Handle image uploads first
-    bracket_images = {}
-    if "bracket_images" in request.files:
-        files = request.files.getlist("bracket_images")
-        bracket_indices = request.form.getlist("bracket_image_indices")
-
-        for idx, file in enumerate(files):
-            if file and file.filename:
-                bracket_idx = (
-                    bracket_indices[idx] if idx < len(bracket_indices) else None
-                )
-                if bracket_idx is not None:
-                    try:
-                        upload_dir = os.path.join(
-                            current_app.root_path, "../static", "uploads", "brackets"
-                        )
-                        os.makedirs(upload_dir, exist_ok=True)
-                        filename = f"bracket_{tournament_url}_{bracket_idx}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.{file.filename.split('.')[-1]}"
-                        file_path = os.path.join(upload_dir, filename)
-                        file.save(file_path)
-                        bracket_images[bracket_idx] = f"uploads/brackets/{filename}"
-                    except Exception as e:
-                        flash(f"Error uploading image: {str(e)}", "error")
-
-    # Build TOML structure from form data
-    brackets = []
-    bracket_count = int(request.form.get("bracket_count", 0))
-
-    for i in range(bracket_count):
-        bracket_name = request.form.get(f"bracket_{i}_name", "").strip()
-        if not bracket_name:
-            continue
-
-        # Use uploaded image or existing image path
-        bracket_image = bracket_images.get(str(i))
-        if not bracket_image:
-            bracket_image = request.form.get(f"bracket_{i}_image_existing", "").strip()
-
-        if not bracket_image:
-            continue
-
-        teams = []
-        # Count teams by checking for team ref inputs
-        team_count = 0
-        while request.form.get(f"bracket_{i}_team_{team_count}_ref"):
-            team_count += 1
-
-        for j in range(team_count):
-            team_ref = request.form.get(f"bracket_{i}_team_{j}_ref", "").strip()
-            if not team_ref:
-                continue
-
-            try:
-                x = int(request.form.get(f"bracket_{i}_team_{j}_x", 0))
-                y = int(request.form.get(f"bracket_{i}_team_{j}_y", 0))
-                halign = request.form.get(f"bracket_{i}_team_{j}_halign", "center")
-                valign = request.form.get(f"bracket_{i}_team_{j}_valign", "center")
-                size = int(request.form.get(f"bracket_{i}_team_{j}_size", 20))
-            except (ValueError, TypeError):
-                continue
-
-            teams.append(
-                {
-                    "team": team_ref,
-                    "x": x,
-                    "y": y,
-                    "halign": halign,
-                    "valign": valign,
-                    "size": size,
-                }
-            )
-
-        brackets.append({"name": bracket_name, "image": bracket_image, "teams": teams})
-
-    # Generate TOML manually (simple structure)
-    def escape_toml_string(s):
-        """Escape special characters in TOML strings."""
-        s = str(s)
-        s = s.replace("\\", "\\\\")
-        s = s.replace('"', '\\"')
-        s = s.replace("\n", "\\n")
-        s = s.replace("\t", "\\t")
-        return s
-
-    toml_lines = []
-    for bracket in brackets:
-        toml_lines.append("[[brackets]]")
-        toml_lines.append(f'name = "{escape_toml_string(bracket["name"])}"')
-        toml_lines.append(f'image = "{escape_toml_string(bracket["image"])}"')
-        toml_lines.append("")
-        for team in bracket.get("teams", []):
-            toml_lines.append("[[brackets.teams]]")
-            toml_lines.append(f'team = "{escape_toml_string(team["team"])}"')
-            toml_lines.append(f'x = {team["x"]}')
-            toml_lines.append(f'y = {team["y"]}')
-            toml_lines.append(f'halign = "{escape_toml_string(team["halign"])}"')
-            toml_lines.append(f'valign = "{escape_toml_string(team["valign"])}"')
-            toml_lines.append(f'size = {team["size"]}')
-            toml_lines.append("")
-    toml_str = "\n".join(toml_lines)
-
-    tournament.bracket = toml_str
-    db.session.commit()
-
-    flash("Bracket configuration updated successfully!", "success")
-    return redirect(f"/{tournament_url}/bracket-setup")
-
-
-@bp.route("/<tournament_url>/settings")
-@require_tournament_organizer(
-    "You do not have permission to access tournament settings"
-)
-def tournament_settings(tournament_url):
-    """Tournament settings page."""
-    tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
-
-    # Get all TOs for this tournament with their user info
-    from models import Player, Team
-
-    to_entries = TO.query.filter_by(event=tournament_url).all()
-    tos_with_info = []
-    for to_entry in to_entries:
-        if to_entry.user_type == "player":
-            user = Player.query.get(to_entry.user_id)
-            user_name = user.name if user else to_entry.user_id
-        else:  # team
-            user = Team.query.get(to_entry.user_id)
-            user_name = user.name if user else to_entry.user_id
-
-        tos_with_info.append(
-            {
-                "to": to_entry,
-                "user": user,
-                "user_name": user_name,
-                "is_current_user": to_entry.user_id == current_user.id
-                and to_entry.user_type == current_user.__class__.__name__.lower(),
-            }
-        )
-
-    return render_template(
-        "tournament_settings.html", tournament=tournament, tos_with_info=tos_with_info
-    )
-
-
-@bp.route("/<tournament_url>/setup")
-@login_required
-def tournament_setup(tournament_url):
-    """Tournament setup page."""
-    tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
-
-    if is_not_TO(tournament_url):
-        return redirect(f"/{tournament_url}")
-
-    from sqlalchemy.orm import joinedload
-
-    matches = (
-        Match.query.options(
-            joinedload(Match.previous_match_obj), joinedload(Match.next_match_obj)
-        )
-        .filter_by(event=tournament_url)
-        .order_by(Match.nominal_start_time)
-        .all()
-    )
-    fields = Field.query.filter_by(event=tournament_url).all()
-    tags = Tag.query.filter_by(event=tournament_url).all()
-    # Only confirmed teams should be eligible for tag-to-team conversion.
-    team_registrations = TeamRegistration.query.filter_by(
-        event=tournament_url, status=RegistrationStatus.CONFIRMED
-    ).all()
-
-    # Detect conflicts across all matches; template expects dict match_uuid -> list of description strings
-    raw_conflicts = detect_match_conflicts(tournament_url)
-    name_to_uuids = {}
-    for m in matches:
-        name_to_uuids.setdefault(m.name, []).append(m.uuid)
-    conflicts = {}
-    for c in raw_conflicts:
-        desc1 = f"Overlaps with {c['match2']} on {c['field']}"
-        desc2 = f"Overlaps with {c['match1']} on {c['field']}"
-        for uid in name_to_uuids.get(c["match1"], []):
-            conflicts.setdefault(uid, []).append(desc1)
-        for uid in name_to_uuids.get(c["match2"], []):
-            conflicts.setdefault(uid, []).append(desc2)
-
-    return render_template(
-        "tournament_setup.html",
-        tournament=tournament,
-        matches=matches,
-        fields=fields,
-        tags=tags,
-        team_registrations=team_registrations,
-        conflicts=conflicts,
-    )
 
 
 @bp.route("/<tournament_url>/recompute-schedule", methods=["POST"])
@@ -886,13 +218,12 @@ def tournament_setup(tournament_url):
 def recompute_schedule(tournament_url):
     """Force full recompute of match times as if a match were just edited (TO only)."""
     if is_not_TO(tournament_url):
-        return redirect(f"/{tournament_url}")
+        return jsonify({"success": False, "error": "Only tournament organizers can access this page"}), 403
     try:
         recompute_all_match_times(tournament_url)
-        flash("Schedule recomputed successfully.", "success")
+        return jsonify({"success": True, "message": "Schedule recomputed successfully."}), 200
     except Exception as e:
-        flash(f"Recompute failed: {e}", "error")
-    return redirect(f"/{tournament_url}/setup")
+        return jsonify({"success": False, "error": f"Recompute failed: {e}"}), 500
 
 
 @bp.route("/<tournament_url>/export-schedule")
@@ -972,32 +303,8 @@ def import_schedule(tournament_url):
     return json_from_result(res, ok_to_payload=result_to_payload)
 
 
-@bp.route("/<tournament_url>/register")
-def tournament_register(tournament_url):
-    """Tournament registration page."""
-    tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
-    if not tournament.registration_open:
-        flash("Registration is not open for this tournament", "warning")
-        return redirect(f"/{tournament_url}")
 
-    team_registrations = TeamRegistration.query.filter_by(
-        event=tournament_url, status=RegistrationStatus.CONFIRMED
-    ).all()
-
-    registered_teams = []
-    for team_reg in team_registrations:
-        team = Team.query.get(team_reg.team)
-        if team:
-            registered_teams.append({"team": team, "pseudonym": team_reg.pseudonym})
-
-    return render_template(
-        "tournament_register.html",
-        tournament=tournament,
-        registered_teams=registered_teams,
-    )
-
-
-@bp.route("/api/camera-url")
+@bp.route("/_api/camera-url")
 @login_required
 def camera_url_api():
     """Generate camera recording URL with access key. Requires TO access."""
@@ -1025,12 +332,13 @@ def camera_url_api():
         # Generate the camera URL with key
         access_key = generate_camera_key(tournament_url, field_name)
         from flask import url_for
+        from urllib.parse import quote
 
         camera_url = url_for(
             "tournaments.record_page",
             tournament_url=tournament_url,
-            field=field_name,
-            key=access_key,
+            field=quote(field_name),
+            camera_key=access_key,
             _external=True,
         )
 
@@ -1043,45 +351,9 @@ def camera_url_api():
         return jsonify({"error": f"Server error: {str(e)}"}), 500
 
 
-@bp.route("/<tournament_url>/record")
-def record_page(tournament_url):
-    """Point recording page for a field."""
-    # Validate camera access key
-    field_name = request.args.get("field", "").strip()
-    is_valid, error_response = require_camera_key(tournament_url, field_name)
-    if not is_valid:
-        return error_response[0], error_response[1]
-
-    tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
-
-    if not field_name:
-        return (
-            render_template(
-                "record.html",
-                tournament=tournament,
-                field_name="",
-                error="Field name is required",
-            ),
-            400,
-        )
-
-    # Verify field exists
-    field = Field.query.filter_by(event=tournament_url, name=field_name).first()
-    if not field:
-        return (
-            render_template(
-                "record.html",
-                tournament=tournament,
-                field_name=field_name,
-                error=f'Field "{field_name}" not found',
-            ),
-            404,
-        )
-
-    return render_template("record.html", tournament=tournament, field_name=field_name)
 
 
-@bp.route("/api/record/match-status")
+@bp.route("/_api/record/match-status")
 def record_match_status():
     """Check if a field has an active match for point recording. No access key required."""
     from models import Point
@@ -1203,31 +475,33 @@ def record_match_status():
         return jsonify({"hasActiveMatch": False})
 
 
-@bp.route("/api/record/upload-chunk", methods=["POST"])
+@bp.route("/_api/record/upload-chunk", methods=["POST"])
 def record_upload_chunk():
     """Receive and store a video chunk for point recording. No access key required."""
     import os
     from flask import current_app
     from datetime import datetime
+    import fcntl
 
     tournament_url = request.form.get("tournament")
     field_name = request.form.get("field")
-    match_id = request.form.get("match_id", "")
+    match_id = request.form.get("match_id")
     session_id = request.form.get("session_id")
-    chunk_index = request.form.get("chunk_index")
-    start_timestamp = request.form.get("start_timestamp")
     chunk_start_timestamp = request.form.get(
         "chunk_start_timestamp"
     )  # Absolute world time when chunk started
+    start_timestamp = request.form.get("start_timestamp")
+    recording_session_start_time = request.form.get("recording_session_start_time")
     chunk_duration = request.form.get("chunk_duration")  # Duration in milliseconds
-    point_id = request.form.get("point_id", "")
+    camera_name = request.form.get("camera_name")
+    point_id = request.form.get("point_id")
 
     # Validate camera access key
     is_valid, error_response = require_camera_key(tournament_url, field_name)
     if not is_valid:
         return error_response[0], error_response[1]
 
-    if not tournament_url or not field_name or not session_id or chunk_index is None:
+    if not tournament_url or not field_name or not session_id or not match_id:
         return jsonify({"error": "Missing required parameters"}), 400
 
     # Verify field exists
@@ -1242,20 +516,38 @@ def record_upload_chunk():
     if chunk_file.filename == "":
         return jsonify({"error": "Empty chunk file"}), 400
 
-    # Create directory structure: static/uploads/videos/{tournament}/{field}/{session_id}/
     upload_dir = os.path.join(
         current_app.root_path,
         "../static/uploads/videos",
         tournament_url,
         field_name,
-        session_id,
+        match_id,
+        camera_name,
     )
     os.makedirs(upload_dir, exist_ok=True)
 
     # Save chunk with index in filename for ordering
-    chunk_filename = f"chunk_{int(chunk_index):06d}.webm"
+    chunk_index = len(
+        list(filter(lambda x: not x.endswith(".json"), os.listdir(upload_dir)))
+    )
+    chunk_filename = f"chunk_{chunk_index}.webm"
     chunk_path = os.path.join(upload_dir, chunk_filename)
     chunk_file.save(chunk_path)
+
+    # Debug: log saved chunk size and first 4 bytes (WebM/EBML magic is 1a 45 df a3)
+    try:
+        with open(chunk_path, "rb") as f:
+            head = f.read(4)
+        file_size = os.path.getsize(chunk_path)
+        current_app.logger.info(
+            "record chunk %s: size=%s bytes, first4=%s (EBML=%s)",
+            chunk_index,
+            file_size,
+            head.hex() if len(head) == 4 else "short",
+            head == b"\x1a\x45\xdf\xa3" if len(head) == 4 else False,
+        )
+    except Exception as e:
+        current_app.logger.warning("record chunk debug read failed: %s", e)
 
     # Load or create chunks metadata with file locking to prevent race conditions
     chunks_meta_path = os.path.join(upload_dir, "chunks_meta.json")
@@ -1263,110 +555,58 @@ def record_upload_chunk():
 
     # Use file locking to prevent concurrent write issues
     try:
-        import fcntl
-
-        use_locking = True
-    except ImportError:
-        # fcntl not available (e.g., on Windows)
-        use_locking = False
-
-    if use_locking:
-        try:
-            # Open file in read-write mode, create if it doesn't exist
-            file_mode = "r+" if os.path.exists(chunks_meta_path) else "w+"
-            with open(chunks_meta_path, file_mode) as lock_file:
-                # Acquire exclusive lock
-                try:
-                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                except IOError:
-                    # If we can't get the lock immediately, wait for it
-                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
-
-                # Read existing metadata
-                lock_file.seek(0)
-                content = lock_file.read()
-                if content.strip():
-                    try:
-                        chunks_meta = json.loads(content)
-                    except (json.JSONDecodeError, ValueError):
-                        chunks_meta = {}
-
-                # Store chunk metadata
-                chunk_meta = {
-                    "chunk_index": int(chunk_index),
-                    "filename": chunk_filename,
-                    "chunk_start_timestamp": (
-                        float(chunk_start_timestamp) if chunk_start_timestamp else None
-                    ),  # Absolute world time in milliseconds
-                    "chunk_duration": (
-                        float(chunk_duration) if chunk_duration else None
-                    ),  # Duration in milliseconds
-                    "point_id": point_id if point_id else None,
-                    "upload_timestamp": datetime.now(timezone.utc).isoformat(),
-                }
-                chunks_meta[str(chunk_index)] = (
-                    chunk_meta  # Use string key for consistency
-                )
-
-                # Write metadata back
-                lock_file.seek(0)
-                lock_file.truncate(0)
-                json.dump(chunks_meta, lock_file, indent=2)
-                lock_file.flush()
-                # Lock is released when file is closed
-        except (IOError, OSError) as e:
-            # Fallback if file locking fails (e.g., on NFS)
-            use_locking = False
-
-    if not use_locking:
-        # Fallback: read-modify-write without locking (less safe but works on all platforms)
-        # This is still better than nothing, but concurrent uploads might lose some metadata
-        if os.path.exists(chunks_meta_path):
+        # Open file in read-write mode, create if it doesn't exist
+        file_mode = "r+" if os.path.exists(chunks_meta_path) else "w+"
+        with open(chunks_meta_path, file_mode) as lock_file:
+            # Acquire exclusive lock
             try:
-                with open(chunks_meta_path, "r") as f:
-                    chunks_meta = json.load(f)
-            except (json.JSONDecodeError, IOError):
-                chunks_meta = {}
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except IOError:
+                # If we can't get the lock immediately, wait for it
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
 
-        chunk_meta = {
-            "chunk_index": int(chunk_index),
-            "filename": chunk_filename,
-            "chunk_start_timestamp": (
-                float(chunk_start_timestamp) if chunk_start_timestamp else None
-            ),
-            "chunk_duration": float(chunk_duration) if chunk_duration else None,
-            "point_id": point_id if point_id else None,
-            "upload_timestamp": datetime.now(timezone.utc).isoformat(),
-        }
-        chunks_meta[str(chunk_index)] = chunk_meta
+            # Read existing metadata
+            lock_file.seek(0)
+            content = lock_file.read()
+            if content.strip():
+                try:
+                    chunks_meta = json.loads(content)
+                except (json.JSONDecodeError, ValueError):
+                    chunks_meta = {}
 
-        with open(chunks_meta_path, "w") as f:
-            json.dump(chunks_meta, f, indent=2)
+            # Store chunk metadata
+            chunk_meta = {
+                "filename": chunk_filename,
+                "session_id": session_id,
+                "chunk_start_timestamp": (
+                    float(chunk_start_timestamp)
+                ),  # Absolute world time in milliseconds
+                "chunk_duration": (float(chunk_duration)),  # Duration in milliseconds
+                "point_id": point_id,
+                "camera_name": camera_name,
+                "recording_session_start_time": (float(recording_session_start_time)),
+            }
+            chunks_meta[str(chunk_index)] = chunk_meta  # Use string key for consistency
 
-    # Save metadata file (first chunk only)
-    if chunk_index == "0" or chunk_index == 0:
-        metadata = {
-            "tournament": tournament_url,
-            "field": field_name,
-            "match_id": match_id,
-            "session_id": session_id,
-            "start_timestamp": start_timestamp,
-        }
-        metadata_path = os.path.join(upload_dir, "metadata.json")
-        with open(metadata_path, "w") as f:
-            json.dump(metadata, f, indent=2)
+            # Write metadata back
+            lock_file.seek(0)
+            lock_file.truncate(0)
+            json.dump(chunks_meta, lock_file, indent=2)
+            lock_file.flush()
+            # Lock is released when file is closed
+    except (IOError, OSError) as e:
+        print("error writing :sob:")
 
     return jsonify(
         {"success": True, "chunk_index": chunk_index, "session_id": session_id}
     )
 
 
-@bp.route("/api/record/finalize", methods=["POST"])
+@bp.route("/_api/record/finalize", methods=["POST"])
 def record_finalize():
     data = request.json
     tournament_url = data.get("tournament")
     field_name = data.get("field")
-    session_id = data.get("session_id")
     match_id = data.get("match_id")
     camera_name = data.get("camera_name")
 
@@ -1375,41 +615,53 @@ def record_finalize():
     if not is_valid:
         return error_response[0], error_response[1]
 
-    if not tournament_url or not field_name or not session_id:
+    if not tournament_url or not field_name or not match_id or not camera_name:
         return jsonify({"error": "Missing required parameters"}), 400
 
     # Verify field exists
     if not Field.query.filter_by(event=tournament_url, name=field_name).first():
         return jsonify({"error": "Field not found"}), 404
 
-    # Directory where chunks are stored
+    # Directory where chunks are stored (same layout as upload-chunk: tournament/field/match_id/camera_name)
     chunk_dir = path.join(
         current_app.root_path,
         "../static/uploads/videos",
         tournament_url,
         field_name,
-        session_id,
+        match_id,
+        camera_name,
     )
     if not path.exists(chunk_dir):
-        return jsonify({"error": "Session directory not found"}), 404
+        return jsonify({"error": "Recording directory not found"}), 404
 
-    _ = executor.submit(
-        finalize_recording_worker,
-        current_app.logger,
-        tournament_url,
-        field_name,
-        session_id,
+    # Worker runs in a background thread; it must run inside an app context for db.session to persist.
+    app = current_app._get_current_object()
+    logger = current_app.logger
+    current_app.logger.info(
+        "record_finalize: submitting worker for match_id=%s camera_name=%s chunk_dir=%s",
         match_id,
         camera_name,
         chunk_dir,
     )
+
+    def run_finalize_with_app_context():
+        with app.app_context():
+            finalize_recording_worker(
+                logger,
+                tournament_url,
+                field_name,
+                match_id,
+                camera_name,
+                chunk_dir,
+            )
+
+    _ = executor.submit(run_finalize_with_app_context)
 
     # For now, just return success
     return jsonify(
         {
             "success": True,
             "message": "all recordings uploaded; processing has begun",
-            "session_id": session_id,
             "match_id": match_id,
         }
     )
@@ -1420,7 +672,7 @@ def record_finalize():
 def update_tournament_settings(tournament_url):
     """Update tournament settings."""
     if is_not_TO(tournament_url):
-        return redirect(f"/{tournament_url}")
+        return jsonify({"success": False, "error": "Only tournament organizers can access this page"}), 403
 
     tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
 
@@ -1458,8 +710,7 @@ def update_tournament_settings(tournament_url):
         tournament.end_date = None
 
     db.session.commit()
-    flash("Tournament settings updated successfully!", "success")
-    return redirect(f"/{tournament_url}/settings")
+    return jsonify({"success": True, "message": "Tournament settings updated successfully!"}), 200
 
 
 @bp.route("/<tournament_url>/add-match", methods=["POST"])
@@ -1467,7 +718,7 @@ def update_tournament_settings(tournament_url):
 def add_match(tournament_url):
     """Add a match to tournament."""
     if is_not_TO(tournament_url):
-        return redirect(f"/{tournament_url}")
+        return jsonify({"success": False, "error": "Only tournament organizers can access this page"}), 403
 
     # Check if BREAK or JOIN is selected from the Match Type dropdown (renamed from 'dynamic')
     match_type_value = request.form.get("dynamic", "")
@@ -1500,8 +751,8 @@ def add_match(tournament_url):
     else:
         team1_name = request.form.get("team1", "")
         team2_name = request.form.get("team2", "")
-        team1_id = resolve_team_name_to_id(team1_name, tournament_url)
-        team2_id = resolve_team_name_to_id(team2_name, tournament_url)
+        team1_id, _ = resolve_team_name_to_id(team1_name, tournament_url)
+        team2_id, _ = resolve_team_name_to_id(team2_name, tournament_url)
         refs_initial = request.form.get("refs", "")
 
     ribbon = request.form.get("ribbon", "") == "on"  # Checkbox value
@@ -1509,8 +760,7 @@ def add_match(tournament_url):
     # Validate match name doesn't contain "::"
     match_name = request.form["match_name"]
     if "::" in match_name:
-        flash('Match names cannot contain "::"', "error")
-        return redirect(f"/{tournament_url}/setup")
+        return jsonify({"success": False, "error": 'Match names cannot contain "::"'}), 400
 
     # Validate match name uniqueness
     # BREAK and JOIN matches can have duplicate names on different fields
@@ -1525,22 +775,20 @@ def add_match(tournament_url):
             schedule_type=schedule_type,
         ).first()
         if existing_match:
-            flash(
-                f'A {schedule_type} match with the name "{match_name}" already exists on field "{match_field}" in this tournament',
-                "error",
-            )
-            return redirect(f"/{tournament_url}/setup")
+            return jsonify({
+                "success": False,
+                "error": f'A {schedule_type} match with the name "{match_name}" already exists on field "{match_field}" in this tournament',
+            }), 400
     else:
         # For other matches: check uniqueness by (name, event)
         existing_match = Match.query.filter_by(
             event=tournament_url, name=match_name
         ).first()
         if existing_match:
-            flash(
-                f'A match with the name "{match_name}" already exists in this tournament',
-                "error",
-            )
-            return redirect(f"/{tournament_url}/setup")
+            return jsonify({
+                "success": False,
+                "error": f'A match with the name "{match_name}" already exists in this tournament',
+            }), 400
 
     # Get stones_per_set for STONES matches (with fallback to deprecated nstonesperset for backward compatibility)
     stones_per_set_value = None
@@ -1700,8 +948,7 @@ def add_match(tournament_url):
     ok, err = validate_match_input(match, tournament_url)
     if not ok:
         db.session.rollback()
-        flash(err, "error")
-        return redirect(f"/{tournament_url}/setup")
+        return jsonify({"success": False, "error": err}), 400
 
     db.session.commit()
 
@@ -1710,8 +957,7 @@ def add_match(tournament_url):
     except Exception:
         pass
 
-    flash("Match added successfully!", "success")
-    return redirect(f"/{tournament_url}/setup")
+    return jsonify({"success": True, "message": "Match added successfully!"}), 200
 
 
 @bp.route("/<tournament_url>/add-field", methods=["POST"])
@@ -1719,7 +965,7 @@ def add_match(tournament_url):
 def add_field(tournament_url):
     """Add a field to tournament."""
     if is_not_TO(tournament_url):
-        return redirect(f"/{tournament_url}")
+        return jsonify({"success": False, "error": "Only tournament organizers can access this page"}), 403
 
     tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
 
@@ -1740,29 +986,11 @@ def add_field(tournament_url):
 
     current_field_count = Field.query.filter_by(event=tournament_url).count()
     if current_field_count >= tournament.num_fields:
-        flash(f"Maximum number of fields ({tournament.num_fields}) reached", "error")
-        return redirect(f"/{tournament_url}/setup")
+        return jsonify({"success": False, "error": f"Maximum number of fields ({tournament.num_fields}) reached"}), 400
 
-    flash("Field added successfully!", "success")
-    return redirect(f"/{tournament_url}/setup")
+    return jsonify({"success": True, "message": "Field added successfully!"}), 200
 
 
-@bp.route("/<tournament_url>/edit-field")
-@login_required
-def edit_field(tournament_url):
-    """Edit field page."""
-    if is_not_TO(tournament_url):
-        return redirect(f"/{tournament_url}")
-
-    field_id = request.args.get("id")
-    if not field_id:
-        flash("Field ID is required", "error")
-        return redirect(f"/{tournament_url}/setup")
-
-    field = Field.query.get_or_404(field_id)
-    return render_template(
-        "edit_field.html", tournament_url=tournament_url, field=field
-    )
 
 
 @bp.route("/<tournament_url>/update-field", methods=["POST"])
@@ -1770,12 +998,11 @@ def edit_field(tournament_url):
 def update_field(tournament_url):
     """Update field."""
     if is_not_TO(tournament_url):
-        return redirect(f"/{tournament_url}")
+        return jsonify({"success": False, "error": "Only tournament organizers can access this page"}), 403
 
     field_id = request.form.get("field_id")
     if not field_id:
-        flash("Field ID is required", "error")
-        return redirect(f"/{tournament_url}/setup")
+        return jsonify({"success": False, "error": "Field ID is required"}), 400
 
     field = Field.query.get_or_404(field_id)
     old_field_name = field.name
@@ -1929,13 +1156,9 @@ def update_field(tournament_url):
                 f"Updated camera indices for {point_update_count} point(s)"
             )
 
-    if update_messages:
-        flash(f'Field updated successfully! {" ".join(update_messages)}.', "success")
-    else:
-        flash("Field updated successfully!", "success")
-
+    msg = f'Field updated successfully! {" ".join(update_messages)}.' if update_messages else "Field updated successfully!"
     db.session.commit()
-    return redirect(f"/{tournament_url}/setup")
+    return jsonify({"success": True, "message": msg}), 200
 
 
 @bp.route("/<tournament_url>/delete-field", methods=["POST"])
@@ -1943,18 +1166,16 @@ def update_field(tournament_url):
 def delete_field(tournament_url):
     """Delete field."""
     if is_not_TO(tournament_url):
-        return redirect(f"/{tournament_url}")
+        return jsonify({"success": False, "error": "Only tournament organizers can access this page"}), 403
 
     field_id = request.form.get("field_id")
     if not field_id:
-        flash("Field ID is required", "error")
-        return redirect(f"/{tournament_url}/setup")
+        return jsonify({"success": False, "error": "Field ID is required"}), 400
 
     field = Field.query.get_or_404(field_id)
     db.session.delete(field)
     db.session.commit()
-    flash("Field deleted successfully!", "success")
-    return redirect(f"/{tournament_url}/setup")
+    return jsonify({"success": True, "message": "Field deleted successfully!"}), 200
 
 
 @bp.route("/<tournament_url>/add-tag", methods=["POST"])
@@ -1962,31 +1183,16 @@ def delete_field(tournament_url):
 def add_tag(tournament_url):
     """Add a tag to tournament."""
     if is_not_TO(tournament_url):
-        return redirect(f"/{tournament_url}")
+        return jsonify({"success": False, "error": "Only tournament organizers can access this page"}), 403
 
     tag = Tag(event=tournament_url, name=request.form["tag_name"])
 
     db.session.add(tag)
     db.session.commit()
 
-    flash("Tag added successfully!", "success")
-    return redirect(f"/{tournament_url}/setup")
+    return jsonify({"success": True, "message": "Tag added successfully!"}), 200
 
 
-@bp.route("/<tournament_url>/edit-tag")
-@login_required
-def edit_tag(tournament_url):
-    """Edit tag page."""
-    if is_not_TO(tournament_url):
-        return redirect(f"/{tournament_url}")
-
-    tag_id = request.args.get("id")
-    if not tag_id:
-        flash("Tag ID is required", "error")
-        return redirect(f"/{tournament_url}/setup")
-
-    tag = Tag.query.get_or_404(tag_id)
-    return render_template("edit_tag.html", tournament_url=tournament_url, tag=tag)
 
 
 @bp.route("/<tournament_url>/update-tag", methods=["POST"])
@@ -1994,19 +1200,17 @@ def edit_tag(tournament_url):
 def update_tag(tournament_url):
     """Update tag."""
     if is_not_TO(tournament_url):
-        return redirect(f"/{tournament_url}")
+        return jsonify({"success": False, "error": "Only tournament organizers can access this page"}), 403
 
     tag_id = request.form.get("tag_id")
     if not tag_id:
-        flash("Tag ID is required", "error")
-        return redirect(f"/{tournament_url}/setup")
+        return jsonify({"success": False, "error": "Tag ID is required"}), 400
 
     tag = Tag.query.get_or_404(tag_id)
     tag.name = request.form["tag_name"]
 
     db.session.commit()
-    flash("Tag updated successfully!", "success")
-    return redirect(f"/{tournament_url}/setup")
+    return jsonify({"success": True, "message": "Tag updated successfully!"}), 200
 
 
 @bp.route("/<tournament_url>/delete-tag", methods=["POST"])
@@ -2014,49 +1218,18 @@ def update_tag(tournament_url):
 def delete_tag(tournament_url):
     """Delete tag."""
     if is_not_TO(tournament_url):
-        return redirect(f"/{tournament_url}")
+        return jsonify({"success": False, "error": "Only tournament organizers can access this page"}), 403
 
     tag_id = request.form.get("tag_id")
     if not tag_id:
-        flash("Tag ID is required", "error")
-        return redirect(f"/{tournament_url}/setup")
+        return jsonify({"success": False, "error": "Tag ID is required"}), 400
 
     tag = Tag.query.get_or_404(tag_id)
     db.session.delete(tag)
     db.session.commit()
-    flash("Tag deleted successfully!", "success")
-    return redirect(f"/{tournament_url}/setup")
+    return jsonify({"success": True, "message": "Tag deleted successfully!"}), 200
 
 
-@bp.route("/<tournament_url>/edit-match")
-@login_required
-def edit_match(tournament_url):
-    """Edit match page."""
-    if is_not_TO(tournament_url):
-        return redirect(f"/{tournament_url}")
-
-    match_id = request.args.get("id")
-    if not match_id:
-        flash("Match ID is required", "error")
-        return redirect(f"/{tournament_url}/setup")
-
-    tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
-    match = Match.query.get_or_404(match_id)
-    matches = (
-        Match.query.filter_by(event=tournament_url)
-        .order_by(Match.nominal_start_time)
-        .all()
-    )
-    fields = Field.query.filter_by(event=tournament_url).all()
-    tags = Tag.query.filter_by(event=tournament_url).all()
-    return render_template(
-        "edit_match.html",
-        tournament=tournament,
-        match=match,
-        matches=matches,
-        fields=fields,
-        tags=tags,
-    )
 
 
 @bp.route("/<tournament_url>/update-match", methods=["POST"])
@@ -2064,12 +1237,11 @@ def edit_match(tournament_url):
 def update_match(tournament_url):
     """Update match."""
     if is_not_TO(tournament_url):
-        return redirect(f"/{tournament_url}")
+        return jsonify({"success": False, "error": "Only tournament organizers can access this page"}), 403
 
     match_id = request.form.get("match_id")
     if not match_id:
-        flash("Match ID is required", "error")
-        return redirect(f"/{tournament_url}/setup")
+        return jsonify({"success": False, "error": "Match ID is required"}), 400
 
     match = Match.query.get_or_404(match_id)
     tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
@@ -2102,15 +1274,14 @@ def update_match(tournament_url):
     else:
         team1_name = request.form.get("team1", "")
         team2_name = request.form.get("team2", "")
-        team1_id = resolve_team_name_to_id(team1_name, tournament_url)
-        team2_id = resolve_team_name_to_id(team2_name, tournament_url)
+        team1_id, _ = resolve_team_name_to_id(team1_name, tournament_url)
+        team2_id, _ = resolve_team_name_to_id(team2_name, tournament_url)
         refs_initial = request.form.get("refs", "")
 
     # Validate match name doesn't contain "::"
     new_match_name = request.form.get("match_name", match.name)
     if "::" in new_match_name:
-        flash('Match names cannot contain "::"', "error")
-        return redirect(f"/{tournament_url}/setup")
+        return jsonify({"success": False, "error": 'Match names cannot contain "::"'}), 400
 
     # Validate match name uniqueness (excluding current match)
     # BREAK and JOIN matches can have duplicate names on different fields
@@ -2126,22 +1297,20 @@ def update_match(tournament_url):
                 schedule_type=schedule_type,
             ).first()
             if existing_match and existing_match.uuid != match.uuid:
-                flash(
-                    f'A {schedule_type} match with the name "{new_match_name}" already exists on field "{new_match_field}" in this tournament',
-                    "error",
-                )
-                return redirect(f"/{tournament_url}/setup")
+                return jsonify({
+                    "success": False,
+                    "error": f'A {schedule_type} match with the name "{new_match_name}" already exists on field "{new_match_field}" in this tournament',
+                }), 400
         else:
             # For other matches: check uniqueness by (name, event)
             existing_match = Match.query.filter_by(
                 event=tournament_url, name=new_match_name
             ).first()
             if existing_match and existing_match.uuid != match.uuid:
-                flash(
-                    f'A match with the name "{new_match_name}" already exists in this tournament',
-                    "error",
-                )
-                return redirect(f"/{tournament_url}/setup")
+                return jsonify({
+                    "success": False,
+                    "error": f'A match with the name "{new_match_name}" already exists in this tournament',
+                }), 400
 
     # Helper to check if a value is an explicit team ID (not a tag or match reference)
     def is_explicit_team_id(val: str) -> bool:
@@ -2337,8 +1506,7 @@ def update_match(tournament_url):
     # Validate inputs and constraints
     ok, err = validate_match_input(match, tournament_url)
     if not ok:
-        flash(err, "error")
-        return redirect(f"/{tournament_url}/edit-match?id={match_id}")
+        return jsonify({"success": False, "error": err}), 400
 
     db.session.flush()  # Flush before updating sequence
 
@@ -2346,8 +1514,7 @@ def update_match(tournament_url):
     recompute_all_match_times(tournament_url)
 
     db.session.commit()
-    flash("Match updated successfully!", "success")
-    return redirect(f"/{tournament_url}/setup")
+    return jsonify({"success": True, "message": "Match updated successfully!"}), 200
 
 
 @bp.route("/<tournament_url>/update-tags", methods=["POST"])
@@ -2357,7 +1524,7 @@ def update_tags(tournament_url):
     All tag resolution will query the Tag table directly.
     """
     if is_not_TO(tournament_url):
-        return redirect(f"/{tournament_url}")
+        return jsonify({"success": False, "error": "Only tournament organizers can access this page"}), 403
 
     from models import Tag
 
@@ -2377,12 +1544,10 @@ def update_tags(tournament_url):
             tag.team = None
 
     if updated_count == 0:
-        flash("No tag conversions selected", "error")
-        return redirect(f"/{tournament_url}/setup")
+        return jsonify({"success": False, "error": "No tag conversions selected"}), 400
 
     db.session.commit()
-    flash(f"Successfully updated {updated_count} tag(s)", "success")
-    return redirect(f"/{tournament_url}/setup")
+    return jsonify({"success": True, "message": f"Successfully updated {updated_count} tag(s)"}), 200
 
 
 @bp.route("/<tournament_url>/update-all-references", methods=["POST"])
@@ -2390,7 +1555,7 @@ def update_tags(tournament_url):
 def update_all_references(tournament_url):
     """Update all match references (winner/loser) for troubleshooting."""
     if is_not_TO(tournament_url):
-        return redirect(f"/{tournament_url}")
+        return jsonify({"success": False, "error": "Only tournament organizers can access this page"}), 403
 
     from app.utils.dependencies import apply_match_dependencies
 
@@ -2409,11 +1574,10 @@ def update_all_references(tournament_url):
                 print(f"Error updating references for match {match.name}: {e}")
 
     if updated_count > 0:
-        flash(f"Updated references for {updated_count} completed matches", "success")
+        msg = f"Updated references for {updated_count} completed matches"
     else:
-        flash("No references were updated", "info")
-
-    return redirect(f"/{tournament_url}/setup")
+        msg = "No references were updated"
+    return jsonify({"success": True, "message": msg}), 200
 
 
 @bp.route("/<tournament_url>/push-back-matches", methods=["POST"])
@@ -2421,17 +1585,20 @@ def update_all_references(tournament_url):
 def push_back_matches(tournament_url):
     """Push all non-started matches backwards by a specified amount of time (in minutes)."""
     if is_not_TO(tournament_url):
-        return redirect(f"/{tournament_url}")
+        return jsonify({"success": False, "error": "Only tournament organizers can access this page"}), 403
 
     try:
         minutes = int(request.form.get("minutes", 0))
     except (ValueError, TypeError):
-        flash("Invalid number of minutes", "error")
-        return redirect(f"/{tournament_url}/setup")
+        return jsonify({"success": False, "error": "Invalid number of minutes"}), 400
 
     non_started_matches = (
         Match.query.filter_by(event=tournament_url)
-        .filter(~Match.status.in_([MatchStatus.IN_PROGRESS, MatchStatus.COMPLETED, MatchStatus.SKIPPED]))
+        .filter(
+            ~Match.status.in_(
+                [MatchStatus.IN_PROGRESS, MatchStatus.COMPLETED, MatchStatus.SKIPPED]
+            )
+        )
         .all()
     )
 
@@ -2453,20 +1620,13 @@ def push_back_matches(tournament_url):
     db.session.commit()
 
     if updated_count > 0:
-        flash(
-            f"Pushed back {updated_count} non-started match(es) by {minutes} minute(s)",
-            "success",
-        )
+        msg = f"Pushed back {updated_count} non-started match(es) by {minutes} minute(s)"
     else:
-        flash(
-            "No matches were updated. All matches have already started or been completed.",
-            "info",
-        )
-
-    return redirect(f"/{tournament_url}/setup")
+        msg = "No matches were updated. All matches have already started or been completed."
+    return jsonify({"success": True, "message": msg}), 200
 
 
-@bp.route("/<tournament_url>/api/autocomplete")
+@bp.route("/<tournament_url>/_api/autocomplete")
 def tournament_autocomplete(tournament_url):
     """Autocomplete endpoint for tournament setup.
     Returns a list of suggestions with fields: type, value, label, id
@@ -2553,7 +1713,7 @@ def tournament_autocomplete(tournament_url):
         return jsonify(suggestions[:50])
 
 
-@bp.route("/<tournament_url>/api/validate-dsl", methods=["POST"])
+@bp.route("/<tournament_url>/_api/validate-dsl", methods=["POST"])
 def validate_dsl(tournament_url):
     """Validate and simplify a DSL expression.
     Returns JSON with: valid (bool), value (the full interpreted value), simplified (str representation), error (str or None)
@@ -2671,15 +1831,14 @@ def validate_dsl(tournament_url):
 def delete_tournament(tournament_url):
     """Delete a tournament and all related data."""
     if is_not_TO(tournament_url):
-        return redirect(f"/{tournament_url}")
+        return jsonify({"success": False, "error": "Only tournament organizers can access this page"}), 403
 
     tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
 
     # Verify confirmation URL slug
     confirm_url = request.form.get("confirm_url", "").strip()
     if confirm_url != tournament_url:
-        flash("Confirmation URL does not match. Tournament not deleted.", "error")
-        return redirect(f"/{tournament_url}")
+        return jsonify({"success": False, "error": "Confirmation URL does not match. Tournament not deleted."}), 400
 
     # Import all necessary models
     from models import (
@@ -2729,8 +1888,7 @@ def delete_tournament(tournament_url):
     db.session.delete(tournament)
     db.session.commit()
 
-    flash(f'Tournament "{tournament.name}" has been permanently deleted.', "success")
-    return redirect("/")
+    return jsonify({"success": True, "message": f'Tournament "{tournament.name}" has been permanently deleted.'}), 200
 
 
 @bp.route("/<tournament_url>/add-to", methods=["POST"])
@@ -2739,14 +1897,13 @@ def add_to(tournament_url):
     """Add a TO to the tournament."""
 
     if is_not_TO(tournament_url):
-        return redirect(f"/{tournament_url}")
+        return jsonify({"success": False, "error": "Only tournament organizers can access this page"}), 403
 
     user_id = request.form.get("user_id", "").strip()
     user_type = request.form.get("user_type", "").strip().lower()
 
     if not user_id or user_type not in ["player", "team"]:
-        flash("Invalid user ID or type", "error")
-        return redirect(f"/{tournament_url}/settings")
+        return jsonify({"success": False, "error": "Invalid user ID or type"}), 400
 
     # Verify the user exists
     from models import Player, Team
@@ -2754,13 +1911,11 @@ def add_to(tournament_url):
     if user_type == "player":
         user = Player.query.get(user_id)
         if not user:
-            flash(f'Player with ID "{user_id}" not found', "error")
-            return redirect(f"/{tournament_url}/settings")
+            return jsonify({"success": False, "error": f'Player with ID "{user_id}" not found'}), 404
     else:  # team
         user = Team.query.get(user_id)
         if not user:
-            flash(f'Team with ID "{user_id}" not found', "error")
-            return redirect(f"/{tournament_url}/settings")
+            return jsonify({"success": False, "error": f'Team with ID "{user_id}" not found'}), 404
 
     # Check if TO already exists
     existing_to = TO.query.filter_by(
@@ -2768,8 +1923,7 @@ def add_to(tournament_url):
     ).first()
 
     if existing_to:
-        flash(f"This user is already a TO for this tournament", "error")
-        return redirect(f"/{tournament_url}/settings")
+        return jsonify({"success": False, "error": "This user is already a TO for this tournament"}), 400
 
     # Create new TO entry
     new_to = TO(user_id=user_id, user_type=user_type, event=tournament_url)
@@ -2777,8 +1931,7 @@ def add_to(tournament_url):
     db.session.commit()
 
     user_name = user.name if user else user_id
-    flash(f"Successfully added {user_name} as a TO", "success")
-    return redirect(f"/{tournament_url}/settings")
+    return jsonify({"success": True, "message": f"Successfully added {user_name} as a TO"}), 200
 
 
 @bp.route("/<tournament_url>/remove-to", methods=["POST"])
@@ -2787,28 +1940,25 @@ def remove_to(tournament_url):
     """Remove a TO from the tournament."""
 
     if is_not_TO(tournament_url):
-        return redirect(f"/{tournament_url}")
+        return jsonify({"success": False, "error": "Only tournament organizers can access this page"}), 403
 
     to_id = request.form.get("to_id")
     if not to_id:
-        flash("TO ID is required", "error")
-        return redirect(f"/{tournament_url}/settings")
+        return jsonify({"success": False, "error": "TO ID is required"}), 400
 
     # Get the TO entry to remove
     to_to_remove = TO.query.get_or_404(to_id)
 
     # Verify it's for this tournament
     if to_to_remove.event != tournament_url:
-        flash("Invalid TO entry", "error")
-        return redirect(f"/{tournament_url}/settings")
+        return jsonify({"success": False, "error": "Invalid TO entry"}), 400
 
     # Prevent removing yourself (optional - you might want to allow this)
     if (
         to_to_remove.user_id == current_user.id
         and to_to_remove.user_type == current_user.__class__.__name__.lower()
     ):
-        flash("You cannot remove yourself as a TO", "error")
-        return redirect(f"/{tournament_url}/settings")
+        return jsonify({"success": False, "error": "You cannot remove yourself as a TO"}), 400
 
     # Get user info for flash message
     from models import Player, Team
@@ -2823,5 +1973,4 @@ def remove_to(tournament_url):
     db.session.delete(to_to_remove)
     db.session.commit()
 
-    flash(f"Successfully removed {user_name} as a TO", "success")
-    return redirect(f"/{tournament_url}/settings")
+    return jsonify({"success": True, "message": f"Successfully removed {user_name} as a TO"}), 200

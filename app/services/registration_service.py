@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Optional
 
-from app.domain.enums import RegistrationStatus
+from app.domain.enums import MatchStatus, RegistrationStatus
 from app.error_values import Err, Ok, Result, allow_Q, option
 from app.exceptions import (
     ArctosError,
@@ -173,7 +173,7 @@ class RegistrationService:
     @staticmethod
     @allow_Q
     def deregister_team(tournament_url: str, team_id: str) -> Result[None, ArctosError]:
-        from models import Tournament, TeamRegistration, PlayerRegistration, db
+        from models import Match, Tournament, TeamRegistration, PlayerRegistration, db
 
         tournament = RegistrationService._get_tournament(tournament_url).Q()
         RegistrationService._require_registration_open_for_deregister(tournament).Q()
@@ -183,6 +183,20 @@ class RegistrationService:
         ).first()
         if not team_registration:
             return Err(ValidationError("You are not registered for this tournament"))
+
+        in_progress = (
+            Match.query.filter_by(event=tournament_url, status=MatchStatus.IN_PROGRESS)
+            .filter(
+                (Match.team1 == team_id) | (Match.team2 == team_id)
+            )
+            .first()
+        )
+        if in_progress:
+            return Err(
+                ValidationError(
+                    "Cannot deregister once your team has played in a match that is in progress."
+                )
+            )
 
         team_registration.status = RegistrationStatus.CANCELLED
 
@@ -198,7 +212,7 @@ class RegistrationService:
     def deregister_player(
         tournament_url: str, player_id: str
     ) -> Result[None, ArctosError]:
-        from models import Tournament, PlayerRegistration, db
+        from models import Match, Tournament, PlayerRegistration, db
 
         tournament = RegistrationService._get_tournament(tournament_url).Q()
         RegistrationService._require_registration_open_for_deregister(tournament).Q()
@@ -217,6 +231,24 @@ class RegistrationService:
         )
         if not player_registration:
             return Err(ValidationError("You are not registered for this tournament"))
+
+        player_team = player_registration.team
+        if player_team:
+            in_progress = (
+                Match.query.filter_by(
+                    event=tournament_url, status=MatchStatus.IN_PROGRESS
+                )
+                .filter(
+                    (Match.team1 == player_team) | (Match.team2 == player_team)
+                )
+                .first()
+            )
+            if in_progress:
+                return Err(
+                    ValidationError(
+                        "Cannot deregister once you have played in a match that is in progress."
+                    )
+                )
 
         player_registration.status = RegistrationStatus.CANCELLED
 

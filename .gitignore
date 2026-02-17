@@ -1,22 +1,42 @@
 # various python shenanigans
-.vscode
-.mypy_cache
-.pytest_cache
-__pycache__
+.venv
+__pycache__/
+.mypy_cache/
+.pytest_cache/
+*.py[cod]
 
-# db and state
+# secrets
+.env.*
+run
+
+# editors
+.vscode/
+.idea/
+*.swp
+*~
+*\#*
+
+# --- App data & uploads ---
 instance/*
 static/uploads/*
-# has keys
-run
-# uv env dir
-.venv
 
-# key files for tls certs
+# --- TLS key material ---
 *.csr
 *.key
 *.crt
 
-# emacs files (backups and autosaves)
-*~
-*\#*
+
+# cargo (i sure hope it does)
+target/
+**/target/
+Cargo.lock
+
+# build stuff
+/frontend/dist/
+/frontend/pkg/
+/frontend/.parcel-cache/
+/frontend/node_modules/
+
+# stupid
+.DS_Store
+Thumbs.db

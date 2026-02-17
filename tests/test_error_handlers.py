@@ -8,12 +8,12 @@ from app.exceptions import ValidationError
 def test_arctos_error_handler_returns_json_for_api_paths():
     app = create_app(config={"TESTING": True, "SECRET_KEY": "test"})
 
-    @app.get("/api/test-error")
+    @app.get("/_api/test-error")
     def _api_error():
         raise ValidationError("bad input")
 
     client = app.test_client()
-    resp = client.get("/api/test-error")
+    resp = client.get("/_api/test-error")
     assert resp.status_code == 200
     data = resp.get_json()
     assert data["success"] is False
