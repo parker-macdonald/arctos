@@ -4,8 +4,13 @@ version = "0.1.0"
 edition = "2021"
 publish = false
 
+[features]
+default = []
+wasm-split = ["dioxus/wasm-split", "dep:dioxus-router", "dioxus-router/wasm-split"]
+
 [dependencies]
 dioxus = { version = "0.7", features = ["web", "router", "document"] }
+dioxus-router = { version = "0.7", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 bytes = "1"
@@ -36,8 +41,11 @@ wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 
 [profile.release]
-opt-level = "s"
+opt-level = "z"
+debug = false
 lto = true
+strip = "debuginfo"
 codegen-units = 1
 panic = "abort"
-strip = true
+incremental = false
+

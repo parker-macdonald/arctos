@@ -159,7 +159,10 @@ pub fn Layout() -> Element {
         }
 
         main { class: "container-wide mt-4",
-            Outlet::<Route> {}
+            SuspenseBoundary {
+                fallback: |_| rsx! { div { class: "text-center py-5 text-muted", "Loading…" } },
+                Outlet::<Route> {}
+            }
         }
 
         footer { class: "container-wide mt-4",
