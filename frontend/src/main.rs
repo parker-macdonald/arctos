@@ -98,13 +98,13 @@ enum Route {
     PlayersList {},
 
     #[route("/players/:id")]
-    PlayerProfile { id: String },
+    PlayerProfilePage { id: String },
 
     #[route("/teams")]
     TeamsList {},
 
     #[route("/teams/:id")]
-    TeamProfile { id: String },
+    TeamProfilePage { id: String },
 
     #[route("/stones")]
     Stones {},

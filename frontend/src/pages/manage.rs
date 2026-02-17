@@ -1,6 +1,7 @@
 use crate::api;
 use crate::Route;
 use dioxus::prelude::*;
+use wasm_bindgen::JsCast;
 
 #[component]
 pub fn Manage(url: String) -> Element {
@@ -8,19 +9,16 @@ pub fn Manage(url: String) -> Element {
     let mut search_type = use_signal(|| "both".to_string());
     let mut submitted_search = use_signal(|| String::new());
     let mut submitted_type = use_signal(|| "both".to_string());
+    let mut refresh = use_signal(|| 0u32);
     let url_for_data = url.clone();
     let data = use_resource(move || {
         let u = url_for_data.clone();
         let s = submitted_search().clone();
         let t = submitted_type().clone();
+        let _r = refresh();
         async move { api::tournament_manage(&u, &s, &t).await.map_err(|e| e.to_string()) }
     });
     let val = data.value();
-    let backend = api::base_url();
-    let deregister_team = format!("{}/{}/deregister-any-team", backend, url);
-    let deregister_player = format!("{}/{}/deregister-any-player", backend, url);
-    let mark_team_paid = format!("{}/{}/mark-team-paid", backend, url);
-    let mark_player_paid = format!("{}/{}/mark-player-paid", backend, url);
     rsx! {
         if let Some(Ok(d)) = val.read().as_ref() {
             div { class: "row",
@@ -87,7 +85,7 @@ pub fn Manage(url: String) -> Element {
                                         }
                                     }
                                     tbody {
-                                        for team_data in d.team_registrations.iter() {
+                                        for (url_dereg, url_save, team_id_dereg, reg_id_save, team_data) in d.team_registrations.iter().map(|t| (url.clone(), url.clone(), t.registration.team.clone(), t.registration.id, t)) {
                                             tr { key: "{team_data.registration.id}",
                                                 td {
                                                     a { href: "/app/teams/{team_data.registration.team}", class: "text-decoration-none",
@@ -115,13 +113,21 @@ pub fn Manage(url: String) -> Element {
                                                 td { "{team_data.registration.registered_at.as_deref().unwrap_or(\"-\")}" }
                                                 td {
                                                     if team_data.registration.status == "CONFIRMED" {
-                                                        form { method: "POST", action: "{deregister_team}", class: "d-inline",
-                                                            input { r#type: "hidden", name: "team_id", value: "{team_data.registration.team}" }
-                                                            button { r#type: "submit", class: "btn btn-sm btn-outline-danger", "Deregister" }
+                                                        button {
+                                                            r#type: "button",
+                                                            class: "btn btn-sm btn-outline-danger",
+                                                            onclick: move |_| {
+                                                                let u = url_dereg.clone();
+                                                                let tid = team_id_dereg.clone();
+                                                                spawn(async move {
+                                                                    let _ = api::deregister_any_team(&u, &tid).await;
+                                                                    refresh.set(refresh() + 1);
+                                                                });
+                                                            },
+                                                            "Deregister"
                                                         }
                                                     }
-                                                    form { method: "POST", action: "{mark_team_paid}", class: "d-inline ms-2",
-                                                        input { r#type: "hidden", name: "registration_id", value: "{team_data.registration.id}" }
+                                                    div { class: "d-inline ms-2",
                                                         div { class: "input-group input-group-sm", style: "max-width: 420px;",
                                                             span { class: "input-group-text", "$" }
                                                             input {
@@ -129,14 +135,43 @@ pub fn Manage(url: String) -> Element {
                                                                 step: "0.01",
                                                                 min: "0",
                                                                 class: "form-control",
-                                                                name: "amount_paid",
+                                                                id: "team-amount-{team_data.registration.id}",
                                                                 placeholder: "Amount",
                                                                 value: format!("{:.2}", team_data.registration.amount_paid)
                                                             }
                                                             div { class: "input-group-text",
-                                                                input { class: "form-check-input mt-0", r#type: "checkbox", name: "paid", checked: team_data.registration.paid }
+                                                                input {
+                                                                    class: "form-check-input mt-0",
+                                                                    r#type: "checkbox",
+                                                                    id: "team-paid-{team_data.registration.id}",
+                                                                    checked: team_data.registration.paid
+                                                                }
                                                             }
-                                                            button { r#type: "submit", class: "btn btn-sm btn-outline-primary", "Save" }
+                                                            button {
+                                                                r#type: "button",
+                                                                class: "btn btn-sm btn-outline-primary",
+                                                                onclick: move |_| {
+                                                                    let u = url_save.clone();
+                                                                    let rid = reg_id_save;
+                                                                    spawn(async move {
+                                                                        let amount: f64 = web_sys::window()
+                                                                            .and_then(|w| w.document())
+                                                                            .and_then(|d| d.get_element_by_id(&format!("team-amount-{}", rid)))
+                                                                            .and_then(|e| e.dyn_into::<web_sys::HtmlInputElement>().ok())
+                                                                            .map(|e: web_sys::HtmlInputElement| e.value().parse().unwrap_or(0.0))
+                                                                            .unwrap_or(0.0);
+                                                                        let paid = web_sys::window()
+                                                                            .and_then(|w| w.document())
+                                                                            .and_then(|d| d.get_element_by_id(&format!("team-paid-{}", rid)))
+                                                                            .and_then(|e| e.dyn_into::<web_sys::HtmlInputElement>().ok())
+                                                                            .map(|e: web_sys::HtmlInputElement| e.checked())
+                                                                            .unwrap_or(false);
+                                                                        let _ = api::mark_team_paid(&u, rid, amount, paid, "", "", "").await;
+                                                                        refresh.set(refresh() + 1);
+                                                                    });
+                                                                },
+                                                                "Save"
+                                                            }
                                                         }
                                                         if let Some(paid_at) = &team_data.registration.paid_at {
                                                             div { class: "form-text", "Paid at {paid_at}" }
@@ -171,7 +206,7 @@ pub fn Manage(url: String) -> Element {
                                         }
                                     }
                                     tbody {
-                                        for player_data in d.player_registrations.iter() {
+                                        for (url_dereg, url_save, player_id_dereg, reg_id_save, player_data) in d.player_registrations.iter().map(|p| (url.clone(), url.clone(), p.registration.player.clone(), p.registration.id, p)) {
                                             tr { key: "{player_data.registration.id}",
                                                 td {
                                                     a { href: "/app/players/{player_data.registration.player}", class: "text-decoration-none",
@@ -222,13 +257,21 @@ pub fn Manage(url: String) -> Element {
                                                     if player_data.registration.status == "PENDING_TEAM_APPROVAL"
                                                         || player_data.registration.status == "CONFIRMED"
                                                     {
-                                                        form { method: "POST", action: "{deregister_player}", class: "d-inline",
-                                                            input { r#type: "hidden", name: "player_id", value: "{player_data.registration.player}" }
-                                                            button { r#type: "submit", class: "btn btn-sm btn-outline-danger", "Deregister" }
+                                                        button {
+                                                            r#type: "button",
+                                                            class: "btn btn-sm btn-outline-danger",
+onclick: move |_| {
+                                                                let u = url_dereg.clone();
+                                                                let pid = player_id_dereg.clone();
+                                                                spawn(async move {
+                                                                    let _ = api::deregister_any_player(&u, &pid).await;
+                                                                    refresh.set(refresh() + 1);
+                                                                });
+                                                            },
+                                                            "Deregister"
                                                         }
                                                     }
-                                                    form { method: "POST", action: "{mark_player_paid}", class: "d-inline ms-2",
-                                                        input { r#type: "hidden", name: "registration_id", value: "{player_data.registration.id}" }
+                                                    div { class: "d-inline ms-2",
                                                         div { class: "input-group input-group-sm", style: "max-width: 420px;",
                                                             span { class: "input-group-text", "$" }
                                                             input {
@@ -236,14 +279,43 @@ pub fn Manage(url: String) -> Element {
                                                                 step: "0.01",
                                                                 min: "0",
                                                                 class: "form-control",
-                                                                name: "amount_paid",
+                                                                id: "player-amount-{player_data.registration.id}",
                                                                 placeholder: "Amount",
                                                                 value: format!("{:.2}", player_data.registration.amount_paid)
                                                             }
                                                             div { class: "input-group-text",
-                                                                input { class: "form-check-input mt-0", r#type: "checkbox", name: "paid", checked: player_data.registration.paid }
+                                                                input {
+                                                                    class: "form-check-input mt-0",
+                                                                    r#type: "checkbox",
+                                                                    id: "player-paid-{player_data.registration.id}",
+                                                                    checked: player_data.registration.paid
+                                                                }
                                                             }
-                                                            button { r#type: "submit", class: "btn btn-sm btn-outline-primary", "Save" }
+                                                            button {
+                                                                r#type: "button",
+                                                                class: "btn btn-sm btn-outline-primary",
+                                                            onclick: move |_| {
+                                                                    let u = url_save.clone();
+                                                                    let rid = reg_id_save;
+                                                                    spawn(async move {
+                                                                        let amount: f64 = web_sys::window()
+                                                                            .and_then(|w| w.document())
+                                                                            .and_then(|d| d.get_element_by_id(&format!("player-amount-{}", rid)))
+                                                                            .and_then(|e| e.dyn_into::<web_sys::HtmlInputElement>().ok())
+                                                                            .map(|e: web_sys::HtmlInputElement| e.value().parse().unwrap_or(0.0))
+                                                                            .unwrap_or(0.0);
+                                                                        let paid = web_sys::window()
+                                                                            .and_then(|w| w.document())
+                                                                            .and_then(|d| d.get_element_by_id(&format!("player-paid-{}", rid)))
+                                                                            .and_then(|e| e.dyn_into::<web_sys::HtmlInputElement>().ok())
+                                                                            .map(|e: web_sys::HtmlInputElement| e.checked())
+                                                                            .unwrap_or(false);
+                                                                        let _ = api::mark_player_paid(&u, rid, amount, paid, "", "", "").await;
+                                                                        refresh.set(refresh() + 1);
+                                                                    });
+                                                                },
+                                                                "Save"
+                                                            }
                                                         }
                                                         if let Some(paid_at) = &player_data.registration.paid_at {
                                                             div { class: "form-text", "Paid at {paid_at}" }

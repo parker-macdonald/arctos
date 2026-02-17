@@ -1131,7 +1131,7 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                                                 }
                                             } else if let Some(team1_id) = &d.match_data.team1 {
                                                 Link {
-                                                    to: Route::TeamProfile {
+                                                    to: Route::TeamProfilePage {
                                                         id: team1_id.clone(),
                                                     },
                                                     class: "text-decoration-none",
@@ -1162,7 +1162,7 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                                                 }
                                             } else if let Some(team2_id) = &d.match_data.team2 {
                                                 Link {
-                                                    to: Route::TeamProfile {
+                                                    to: Route::TeamProfilePage {
                                                         id: team2_id.clone(),
                                                     },
                                                     class: "text-decoration-none",
@@ -1696,9 +1696,9 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                                                                 {
                                                                     rsx! {
                                                                         Link {
-                                                                            to: if note.team_id.is_some() { Route::TeamProfile {
+                                                                            to: if note.team_id.is_some() { Route::TeamProfilePage {
                                                                                 id: note.team_id.as_ref().unwrap().clone(),
-                                                                            } } else { Route::PlayerProfile {
+                                                                            } } else { Route::PlayerProfilePage {
                                                                                 id: note.player_id.as_ref().unwrap().clone(),
                                                                             } },
                                                                             class: "text-decoration-none",

@@ -820,6 +820,13 @@ pub struct MarkdownPageResponse {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RenderMarkdownResponse {
+    pub html: String,
+    #[serde(default)]
+    pub css: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleChooseAccountTypeResponse {
     pub email: String,
 }

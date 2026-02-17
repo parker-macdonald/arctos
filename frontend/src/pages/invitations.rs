@@ -77,7 +77,7 @@ pub fn Invitations(url: String) -> Element {
                                                                         }
                                                                     }
                                                                     div { class: "flex-grow-1",
-                                                                        Link { to: Route::PlayerProfile { id: invitation.player.id.clone() }, "{invitation.player.name}" }
+                                                                        Link { to: Route::PlayerProfilePage { id: invitation.player.id.clone() }, "{invitation.player.name}" }
                                                                     }
                                                                 }
                                                             }
@@ -141,7 +141,7 @@ pub fn Invitations(url: String) -> Element {
                                                                 }
                                                             }
                                                             div { class: "flex-grow-1",
-                                                                Link { to: Route::PlayerProfile { id: roster_item.player.id.clone() }, "{roster_item.player.name}" }
+                                                                Link { to: Route::PlayerProfilePage { id: roster_item.player.id.clone() }, "{roster_item.player.name}" }
                                                             }
                                                         }
                                                     }

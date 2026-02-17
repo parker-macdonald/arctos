@@ -48,7 +48,7 @@ pub fn EditTeamProfile(team_id: String) -> Element {
 
             match api::update_team_profile(&team_id, &req).await {
                 Ok(_) => {
-                    nav.push(Route::TeamProfile { id: team_id.clone() });
+                    nav.push(Route::TeamProfilePage { id: team_id.clone() });
                 }
                 Err(e) => {
                     error.set(Some(e));
@@ -65,7 +65,7 @@ pub fn EditTeamProfile(team_id: String) -> Element {
                     nav { "aria-label": "breadcrumb",
                         ol { class: "breadcrumb",
                             li { class: "breadcrumb-item",
-                                Link { to: Route::TeamProfile { id: team_id.clone() }, "{name}" }
+                                Link { to: Route::TeamProfilePage { id: team_id.clone() }, "{name}" }
                             }
                             li { class: "breadcrumb-item active", "Edit Profile" }
                         }
@@ -158,7 +158,7 @@ pub fn EditTeamProfile(team_id: String) -> Element {
                                         button { class: "btn btn-primary", "type": "submit", "Update Team Profile" }
                                         Link {
                                             class: "btn btn-outline-secondary",
-                                            to: Route::TeamProfile { id: team_id.clone() },
+                                            to: Route::TeamProfilePage { id: team_id.clone() },
                                             "Cancel"
                                         }
                                     }

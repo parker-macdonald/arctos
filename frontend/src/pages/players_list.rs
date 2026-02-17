@@ -67,7 +67,7 @@ pub fn PlayersList() -> Element {
                 } else {
                     for p in d.players.iter() {
                         div { key: "{p.id}", class: "col-md-6 col-lg-4 mb-4",
-                            Link { to: Route::PlayerProfile { id: p.id.clone() }, class: "text-decoration-none text-reset",
+                            Link { to: Route::PlayerProfilePage { id: p.id.clone() }, class: "text-decoration-none text-reset",
                                 div { class: "card h-100 player-card-link",
                                     div { class: "card-body",
                                         div { class: "d-flex",

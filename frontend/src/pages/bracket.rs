@@ -65,7 +65,7 @@ pub fn Bracket(url: String) -> Element {
                                                         if team_entry.is_tag {
                                                             span { "{team_info.display_text}" }
                                                         } else if let Some(team_id) = &team_info.id {
-                                                            Link { to: Route::TeamProfile { id: team_id.clone() }, class: "text-decoration-none text-dark d-inline-flex align-items-center",
+                                                            Link { to: Route::TeamProfilePage { id: team_id.clone() }, class: "text-decoration-none text-dark d-inline-flex align-items-center",
                                                                 if let Some(photo) = &team_info.profile_photo {
                                                                     img { src: "{backend}/static/{photo}", alt: "{team_info.pseudonym.as_deref().unwrap_or(&team_info.display_text)}", class: "rounded-circle me-1", style: "width: {team_entry.size}px; height: {team_entry.size}px; object-fit: cover;" }
                                                                 }

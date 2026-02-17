@@ -36,6 +36,23 @@ pub fn Layout() -> Element {
             .layout-nav .nav-link {{ color: rgba(255,255,255,.85) !important; }}
             .layout-nav .nav-link:hover {{ color: #fff !important; }}
             .dropdown-menu {{ position: absolute; z-index: 1050; }}
+            .markdown-content {{ line-height: 1.6; }}
+            .markdown-content h1, .markdown-content h2, .markdown-content h3, .markdown-content h4, .markdown-content h5, .markdown-content h6 {{ margin-top: 1em; margin-bottom: 0.5em; font-weight: 600; }}
+            .markdown-content h1 {{ font-size: 1.5em; }} .markdown-content h2 {{ font-size: 1.3em; }} .markdown-content h3 {{ font-size: 1.15em; }}
+            .markdown-content p {{ margin-bottom: 0.75em; }}
+            .markdown-content ul, .markdown-content ol {{ margin-bottom: 0.75em; padding-left: 1.5em; }}
+            .markdown-content li {{ margin-bottom: 0.25em; }}
+            .markdown-content blockquote {{ border-left: 4px solid var(--bs-secondary, #6c757d); padding-left: 1em; margin: 0.75em 0; color: var(--bs-secondary); }}
+            .markdown-content code {{ padding: 0.2em 0.4em; font-size: 0.9em; background: rgba(0,0,0,0.06); border-radius: 4px; }}
+            .markdown-content pre {{ padding: 0.75em; overflow-x: auto; background: rgba(0,0,0,0.06); border-radius: 4px; margin-bottom: 0.75em; }}
+            .markdown-content pre code {{ padding: 0; background: none; }}
+            .markdown-content table {{ border-collapse: collapse; margin-bottom: 0.75em; width: 100%; }}
+            .markdown-content th, .markdown-content td {{ border: 1px solid var(--bs-border-color, #dee2e6); padding: 0.4em 0.6em; text-align: left; }}
+            .markdown-content th {{ font-weight: 600; background: rgba(0,0,0,0.04); }}
+            .markdown-content a {{ color: var(--bs-link-color, #0d6efd); text-decoration: none; }}
+            .markdown-content a:hover {{ text-decoration: underline; }}
+            .markdown-content img {{ max-width: 100%; height: auto; }}
+            .markdown-content hr {{ margin: 1em 0; border: 0; border-top: 1px solid var(--bs-border-color, #dee2e6); }}
         "# }
 
         nav { class: "navbar navbar-expand-lg navbar-dark bg-dark",
@@ -82,13 +99,13 @@ pub fn Layout() -> Element {
                                         li {
                                             if u.user_type == "player" {
                                                 Link {
-                                                    to: Route::PlayerProfile { id: u.id.clone() },
+                                                    to: Route::PlayerProfilePage { id: u.id.clone() },
                                                     class: "dropdown-item",
                                                     "Profile"
                                                 }
                                             } else {
                                                 Link {
-                                                    to: Route::TeamProfile { id: u.id.clone() },
+                                                    to: Route::TeamProfilePage { id: u.id.clone() },
                                                     class: "dropdown-item",
                                                     "Profile"
                                                 }

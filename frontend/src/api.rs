@@ -42,6 +42,13 @@ fn truncate_error_body(text: &str, max_len: usize) -> String {
     }
 }
 
+#[derive(serde::Deserialize)]
+pub struct StatusResponse {
+    pub success: bool,
+    pub message: Option<String>,
+    pub error: Option<String>,
+}
+
 async fn response_json<T: serde::de::DeserializeOwned>(
     resp: reqwest::Response,
 ) -> Result<T, String> {
@@ -226,6 +233,132 @@ pub async fn finalize_match(
     .await
     .map_err(|e| e.to_string())?;
     response_json(r).await
+}
+
+async fn post_form_status(
+    url: &str,
+    params: &[(String, String)],
+) -> Result<StatusResponse, String> {
+    let c = client();
+    let r = with_credentials(c.post(url).form(params))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    response_json(r).await
+}
+
+pub async fn update_tournament_settings(
+    tournament_url: &str,
+    params: &[(String, String)],
+) -> Result<StatusResponse, String> {
+    let url = format!("{}/{}/update-settings", base(), tournament_url);
+    post_form_status(&url, params).await
+}
+
+pub async fn mark_team_paid(
+    tournament_url: &str,
+    registration_id: u32,
+    amount_paid: f64,
+    paid: bool,
+    payment_method: &str,
+    payment_reference: &str,
+    payment_notes: &str,
+) -> Result<StatusResponse, String> {
+    let mut params = vec![
+        ("registration_id".into(), registration_id.to_string()),
+        ("amount_paid".into(), amount_paid.to_string()),
+        ("payment_method".into(), payment_method.to_string()),
+        ("payment_reference".into(), payment_reference.to_string()),
+        ("payment_notes".into(), payment_notes.to_string()),
+    ];
+    if paid {
+        params.push(("paid".into(), "on".to_string()));
+    }
+    let url = format!("{}/{}/mark-team-paid", base(), tournament_url);
+    post_form_status(&url, &params).await
+}
+
+pub async fn mark_player_paid(
+    tournament_url: &str,
+    registration_id: u32,
+    amount_paid: f64,
+    paid: bool,
+    payment_method: &str,
+    payment_reference: &str,
+    payment_notes: &str,
+) -> Result<StatusResponse, String> {
+    let mut params = vec![
+        ("registration_id".into(), registration_id.to_string()),
+        ("amount_paid".into(), amount_paid.to_string()),
+        ("payment_method".into(), payment_method.to_string()),
+        ("payment_reference".into(), payment_reference.to_string()),
+        ("payment_notes".into(), payment_notes.to_string()),
+    ];
+    if paid {
+        params.push(("paid".into(), "on".to_string()));
+    }
+    let url = format!("{}/{}/mark-player-paid", base(), tournament_url);
+    post_form_status(&url, &params).await
+}
+
+pub async fn deregister_any_team(
+    tournament_url: &str,
+    team_id: &str,
+) -> Result<StatusResponse, String> {
+    let params = vec![("team_id".into(), team_id.to_string())];
+    let url = format!("{}/{}/deregister-any-team", base(), tournament_url);
+    post_form_status(&url, &params).await
+}
+
+pub async fn deregister_any_player(
+    tournament_url: &str,
+    player_id: &str,
+) -> Result<StatusResponse, String> {
+    let params = vec![("player_id".into(), player_id.to_string())];
+    let url = format!("{}/{}/deregister-any-player", base(), tournament_url);
+    post_form_status(&url, &params).await
+}
+
+pub async fn register_player(
+    tournament_url: &str,
+    jersey_name: &str,
+    jersey_number: &str,
+    team: &str,
+    agree_terms: bool,
+) -> Result<StatusResponse, String> {
+    let mut params = vec![
+        ("jersey_name".into(), jersey_name.to_string()),
+        ("jersey_number".into(), jersey_number.to_string()),
+        ("team".into(), team.to_string()),
+    ];
+    if agree_terms {
+        params.push(("agree_terms".into(), "on".into()));
+    }
+    let url = format!("{}/{}/register-player", base(), tournament_url);
+    post_form_status(&url, &params).await
+}
+
+pub async fn register_team(
+    tournament_url: &str,
+    pseudonym: &str,
+    agree_terms: bool,
+) -> Result<StatusResponse, String> {
+    let mut params = vec![("pseudonym".into(), pseudonym.to_string())];
+    if agree_terms {
+        params.push(("agree_terms".into(), "on".into()));
+    }
+    let url = format!("{}/{}/register-team", base(), tournament_url);
+    post_form_status(&url, &params).await
+}
+
+pub async fn deregister_player(tournament_url: &str) -> Result<StatusResponse, String> {
+    let url = format!("{}/{}/deregister-player", base(), tournament_url);
+    post_form_status(&url, &[]).await
+}
+
+pub async fn deregister_team(tournament_url: &str) -> Result<StatusResponse, String> {
+    let url = format!("{}/{}/deregister-team", base(), tournament_url);
+    post_form_status(&url, &[]).await
 }
 
 pub async fn tournament_manage(
@@ -1176,6 +1309,18 @@ pub async fn markdown_page(slug: &str) -> Result<MarkdownPageResponse, String> {
     .await
     .map_err(|e| e.to_string())?;
     response_json(r).await
+}
+
+pub async fn render_markdown(markdown: &str) -> Result<String, String> {
+    let c = client();
+    let r = with_credentials(
+        c.post(format!("{}/_api/render-markdown", base())).json(&serde_json::json!({ "markdown": markdown }))
+    )
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    let res: RenderMarkdownResponse = response_json(r).await?;
+    Ok(res.html)
 }
 
 pub async fn google_choose_account_type_info() -> Result<GoogleChooseAccountTypeResponse, String> {
