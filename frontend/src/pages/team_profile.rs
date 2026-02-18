@@ -1,6 +1,141 @@
 use crate::api;
+use crate::types::{TeamRegItem, TournamentPlayerItem};
 use crate::Route;
 use dioxus::prelude::*;
+use std::collections::HashMap;
+
+#[component]
+fn RegistrationRow(
+    registration: TeamRegItem,
+    is_expanded: bool,
+    on_toggle: EventHandler<()>,
+    is_own_team: bool,
+    backend: String,
+    players_cache: Signal<HashMap<String, Vec<TournamentPlayerItem>>>,
+    players_resource: Resource<Result<Vec<TournamentPlayerItem>, String>>,
+    expanded_event: Signal<Option<String>>,
+) -> Element {
+    let event_key = registration.event.clone();
+    rsx! {
+        tr {
+            class: if is_expanded { "table-active" } else { "" },
+            onclick: move |_| on_toggle.call(()),
+            style: "cursor: pointer;",
+            td {
+                i {
+                    class: if is_expanded { "fas fa-chevron-down" } else { "fas fa-chevron-right" },
+                    style: "font-size: 0.7rem;"
+                }
+            }
+            td { Link { to: Route::TournamentHome { url: event_key.clone() }, "{event_key}" } }
+            td { strong { "{registration.pseudonym.as_deref().unwrap_or(\"-\")}" } }
+            td {
+                if let Some(date) = &registration.start_date {
+                    "{date.split('T').next().unwrap_or(date)}"
+                } else {
+                    "TBA"
+                }
+            }
+            td {
+                span {
+                    class: format!(
+                        "badge {}",
+                        if registration.status == "CONFIRMED" { "bg-success" } else { "bg-warning" }
+                    ),
+                    "{registration.status}"
+                }
+            }
+            td {
+                if registration.paid {
+                    span { class: "badge bg-success", "Paid" }
+                    if registration.amount_paid > 0.0 {
+                        { let amt = format!("${:.2}", registration.amount_paid); rsx! { small { class: "text-muted ms-1", "{amt}" } } }
+                    }
+                } else {
+                    span { class: "badge bg-warning", "Unpaid" }
+                }
+            }
+            td {
+                onclick: move |e: Event<MouseData>| e.stop_propagation(),
+                if is_own_team {
+                    Link {
+                        to: Route::Invitations { url: event_key.clone() },
+                        class: "btn btn-sm btn-outline-primary",
+                        "Manage Roster"
+                    }
+                }
+            }
+        }
+        if is_expanded {
+            tr {
+                key: "{event_key}-players",
+                td { colspan: 7, class: "bg-light py-3",
+                    {
+                        let ev = registration.event.clone();
+                        let cached = players_cache().get(&ev).cloned();
+                        let resource_val = players_resource.value().read().clone();
+                        let is_this_expanded = expanded_event() == Some(ev.clone());
+                        let loading = is_this_expanded && cached.is_none() && resource_val.is_none();
+                        let err_msg = is_this_expanded && cached.is_none() && resource_val.as_ref().map(|v| v.is_err()) == Some(true);
+                        let players = cached.or_else(|| {
+                            if is_this_expanded {
+                                resource_val.and_then(|v| v.ok())
+                            } else {
+                                None
+                            }
+                        });
+                        rsx! {
+                            div { class: "ps-4", onclick: move |e: Event<MouseData>| e.stop_propagation(),
+                                if let Some(players_list) = players {
+                                    if players_list.is_empty() {
+                                        p { class: "text-muted mb-0", "No players registered yet." }
+                                    } else {
+                                        div { class: "row",
+                                            for p in players_list.iter() {
+                                                div { class: "col-md-6 mb-2",
+                                                    div { class: "card card-body py-2",
+                                                        div { class: "d-flex align-items-center",
+                                                            div { class: "flex-shrink-0 me-2",
+                                                                if let Some(player) = &p.player {
+                                                                    if let Some(photo) = &player.profile_photo {
+                                                                        img { src: "{backend}/static/{photo}", alt: "{player.name}", class: "rounded-circle", style: "width: 40px; height: 40px; object-fit: cover;" }
+                                                                    } else {
+                                                                        div { class: "d-flex align-items-center justify-content-center bg-secondary rounded-circle", style: "width: 40px; height: 40px;", i { class: "fas fa-user text-white" } }
+                                                                    }
+                                                                } else {
+                                                                    div { class: "d-flex align-items-center justify-content-center bg-secondary rounded-circle", style: "width: 40px; height: 40px;", i { class: "fas fa-user text-white" } }
+                                                                }
+                                                            }
+                                                            div { class: "flex-grow-1",
+                                                                div { class: "d-flex justify-content-between align-items-center",
+                                                                    div {
+                                                                        strong { "{p.registration.jersey_name.as_deref().unwrap_or(\"-\")}" }
+                                                                        if let Some(num) = &p.registration.jersey_number {
+                                                                            span { class: "text-muted ms-1", "#{num}" }
+                                                                        }
+                                                                    }
+                                                                    small { class: "text-muted", "{p.registration.player}" }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                } else if loading {
+                                    p { class: "text-muted mb-0", "Loading…" }
+                                } else if err_msg {
+                                    p { class: "text-danger mb-0", "Failed to load players." }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
 
 /// Page component for the router. Reads id from use_route() so navigation
 /// between profiles updates the view (router reuses the same component and
@@ -46,6 +181,30 @@ pub fn TeamProfile(id: Signal<String>) -> Element {
             }
         }
     }));
+
+    let mut expanded_event = use_signal(|| Option::<String>::None);
+    let mut players_cache = use_signal(|| HashMap::<String, Vec<TournamentPlayerItem>>::new());
+    let team_id_for_fetch = id();
+    let players_resource = use_resource(use_reactive(&expanded_event, move |exp| {
+        let ev = exp().clone();
+        let tid = team_id_for_fetch.clone();
+        async move {
+            match ev.as_deref() {
+                Some(e) => api::team_registration_players(&tid, e).await,
+                None => Err("no event".to_string()),
+            }
+        }
+    }));
+    use_effect(move || {
+        let res = players_resource.value().read().clone();
+        let expanded = expanded_event();
+        if let (Some(Ok(players)), Some(ev)) = (res.as_ref(), expanded.as_ref()) {
+            let mut c = players_cache().clone();
+            c.insert(ev.clone(), players.clone());
+            players_cache.set(c);
+        }
+    });
+
     rsx! {
         if let Some(Ok(d)) = val.read().as_ref() {
             div { class: "row",
@@ -111,6 +270,7 @@ pub fn TeamProfile(id: Signal<String>) -> Element {
                                     table { class: "table table-striped",
                                         thead {
                                             tr {
+                                                th { style: "width: 2rem;", "" }
                                                 th { "Tournament" }
                                                 th { "Team Name" }
                                                 th { "Date" }
@@ -120,58 +280,32 @@ pub fn TeamProfile(id: Signal<String>) -> Element {
                                             }
                                         }
                                         tbody {
-                                            for r in d.registrations.iter() {
-                                                tr { key: "{r.event}",
-                                                    td { Link { to: Route::TournamentHome { url: r.event.clone() }, "{r.event}" } }
-                                                    td {
-                                                        strong { "{r.pseudonym.as_deref().unwrap_or(\"-\")}" }
-                                                    }
-                                                    td {
-                                                        if let Some(date) = &r.start_date {
-                                                            "{date.split('T').next().unwrap_or(date)}"
-                                                        } else {
-                                                            "TBA"
+                                            { {
+                                                let mut row_views = Vec::new();
+                                                for reg_item in d.registrations.iter() {
+                                                    let reg_clone = reg_item.clone();
+                                                    let ev = reg_clone.event.clone();
+                                                    let is_expanded = expanded_event() == Some(ev.clone());
+                                                    let ev_for_toggle = ev.clone();
+                                                    let is_own = me.read().as_ref().and_then(|r| r.as_ref().ok()).map(|u| u.user_type == "team" && u.id == d.team.id).unwrap_or(false);
+                                                    row_views.push(rsx! {
+                                                        RegistrationRow {
+                                                            key: "{ev}",
+                                                            registration: reg_clone,
+                                                            is_expanded,
+                                                            on_toggle: move |_| {
+                                                                expanded_event.set(if is_expanded { None } else { Some(ev_for_toggle.clone()) });
+                                                            },
+                                                            is_own_team: is_own,
+                                                            backend: backend.clone(),
+                                                            players_cache,
+                                                            players_resource: players_resource.clone(),
+                                                            expanded_event,
                                                         }
-                                                    }
-                                                    td {
-                                                        span {
-                                                            class: format!(
-                                                                "badge {}",
-                                                                if r.status == "CONFIRMED" {
-                                                                    "bg-success"
-                                                                } else {
-                                                                    "bg-warning"
-                                                                }
-                                                            ),
-                                                            "{r.status}"
-                                                        }
-                                                    }
-                                                    td {
-                                                        if r.paid {
-                                                            span { class: "badge bg-success", "Paid" }
-                                                            if r.amount_paid > 0.0 {
-                                                                {
-                                                                    let paid_amount = format!("${:.2}", r.amount_paid);
-                                                                    rsx! { small { class: "text-muted ms-1", "{paid_amount}" } }
-                                                                }
-                                                            }
-                                                        } else {
-                                                            span { class: "badge bg-warning", "Unpaid" }
-                                                        }
-                                                    }
-                                                    td {
-                                                        if let Some(Ok(u)) = me.read().as_ref() {
-                                                            if u.user_type == "team" && u.id == d.team.id {
-                                                                Link {
-                                                                to: Route::Invitations { url: r.event.clone() },
-                                                                    class: "btn btn-sm btn-outline-primary",
-                                                                    "Manage Roster"
-                                                                }
-                                                            }
-                                                        }
-                                                    }
+                                                    });
                                                 }
-                                            }
+                                                rsx! { for row in row_views { {row} } }
+                                            } }
                                         }
                                     }
                                 }
@@ -213,62 +347,6 @@ pub fn TeamProfile(id: Signal<String>) -> Element {
                         }
                     }
 
-                    if let Some(Ok(u)) = me.read().as_ref() {
-                        if u.user_type == "team" && u.id == d.team.id && !d.tournament_players.is_empty() {
-                            div { class: "card mt-3",
-                                div { class: "card-header",
-                                    h5 { class: "mb-0", "Team Members by Tournament" }
-                                }
-                                div { class: "card-body",
-                                    for (tournament_url, players) in d.tournament_players.iter() {
-                                        div { class: "mb-3",
-                                            h6 { a { href: "/{tournament_url}", "{tournament_url}" } }
-                                            if players.is_empty() {
-                                                p { class: "text-muted", "No players registered yet." }
-                                            } else {
-                                                div { class: "row",
-                                                    for p in players.iter() {
-                                                        div { class: "col-md-6 mb-2",
-                                                            div { class: "card card-body py-2",
-                                                                div { class: "d-flex align-items-center",
-                                                                    div { class: "flex-shrink-0 me-2",
-                                                                        if let Some(player) = &p.player {
-                                                                            if let Some(photo) = &player.profile_photo {
-                                                                                img { src: "{backend}/static/{photo}", alt: "{player.name}", class: "rounded-circle", style: "width: 40px; height: 40px; object-fit: cover;" }
-                                                                            } else {
-                                                                                div { class: "d-flex align-items-center justify-content-center bg-secondary rounded-circle", style: "width: 40px; height: 40px;",
-                                                                                    i { class: "fas fa-user text-white" }
-                                                                                }
-                                                                            }
-                                                                        } else {
-                                                                            div { class: "d-flex align-items-center justify-content-center bg-secondary rounded-circle", style: "width: 40px; height: 40px;",
-                                                                                i { class: "fas fa-user text-white" }
-                                                                            }
-                                                                        }
-                                                                    }
-                                                                    div { class: "flex-grow-1",
-                                                                        div { class: "d-flex justify-content-between align-items-center",
-                                                                            div {
-                                                                                strong { "{p.registration.jersey_name.as_deref().unwrap_or(\"-\")}" }
-                                                                                if let Some(num) = &p.registration.jersey_number {
-                                                                                    span { class: "text-muted ms-1", "#{num}" }
-                                                                                }
-                                                                            }
-                                                                            small { class: "text-muted", "{p.registration.player}" }
-                                                                        }
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
                 }
             }
         } else if let Some(Err(e)) = val.read().as_ref() {
