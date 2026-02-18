@@ -5,12 +5,15 @@ use dioxus::prelude::*;
 #[component]
 pub fn Invitations(url: String) -> Element {
     let url_for_data = url.clone();
-    let data = use_resource(move || {
-        let u = url_for_data.clone();
+    let mut refresh = use_signal(|| 0u32);
+    let data = use_resource(use_reactive(&(url_for_data, refresh), |(u, r)| {
+        let u = u.clone();
+        let _ = r();
         async move { api::tournament_invitations(&u).await.map_err(|e| e.to_string()) }
-    });
+    }));
     let val = data.value();
     let backend = api::base_url();
+    let mut action_error = use_signal(|| Option::<String>::None);
     rsx! {
         if let Some(Ok(d)) = val.read().as_ref() {
             div { class: "row",
@@ -32,6 +35,12 @@ pub fn Invitations(url: String) -> Element {
                             h5 { class: "mb-0", "Pending Player Requests" }
                         }
                         div { class: "card-body",
+                            if let Some(err) = action_error() {
+                                div { class: "alert alert-danger alert-dismissible fade show", role: "alert",
+                                    "{err}"
+                                    button { r#type: "button", class: "btn-close", "aria-label": "Close", onclick: move |_| action_error.set(None) }
+                                }
+                            }
                             if d.invitations.is_empty() {
                                 p { class: "text-muted", "No pending requests." }
                             } else {
@@ -55,14 +64,11 @@ pub fn Invitations(url: String) -> Element {
                                         tbody {
                                             for invitation in d.invitations.iter() {
                                                 {
-                                                    let accept_url = format!(
-                                                        "{}/{}/invitation/{}/accept",
-                                                        backend, url, invitation.registration.id
-                                                    );
-                                                    let decline_url = format!(
-                                                        "{}/{}/invitation/{}/decline",
-                                                        backend, url, invitation.registration.id
-                                                    );
+                                                    let inv_id = invitation.registration.id;
+                                                    let url_clone = url.clone();
+                                                    let url_accept = url.clone();
+                                                    let url_decline = url.clone();
+                                                    let at_cap = d.tournament.max_team_size_roster.map(|max| d.current_team_size >= max).unwrap_or(false);
                                                     rsx! {
                                                         tr { key: "{invitation.registration.id}",
                                                             td {
@@ -85,16 +91,40 @@ pub fn Invitations(url: String) -> Element {
                                                             td { "{invitation.registration.jersey_number.as_deref().unwrap_or(\"N/A\")}" }
                                                             td {
                                                                 div { class: "btn-group", role: "group",
-                                                                    form { method: "POST", action: "{accept_url}", style: "display: inline;",
-                                                                        button {
-                                                                            r#type: "submit",
-                                                                            class: "btn btn-success btn-sm",
-                                                                            disabled: d.tournament.max_team_size_roster.map(|max| d.current_team_size >= max).unwrap_or(false),
-                                                                            "Accept"
-                                                                        }
+                                                                    button {
+                                                                        r#type: "button",
+                                                                        class: "btn btn-success btn-sm",
+                                                                        disabled: at_cap,
+                                                                        onclick: move |_| {
+                                                                            action_error.set(None);
+                                                                            let url = url_accept.clone();
+                                                                            let mut ref_sig = refresh;
+                                                                            let mut err_sig = action_error;
+                                                                            spawn(async move {
+                                                                                match api::accept_invitation(&url, inv_id).await {
+                                                                                    Ok(()) => ref_sig.set(ref_sig() + 1),
+                                                                                    Err(e) => err_sig.set(Some(e)),
+                                                                                }
+                                                                            });
+                                                                        },
+                                                                        "Accept"
                                                                     }
-                                                                    form { method: "POST", action: "{decline_url}", style: "display: inline;",
-                                                                        button { r#type: "submit", class: "btn btn-danger btn-sm", "Decline" }
+                                                                    button {
+                                                                        r#type: "button",
+                                                                        class: "btn btn-danger btn-sm",
+                                                                        onclick: move |_| {
+                                                                            action_error.set(None);
+                                                                            let url = url_decline.clone();
+                                                                            let mut ref_sig = refresh;
+                                                                            let mut err_sig = action_error;
+                                                                            spawn(async move {
+                                                                                match api::decline_invitation(&url, inv_id).await {
+                                                                                    Ok(()) => ref_sig.set(ref_sig() + 1),
+                                                                                    Err(e) => err_sig.set(Some(e)),
+                                                                                }
+                                                                            });
+                                                                        },
+                                                                        "Decline"
                                                                     }
                                                                 }
                                                             }

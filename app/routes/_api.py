@@ -2408,9 +2408,12 @@ def teams_list():
     )
 
 
-@bp.route("/teams/<team_id>/events/<event>/players", methods=["GET"])
-def team_registration_players(team_id, event):
-    """Players registered for a team in an event (public)."""
+@bp.route("/teams/<team_id>/players", methods=["GET"])
+def team_registration_players(team_id):
+    """Players registered for a team in an event (public). Event via query param ?event=."""
+    event = request.args.get("event")
+    if not event:
+        return jsonify({"error": "event required"}), 400
     team = Team.query.get(team_id)
     if not team:
         return jsonify({"error": "Not found"}), 404
