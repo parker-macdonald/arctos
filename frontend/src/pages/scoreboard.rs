@@ -19,8 +19,7 @@ fn get_query_param(name: &str) -> Option<String> {
 }
 
 #[component]
-pub fn Scoreboard(url: String) -> Element {
-    let field = get_query_param("field");
+pub fn Scoreboard(url: String, field: String) -> Element {
     let poll_tick = use_signal(|| 0u32);
     let poll_started = use_signal(|| false);
     #[cfg(target_arch = "wasm32")]
@@ -44,11 +43,7 @@ pub fn Scoreboard(url: String) -> Element {
         let f = field_for_poll.clone();
         let _tick = poll_tick();
         async move {
-            if let Some(f) = &f {
-                api::scoreboard_state(&u, f).await.map_err(|e| e.to_string())
-            } else {
-                Err("field query param required".to_string())
-            }
+            api::scoreboard_state(&u, &f).await.map_err(|e| e.to_string())
         }
     });
     let val = data.value();
@@ -76,9 +71,7 @@ pub fn Scoreboard(url: String) -> Element {
         .vs-text {{ margin: 0 15px; font-size: 24px; font-weight: 600; color: rgba(255, 255, 255, 0.7); }}
         "# }
 
-        if field.is_none() {
-            div { class: "error-message", "Add ?field=<field_name> to the URL." }
-        } else if let Some(Ok(s)) = val.read().as_ref() {
+        if let Some(Ok(s)) = val.read().as_ref() {
             if s.has_active_match {
                 div { class: "scoreboard-container",
                     table { class: "scoreboard-table",
