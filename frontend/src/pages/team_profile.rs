@@ -4,6 +4,9 @@ use crate::Route;
 use dioxus::prelude::*;
 use std::collections::HashMap;
 
+/// Cache value: None = loading, Some(Ok(players)) = loaded, Some(Err(_)) = error.
+type PlayersCache = HashMap<String, Option<Result<Vec<TournamentPlayerItem>, String>>>;
+
 #[component]
 fn RegistrationRow(
     registration: TeamRegItem,
@@ -11,9 +14,7 @@ fn RegistrationRow(
     on_toggle: EventHandler<()>,
     is_own_team: bool,
     backend: String,
-    players_cache: Signal<HashMap<String, Vec<TournamentPlayerItem>>>,
-    players_resource: Resource<Result<Vec<TournamentPlayerItem>, String>>,
-    expanded_event: Signal<Option<String>>,
+    players_cache: Signal<PlayersCache>,
 ) -> Element {
     let event_key = registration.event.clone();
     rsx! {
@@ -73,17 +74,12 @@ fn RegistrationRow(
                     {
                         let ev = registration.event.clone();
                         let cached = players_cache().get(&ev).cloned();
-                        let resource_val = players_resource.value().read().clone();
-                        let is_this_expanded = expanded_event() == Some(ev.clone());
-                        let loading = is_this_expanded && cached.is_none() && resource_val.is_none();
-                        let err_msg = is_this_expanded && cached.is_none() && resource_val.as_ref().map(|v| v.is_err()) == Some(true);
-                        let players = cached.or_else(|| {
-                            if is_this_expanded {
-                                resource_val.and_then(|v| v.ok())
-                            } else {
-                                None
-                            }
-                        });
+                        let (loading, err_msg, players) = match &cached {
+                            None => (true, false, None),
+                            Some(None) => (true, false, None),
+                            Some(Some(Ok(list))) => (false, false, Some(list.clone())),
+                            Some(Some(Err(_))) => (false, true, None),
+                        };
                         rsx! {
                             div { class: "ps-4", onclick: move |e: Event<MouseData>| e.stop_propagation(),
                                 if let Some(players_list) = players {
@@ -183,25 +179,27 @@ pub fn TeamProfile(id: Signal<String>) -> Element {
     }));
 
     let mut expanded_event = use_signal(|| Option::<String>::None);
-    let mut players_cache = use_signal(|| HashMap::<String, Vec<TournamentPlayerItem>>::new());
-    let team_id_for_fetch = id();
-    let players_resource = use_resource(use_reactive(&expanded_event, move |exp| {
-        let ev = exp().clone();
-        let tid = team_id_for_fetch.clone();
-        async move {
-            match ev.as_deref() {
-                Some(e) => api::team_registration_players(&tid, e).await,
-                None => Err("no event".to_string()),
-            }
-        }
-    }));
+    let mut players_cache = use_signal(|| PlayersCache::new());
+    let team_id_for_fetch = id().clone();
     use_effect(move || {
-        let res = players_resource.value().read().clone();
         let expanded = expanded_event();
-        if let (Some(Ok(players)), Some(ev)) = (res.as_ref(), expanded.as_ref()) {
-            let mut c = players_cache().clone();
-            c.insert(ev.clone(), players.clone());
-            players_cache.set(c);
+        if let Some(ev) = &expanded {
+            if !players_cache().contains_key(ev) {
+                let mut c = players_cache().clone();
+                c.insert(ev.clone(), None);
+                players_cache.set(c);
+                let tid = team_id_for_fetch.clone();
+                let ev_fetch = ev.clone();
+                let mut cache_sig = players_cache;
+                spawn(async move {
+                    let res = api::team_registration_players(&tid, &ev_fetch).await;
+                    cache_sig.set({
+                        let mut c = cache_sig();
+                        c.insert(ev_fetch, Some(res));
+                        c
+                    });
+                });
+            }
         }
     });
 
@@ -299,8 +297,6 @@ pub fn TeamProfile(id: Signal<String>) -> Element {
                                                             is_own_team: is_own,
                                                             backend: backend.clone(),
                                                             players_cache,
-                                                            players_resource: players_resource.clone(),
-                                                            expanded_event,
                                                         }
                                                     });
                                                 }

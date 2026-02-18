@@ -401,6 +401,72 @@ pub async fn tournament_invitations(
     response_json(r).await
 }
 
+/// Accept a pending player invitation (team only). Uses POST to _api route.
+pub async fn accept_invitation(
+    tournament_url: &str,
+    invitation_id: u32,
+) -> Result<(), String> {
+    let c = client();
+    let url = format!(
+        "{}/_api/{}/invitation/{}/accept",
+        base(),
+        tournament_url,
+        invitation_id
+    );
+    let r = with_credentials(c.post(&url))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if r.status().as_u16() == 403 {
+        let err: serde_json::Value = response_json(r).await.unwrap_or_default();
+        return Err(err
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Forbidden")
+            .to_string());
+    }
+    if r.status().as_u16() == 404 {
+        return Err("Not found".to_string());
+    }
+    if !r.status().is_success() {
+        return Err(format!("Request failed: {}", r.status()));
+    }
+    Ok(())
+}
+
+/// Decline a pending player invitation (team only). Uses POST to _api route.
+pub async fn decline_invitation(
+    tournament_url: &str,
+    invitation_id: u32,
+) -> Result<(), String> {
+    let c = client();
+    let url = format!(
+        "{}/_api/{}/invitation/{}/decline",
+        base(),
+        tournament_url,
+        invitation_id
+    );
+    let r = with_credentials(c.post(&url))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if r.status().as_u16() == 403 {
+        let err: serde_json::Value = response_json(r).await.unwrap_or_default();
+        return Err(err
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Forbidden")
+            .to_string());
+    }
+    if r.status().as_u16() == 404 {
+        return Err("Not found".to_string());
+    }
+    if !r.status().is_success() {
+        return Err(format!("Request failed: {}", r.status()));
+    }
+    Ok(())
+}
+
 pub async fn tournament_bracket(tournament_url: &str) -> Result<BracketResponse, String> {
     let c = client();
     let r = with_credentials(c.get(format!(
@@ -527,15 +593,16 @@ pub async fn team_registration_players(
     event: &str,
 ) -> Result<Vec<crate::types::TournamentPlayerItem>, String> {
     let c = client();
-    let r = with_credentials(c.get(format!(
-        "{}/_api/teams/{}/events/{}/players",
+    let url = format!(
+        "{}/_api/teams/{}/players?event={}",
         base(),
-        team_id,
-        event
-    )))
-    .send()
-    .await
-    .map_err(|e| e.to_string())?;
+        urlencoding::encode(team_id),
+        urlencoding::encode(event)
+    );
+    let r = with_credentials(c.get(&url))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
     if r.status().as_u16() == 404 {
         return Err("Not found".to_string());
     }
