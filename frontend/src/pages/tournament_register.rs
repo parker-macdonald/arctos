@@ -37,7 +37,7 @@ pub fn TournamentRegister(url: String) -> Element {
     });
     let me = use_resource(move || async move { api::me().await });
     let val = data.value();
-    let backend = api::base_url();
+    let _backend = api::base_url();
     let mut show_help_modal = use_signal(|| false);
     let mut register_error = use_signal(|| None::<String>);
     rsx! {

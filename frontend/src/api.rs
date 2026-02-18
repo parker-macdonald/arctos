@@ -45,6 +45,7 @@ fn truncate_error_body(text: &str, max_len: usize) -> String {
 #[derive(serde::Deserialize)]
 pub struct StatusResponse {
     pub success: bool,
+    #[allow(dead_code)]
     pub message: Option<String>,
     pub error: Option<String>,
 }
@@ -404,25 +405,6 @@ pub async fn tournament_bracket(tournament_url: &str) -> Result<BracketResponse,
     .send()
     .await
     .map_err(|e| e.to_string())?;
-    response_json(r).await
-}
-
-pub async fn schedule(tournament_url: &str) -> Result<ScheduleResponse, String> {
-    let c = client();
-    let r = with_credentials(c.get(format!(
-        "{}/_api/tournaments/{}/schedule",
-        base(),
-        tournament_url
-    )))
-    .send()
-    .await
-    .map_err(|e| e.to_string())?;
-    if r.status().as_u16() == 404 {
-        return Err("Not found".to_string());
-    }
-    if r.status().as_u16() == 403 {
-        return Err("Schedule not published".to_string());
-    }
     response_json(r).await
 }
 
@@ -918,48 +900,12 @@ pub async fn update_point(
     Ok(resp)
 }
 
-pub async fn complete_match(tournament_url: &str, match_id: &str) -> Result<Value, String> {
-    let c = client();
-    let body = serde_json::json!({ "match_id": match_id });
-    let r = with_credentials(
-        c.post(format!("{}/_api/{}/match-actions/complete-match", base(), tournament_url)).json(&body),
-    )
-    .send()
-    .await
-    .map_err(|e| e.to_string())?;
-    let data: Value = response_json(r).await?;
-    let success = data.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
-    if !success {
-        return Err(
-            data.get("error")
-                .and_then(|v| v.as_str())
-                .unwrap_or("Request failed")
-                .to_string(),
-        );
-    }
-    Ok(data)
-}
-
-pub async fn get_field(tournament_url: &str, field_id: u32) -> Result<FieldResponse, String> {
-    let c = client();
-    let r = with_credentials(c.get(format!(
-        "{}/_api/tournaments/{}/fields/{}",
-        base(),
-        tournament_url,
-        field_id
-    )))
-    .send()
-    .await
-    .map_err(|e| e.to_string())?;
-    response_json(r).await
-}
-
 pub async fn delete_point(tournament_url: &str, point_id: &str) -> Result<Value, String> {
     let c = client();
     let body = serde_json::json!({ "point_id": point_id });
     let r = with_credentials(
         c.post(format!(
-            "{}/{}/match-actions/delete-point",
+            "{}/_api/{}/match-actions/delete-point",
             base(),
             tournament_url
         ))
@@ -1228,47 +1174,6 @@ pub async fn update_field(
             base(),
             tournament_url,
             field_id
-        ))
-        .json(req),
-    )
-    .send()
-    .await
-    .map_err(|e| e.to_string())?;
-    
-    let data: Value = response_json(r).await?;
-    if data.get("success").and_then(|v| v.as_bool()) == Some(true) {
-        Ok(())
-    } else {
-        Err(data.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown error").to_string())
-    }
-}
-
-pub async fn get_tag(tournament_url: &str, tag_id: u32) -> Result<TagResponse, String> {
-    let c = client();
-    let r = with_credentials(c.get(format!(
-        "{}/_api/tournaments/{}/tags/{}",
-        base(),
-        tournament_url,
-        tag_id
-    )))
-    .send()
-    .await
-    .map_err(|e| e.to_string())?;
-    response_json(r).await
-}
-
-pub async fn update_tag(
-    tournament_url: &str,
-    tag_id: u32,
-    req: &UpdateTagRequest,
-) -> Result<(), String> {
-    let c = client();
-    let r = with_credentials(
-        c.put(format!(
-            "{}/_api/tournaments/{}/tags/{}",
-            base(),
-            tournament_url,
-            tag_id
         ))
         .json(req),
     )

@@ -241,43 +241,12 @@ pub struct ToEntry {
     pub user_type: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ScheduleMatch {
-    pub uuid: String,
-    pub name: String,
-    pub field: Option<String>,
-    pub team1: Option<String>,
-    pub team2: Option<String>,
-    pub team1_initial: Option<String>,
-    pub team2_initial: Option<String>,
-    pub status: String,
-    pub nominal_start_time: Option<String>,
-    pub confirmed_start_time: Option<String>,
-    pub completed_time: Option<String>,
-    pub schedule_type: Option<String>,
-    pub set_type: Option<String>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ScheduleField {
-    pub id: u32,
-    pub name: String,
-}
-
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct TeamOption {
     pub id: String,
     pub pseudonym: Option<String>,
     #[serde(default)]
     pub profile_photo: Option<String>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ScheduleResponse {
-    pub tournament: Tournament,
-    pub matches: Vec<ScheduleMatch>,
-    pub fields: Vec<ScheduleField>,
-    pub team_options: Vec<TeamOption>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -289,17 +258,6 @@ pub struct PointData {
     pub stamp: Option<String>,
     pub end_stamp: Option<String>,
     pub stones_at_start: Option<u32>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct MatchResultItem {
-    pub uuid: String,
-    pub name: String,
-    pub field: Option<String>,
-    pub team1: Option<String>,
-    pub team2: Option<String>,
-    pub match_winner: Option<String>,
-    pub points: Vec<PointData>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -790,19 +748,6 @@ pub struct PrevNextMatch {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct FieldResponse {
-    pub id: u32,
-    pub name: String,
-    pub camera_urls: Vec<String>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct TagResponse {
-    pub id: u32,
-    pub name: String,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TagListItem {
     pub id: u32,
     pub name: String,
@@ -856,11 +801,6 @@ pub struct UpdateFieldRequest {
     /// Per-camera stream start times (ISO UTC). None = no change; Some(None) = clear; Some(Some(s)) = set.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stream_start_times: Option<Vec<Option<String>>>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct UpdateTagRequest {
-    pub name: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

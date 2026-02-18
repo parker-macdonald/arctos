@@ -19,6 +19,7 @@ pub fn Layout() -> Element {
             api::me().await
         }
     });
+    let mut nav_expanded = use_signal(|| false);
     let mut user_dropdown_open = use_signal(|| false);
     let mut register_dropdown_open = use_signal(|| false);
     let navigator = use_navigator();
@@ -61,11 +62,14 @@ pub fn Layout() -> Element {
                 button {
                     class: "navbar-toggler",
                     r#type: "button",
-                    "data-bs-toggle": "collapse",
-                    "data-bs-target": "#navbarNav",
+                    "aria-expanded": "{nav_expanded()}",
+                    "aria-label": "Toggle navigation",
+                    onclick: move |_| nav_expanded.toggle(),
                     span { class: "navbar-toggler-icon" }
                 }
-                div { class: "collapse navbar-collapse", id: "navbarNav",
+                div {
+                    class: if nav_expanded() { "collapse navbar-collapse show" } else { "collapse navbar-collapse" },
+                    id: "navbarNav",
                     ul { class: "navbar-nav me-auto",
                         li { class: "nav-item",
                             Link { to: Route::TeamsList {}, class: "nav-link", "Teams" }
