@@ -281,11 +281,12 @@ pub fn Results(url: String) -> Element {
                                                                                                 }
                                                                                                 if game_row.ribbon {
                                                                                                     span {
-                                                                                                        class: "schedule-timeline-ribbon-icon",
+                                                                                                        class: "d-inline-flex align-items-center ms-1",
                                                                                                         title: "Ribbon game",
                                                                                                         img {
                                                                                                             src: "{backend}/static/ribbon.svg",
-                                                                                                            alt: "Ribbon game"
+                                                                                                            alt: "Ribbon game",
+                                                                                                            style: "width: 1em; height: 1em; object-fit: contain; vertical-align: middle; filter: invert(27%) sepia(98%) saturate(2476%) hue-rotate(226deg) brightness(99%) contrast(101%);"
                                                                                                         }
                                                                                                     }
                                                                                                 }
