@@ -194,7 +194,7 @@ pub fn PlayerProfile(id: Signal<String>) -> Element {
                                         tbody {
                                             for r in d.registrations.iter() {
                                                 tr { key: "{r.event}-{r.team.as_deref().unwrap_or(\"\")}",
-                                                    td { a { href: "/app/{r.event}", "{r.event}" } }
+                                                    td { a { href: "/{r.event}", "{r.event}" } }
                                                     td {
                                                         if let Some(team) = &r.team {
                                                             Link { to: Route::TeamProfilePage { id: team.clone() }, "{team}" }
@@ -541,7 +541,7 @@ pub fn PlayerProfile(id: Signal<String>) -> Element {
                                                             td { "{note.point_index}" }
                                                             td {
                                                                 if let Some(match_info) = &note.match_info {
-                                                                    a { href: "/app/{match_info.event}/match/{match_info.uuid}", "{match_info.name}" }
+                                                                    a { href: "/{match_info.event}/match/{match_info.uuid}", "{match_info.name}" }
                                                                 } else {
                                                                     "-"
                                                                 }

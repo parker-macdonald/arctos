@@ -202,7 +202,7 @@ pub fn TeamProfile(id: Signal<String>) -> Element {
                                                     td { "{note.text}" }
                                                     td { "{note.point_index}" }
                                                     td {
-                                                        a { href: "/app/{note.match_info.event}/match/{note.match_info.uuid}", "{note.match_info.name}" }
+                                                        a { href: "/{note.match_info.event}/match/{note.match_info.uuid}", "{note.match_info.name}" }
                                                     }
                                                 }
                                             }
@@ -222,7 +222,7 @@ pub fn TeamProfile(id: Signal<String>) -> Element {
                                 div { class: "card-body",
                                     for (tournament_url, players) in d.tournament_players.iter() {
                                         div { class: "mb-3",
-                                            h6 { a { href: "/app/{tournament_url}", "{tournament_url}" } }
+                                            h6 { a { href: "/{tournament_url}", "{tournament_url}" } }
                                             if players.is_empty() {
                                                 p { class: "text-muted", "No players registered yet." }
                                             } else {

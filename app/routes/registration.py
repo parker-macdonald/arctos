@@ -21,7 +21,7 @@ from app.utils.user_helpers import is_player, is_team
 from app.error_values import Ok, Err
 from app.utils.result_helpers import public_error_message
 
-bp = Blueprint("registration", __name__)
+bp = Blueprint("registration", __name__, url_prefix="/_api")
 
 
 @bp.route("/<tournament_url>/register-team", methods=["POST"])

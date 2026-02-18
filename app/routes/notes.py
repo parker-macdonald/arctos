@@ -10,7 +10,7 @@ from app.utils.helpers import can_head_ref_match
 from app.serializers.match_note_serializer import MatchNoteSerializer
 from app.utils.responses import json_error, json_success
 
-bp = Blueprint("notes", __name__)
+bp = Blueprint("notes", __name__, url_prefix="/_api")
 
 
 @bp.route("/<tournament_url>/get-notes")

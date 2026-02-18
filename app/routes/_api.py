@@ -3,7 +3,7 @@ Internal JSON API for the Dioxus SPA. All routes live under /_api/.
 Do not use /api/ — that is reserved for a future public API.
 """
 
-from flask import Blueprint, request, jsonify, session
+from flask import Blueprint, request, jsonify, session, redirect
 from datetime import datetime, timezone
 from pathlib import Path
 from flask_login import current_user, login_user, logout_user, login_required
@@ -43,6 +43,12 @@ from models import (
 import json
 
 bp = Blueprint("_api", __name__, url_prefix="/_api")
+
+
+@bp.route("/")
+def login_redirect():
+    """Redirect to SPA root (used as login_view when unauthenticated)."""
+    return redirect("/")
 
 
 def _dt_iso(dt):
