@@ -541,76 +541,6 @@ fn skip_condition_innermost_around_cursor(s: &str, cursor_char: usize) -> Option
     best.map(|(_, b)| b)
 }
 
-/// Segment of a skip condition expression for tokenized display (text vs team/match chips).
-#[derive(Clone, Debug)]
-enum SkipConditionSegment {
-    Text(String),
-    TeamLiteral { display: String, value: String },
-    MatchLiteral { display: String },
-}
-
-fn skip_condition_parse_segments(
-    s: &str,
-    team_options: &[crate::types::TeamOption],
-    _matches: &[crate::types::MatchSetupData],
-) -> Vec<SkipConditionSegment> {
-    let mut segments: Vec<SkipConditionSegment> = Vec::new();
-    let mut text_start = 0usize;
-    let mut pos = 0usize;
-    while pos < s.len() {
-        let rest = match s.get(pos..) {
-            Some(r) => r,
-            None => break,
-        };
-        if rest.starts_with('[') {
-            if let Some(close) = skip_condition_find_matching_close(s, pos, '[', ']') {
-                if text_start < pos {
-                    segments.push(SkipConditionSegment::Text(s[text_start..pos].to_string()));
-                }
-                let content = s[pos + 1..close].trim().to_string();
-                let display = if content.ends_with("::winner") || content.ends_with("::loser") {
-                    content.clone()
-                } else {
-                    team_options
-                        .iter()
-                        .find(|t| t.id == content || t.pseudonym.as_deref() == Some(content.as_str()))
-                        .and_then(|t| t.pseudonym.clone())
-                        .unwrap_or_else(|| content.clone())
-                };
-                segments.push(SkipConditionSegment::TeamLiteral {
-                    display,
-                    value: content,
-                });
-                pos = close + 1;
-                text_start = pos;
-            } else {
-                pos += 1;
-            }
-        } else if rest.starts_with('{') {
-            if let Some(close) = skip_condition_find_matching_close(s, pos, '{', '}') {
-                if text_start < pos {
-                    segments.push(SkipConditionSegment::Text(s[text_start..pos].to_string()));
-                }
-                let content = s[pos + 1..close].trim().to_string();
-                segments.push(SkipConditionSegment::MatchLiteral {
-                    display: content.clone(),
-                });
-                pos = close + 1;
-                text_start = pos;
-            } else {
-                pos += 1;
-            }
-        } else {
-            let c = rest.chars().next().unwrap_or('\0');
-            pos += c.len_utf8();
-        }
-    }
-    if text_start < s.len() {
-        segments.push(SkipConditionSegment::Text(s[text_start..].to_string()));
-    }
-    segments
-}
-
 /// Skip condition help modal (same content as Flask #dslHelpModal).
 #[component]
 fn SkipConditionHelpModal(on_close: EventHandler<()>) -> Element {
@@ -1080,10 +1010,18 @@ fn CreateMatchModal(
             .filter(|(s, _, _)| s.to_lowercase().contains(bracket_query.as_str()))
             .take(15)
             .collect();
+        let tag_opts: Vec<_> = data
+            .tags
+            .iter()
+            .filter(|t| t.name.to_lowercase().contains(bracket_query.as_str()))
+            .map(|t| (format!("tag::{}", t.name), t.name.clone(), None))
+            .take(15)
+            .collect();
         team_opts
             .into_iter()
             .chain(match_qual_opts)
-            .take(15)
+            .chain(tag_opts)
+            .take(20)
             .collect()
     } else if show_bracket_ac {
         data.matches
@@ -1137,7 +1075,15 @@ fn CreateMatchModal(
                     "py-1 px-2 rounded"
                 };
                 let avatar_node = if is_team {
-                    if let Some(photo) = &opt_photo {
+                    if opt_insert.ends_with("::winner") || opt_insert.ends_with("::loser") {
+                        rsx! {
+                            img { class: "icon-primary-svg me-1", src: "{base_url_create}/static/reference.svg", alt: "Reference", style: "width: 1.25em; height: 1.25em;" }
+                        }
+                    } else if opt_insert.starts_with("tag::") {
+                        rsx! {
+                            img { class: "icon-primary-svg me-1", src: "{base_url_create}/static/tag.svg", alt: "Tag", style: "width: 1.25em; height: 1.25em;" }
+                        }
+                    } else if let Some(photo) = &opt_photo {
                         rsx! {
                             img {
                                 src: "{base_url_create}/static/{photo}",
@@ -1152,7 +1098,7 @@ fn CreateMatchModal(
                         }
                     }
                 } else {
-                    rsx! { span { class: "me-1", "🏀" } }
+                    rsx! { }
                 };
                 rsx! {
                     li {
@@ -1185,67 +1131,6 @@ fn CreateMatchModal(
     } else {
         vec![]
     };
-
-    let skip_condition_segments = skip_condition_parse_segments(
-        &skip_condition(),
-        &data.team_options,
-        &data.matches,
-    );
-    let skip_condition_has_tokens = skip_condition_segments
-        .iter()
-        .any(|s| !matches!(s, SkipConditionSegment::Text(_)));
-    let skip_condition_segment_items: Vec<_> = skip_condition_segments
-        .iter()
-        .map(|seg| {
-            match seg {
-                SkipConditionSegment::Text(t) => rsx! { span { "{t}" } },
-                SkipConditionSegment::TeamLiteral { display, value } => {
-                    let d = display.clone();
-                    let photo = data
-                        .team_options
-                        .iter()
-                        .find(|t| t.id == *value)
-                        .and_then(|t| t.profile_photo.clone());
-                    let chip_class = if value.ends_with("::winner") {
-                        "team-token-chip team-token-chip-winner small me-1"
-                    } else if value.ends_with("::loser") {
-                        "team-token-chip team-token-chip-loser small me-1"
-                    } else {
-                        "team-token-chip team-token-chip-team small me-1"
-                    };
-                    let avatar_node = if let Some(ph) = &photo {
-                        rsx! {
-                            img {
-                                src: "{base_url_create}/static/{ph}",
-                                alt: "{d}",
-                                class: "team-token-avatar rounded-circle",
-                                style: "width: 1.25em; height: 1.25em; object-fit: cover;"
-                            }
-                        }
-                    } else {
-                        rsx! {
-                            span { class: "team-token-avatar", "{d.chars().next().unwrap_or('?')}" }
-                        }
-                    };
-                    rsx! {
-                        span { class: "{chip_class}",
-                            {avatar_node}
-                            span { class: "team-token-label", "{d}" }
-                        }
-                    }
-                }
-                SkipConditionSegment::MatchLiteral { display } => {
-                    let d = display.clone();
-                    rsx! {
-                        span { class: "team-token-chip small me-1", style: "background: #e9ecef; border-radius: 4px; padding: 2px 6px;",
-                            span { class: "me-1", "🏀" }
-                            span { "{d}" }
-                        }
-                    }
-                }
-            }
-        })
-        .collect();
 
     rsx! {
         div {
@@ -1624,13 +1509,6 @@ fn CreateMatchModal(
                                                     for bracket_item in bracket_option_items.iter() {
                                                         {bracket_item.clone()}
                                                     }
-                                                }
-                                            }
-                                        }
-                                        if skip_condition_has_tokens {
-                                            div { class: "form-text mt-1 d-flex flex-wrap align-items-center gap-0",
-                                                for item in skip_condition_segment_items.iter() {
-                                                    {item.clone()}
                                                 }
                                             }
                                         }
@@ -3323,10 +3201,18 @@ fn EditMatchModal(
             .filter(|(s, _, _)| s.to_lowercase().contains(bracket_query_edit.as_str()))
             .take(15)
             .collect();
+        let tag_opts_edit: Vec<_> = data
+            .tags
+            .iter()
+            .filter(|t| t.name.to_lowercase().contains(bracket_query_edit.as_str()))
+            .map(|t| (format!("tag::{}", t.name), t.name.clone(), None))
+            .take(15)
+            .collect();
         team_opts_edit
             .into_iter()
             .chain(match_qual_opts_edit)
-            .take(15)
+            .chain(tag_opts_edit)
+            .take(20)
             .collect()
     } else if show_bracket_ac_edit {
         data.matches
@@ -3380,7 +3266,15 @@ fn EditMatchModal(
                     "py-1 px-2 rounded"
                 };
                 let avatar_node_edit = if is_team {
-                    if let Some(photo) = &opt_photo {
+                    if opt_insert.ends_with("::winner") || opt_insert.ends_with("::loser") {
+                        rsx! {
+                            img { class: "icon-primary-svg me-1", src: "{base_url_edit}/static/reference.svg", alt: "Reference", style: "width: 1.25em; height: 1.25em;" }
+                        }
+                    } else if opt_insert.starts_with("tag::") {
+                        rsx! {
+                            img { class: "icon-primary-svg me-1", src: "{base_url_edit}/static/tag.svg", alt: "Tag", style: "width: 1.25em; height: 1.25em;" }
+                        }
+                    } else if let Some(photo) = &opt_photo {
                         rsx! {
                             img {
                                 src: "{base_url_edit}/static/{photo}",
@@ -3395,7 +3289,7 @@ fn EditMatchModal(
                         }
                     }
                 } else {
-                    rsx! { span { class: "me-1", "🏀" } }
+                    rsx! { }
                 };
                 rsx! {
                     li {
@@ -3428,67 +3322,6 @@ fn EditMatchModal(
     } else {
         vec![]
     };
-
-    let skip_condition_segments_edit = skip_condition_parse_segments(
-        &skip_condition(),
-        &data.team_options,
-        &data.matches,
-    );
-    let skip_condition_has_tokens_edit = skip_condition_segments_edit
-        .iter()
-        .any(|s| !matches!(s, SkipConditionSegment::Text(_)));
-    let skip_condition_segment_items_edit: Vec<_> = skip_condition_segments_edit
-        .iter()
-        .map(|seg| {
-            match seg {
-                SkipConditionSegment::Text(t) => rsx! { span { "{t}" } },
-                SkipConditionSegment::TeamLiteral { display, value } => {
-                    let d = display.clone();
-                    let photo_edit = data
-                        .team_options
-                        .iter()
-                        .find(|t| t.id == *value)
-                        .and_then(|t| t.profile_photo.clone());
-                    let chip_class = if value.ends_with("::winner") {
-                        "team-token-chip team-token-chip-winner small me-1"
-                    } else if value.ends_with("::loser") {
-                        "team-token-chip team-token-chip-loser small me-1"
-                    } else {
-                        "team-token-chip team-token-chip-team small me-1"
-                    };
-                    let avatar_node_edit = if let Some(ph) = &photo_edit {
-                        rsx! {
-                            img {
-                                src: "{base_url_edit}/static/{ph}",
-                                alt: "{d}",
-                                class: "team-token-avatar rounded-circle",
-                                style: "width: 1.25em; height: 1.25em; object-fit: cover;"
-                            }
-                        }
-                    } else {
-                        rsx! {
-                            span { class: "team-token-avatar", "{d.chars().next().unwrap_or('?')}" }
-                        }
-                    };
-                    rsx! {
-                        span { class: "{chip_class}",
-                            {avatar_node_edit}
-                            span { class: "team-token-label", "{d}" }
-                        }
-                    }
-                }
-                SkipConditionSegment::MatchLiteral { display } => {
-                    let d = display.clone();
-                    rsx! {
-                        span { class: "team-token-chip small me-1", style: "background: #e9ecef; border-radius: 4px; padding: 2px 6px;",
-                            span { class: "me-1", "🏀" }
-                            span { "{d}" }
-                        }
-                    }
-                }
-            }
-        })
-        .collect();
 
     let tournament_url_val_edit = tournament_url.clone();
     use_effect(move || {
@@ -3897,13 +3730,6 @@ fn EditMatchModal(
                                                     for item in bracket_option_items_edit.iter() {
                                                         {item.clone()}
                                                     }
-                                                }
-                                            }
-                                        }
-                                        if skip_condition_has_tokens_edit {
-                                            div { class: "form-text mt-1 d-flex flex-wrap align-items-center gap-0",
-                                                for item in skip_condition_segment_items_edit.iter() {
-                                                    {item.clone()}
                                                 }
                                             }
                                         }
