@@ -337,7 +337,7 @@ pub fn Record(url: String, field: ReadSignal<String>, camera_key: ReadSignal<Str
                                 }
                                 div {
                                     id: "record-video-container",
-                                    style: format!("display: {};", if matches!(status(), RecordStatus::Connected | RecordStatus::Recording) { "block" } else { "none" }),
+                                    style: format!("display: {};", if matches!(status(), RecordStatus::Connected) { "block" } else { "none" }),
                                     div { class: "mb-2",
                                         video {
                                             id: "record-preview",
@@ -378,7 +378,6 @@ pub fn Record(url: String, field: ReadSignal<String>, camera_key: ReadSignal<Str
 enum RecordStatus {
     Checking,
     Connected,
-    Recording,
     NoMatch,
     Error(String),
 }
@@ -388,8 +387,8 @@ fn status_line(status: Signal<RecordStatus>) -> Element {
     let s = status();
     let (class, text) = match s {
         RecordStatus::Checking => ("alert alert-info", "Checking for active match...".to_string()),
-        RecordStatus::Connected | RecordStatus::Recording => {
-            ("alert alert-success", "Camera ready. Waiting for match / Recording...".to_string())
+        RecordStatus::Connected => {
+            ("alert alert-success", "Camera ready. Waiting for match...".to_string())
         }
         RecordStatus::NoMatch => ("alert alert-secondary", "No active match. Waiting...".to_string()),
         RecordStatus::Error(ref e) => ("alert alert-danger", e.clone()),

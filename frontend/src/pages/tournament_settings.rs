@@ -39,7 +39,7 @@ pub fn TournamentSettings(url: String) -> Element {
         async move { api::tournament_detail(&u).await.map_err(|e| e.to_string()) }
     });
     let val = data.value();
-    let backend = api::base_url();
+    let _backend = api::base_url();
     rsx! {
         if let Some(Ok(d)) = val.read().as_ref() {
             div { class: "row",

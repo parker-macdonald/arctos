@@ -2522,7 +2522,7 @@ fn ScheduleTimeline(
         .collect();
 
     // Helper: get start_slot and end_slot for an event (for which row to render in; still slot-based)
-    let event_slots = |e: &TimelineEvent| -> (usize, usize) {
+    let _event_slots = |e: &TimelineEvent| -> (usize, usize) {
         let start_slot = {
             if e.start_time.date() != current_visible_date {
                 0
