@@ -414,16 +414,21 @@ pub async fn tournament_bracket(tournament_url: &str) -> Result<BracketResponse,
     response_json(r).await
 }
 
-pub async fn results(tournament_url: &str) -> Result<ResultsResponse, String> {
+pub async fn results(
+    tournament_url: &str,
+    include_ribbon: bool,
+) -> Result<ResultsResponse, String> {
     let c = client();
-    let r = with_credentials(c.get(format!(
-        "{}/_api/tournaments/{}/results",
+    let url = format!(
+        "{}/_api/tournaments/{}/results?include_ribbon={}",
         base(),
-        tournament_url
-    )))
-    .send()
-    .await
-    .map_err(|e| e.to_string())?;
+        tournament_url,
+        include_ribbon
+    );
+    let r = with_credentials(c.get(&url))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
     if r.status().as_u16() == 404 {
         return Err("Not found".to_string());
     }
@@ -510,6 +515,27 @@ pub async fn team_profile(team_id: &str) -> Result<TeamProfileResponse, String> 
         .send()
         .await
         .map_err(|e| e.to_string())?;
+    if r.status().as_u16() == 404 {
+        return Err("Not found".to_string());
+    }
+    response_json(r).await
+}
+
+/// Players registered for a team in an event (public). Load on demand for dropdown.
+pub async fn team_registration_players(
+    team_id: &str,
+    event: &str,
+) -> Result<Vec<crate::types::TournamentPlayerItem>, String> {
+    let c = client();
+    let r = with_credentials(c.get(format!(
+        "{}/_api/teams/{}/events/{}/players",
+        base(),
+        team_id,
+        event
+    )))
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
     if r.status().as_u16() == 404 {
         return Err("Not found".to_string());
     }

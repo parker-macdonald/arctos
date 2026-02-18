@@ -7,10 +7,12 @@ use std::collections::HashMap;
 #[component]
 pub fn Results(url: String) -> Element {
     let url_for_data = url.clone();
-    let data = use_resource(move || {
-        let u = url_for_data.clone();
-        async move { api::results(&u).await.map_err(|e| e.to_string()) }
-    });
+    let mut include_ribbon = use_signal(|| false);
+    let data = use_resource(use_reactive(&(url_for_data, include_ribbon), |(u, inc_sig)| {
+        let url = u.clone();
+        let inc_ribbon = inc_sig();
+        async move { api::results(&url, inc_ribbon).await.map_err(|e| e.to_string()) }
+    }));
     let mut expanded = use_signal(|| None::<String>);
     let mut team_matches_cache =
         use_signal(|| HashMap::<String, Option<Result<crate::types::TeamMatchesResponse, String>>>::new());
@@ -31,6 +33,18 @@ pub fn Results(url: String) -> Element {
                             li { class: "breadcrumb-item active", "Results" }
                         }
                     }
+                }
+            }
+            div { class: "d-flex align-items-center gap-2 mt-2 mb-2",
+                label { class: "form-check-label d-flex align-items-center gap-1 user-select-none",
+                    input {
+                        class: "form-check-input",
+                        r#type: "checkbox",
+                        id: "results-include-ribbon",
+                        checked: include_ribbon(),
+                        onchange: move |e| include_ribbon.set(e.value() == "true"),
+                    }
+                    "Include ribbon games"
                 }
             }
             if results_data.teams.is_empty() {
@@ -258,11 +272,23 @@ pub fn Results(url: String) -> Element {
                                                                                         rsx! {
                                                                                     tr { key: "{game_row.uuid}-1",
                                                                                         td { rowspan: 2, class: "text-start align-top",
-                                                                                            Link {
-                                                                                                to: Route::MatchPageById { url: url_row.clone(), match_id: game_row.uuid.clone() },
-                                                                                                class: "text-decoration-none",
-                                                                                                onclick: move |ev: Event<MouseData>| { ev.stop_propagation(); },
-                                                                                                "{game_row.name}"
+                                                                                            span { class: "d-inline-flex align-items-center gap-1",
+                                                                                                Link {
+                                                                                                    to: Route::MatchPageById { url: url_row.clone(), match_id: game_row.uuid.clone() },
+                                                                                                    class: "text-decoration-none",
+                                                                                                    onclick: move |ev: Event<MouseData>| { ev.stop_propagation(); },
+                                                                                                    "{game_row.name}"
+                                                                                                }
+                                                                                                if game_row.ribbon {
+                                                                                                    span {
+                                                                                                        class: "schedule-timeline-ribbon-icon",
+                                                                                                        title: "Ribbon game",
+                                                                                                        img {
+                                                                                                            src: "{backend}/static/ribbon.svg",
+                                                                                                            alt: "Ribbon game"
+                                                                                                        }
+                                                                                                    }
+                                                                                                }
                                                                                             }
                                                                                         }
                                                                                         td { rowspan: 2, class: "align-top {result_class}", strong { "{result_text}" } }

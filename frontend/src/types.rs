@@ -294,6 +294,8 @@ pub struct TeamMatchDetail {
     /// Which side this team played: "TEAM1" or "TEAM2"
     pub your_side: Option<String>,
     pub sets: Vec<SetScore>,
+    #[serde(default)]
+    pub ribbon: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -658,7 +660,7 @@ pub struct TeamProfileResponse {
     pub tournament_players: std::collections::HashMap<String, Vec<TournamentPlayerItem>>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TeamRegItem {
     pub event: String,
     pub pseudonym: Option<String>,
