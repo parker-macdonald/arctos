@@ -507,27 +507,27 @@ pub fn TeamTokenInput(
                                     img {
                                         src: "{base_url}/static/{photo}",
                                         alt: "{opt_display}",
-                                        class: "team-token-avatar small rounded-circle",
-                                        style: "width: 1.25em; height: 1.25em; object-fit: cover;"
+                                        class: "team-token-avatar small me-1 rounded-circle",
+                                        style: "width: 1.5em; height: 1.5em; object-fit: cover;"
                                     }
                                     span { "{opt_display}" }
                                 }
                             } else {
                                 rsx! {
-                                    span { class: "team-token-avatar small", "{opt_display.chars().next().unwrap_or('?')}" }
+                                    span { class: "team-token-avatar small me-1", "{opt_display.chars().next().unwrap_or('?')}" }
                                     span { "{opt_display}" }
                                 }
                             };
                             let opt_tag = rsx! {
-                                img { class: "icon-primary-svg", src: "{base_url}/static/tag.svg", alt: "Tag" }
+                                img { class: "icon-primary-svg me-1", src: "{base_url}/static/tag.svg", alt: "Tag" }
                                 span { "{opt_display}" }
                             };
                             let opt_winner = rsx! {
-                                img { class: "icon-primary-svg", src: "{base_url}/static/reference.svg", alt: "Reference" }
+                                img { class: "icon-primary-svg me-1", src: "{base_url}/static/reference.svg", alt: "Reference" }
                                 span { "{opt_display}" }
                             };
                             let opt_loser = rsx! {
-                                img { class: "icon-primary-svg", src: "{base_url}/static/reference.svg", alt: "Reference" }
+                                img { class: "icon-primary-svg me-1", src: "{base_url}/static/reference.svg", alt: "Reference" }
                                 span { "{opt_display}" }
                             };
                             let opt_inner = if opt_suffix == "team" { opt_team } else if opt_suffix == "tag" { opt_tag } else if opt_suffix == "winner" { opt_winner } else { opt_loser };
@@ -535,7 +535,10 @@ pub fn TeamTokenInput(
                                 li {
                                     key: "{idx}-{opt_value}",
                                     class: "{item_class}",
-                                    onclick: move |ev: Event<MouseData>| {
+                                    role: "option",
+                                    "aria-selected": "{is_cur}",
+                                    onmousedown: move |ev: Event<MouseData>| {
+                                        ev.prevent_default();
                                         ev.stop_propagation();
                                         add_rc.borrow_mut()(Token { kind: opt_kind.clone(), display: opt_display.clone(), value: opt_value.clone() });
                                     },
