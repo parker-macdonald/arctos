@@ -17,12 +17,12 @@ from models import Player, Team
 from app.utils.helpers import is_valid_url_username
 from authlib.integrations.flask_client import OAuth
 
-bp = Blueprint("auth", __name__)
+bp = Blueprint("auth", __name__, url_prefix="/_api")
 
 # Initialize OAuth (will be configured in app factory)
 oauth = OAuth()
 
-_SPA_BASE = "/app"
+_SPA_BASE = "/"
 
 
 @bp.route("/check-username", methods=["GET"])

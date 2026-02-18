@@ -72,7 +72,7 @@ pub fn Bracket(url: String) -> Element {
                                                                 span { "{team_info.pseudonym.as_deref().unwrap_or(&team_info.display_text)}" }
                                                             }
                                                         } else if team_entry.is_reference {
-                                                            a { href: "/app/{url}/match?name={match_ref}", class: "text-decoration-none text-dark",
+                                                            a { href: "/{url}/match?name={match_ref}", class: "text-decoration-none text-dark",
                                                                 {team_info.display_text.replace("::", " ")}
                                                             }
                                                         } else {

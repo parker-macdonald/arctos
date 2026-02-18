@@ -251,7 +251,7 @@ pub async fn update_tournament_settings(
     tournament_url: &str,
     params: &[(String, String)],
 ) -> Result<StatusResponse, String> {
-    let url = format!("{}/{}/update-settings", base(), tournament_url);
+    let url = format!("{}/_api/{}/update-settings", base(), tournament_url);
     post_form_status(&url, params).await
 }
 
@@ -274,7 +274,7 @@ pub async fn mark_team_paid(
     if paid {
         params.push(("paid".into(), "on".to_string()));
     }
-    let url = format!("{}/{}/mark-team-paid", base(), tournament_url);
+    let url = format!("{}/_api/{}/mark-team-paid", base(), tournament_url);
     post_form_status(&url, &params).await
 }
 
@@ -297,7 +297,7 @@ pub async fn mark_player_paid(
     if paid {
         params.push(("paid".into(), "on".to_string()));
     }
-    let url = format!("{}/{}/mark-player-paid", base(), tournament_url);
+    let url = format!("{}/_api/{}/mark-player-paid", base(), tournament_url);
     post_form_status(&url, &params).await
 }
 
@@ -306,7 +306,7 @@ pub async fn deregister_any_team(
     team_id: &str,
 ) -> Result<StatusResponse, String> {
     let params = vec![("team_id".into(), team_id.to_string())];
-    let url = format!("{}/{}/deregister-any-team", base(), tournament_url);
+    let url = format!("{}/_api/{}/deregister-any-team", base(), tournament_url);
     post_form_status(&url, &params).await
 }
 
@@ -315,7 +315,7 @@ pub async fn deregister_any_player(
     player_id: &str,
 ) -> Result<StatusResponse, String> {
     let params = vec![("player_id".into(), player_id.to_string())];
-    let url = format!("{}/{}/deregister-any-player", base(), tournament_url);
+    let url = format!("{}/_api/{}/deregister-any-player", base(), tournament_url);
     post_form_status(&url, &params).await
 }
 
@@ -334,7 +334,7 @@ pub async fn register_player(
     if agree_terms {
         params.push(("agree_terms".into(), "on".into()));
     }
-    let url = format!("{}/{}/register-player", base(), tournament_url);
+    let url = format!("{}/_api/{}/register-player", base(), tournament_url);
     post_form_status(&url, &params).await
 }
 
@@ -347,17 +347,17 @@ pub async fn register_team(
     if agree_terms {
         params.push(("agree_terms".into(), "on".into()));
     }
-    let url = format!("{}/{}/register-team", base(), tournament_url);
+    let url = format!("{}/_api/{}/register-team", base(), tournament_url);
     post_form_status(&url, &params).await
 }
 
 pub async fn deregister_player(tournament_url: &str) -> Result<StatusResponse, String> {
-    let url = format!("{}/{}/deregister-player", base(), tournament_url);
+    let url = format!("{}/_api/{}/deregister-player", base(), tournament_url);
     post_form_status(&url, &[]).await
 }
 
 pub async fn deregister_team(tournament_url: &str) -> Result<StatusResponse, String> {
-    let url = format!("{}/{}/deregister-team", base(), tournament_url);
+    let url = format!("{}/_api/{}/deregister-team", base(), tournament_url);
     post_form_status(&url, &[]).await
 }
 
@@ -835,7 +835,7 @@ pub async fn set_match_status(
     let c = client();
     let body = serde_json::json!({ "match_id": match_id, "status": status });
     let r = with_credentials(
-        c.post(format!("{}/{}/match-actions/set-status", base(), tournament_url)).json(&body),
+        c.post(format!("{}/_api/{}/match-actions/set-status", base(), tournament_url)).json(&body),
     )
     .send()
     .await
@@ -868,7 +868,7 @@ pub async fn add_point(
         "stones_at_start": stones_at_start,
     });
     let r = with_credentials(
-        c.post(format!("{}/{}/match-actions/add-point", base(), tournament_url)).json(&body),
+        c.post(format!("{}/_api/{}/match-actions/add-point", base(), tournament_url)).json(&body),
     )
     .send()
     .await
@@ -900,7 +900,7 @@ pub async fn update_point(
         }
     }
     let r = with_credentials(
-        c.post(format!("{}/{}/match-actions/update-point", base(), tournament_url)).json(&body),
+        c.post(format!("{}/_api/{}/match-actions/update-point", base(), tournament_url)).json(&body),
     )
     .send()
     .await
@@ -922,7 +922,7 @@ pub async fn complete_match(tournament_url: &str, match_id: &str) -> Result<Valu
     let c = client();
     let body = serde_json::json!({ "match_id": match_id });
     let r = with_credentials(
-        c.post(format!("{}/{}/match-actions/complete-match", base(), tournament_url)).json(&body),
+        c.post(format!("{}/_api/{}/match-actions/complete-match", base(), tournament_url)).json(&body),
     )
     .send()
     .await
@@ -1032,7 +1032,7 @@ pub async fn add_point_note(
         "player_id": player_id,
     });
     let r = with_credentials(
-        c.post(format!("{}/{}/add-point-note", base(), tournament_url)).json(&body),
+        c.post(format!("{}/_api/{}/add-point-note", base(), tournament_url)).json(&body),
     )
     .send()
     .await
@@ -1062,7 +1062,7 @@ pub async fn update_stones(
     });
     let r = with_credentials(
         c.post(format!(
-            "{}/{}/match-actions/update-stones",
+            "{}/_api/{}/match-actions/update-stones",
             base(),
             tournament_url
         ))
@@ -1571,7 +1571,7 @@ pub async fn validate_dsl(tournament_url: &str, expression: &str) -> Result<Vali
     let c = client();
     let body = serde_json::json!({ "expression": expression });
     let r = with_credentials(
-        c.post(format!("{}/{}/_api/validate-dsl", base(), tournament_url))
+        c.post(format!("{}/_api/{}/validate-dsl", base(), tournament_url))
         .json(&body)
     )
     .send()

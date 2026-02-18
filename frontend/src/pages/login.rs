@@ -10,7 +10,7 @@ pub fn Login() -> Element {
     let mut err = use_signal(|| None::<String>);
     let navigator = use_navigator();
     let auth_invalidate = use_auth_invalidate();
-    let google_url = format!("{}/auth/google/login", api::base_url());
+    let google_url = format!("{}/_api/auth/google/login", api::base_url());
 
     rsx! {
         div { class: "row justify-content-center",

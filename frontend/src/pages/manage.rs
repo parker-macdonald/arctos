@@ -88,7 +88,7 @@ pub fn Manage(url: String) -> Element {
                                         for (url_dereg, url_save, team_id_dereg, reg_id_save, team_data) in d.team_registrations.iter().map(|t| (url.clone(), url.clone(), t.registration.team.clone(), t.registration.id, t)) {
                                             tr { key: "{team_data.registration.id}",
                                                 td {
-                                                    a { href: "/app/teams/{team_data.registration.team}", class: "text-decoration-none",
+                                                    a { href: "/teams/{team_data.registration.team}", class: "text-decoration-none",
                                                         strong { "{team_data.registration.pseudonym}" }
                                                     }
                                                 }
@@ -209,13 +209,13 @@ pub fn Manage(url: String) -> Element {
                                         for (url_dereg, url_save, player_id_dereg, reg_id_save, player_data) in d.player_registrations.iter().map(|p| (url.clone(), url.clone(), p.registration.player.clone(), p.registration.id, p)) {
                                             tr { key: "{player_data.registration.id}",
                                                 td {
-                                                    a { href: "/app/players/{player_data.registration.player}", class: "text-decoration-none",
+                                                    a { href: "/players/{player_data.registration.player}", class: "text-decoration-none",
                                                         strong { "{player_data.player.name}" }
                                                     }
                                                 }
                                                 td {
                                                     if let Some(team) = &player_data.team {
-                                                        a { href: "/app/teams/{team.id}", class: "text-decoration-none", "{team.name}" }
+                                                        a { href: "/teams/{team.id}", class: "text-decoration-none", "{team.name}" }
                                                     } else {
                                                         span { class: "text-muted", "Unattached" }
                                                     }
