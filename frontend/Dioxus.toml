@@ -3,8 +3,10 @@ name = "Arctos"
 default_platform = "web"
 out_dir = "dist"
 
-[application.web]
+# HTML title for dx build/bundle (replaces {app_title} in index.html)
+[web.app]
 title = "Arctos"
 
 [build]
 release = false
+
