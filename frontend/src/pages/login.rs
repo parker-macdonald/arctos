@@ -98,7 +98,13 @@ pub fn Login() -> Element {
                             }
                         }
                         if let Some(e) = err.read().as_ref() {
-                            div { class: "alert alert-danger mt-3 mb-0", "{e}" }
+                            div { class: "alert alert-danger d-flex align-items-center mt-3 mb-0", role: "alert",
+                                span { class: "fa-solid fa-circle-exclamation me-2", style: "font-size: 1.25rem;" }
+                                div {
+                                    strong { class: "alert-heading", "Login failed" }
+                                    p { class: "mb-0 mt-1", "{e}" }
+                                }
+                            }
                         }
                     }
                 }

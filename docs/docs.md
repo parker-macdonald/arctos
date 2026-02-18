@@ -632,7 +632,7 @@ creates a live scoreboard overlay for your stream.
 To set it up:
 
   1. In OBS, add a new **Browser Source**
-  2. Set the URL to: `https://events.californiajugger.org/api/scoreboard?tournament=TOURNAMENT_URL&field=FIELD_NAME`
+  2. Set the URL to: `https://events.californiajugger.org/TOURNAMENT_URL/scoreboard?field=FIELD_NAME`
    - Replace `TOURNAMENT_URL` with your tournament's URL
    - Replace `FIELD_NAME` with the name of the field you're streaming
 

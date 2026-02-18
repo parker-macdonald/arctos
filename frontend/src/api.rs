@@ -56,6 +56,12 @@ async fn response_json<T: serde::de::DeserializeOwned>(
     if !resp.status().is_success() {
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
+        // If the body is JSON with an "error" field, use that for a friendlier message
+        if let Ok(v) = serde_json::from_str::<Value>(&text) {
+            if let Some(msg) = v.get("error").and_then(|e| e.as_str()) {
+                return Err(msg.to_string());
+            }
+        }
         let truncated = truncate_error_body(&text, 200);
         return Err(format!("Server returned error {}: {}", status, truncated));
     }
