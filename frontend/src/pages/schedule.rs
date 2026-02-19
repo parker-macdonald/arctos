@@ -5,6 +5,7 @@ use dioxus::html::ModifiersInteraction;
 use dioxus::prelude::*;
 use serde::Serialize;
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 use super::TeamTokenInput;
 #[cfg(target_arch = "wasm32")]
@@ -112,6 +113,8 @@ pub fn Schedule(url: String) -> Element {
             let is_to = data.is_to;
             let url_for_export = url.clone();
             let url_for_recompute = url.clone();
+            let url_for_export_key = url_for_export.clone();
+            let url_for_recompute_key = url_for_recompute.clone();
             let handle_keydown = move |ev: Event<KeyboardData>| {
                 let key_str = ev.key().to_string();
                 let modal_open = active_modal() != "none";
@@ -142,7 +145,9 @@ pub fn Schedule(url: String) -> Element {
                         }
                         "t" | "T" => {
                             ev.prevent_default();
-                            if view_mode() == "timeline" {
+                            if edit_mode() && is_to {
+                                active_modal.set("tags".to_string());
+                            } else if view_mode() == "timeline" {
                                 key_nav.set(Some("today".to_string()));
                             }
                         }
@@ -150,6 +155,74 @@ pub fn Schedule(url: String) -> Element {
                             ev.prevent_default();
                             if is_to {
                                 edit_mode.set(!edit_mode());
+                            }
+                        }
+                        "m" | "M" => {
+                            if edit_mode() && is_to {
+                                ev.prevent_default();
+                                active_modal.set("match_create".to_string());
+                            }
+                        }
+                        "f" | "F" => {
+                            if edit_mode() && is_to {
+                                ev.prevent_default();
+                                active_modal.set("fields".to_string());
+                            }
+                        }
+                        "x" | "X" => {
+                            if edit_mode() && is_to {
+                                ev.prevent_default();
+                                let u = url_for_export_key.clone();
+                                spawn(async move {
+                                    if let Ok(res) = api::export_schedule(&u).await {
+                                        #[cfg(target_arch = "wasm32")]
+                                        if let Some(window) = web_sys::window() {
+                                            let doc = window.document().expect("document");
+                                            let bytes = res.toml.as_bytes();
+                                            let arr = js_sys::Uint8Array::new_from_slice(bytes);
+                                            let parts = js_sys::Array::new();
+                                            parts.push(&arr);
+                                            let blob_opts = web_sys::BlobPropertyBag::new();
+                                            blob_opts.set_type("application/toml");
+                                            let blob = web_sys::Blob::new_with_u8_array_sequence_and_options(
+                                                &parts.into(),
+                                                &blob_opts,
+                                            ).expect("Blob");
+                                            let url = web_sys::Url::create_object_url_with_blob(&blob).expect("object URL");
+                                            let filename = format!(
+                                                "{}_schedule_{}.toml",
+                                                u,
+                                                chrono::Utc::now().format("%Y%m%d_%H%M%S")
+                                            );
+                                            if let Ok(a) = doc.create_element("a") {
+                                                let _ = a.set_attribute("href", &url);
+                                                let _ = a.set_attribute("download", &filename);
+                                                if let Some(anchor) = a.dyn_ref::<web_sys::HtmlAnchorElement>() {
+                                                    anchor.click();
+                                                }
+                                            }
+                                            web_sys::Url::revoke_object_url(&url).ok();
+                                        }
+                                    }
+                                });
+                            }
+                        }
+                        "i" | "I" => {
+                            if edit_mode() && is_to {
+                                ev.prevent_default();
+                                active_modal.set("toml_import".to_string());
+                            }
+                        }
+                        "r" | "R" => {
+                            if edit_mode() && is_to {
+                                ev.prevent_default();
+                                let u = url_for_recompute_key.clone();
+                                let mut trigger = refresh_trigger;
+                                spawn(async move {
+                                    if let Ok(_) = api::recompute_schedule(&u).await {
+                                        trigger.set(trigger() + 1);
+                                    }
+                                });
                             }
                         }
                         _ => {}
@@ -1820,6 +1893,20 @@ fn TagsModal(
     let mut new_tag = use_signal(|| "".to_string());
     let mut error = use_signal(|| None::<String>);
     let url_sig = use_signal(|| tournament_url.clone());
+    // Local state for dropdowns: tag_id -> team_id. Synced from data when modal has data so dropdowns show current values.
+    let mut tag_teams = use_signal(|| HashMap::<u32, String>::new());
+    let mut updating_tag_id = use_signal(|| None::<u32>);
+
+    // Sync tag_teams from data whenever we have tags, so dropdowns show correct values on open and after refetch.
+    let data_effect = data.clone();
+    use_effect(move || {
+        let tags = data_effect.tags.clone();
+        let mut map = tag_teams.write();
+        map.clear();
+        for tag in tags {
+            map.insert(tag.id, tag.team.unwrap_or_default());
+        }
+    });
 
     rsx! {
         div { class: "modal d-block", tabindex: "-1", style: "background: rgba(0,0,0,0.5)",
@@ -1865,35 +1952,52 @@ fn TagsModal(
                         ul { class: "list-group",
                             {data.tags.iter().map(|tag| {
                                 let tag_id = tag.id;
-                                let current_team = tag.team.as_deref().unwrap_or("").to_string();
+                                let current_team = tag_teams().get(&tag_id).cloned().unwrap_or_default();
                                 let tag_name = tag.name.clone();
+                                let is_updating = updating_tag_id() == Some(tag_id);
                                 rsx! {
                                     li { key: "{tag_id}", class: "list-group-item d-flex justify-content-between align-items-center gap-2 flex-wrap",
                                         span { class: "flex-grow-1", "{tag_name}" }
-                                        select {
-                                            class: "form-select form-select-sm",
-                                            style: "max-width: 12rem;",
-                                            value: "{current_team}",
-                                            onchange: move |e| {
-                                                let u = url_sig();
-                                                let team_id = e.value();
-                                                let on_change = on_change.clone();
-                                                spawn(async move {
-                                                    let req = UpdateTagsRequest { tag_id, team_id };
-                                                    if let Err(e) = api::update_tags(&u, &req).await {
-                                                        error.set(Some(e));
-                                                    } else {
-                                                        error.set(None);
-                                                        on_change.call(());
-                                                    }
-                                                });
-                                            },
-                                            option { value: "", "No team" }
-                                            for opt in &data.team_options {
-                                                option { value: "{opt.id}", "{opt.pseudonym.as_deref().unwrap_or(&opt.id)}" }
+                                        div { class: "d-flex align-items-center gap-1",
+                                            select {
+                                                class: "form-select form-select-sm",
+                                                style: "max-width: 12rem;",
+                                                value: "{current_team}",
+                                                disabled: is_updating,
+                                                onchange: move |e| {
+                                                    let u = url_sig();
+                                                    let team_id = e.value();
+                                                    let on_change = on_change.clone();
+                                                    tag_teams.write().insert(tag_id, team_id.clone());
+                                                    updating_tag_id.set(Some(tag_id));
+                                                    error.set(None);
+                                                    let prev_team = current_team.clone();
+                                                    spawn(async move {
+                                                        let req = UpdateTagsRequest { tag_id, team_id };
+                                                        match api::update_tags(&u, &req).await {
+                                                            Ok(_) => {
+                                                                updating_tag_id.set(None);
+                                                                on_change.call(());
+                                                            }
+                                                            Err(e) => {
+                                                                tag_teams.write().insert(tag_id, prev_team);
+                                                                updating_tag_id.set(None);
+                                                                error.set(Some(e));
+                                                            }
+                                                        }
+                                                    });
+                                                },
+                                                option { value: "", "No team" }
+                                                for opt in &data.team_options {
+                                                    option { value: "{opt.id}", "{opt.pseudonym.as_deref().unwrap_or(&opt.id)}" }
+                                                }
+                                            }
+                                            if is_updating {
+                                                span { class: "spinner-border spinner-border-sm text-secondary", role: "status", "aria-hidden": "true" }
                                             }
                                         }
                                         button { class: "btn btn-sm btn-outline-danger",
+                                            disabled: is_updating,
                                             onclick: move |_| {
                                                 let u = url_sig();
                                                 let on_change = on_change.clone();
