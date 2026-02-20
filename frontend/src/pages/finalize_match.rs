@@ -8,21 +8,6 @@ use wasm_bindgen::JsCast as _;
 #[cfg(target_arch = "wasm32")]
 use js_sys;
 
-fn get_query_param(name: &str) -> Option<String> {
-    #[cfg(target_arch = "wasm32")]
-    {
-        let window = web_sys::window()?;
-        let search = window.location().search().ok()?;
-        let params = web_sys::UrlSearchParams::new_with_str(&search).ok()?;
-        params.get(name)
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let _ = name;
-        None
-    }
-}
-
 #[component]
 pub fn FinalizeMatch(url: String, match_id: String) -> Element {
     let match_id_for_data = match_id.clone();

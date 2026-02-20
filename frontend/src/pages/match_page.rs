@@ -1076,7 +1076,9 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                 let reflist_str = d.match_data.refs_display.as_deref()
                     .or(d.match_data.r#refs_initial.as_deref())
                     .or(d.match_data.r#refs.as_deref());
+                let match_title = format!("{} | Arctos", d.match_data.name);
                 rsx! {
+                    Title { "{match_title}" }
             div { class: "row",
                 div { class: "col-12",
                     h1 { "{d.match_data.name}" }

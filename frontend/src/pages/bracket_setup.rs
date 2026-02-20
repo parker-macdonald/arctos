@@ -19,8 +19,8 @@ pub fn BracketSetup(url: String) -> Element {
     });
 
     let mut brackets_state = use_signal(|| Vec::<BracketConfig>::new());
-    let mut save_status = use_signal(|| Option::<String>::None);
-    let mut saving = use_signal(|| false);
+    let save_status = use_signal(|| Option::<String>::None);
+    let saving = use_signal(|| false);
 
     let val = data.value();
     let setup_val = setup_data.value();

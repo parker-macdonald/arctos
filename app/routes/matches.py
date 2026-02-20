@@ -19,10 +19,10 @@ from app.error_values import Ok, Err
 from app.utils.result_helpers import json_from_result, public_error_message
 from app.domain.enums import RegistrationStatus, MatchStatus, ScheduleType, SetType
 
-bp = Blueprint("matches", __name__)
+bp = Blueprint("matches", __name__, url_prefix="/_api")
 
 
-@bp.route("/_api/scoreboard")
+@bp.route("/scoreboard")
 def scoreboard():
     """Scoreboard page for OBS overlay. Public endpoint."""
     from flask import make_response
@@ -235,7 +235,7 @@ def scoreboard():
     return response
 
 
-@bp.route("/_api/scoreboard-state")
+@bp.route("/scoreboard-state")
 def scoreboard_state():
     """Get scoreboard state as JSON for polling. Public endpoint."""
     tournament_url = request.args.get("tournament")

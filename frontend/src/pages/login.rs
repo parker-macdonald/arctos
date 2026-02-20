@@ -10,7 +10,7 @@ pub fn Login() -> Element {
     let mut err = use_signal(|| None::<String>);
     let navigator = use_navigator();
     let auth_invalidate = use_auth_invalidate();
-    let google_url = format!("{}/auth/google/login", api::base_url());
+    let google_url = format!("{}/_api/auth/google/login", api::base_url());
 
     rsx! {
         div { class: "row justify-content-center",
@@ -98,7 +98,13 @@ pub fn Login() -> Element {
                             }
                         }
                         if let Some(e) = err.read().as_ref() {
-                            div { class: "alert alert-danger mt-3 mb-0", "{e}" }
+                            div { class: "alert alert-danger d-flex align-items-center mt-3 mb-0", role: "alert",
+                                span { class: "fa-solid fa-circle-exclamation me-2", style: "font-size: 1.25rem;" }
+                                div {
+                                    strong { class: "alert-heading", "Login failed" }
+                                    p { class: "mb-0 mt-1", "{e}" }
+                                }
+                            }
                         }
                     }
                 }

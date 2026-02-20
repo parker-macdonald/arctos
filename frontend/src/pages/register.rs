@@ -67,7 +67,7 @@ fn RegisterPage(account_type: Option<String>) -> Element {
     let mut err = use_signal(|| None::<String>);
     let navigator = use_navigator();
     let auth_invalidate = use_auth_invalidate();
-    let google_base = format!("{}/auth/google/login", api::base_url());
+    let google_base = format!("{}/_api/auth/google/login", api::base_url());
 
     rsx! {
         div { class: "row justify-content-center",

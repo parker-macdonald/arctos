@@ -3,7 +3,7 @@ Internal JSON API for the Dioxus SPA. All routes live under /_api/.
 Do not use /api/ — that is reserved for a future public API.
 """
 
-from flask import Blueprint, request, jsonify, session
+from flask import Blueprint, request, jsonify, session, redirect
 from datetime import datetime, timezone
 from pathlib import Path
 from flask_login import current_user, login_user, logout_user, login_required
@@ -43,6 +43,12 @@ from models import (
 import json
 
 bp = Blueprint("_api", __name__, url_prefix="/_api")
+
+
+@bp.route("/")
+def login_redirect():
+    """Redirect to SPA root (used as login_view when unauthenticated)."""
+    return redirect("/")
 
 
 def _dt_iso(dt):
@@ -1355,13 +1361,14 @@ def tournament_results(tournament_url):
         Match.event == tournament_url,
         Match.status.in_([MatchStatus.COMPLETED, MatchStatus.SKIPPED]),
     ).all()
-    # Exclude ribbon and BREAK/JOIN for stats (same as Flask results page)
+    include_ribbon = request.args.get("include_ribbon", "").lower() in ("1", "true", "yes")
+    # Exclude BREAK/JOIN; exclude ribbon games from stats unless include_ribbon=True
     count_matches = [
         m
         for m in matches
         if getattr(m, "schedule_type", None)
         not in (ScheduleType.BREAK, ScheduleType.JOIN)
-        and not getattr(m, "ribbon", False)
+        and (include_ribbon or not getattr(m, "ribbon", False))
     ]
     points_by_match = {}
     if count_matches:
@@ -1471,6 +1478,7 @@ def tournament_results_team_matches(tournament_url, team_id):
                 "match_winner": m.match_winner.value if m.match_winner else None,
                 "your_side": your_side,
                 "sets": sets_list,
+                "ribbon": getattr(m, "ribbon", False),
             }
         )
     return jsonify({"matches": match_list})
@@ -2398,6 +2406,48 @@ def teams_list():
             ]
         }
     )
+
+
+@bp.route("/teams/<team_id>/players", methods=["GET"])
+def team_registration_players(team_id):
+    """Players registered for a team in an event (public). Event via query param ?event=."""
+    event = request.args.get("event")
+    if not event:
+        return jsonify({"error": "event required"}), 400
+    team = Team.query.get(team_id)
+    if not team:
+        return jsonify({"error": "Not found"}), 404
+    # Ensure the team is registered for this event
+    team_reg = TeamRegistration.query.filter_by(
+        team=team_id, event=event, status=RegistrationStatus.CONFIRMED
+    ).first()
+    if not team_reg:
+        return jsonify({"error": "Not found"}), 404
+    accepted_players = PlayerRegistration.query.filter_by(
+        event=event, team=team_id, status=RegistrationStatus.CONFIRMED
+    ).all()
+    players_with_data = []
+    for player_reg in accepted_players:
+        player = Player.query.get(player_reg.player)
+        players_with_data.append(
+            {
+                "registration": {
+                    "player": player_reg.player,
+                    "jersey_name": player_reg.jersey_name,
+                    "jersey_number": player_reg.jersey_number,
+                },
+                "player": (
+                    {
+                        "id": player.id,
+                        "name": player.name,
+                        "profile_photo": player.profile_photo,
+                    }
+                    if player
+                    else None
+                ),
+            }
+        )
+    return jsonify(players_with_data)
 
 
 @bp.route("/teams/<team_id>", methods=["GET"])

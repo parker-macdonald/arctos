@@ -7,6 +7,51 @@ pub fn use_auth_invalidate() -> Signal<u32> {
     use_context::<Signal<u32>>()
 }
 
+/// Returns a short page name for the tab title: "Page Name | Arctos".
+fn page_title_for_route(route: &Route) -> String {
+    match route {
+        Route::Index { .. } => "Home".into(),
+        Route::Login { .. } => "Login".into(),
+        Route::Register { .. } => "Register".into(),
+        Route::RegisterPlayer { .. } => "Register as Player".into(),
+        Route::RegisterTeam { .. } => "Register as Team".into(),
+        Route::GoogleChooseAccountType { .. } => "Choose Account Type".into(),
+        Route::GoogleCompleteProfile { .. } => "Complete Profile".into(),
+        Route::TournamentHome { url } => format!("{url}"),
+        Route::Schedule { url } => format!("{url} Schedule"),
+        Route::Results { url } => format!("{url} Results"),
+        Route::Bracket { url } => format!("{url} Bracket"),
+        Route::BracketSetup { url } => format!("{url} Bracket Setup"),
+        Route::TournamentSettings { url } => format!("{url} Settings"),
+        Route::TournamentRegister { url } => format!("{url} Register"),
+        Route::Manage { url } => format!("{url} Manage"),
+        Route::Invitations { url } => format!("{url} Roster"),
+        Route::StartMatch { .. } => format!("Start Match").into(),
+        Route::RunMatch { .. } => format!("Run Match").into(),
+        Route::FinalizeMatch { .. } => format!("Finalize Match").into(),
+        Route::Scoreboard { .. } => format!("Scoreboard"),
+        Route::Record { field, .. } => format!("Record Field {field}").into(),
+        Route::MatchPage { .. } => format!("Match"),
+        Route::MatchPageById { .. } => format!("Match").into(),
+        Route::AddInjury { .. } => "Add Injury".into(),
+        Route::EditInjury { .. } => "Edit Injury".into(),
+        Route::EditPlayerProfile { .. } => "Edit Profile".into(),
+        Route::EditTeamProfile { .. } => "Edit Profile".into(),
+        Route::PlayersList { .. } => "Players".into(),
+        Route::PlayerProfilePage { id } => format!("{id}"),
+        Route::TeamsList { .. } => "Teams".into(),
+        Route::TeamProfilePage { id } => format!("{id}"),
+        Route::Stones { .. } => "Stones".into(),
+        Route::About { .. } => "About".into(),
+        Route::NewTournament { .. } => "Create Tournament".into(),
+        Route::Docs { .. } => "User Docs".into(),
+        Route::Privacy { .. } => "Privacy Policy".into(),
+        Route::Terms { .. } => "Terms".into(),
+        Route::Thanks { .. } => "Thanks".into(),
+        Route::License { .. } => "License".into(),
+    }
+}
+
 #[component]
 pub fn Layout() -> Element {
     let auth_version = use_signal(|| 0u32);
@@ -19,11 +64,20 @@ pub fn Layout() -> Element {
             api::me().await
         }
     });
+    let mut nav_expanded = use_signal(|| false);
     let mut user_dropdown_open = use_signal(|| false);
     let mut register_dropdown_open = use_signal(|| false);
     let navigator = use_navigator();
+    let route = use_route::<Route>();
+    let page_title = format!("{} | Arctos", page_title_for_route(&route));
+
+    // Scoreboard is embedded elsewhere (e.g. OBS); render only the raw scoreboard, no nav/footer.
+    if matches!(route, Route::Scoreboard { .. }) {
+        return rsx! { Outlet::<Route> {} };
+    }
 
     rsx! {
+        Title { "{page_title}" }
         link { rel: "stylesheet", href: "https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" }
         link { rel: "stylesheet", href: "https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" }
         style { r#"
@@ -61,11 +115,14 @@ pub fn Layout() -> Element {
                 button {
                     class: "navbar-toggler",
                     r#type: "button",
-                    "data-bs-toggle": "collapse",
-                    "data-bs-target": "#navbarNav",
+                    "aria-expanded": "{nav_expanded()}",
+                    "aria-label": "Toggle navigation",
+                    onclick: move |_| nav_expanded.toggle(),
                     span { class: "navbar-toggler-icon" }
                 }
-                div { class: "collapse navbar-collapse", id: "navbarNav",
+                div {
+                    class: if nav_expanded() { "collapse navbar-collapse show" } else { "collapse navbar-collapse" },
+                    id: "navbarNav",
                     ul { class: "navbar-nav me-auto",
                         li { class: "nav-item",
                             Link { to: Route::TeamsList {}, class: "nav-link", "Teams" }
