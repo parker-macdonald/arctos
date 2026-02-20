@@ -19,7 +19,7 @@ High Level Overview
     - [Day-Of Operations](#on-the-day-of)
  - [Stones](#stones)
  - [Account Types](#account-types)
- - [Ref Notes](#ref-notes)
+ - [Penalties](#penalties)
 
 For Players
 
@@ -226,6 +226,9 @@ Here's, briefly, how it works.
        winner/loser of specific matches, which will then update as the
        tournament progresses.
      - youtube livestream links for each field, if set up
+	 - penalty types: a list of penalty types defined by the
+       tournament. Head refs will be able to choose any of these or
+       write in their own custom penalty.
   2. TOs make the tournament public and open registration (and
      eventually make the schedule public too)
   3. Teams register, setting a pseudonym for this tournament
@@ -276,8 +279,7 @@ Here's, briefly, how it works.
      - select the winner of each point, or leave it as None if nobody
        scored
      - select a box to note if the point is being rerun
-     - add notes to each point if needed, targeted at the point, a
-       specific team, or a specific player.
+     - add notes to each point or player-specific penalties if needed.
   6. spectators watch, either in person, or on the match page, which
      updates live with score results and the stone count.
   7. Head refs click "finalize match" when all points are over. They
@@ -330,74 +332,19 @@ is permanent, and your profile is meant to be the thing that ties you
 to you between tournaments. This is why you can change your jersey
 name and jersey number for each tournament.
 
-## Ref Notes {#ref-notes}
+## Penalties {#penalties}
 
-Ref notes were created primarily for head refs to track
-penalties/warnings/cautions and the points they pertain to. However,
-the penalty system in Jugger (at least in the US) is still changing
-rapidly, so ref notes are meant to be very generic and future
-proof. This means that refs aren't constrained to just writing down
-cautions; they can write anything they want! They should be writing
-nice messages to everyone so you smile when you look at your profile;
-if they're not, it's probably just because they secretly hate you and
-you shouldn't even try talking to them about it.
+The penalty system in Jugger (at least in the US) is still changing
+rapidly, so there is no Arctos-prescribed way to penalize
+players. Instead, TOs set the penalty types they'd like, and head refs
+can either choose from those or write their own custom penalty.
 
-Each note is attached to a specific point of a specific match, and can
-additionally list a team or player from that match as a specific
-target. Here's when and how these notes are visible:
-
-
-<table>
-  <thead>
-    <tr>
-      <th>Target</th>
-      <th>Visible to</th>
-      <th>Location</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td rowspan="4"><strong>Team</strong></td>
-      <td>Team's account</td>
-      <td rowspan="3">profile</td>
-    </tr>
-    <tr>
-      <td>Players who played for this team at the relevant tournament</td>
-    </tr>
-    <tr>
-      <td>Free mercs who played for this team in the relevant match</td>
-    </tr>
-    <tr>
-      <td>Head refs of the relevant tournament while it is ongoing</td>
-      <td>profile and match start page when this team is playing</td>
-    </tr>
-    <tr>
-      <td rowspan="2"><strong>Player</strong></td>
-      <td>Player's account</td>
-      <td>profile</td>
-    </tr>
-    <tr>
-      <td>Head refs of the relevant tournament while it is ongoing</td>
-      <td>profile and match start page when this player is playing</td>
-    </tr>
-    <tr>
-      <td><strong>Point</strong></td>
-      <td>everyone</td>
-      <td>relevant match's page, in the points table</td>
-    </tr>
-  </tbody>
-</table>
-
-
-Importantly, while these notes are stored in perpetuity, player- and
-team-specific notes are *not* shown to anyone except their subjects
-after the tournament in which they were written is over.
-
-
-In addition to these notes, head refs can also write match-level notes
-before starting and while finalizing matches. These notes are public
-and are meant for more mundane things, like rules clarifications, qwik
-contact agreements, ring of fire, etc.
+Penalties are visible to:
+- Players, on their profile
+- Head refs of the relevant match (anyone who *could have* head reffed
+  that match! If the "allow anyone to head ref" box is ticked, then
+  anyone registered for the tournament can view penalties!), on the
+  player's profile, start match page, and run match page
 
 ---
 
@@ -430,7 +377,7 @@ This is pretty self explanatory so I only have a few notes:
     registration forms, just set the value to zero.
   - When entering other TOs, you must enter their exact username for
     it to work.
-  - The max team size on field and roster are actually enforced; don't
+  - The max team size on field and roster **are** actually enforced; don't
     just choose random numbers.
 
 ### Head Ref Options {#head-ref-options}
@@ -461,6 +408,9 @@ add and remove other TOs!
 
 ## Match Schedule Setup {#match-schedule-setup}
 
+From the schedule page, TOs can enter *edit mode*, which allows you to
+set up the schedule.
+
 All matches have (among other things) the following information:
 
 - nominal start time
@@ -476,15 +426,14 @@ have three options:
 
   1. explicit team name: just type their name (autocomplete will help
      you). They must be registered in the tournament.
-  2. tag: after adding a tag in the sidebar, you can use it as a team
-     by entering `tag::[the name you entered]`.
-  3. reference: if there's another match called `M1`, you can enter
-     `M1::winner` or `M1::loser`, and Arctos will update these when
-     the results of `M1` become available.
+  2. tag: after adding a tag in the sidebar, you can use it as a team.
+  3. reference: you can enter the winner or loser of another match,
+     and Arctos will update these when the relevant results become
+     available.
 
 Tags are how you can set up a schedule without knowing what teams are
 actually playing. A tag is like a generic team; whenever you want, you
-can use the "update tags" button to replace all instances of any given
+can use the tags button to replace all instances of any given
 tag with a specific team.
 
 This is most obviously helpful before you know who has registered, but
@@ -513,7 +462,7 @@ Unless you are willing to cut a large portion of matches short,
 however, this requires a large nominal length, which leads to lots of
 idle time before every match starts (see: Fog of War 2025). To fix
 this, we introduce the *dynamic scheduling*, implemented by the
-`dynamic` match type.
+`fast` and `safe` match types.
 
 ### Dynamic Matches {#dynamic-scheduling}
 
@@ -536,13 +485,22 @@ early, its end time will be earlier than its nominal length would
 predict, and so subsequent matches will be shifted forward! This seems
 great, but it creates a problem: it breaks our ability to tell teams
 when they need to be at their matches. If we shift their matches
-forward, we can't possibly penalize them for being late.
+forward, we can't possibly penalize them for being late, which may be
+a problem for more formal events.
 
-To solve this, we lock the start time of dynamic matches when the last
-of their dependency matches starts. When this happens, matches are
-marked as "time finalized" on the schedule. This means that teams
-always know their matches' start times at least nominal_length ahead
-of time, so it's reasonable to expect them to be on time.
+To solve this, there are two types of dynamic matches: `fast` and
+`safe`. `fast` matches do not care about giving adequate warning; they
+just move matches as far forward as possible. A fast match will have
+its start time listed to be precisely the end time of the previous
+match.
+
+`safe` matches, on the other hand, are meant to give at least one
+match's worth of warning to teams before the match begins. The start
+time of a `safe` match gets locked when the last of its dependency
+matches starts. When this happens, matches are marked as "time
+finalized" on the schedule. This means that teams always know their
+matches' start times at least `nominal_length` ahead of time, so it's
+reasonable to expect them to be on time.
 
 !!! note
     Matches without dependencies (like the first match of the day) must be static.
@@ -576,6 +534,10 @@ matches, practice games, or matches that don't affect standings. When
 creating or editing a match, you can check the "Ribbon Game" checkbox
 to mark it as such.
 
+### Skip Conditions
+
+
+
 ### Exporting and Importing Schedule Files {#exporting-and-importing-schedule-files}
 
 On the match setup page, under Utilities, there are "Export Schedule"
@@ -591,6 +553,7 @@ this file includes:
  - fields
 
 this file *does not include*:
+
  - match results
  - match statuses
  - tag updates
@@ -631,10 +594,10 @@ creates a live scoreboard overlay for your stream.
 
 To set it up:
 
-  1. In OBS, add a new **Browser Source**
-  2. Set the URL to: `https://events.californiajugger.org/TOURNAMENT_URL/scoreboard?field=FIELD_NAME`
-   - Replace `TOURNAMENT_URL` with your tournament's URL
-   - Replace `FIELD_NAME` with the name of the field you're streaming
+1. In OBS, add a new **Browser Source**
+2. Set the URL to `https://events.californiajugger.org/TOURNAMENT_URL/scoreboard?field=FIELD_NAME`
+    - Replace `TOURNAMENT_URL` with your tournament's URL
+    - Replace `FIELD_NAME` with the name of the field you're streaming
 
 The scoreboard displays:
 

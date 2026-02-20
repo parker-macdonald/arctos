@@ -1,4 +1,5 @@
 use crate::api;
+use crate::components::PenaltyDisplay;
 use crate::Route;
 use dioxus::prelude::*;
 use serde_json::Value;
@@ -179,6 +180,7 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
     let mut point_notes_map_signal =
         use_signal(|| std::collections::HashMap::<String, Vec<Value>>::new());
     let mut point_notes_seeded = use_signal(|| false);
+    let mut penalty_desc_modal = use_signal(|| None::<String>);
     // Local stones remaining (for STONES set type); synced from match/state when not ticking.
     let mut stones_remaining = use_signal(|| 100u32);
     // When true, stones input shows stones_edit_value so we don't overwrite typing with display_stones.
@@ -833,8 +835,9 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                                                 let target = note_val.get("target").and_then(|t| t.as_str()).unwrap_or("match");
                                                 let target_display = note_val.get("player_display").and_then(|p| p.as_str())
                                                     .or_else(|| note_val.get("player_name").and_then(|p| p.as_str()))
-                                                    .unwrap_or(if target == "match" { "Point" } else { target });
-                                                
+                                                    .unwrap_or(if target == "match" { "Point" } else { target })
+                                                    .to_string();
+                                                let target_profile_id = note_val.get("player_id").and_then(|v| v.as_str()).map(String::from);
                                                 let pt_id = note_val.get("penalty_type_id").and_then(|v| v.as_i64()).map(|v| v as i32);
                                                 let penalty_info = if let Some(id) = pt_id {
                                                     d.penalty_types.iter().find(|t| t.id == id)
@@ -846,13 +849,18 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                                                 } else {
                                                     ("808080".to_string(), if note_text.is_empty() { "Other".to_string() } else { note_text.to_string() })
                                                 };
+                                                let description = penalty_info
+                                                    .and_then(|pt| pt.desc.clone())
+                                                    .filter(|s| !s.is_empty());
 
                                                 rsx! {
-                                                    div {
-                                                        class: "small text-muted ps-2 mb-1",
-                                                        style: format!("border-left: 6px solid #{}; background-color: #{}18;", border_color, border_color),
-                                                        strong { "{target_display}: " }
-                                                        "{display_text}"
+                                                    PenaltyDisplay {
+                                                        border_color,
+                                                        display_text,
+                                                        description,
+                                                        target_display: Some(target_display),
+                                                        target_profile_id,
+                                                        on_description_click: move |d: Option<String>| penalty_desc_modal.set(d),
                                                     }
                                                 }
                                             }
@@ -1470,6 +1478,8 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                                                         {
                                                             let pt_id = pt.id;
                                                             let selected = penalties_selected_type() == Some(pt_id);
+                                                            let pt_desc = pt.desc.clone().filter(|s| !s.is_empty());
+                                                            let show_pt_help = pt_desc.is_some();
                                                             rsx! {
                                                                 button {
                                                                     class: if selected { "btn btn-dark" } else { "btn btn-outline-dark" },
@@ -1483,6 +1493,21 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                                                                         }
                                                                     },
                                                                     "{pt.name}"
+                                                                    if show_pt_help {
+                                                                        span {
+                                                                            class: "ms-1 cursor-pointer d-inline-flex align-items-center",
+                                                                            title: "Description",
+                                                                            onclick: move |ev| {
+                                                                                ev.stop_propagation();
+                                                                                penalty_desc_modal.set(pt_desc.clone());
+                                                                            },
+                                                                            img {
+                                                                                src: "/static/question-mark.svg",
+                                                                                alt: "?",
+                                                                                style: "width: 14px; height: 14px; filter: invert(27%) sepia(51%) saturate(2878%) hue-rotate(224deg); vertical-align: middle;",
+                                                                            }
+                                                                        }
+                                                                    }
                                                                 }
                                                             }
                                                         }
@@ -1602,6 +1627,7 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                                             },
                                             "Close"
                                         }
+                                        }
                                     }
                                         }
                                     }
@@ -1609,7 +1635,23 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                             }
                         }
                         }
+                    }
+                    if penalty_desc_modal().is_some() {
+                        div { class: "modal show", style: "display: block;",
+                            div { class: "modal-dialog modal-dialog-centered",
+                                div { class: "modal-content",
+                                    div { class: "modal-header",
+                                        h5 { class: "modal-title", "Penalty description" }
+                                        button { r#type: "button", class: "btn-close", onclick: move |_| penalty_desc_modal.set(None) }
+                                    }
+                                    div { class: "modal-body", "{penalty_desc_modal().as_ref().unwrap_or(&String::new())}" }
+                                    div { class: "modal-footer",
+                                        button { r#type: "button", class: "btn btn-secondary", onclick: move |_| penalty_desc_modal.set(None), "Close" }
+                                    }
+                                }
+                            }
                         }
+                        div { class: "modal-backdrop show" }
                     }
                 }
             }

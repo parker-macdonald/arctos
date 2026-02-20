@@ -107,6 +107,26 @@ pub fn Layout() -> Element {
             .markdown-content a:hover {{ text-decoration: underline; }}
             .markdown-content img {{ max-width: 100%; height: auto; }}
             .markdown-content hr {{ margin: 1em 0; border: 0; border-top: 1px solid var(--bs-border-color, #dee2e6); }}
+            .markdown-content .admonition {{ margin: 1em 0; padding: 0; border-radius: 6px; border: 1px solid; overflow: hidden; }}
+            .markdown-content .admonition .admonition-title {{ margin: 0; padding: 0.5em 0.75em; font-weight: 600; }}
+            .markdown-content .admonition p:not(.admonition-title) {{ padding: 0.5em 0.75em; margin-bottom: 0.5em; }}
+            .markdown-content .admonition p:not(.admonition-title):last-child {{ margin-bottom: 0; }}
+            .markdown-content .admonition.note {{ border-color: #0d6efd; background: rgba(13, 110, 253, 0.08); }}
+            .markdown-content .admonition.note .admonition-title {{ background: rgba(13, 110, 253, 0.2); color: #0a58ca; }}
+            .markdown-content .admonition.warning {{ border-color: #ffc107; background: rgba(255, 193, 7, 0.12); }}
+            .markdown-content .admonition.warning .admonition-title {{ background: rgba(255, 193, 7, 0.25); color: #856404; }}
+            .markdown-content .admonition.attention {{ border-color: #ffc107; background: rgba(255, 193, 7, 0.12); }}
+            .markdown-content .admonition.attention .admonition-title {{ background: rgba(255, 193, 7, 0.25); color: #856404; }}
+            .markdown-content .admonition.caution {{ border-color: #fd7e14; background: rgba(253, 126, 20, 0.1); }}
+            .markdown-content .admonition.caution .admonition-title {{ background: rgba(253, 126, 20, 0.2); color: #b35a0e; }}
+            .markdown-content .admonition.danger {{ border-color: #dc3545; background: rgba(220, 53, 69, 0.08); }}
+            .markdown-content .admonition.danger .admonition-title {{ background: rgba(220, 53, 69, 0.2); color: #b02a37; }}
+            .markdown-content .admonition.important {{ border-color: #fd7e14; background: rgba(253, 126, 20, 0.1); }}
+            .markdown-content .admonition.important .admonition-title {{ background: rgba(253, 126, 20, 0.2); color: #b35a0e; }}
+            .markdown-content .admonition.tip {{ border-color: #198754; background: rgba(25, 135, 84, 0.08); }}
+            .markdown-content .admonition.tip .admonition-title {{ background: rgba(25, 135, 84, 0.2); color: #146c43; }}
+            .markdown-content .admonition.hint {{ border-color: #198754; background: rgba(25, 135, 84, 0.08); }}
+            .markdown-content .admonition.hint .admonition-title {{ background: rgba(25, 135, 84, 0.2); color: #146c43; }}
         "# }
 
         nav { class: "navbar navbar-expand-lg navbar-dark bg-dark",

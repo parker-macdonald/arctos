@@ -425,7 +425,7 @@ pub struct CameraData {
     pub point_timestamps: Option<Vec<PointTimestamp>>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PenaltyType {
     pub id: i32,
     pub name: String,
@@ -655,6 +655,12 @@ pub struct PlayerNoteItem {
     pub point_index: String,
     #[serde(rename = "match")]
     pub match_info: Option<NoteMatchInfo>,
+    #[serde(default)]
+    pub penalty_type_name: Option<String>,
+    #[serde(default)]
+    pub penalty_type_color: Option<String>,
+    #[serde(default)]
+    pub penalty_type_desc: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
