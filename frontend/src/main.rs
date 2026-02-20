@@ -1,6 +1,7 @@
 #![allow(non_snake_case)]
 
 mod api;
+mod components;
 mod pages;
 
 mod stones_filter;

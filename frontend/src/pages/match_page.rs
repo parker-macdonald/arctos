@@ -1,4 +1,5 @@
 use crate::api;
+use crate::components::PenaltyDisplay;
 use crate::Route;
 use crate::stones_filter::BayesianOffsetFilter;
 use crate::types::{PointData, PointTimestamp};
@@ -46,6 +47,33 @@ fn same_time_seek_target(
         .iter()
         .find(|t| t.point_uuid.as_ref() == Some(point_uuid))?;
     Some(new_entry.in_video_start + offset)
+}
+
+/// (target_display, border_color, display_text, description, target_profile_id) for a point note when rendering penalties column.
+fn point_note_display(
+    note: &crate::types::MatchNoteData,
+    penalty_types: &[crate::types::PenaltyType],
+) -> (String, String, String, Option<String>, Option<String>) {
+    let target_display = note
+        .player_display
+        .as_deref()
+        .or(note.player_name.as_deref())
+        .unwrap_or(if note.target == "match" { "Point" } else { note.target.as_str() })
+        .to_string();
+    let (border_color, display_text, desc) = match note.penalty_type_id.and_then(|id| penalty_types.iter().find(|t| t.id == id)) {
+        Some(pt) => (
+            pt.color.clone(),
+            pt.name.clone(),
+            pt.desc.clone().filter(|s| !s.is_empty()),
+        ),
+        None => (
+            "808080".to_string(),
+            if note.text.is_empty() { "Other".to_string() } else { note.text.clone() },
+            None,
+        ),
+    };
+    let target_profile_id = note.player_id.clone();
+    (target_display, border_color, display_text, desc, target_profile_id)
 }
 
 fn get_query_param(name: &str) -> Option<String> {
@@ -469,6 +497,7 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
     let fetched_stream_starts = use_signal(|| Vec::<Option<String>>::new());
     // Match UUID we have already triggered stream-start fetches for (so we only query once per load).
     let stream_starts_fetched_for_match = use_signal(|| None::<String>);
+    let mut penalty_desc_modal = use_signal(|| None::<String>);
 
     use_effect(move || {
         let _ = (val.read().as_ref(), selected_camera_idx(), live_points_signal());
@@ -1537,6 +1566,29 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                                         p { class: "text-muted", "No points recorded yet." }
                                     }
                                 } else {
+                                    let points_with_note_displays: Vec<(&PointData, Vec<_>)> = points_to_display
+                                        .iter()
+                                        .map(|pt| {
+                                            let notes = d.point_notes_map.get(&pt.uuid).cloned().unwrap_or_default();
+                                            let displays: Vec<_> = notes.iter().map(|n| point_note_display(n, &d.penalty_types)).collect();
+                                            let note_elems: Vec<_> = displays
+                                                .into_iter()
+                                                .map(|(target_display, border_color, display_text, desc, target_profile_id)| {
+                                                    rsx! {
+                                                        PenaltyDisplay {
+                                                            border_color,
+                                                            display_text,
+                                                            description: desc,
+                                                            target_display: Some(target_display),
+                                                            target_profile_id,
+                                                            on_description_click: move |d: Option<String>| penalty_desc_modal.set(d),
+                                                        }
+                                                    }
+                                                })
+                                                .collect();
+                                            (*pt, note_elems)
+                                        })
+                                        .collect();
                                     rsx! {
                                         div { class: "table-responsive",
                                             table { class: "table table-sm",
@@ -1547,10 +1599,13 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                                                         th { "Stones Elapsed" }
                                                         th { "Winner" }
                                                         th { "Rerun" }
+                                                        if d.is_head_ref {
+                                                            th { "Penalties" }
+                                                        }
                                                     }
                                                 }
                                                 tbody { id: "live-points-table",
-                                                    for (idx, pt) in points_to_display.iter().enumerate() {
+                                                    for (idx, (pt, note_elems)) in points_with_note_displays.iter().enumerate() {
                                                         tr { key: "{pt.uuid}", id: "live-point-row-{pt.uuid}",
                                                             td { "{idx + 1}" }
                                                             td { "{pt.set_number.unwrap_or(1)}" }
@@ -1588,6 +1643,15 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                                                                             span { class: "badge bg-warning", "Rerun" }
                                                                         } else {
                                                                             span { class: "badge bg-success", "Normal" }
+                                                                        }
+                                                                    }
+                                                                    if d.is_head_ref {
+                                                                        td {
+                                                                            div { class: "mt-1",
+                                                                                for elem in note_elems.iter() {
+                                                                                    {elem}
+                                                                                }
+                                                                            }
                                                                         }
                                                                     }
                                                                 }
@@ -1726,6 +1790,9 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                                                     } else {
                                                         None
                                                     };
+                                                    let penalty_desc_for_modal = penalty_info
+                                                        .and_then(|pt| pt.desc.clone())
+                                                        .filter(|s| !s.is_empty());
                                                     rsx! {
                                                         div {
                                                             class: "small text-muted border-start border-3 ps-2 mb-2",
@@ -1751,10 +1818,13 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                                                                 }
                                                             }
                                                             if let Some(pt) = penalty_info {
-                                                                span {
-                                                                    class: "badge me-1",
-                                                                    style: "background-color: #{pt.color}; color: white; text-shadow: 0 0 2px black;",
-                                                                    "{pt.name}"
+                                                                PenaltyDisplay {
+                                                                    border_color: pt.color.clone(),
+                                                                    display_text: pt.name.clone(),
+                                                                    description: penalty_desc_for_modal.clone(),
+                                                                    target_display: None,
+                                                                    target_profile_id: None,
+                                                                    on_description_click: move |d: Option<String>| penalty_desc_modal.set(d),
                                                                 }
                                                             }
                                                             "{note.text}"
@@ -1778,6 +1848,23 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                         }
                     }
                 }
+            }
+            if penalty_desc_modal().is_some() {
+                div { class: "modal show", style: "display: block;",
+                    div { class: "modal-dialog modal-dialog-centered",
+                        div { class: "modal-content",
+                            div { class: "modal-header",
+                                h5 { class: "modal-title", "Penalty description" }
+                                button { r#type: "button", class: "btn-close", onclick: move |_| penalty_desc_modal.set(None) }
+                            }
+                            div { class: "modal-body", "{penalty_desc_modal().as_ref().unwrap_or(&String::new())}" }
+                            div { class: "modal-footer",
+                                button { r#type: "button", class: "btn btn-secondary", onclick: move |_| penalty_desc_modal.set(None), "Close" }
+                            }
+                        }
+                    }
+                }
+                div { class: "modal-backdrop show" }
             }
                 }
             }

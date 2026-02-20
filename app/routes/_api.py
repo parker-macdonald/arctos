@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from flask_login import current_user, login_user, logout_user, login_required
 from sqlalchemy import or_, func
+from sqlalchemy.orm import joinedload
 from app.services.tournament_service import TournamentService
 from app.utils.helpers import (
     is_valid_url_username,
@@ -2231,6 +2232,7 @@ def player_profile(player_id):
         try:
             all_player_notes = (
                 MatchNote.query.filter_by(player_id=player_id)
+                .options(joinedload(MatchNote.penalty_type))
                 .order_by(MatchNote.created_at.desc())
                 .all()
             )
@@ -2248,6 +2250,18 @@ def player_profile(player_id):
                     player_notes.append(note)
         except Exception:
             player_notes = []
+
+    penalty_type_ids = {
+        getattr(n, "penalty_type_id", None)
+        for n in player_notes
+        if getattr(n, "penalty_type_id", None)
+    }
+    pt_map = {}
+    if penalty_type_ids:
+        for pt in PenaltyType.query.filter(
+            PenaltyType.id.in_(penalty_type_ids)
+        ).all():
+            pt_map[pt.id] = {"name": pt.name, "color": pt.color, "desc": pt.desc or ""}
 
     player_note_rows = []
     if player_notes:
@@ -2267,11 +2281,25 @@ def player_profile(player_id):
                 order = match_to_points.get(match_id, [])
                 if note.point_id in order:
                     idx = order.index(note.point_id) + 1
+            pt_id = getattr(note, "penalty_type_id", None)
+            pt_rel = getattr(note, "penalty_type", None)
+            if pt_rel is not None:
+                pt_info = {"name": pt_rel.name, "color": pt_rel.color, "desc": pt_rel.desc or ""}
+            else:
+                pt_info = pt_map.get(pt_id) if pt_id else None
+            if pt_info is None and pt_id:
+                _pt = PenaltyType.query.get(pt_id)
+                if _pt:
+                    pt_info = {"name": _pt.name, "color": _pt.color, "desc": _pt.desc or ""}
             player_note_rows.append(
                 {
                     "created_at": _dt_iso(note.created_at),
-                    "text": note.text,
+                    "text": note.text or "",
                     "point_index": str(idx),
+                    "penalty_type_id": pt_id,
+                    "penalty_type_name": pt_info["name"] if pt_info else None,
+                    "penalty_type_color": pt_info["color"] if pt_info else None,
+                    "penalty_type_desc": pt_info.get("desc", "") if pt_info else None,
                     "match": (
                         {
                             "event": match_obj.event if match_obj else None,
@@ -3584,6 +3612,26 @@ MARKDOWN_CONTENT_CSS = """
 .markdown-content a:hover { text-decoration: underline; }
 .markdown-content img { max-width: 100%; height: auto; }
 .markdown-content hr { margin: 1em 0; border: 0; border-top: 1px solid var(--bs-border-color, #dee2e6); }
+.markdown-content .admonition { margin: 1em 0; padding: 0; border-radius: 6px; border: 1px solid; overflow: hidden; }
+.markdown-content .admonition .admonition-title { margin: 0; padding: 0.5em 0.75em; font-weight: 600; }
+.markdown-content .admonition p:not(.admonition-title) { padding: 0.5em 0.75em; margin-bottom: 0.5em; }
+.markdown-content .admonition p:not(.admonition-title):last-child { margin-bottom: 0; }
+.markdown-content .admonition.note { border-color: #0d6efd; background: rgba(13, 110, 253, 0.08); }
+.markdown-content .admonition.note .admonition-title { background: rgba(13, 110, 253, 0.2); color: #0a58ca; }
+.markdown-content .admonition.warning { border-color: #ffc107; background: rgba(255, 193, 7, 0.12); }
+.markdown-content .admonition.warning .admonition-title { background: rgba(255, 193, 7, 0.25); color: #856404; }
+.markdown-content .admonition.attention { border-color: #ffc107; background: rgba(255, 193, 7, 0.12); }
+.markdown-content .admonition.attention .admonition-title { background: rgba(255, 193, 7, 0.25); color: #856404; }
+.markdown-content .admonition.caution { border-color: #fd7e14; background: rgba(253, 126, 20, 0.1); }
+.markdown-content .admonition.caution .admonition-title { background: rgba(253, 126, 20, 0.2); color: #b35a0e; }
+.markdown-content .admonition.danger { border-color: #dc3545; background: rgba(220, 53, 69, 0.08); }
+.markdown-content .admonition.danger .admonition-title { background: rgba(220, 53, 69, 0.2); color: #b02a37; }
+.markdown-content .admonition.important { border-color: #fd7e14; background: rgba(253, 126, 20, 0.1); }
+.markdown-content .admonition.important .admonition-title { background: rgba(253, 126, 20, 0.2); color: #b35a0e; }
+.markdown-content .admonition.tip { border-color: #198754; background: rgba(25, 135, 84, 0.08); }
+.markdown-content .admonition.tip .admonition-title { background: rgba(25, 135, 84, 0.2); color: #146c43; }
+.markdown-content .admonition.hint { border-color: #198754; background: rgba(25, 135, 84, 0.08); }
+.markdown-content .admonition.hint .admonition-title { background: rgba(25, 135, 84, 0.2); color: #146c43; }
 """
 
 
@@ -4031,7 +4079,10 @@ def update_penalty_type(tournament_url, pt_id):
 
     data = request.get_json()
     if "name" in data:
-        pt.name = data["name"]
+        name = data["name"]
+        if len(name) > 50:
+            return jsonify({"error": "Name too long"}), 400
+        pt.name = name
     if "desc" in data:
         pt.desc = data["desc"]
     if "color" in data:

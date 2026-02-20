@@ -89,28 +89,32 @@ fn RegistrationRow(
                                         div { class: "row",
                                             for p in players_list.iter() {
                                                 div { class: "col-md-6 mb-2",
-                                                    div { class: "card card-body py-2",
-                                                        div { class: "d-flex align-items-center",
-                                                            div { class: "flex-shrink-0 me-2",
-                                                                if let Some(player) = &p.player {
-                                                                    if let Some(photo) = &player.profile_photo {
-                                                                        img { src: "{backend}/static/{photo}", alt: "{player.name}", class: "rounded-circle", style: "width: 40px; height: 40px; object-fit: cover;" }
+                                                    Link {
+                                                        to: Route::PlayerProfilePage { id: p.registration.player.clone() },
+                                                        class: "text-decoration-none text-body",
+                                                        div { class: "card card-body py-2",
+                                                            div { class: "d-flex align-items-center",
+                                                                div { class: "flex-shrink-0 me-2",
+                                                                    if let Some(player) = &p.player {
+                                                                        if let Some(photo) = &player.profile_photo {
+                                                                            img { src: "{backend}/static/{photo}", alt: "{player.name}", class: "rounded-circle", style: "width: 40px; height: 40px; object-fit: cover;" }
+                                                                        } else {
+                                                                            div { class: "d-flex align-items-center justify-content-center bg-secondary rounded-circle", style: "width: 40px; height: 40px;", i { class: "fas fa-user text-white" } }
+                                                                        }
                                                                     } else {
                                                                         div { class: "d-flex align-items-center justify-content-center bg-secondary rounded-circle", style: "width: 40px; height: 40px;", i { class: "fas fa-user text-white" } }
                                                                     }
-                                                                } else {
-                                                                    div { class: "d-flex align-items-center justify-content-center bg-secondary rounded-circle", style: "width: 40px; height: 40px;", i { class: "fas fa-user text-white" } }
                                                                 }
-                                                            }
-                                                            div { class: "flex-grow-1",
-                                                                div { class: "d-flex justify-content-between align-items-center",
-                                                                    div {
-                                                                        strong { "{p.registration.jersey_name.as_deref().unwrap_or(\"-\")}" }
-                                                                        if let Some(num) = &p.registration.jersey_number {
-                                                                            span { class: "text-muted ms-1", "#{num}" }
+                                                                div { class: "flex-grow-1",
+                                                                    div { class: "d-flex justify-content-between align-items-center",
+                                                                        div {
+                                                                            strong { "{p.registration.jersey_name.as_deref().unwrap_or(\"-\")}" }
+                                                                            if let Some(num) = &p.registration.jersey_number {
+                                                                                span { class: "text-muted ms-1", "#{num}" }
+                                                                            }
                                                                         }
+                                                                        small { class: "text-muted", "{p.registration.player}" }
                                                                     }
-                                                                    small { class: "text-muted", "{p.registration.player}" }
                                                                 }
                                                             }
                                                         }

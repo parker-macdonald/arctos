@@ -897,7 +897,7 @@ def get_selection_notes(tournament_url):
             PenaltyType.event == tournament_url,
             PenaltyType.id.in_(penalty_type_ids),
         ).all():
-            pt_map[pt.id] = {"name": pt.name, "color": pt.color}
+            pt_map[pt.id] = {"name": pt.name, "color": pt.color, "desc": pt.desc.strip() if pt.desc and pt.desc.strip() else None}
 
     notes_data = []
     for n in all_notes.values():
@@ -918,6 +918,7 @@ def get_selection_notes(tournament_url):
                 "penalty_type_id": pt_id,
                 "penalty_type_name": pt_info["name"] if pt_info else None,
                 "penalty_type_color": pt_info["color"] if pt_info else None,
+                "penalty_type_desc": pt_info.get("desc") if pt_info else None,
             }
         )
 

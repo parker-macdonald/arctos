@@ -1,5 +1,6 @@
 use crate::api;
-use crate::types::PlayerInjury;
+use crate::components::PenaltyDisplay;
+use crate::types::{NoteMatchInfo, PlayerInjury, PlayerNoteItem};
 use crate::Route;
 use dioxus::prelude::*;
 use serde_json::json;
@@ -24,6 +25,36 @@ fn stamp_to_date(stamp: &Option<String>) -> String {
         .as_deref()
         .map(|s| s.chars().take(10).collect())
         .unwrap_or_default()
+}
+
+/// Format penalty row like run match: colored bar, type name as text when present else note text or "Other".
+fn penalty_display_parts(note: &PlayerNoteItem) -> (String, String) {
+    let border_color = note
+        .penalty_type_color
+        .as_deref()
+        .map(|c| c.trim_start_matches('#').to_string())
+        .unwrap_or_else(|| "808080".to_string());
+    let display_text = note
+        .penalty_type_name
+        .clone()
+        .unwrap_or_else(|| {
+            if note.text.is_empty() {
+                "Other".to_string()
+            } else {
+                note.text.clone()
+            }
+        });
+    (border_color, display_text)
+}
+
+struct PenaltyRow {
+    date_display: String,
+    border_color: String,
+    display_text: String,
+    display_desc: Option<String>,
+    point_index: String,
+    match_info: Option<NoteMatchInfo>,
+    key: String,
 }
 
 fn editable_injury_from_api(inj: &PlayerInjury) -> EditableInjury {
@@ -74,6 +105,7 @@ pub fn PlayerProfile(id: Signal<String>) -> Element {
     let mut injury_error = use_signal(|| None::<String>);
     let mut injury_saving = use_signal(|| false);
     let mut bio_markdown = use_signal(|| Option::<String>::None);
+    let mut penalty_desc_modal = use_signal(|| None::<String>);
     use_effect(move || {
         let v = val.read();
         if let Some(Ok(d)) = v.as_ref() {
@@ -114,6 +146,56 @@ pub fn PlayerProfile(id: Signal<String>) -> Element {
         };
         let can_edit_profile = can_edit_injuries;
         let player_id = d.player.id.clone();
+        let penalty_rows: Vec<PenaltyRow> = d.player_notes.iter().map(|note| {
+            let date_str = stamp_to_date(&note.created_at);
+            let date_display = if date_str.is_empty() { "-".to_string() } else { date_str };
+            let (border_color, display_text) = penalty_display_parts(note);
+            PenaltyRow {
+                key: format!("{}-{}", date_display, note.point_index),
+                date_display: date_display.clone(),
+                border_color,
+                display_text,
+                display_desc: note.penalty_type_desc.clone().filter(|s| !s.is_empty()),
+                point_index: note.point_index.clone(),
+                match_info: note.match_info.clone(),
+            }
+        }).collect();
+        let penalty_rows_empty = penalty_rows.is_empty();
+        let penalty_row_elements: Vec<_> = penalty_rows
+            .into_iter()
+            .map(|row| {
+                let key = row.key.clone();
+                let date_display = row.date_display.clone();
+                let border_color = row.border_color.clone();
+                let display_text = row.display_text.clone();
+                let display_desc = row.display_desc.clone();
+                let point_index = row.point_index.clone();
+                let match_info = row.match_info.clone();
+                rsx! {
+                    tr { key: "{key}",
+                        td { "{date_display}" }
+                        td {
+                            PenaltyDisplay {
+                                border_color,
+                                display_text,
+                                description: display_desc,
+                                target_display: None,
+                                target_profile_id: None,
+                                on_description_click: move |desc: Option<String>| penalty_desc_modal.set(desc),
+                            }
+                        }
+                        td { "{point_index}" }
+                        td {
+                            if let Some(ref match_info) = match_info {
+                                a { href: "/{match_info.event}/match/{match_info.uuid}", "{match_info.name}" }
+                            } else {
+                                "-"
+                            }
+                        }
+                    }
+                }
+            })
+            .collect();
         return rsx! {
             div { class: "row",
                 div { class: "col-12",
@@ -203,13 +285,17 @@ pub fn PlayerProfile(id: Signal<String>) -> Element {
                                                         }
                                                     }
                                                     td {
-                                                        if let Some(jersey_name) = &r.jersey_name {
-                                                            "{jersey_name}"
-                                                            if let Some(jersey_number) = &r.jersey_number {
-                                                                " #{jersey_number}"
+                                                        Link {
+                                                            to: Route::PlayerProfilePage { id: d.player.id.clone() },
+                                                            class: "text-decoration-none",
+                                                            if let Some(jersey_name) = &r.jersey_name {
+                                                                "{jersey_name}"
+                                                                if let Some(jersey_number) = &r.jersey_number {
+                                                                    span { class: "text-muted", " #{jersey_number}" }
+                                                                }
+                                                            } else {
+                                                                "-"
                                                             }
-                                                        } else {
-                                                            "-"
                                                         }
                                                     }
                                                     td {
@@ -515,40 +601,25 @@ pub fn PlayerProfile(id: Signal<String>) -> Element {
                         }
                     }
 
-                    if let Some(Ok(u)) = me.read().as_ref() {
-                        if u.user_type == "player" && u.id == d.player.id {
-                            if !d.player_notes.is_empty() {
-                                div { class: "card mt-3",
-                                    div { class: "card-header",
-                                        h5 { class: "mb-0", "Notes Received" }
-                                    }
-                                    div { class: "card-body",
-                                        div { class: "table-responsive",
-                                            table { class: "table table-striped table-sm",
-                                                thead {
-                                                    tr {
-                                                        th { "Date" }
-                                                        th { "Note" }
-                                                        th { "Point #" }
-                                                        th { "Match" }
-                                                    }
-                                                }
-                                                tbody {
-                                                    for note in d.player_notes.iter() {
-                                                        tr { key: "{note.created_at.as_deref().unwrap_or(\"-\")}-{note.point_index}",
-                                                            td { "{note.created_at.as_deref().unwrap_or(\"-\")}" }
-                                                            td { "{note.text}" }
-                                                            td { "{note.point_index}" }
-                                                            td {
-                                                                if let Some(match_info) = &note.match_info {
-                                                                    a { href: "/{match_info.event}/match/{match_info.uuid}", "{match_info.name}" }
-                                                                } else {
-                                                                    "-"
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
+                    if !penalty_rows_empty {
+                        div { class: "card mt-3",
+                            div { class: "card-header",
+                                h5 { class: "mb-0", "Penalties" }
+                            }
+                            div { class: "card-body",
+                                div { class: "table-responsive",
+                                    table { class: "table table-striped table-sm",
+                                        thead {
+                                            tr {
+                                                th { "Date" }
+                                                th { "Note" }
+                                                th { "Point #" }
+                                                th { "Match" }
+                                            }
+                                        }
+                                        tbody {
+                                            for elem in penalty_row_elements.iter() {
+                                                {elem}
                                             }
                                         }
                                     }
@@ -557,7 +628,23 @@ pub fn PlayerProfile(id: Signal<String>) -> Element {
                         }
                     }
                 }
-
+                    if penalty_desc_modal().is_some() {
+                        div { class: "modal show", style: "display: block;",
+                            div { class: "modal-dialog modal-dialog-centered",
+                                div { class: "modal-content",
+                                    div { class: "modal-header",
+                                        h5 { class: "modal-title", "Penalty description" }
+                                        button { r#type: "button", class: "btn-close", onclick: move |_| penalty_desc_modal.set(None) }
+                                    }
+                                    div { class: "modal-body", "{penalty_desc_modal().as_ref().unwrap_or(&String::new())}" }
+                                    div { class: "modal-footer",
+                                        button { r#type: "button", class: "btn btn-secondary", onclick: move |_| penalty_desc_modal.set(None), "Close" }
+                                    }
+                                }
+                            }
+                        }
+                        div { class: "modal-backdrop show" }
+                    }
             }
         };
     }
