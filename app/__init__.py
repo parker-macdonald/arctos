@@ -158,7 +158,7 @@ def create_app(config=None):
             h = response_or_headers
         h["Access-Control-Allow-Origin"] = origin
         h["Access-Control-Allow-Credentials"] = "true"
-        h["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+        h["Access-Control-Allow-Methods"] = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
         h["Access-Control-Allow-Headers"] = "Content-Type, Authorization, Accept"
         h["Vary"] = "Origin"
 

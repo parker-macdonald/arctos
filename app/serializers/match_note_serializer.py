@@ -38,7 +38,7 @@ class MatchNoteSerializer:
 
         return {
             "uuid": getattr(note, "uuid", None),
-            "text": getattr(note, "text", None),
+            "text": getattr(note, "text", "") or "",
             "target": target,
             "created_by": getattr(note, "created_by", None),
             "created_at": created_ts.isoformat() if created_ts else None,
@@ -46,4 +46,5 @@ class MatchNoteSerializer:
             "player_name": player_name,
             "player_display": player_display,
             "team_id": team_id,
+            "penalty_type_id": getattr(note, "penalty_type_id", None),
         }

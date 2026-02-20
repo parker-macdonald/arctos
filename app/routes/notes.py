@@ -5,6 +5,7 @@ Match notes management routes.
 from flask import Blueprint, request
 from flask_login import login_required, current_user
 from models import Match, MatchNote, Point, db
+from app.domain.enums import MatchNoteTarget
 from app.filters import is_head_ref
 from app.utils.helpers import can_head_ref_match
 from app.serializers.match_note_serializer import MatchNoteSerializer
@@ -164,12 +165,16 @@ def add_point_note(tournament_url):
     """Add a note directly to a point."""
     match_id = request.json.get("match_id")
     point_id = request.json.get("point_id")
-    text = request.json.get("text")
+    text = request.json.get("text", "")
     target = request.json.get("target", "MATCH")
     player_id = request.json.get("player_id")
+    penalty_type_id = request.json.get("penalty_type_id")
 
-    if not match_id or not point_id or not text:
-        return json_error("Match ID, Point ID, and text required")
+    if not match_id or not point_id:
+        return json_error("Match ID and Point ID required")
+
+    if not text and not penalty_type_id:
+        return json_error("Text or penalty type required")
 
     match = Match.query.get(match_id)
     if not match or match.event != tournament_url:
@@ -189,11 +194,55 @@ def add_point_note(tournament_url):
         target=target,
         created_by=current_user.id,
         player_id=player_id if player_id else None,
+        penalty_type_id=penalty_type_id if penalty_type_id else None,
     )
     db.session.add(note)
     db.session.commit()
 
     return json_success({"note_id": note.uuid})
+
+
+@bp.route("/<tournament_url>/set-point-note", methods=["POST"])
+@login_required
+def set_point_note(tournament_url):
+    """Set the single point note for a point (target=match). Replaces any existing one."""
+    match_id = request.json.get("match_id")
+    point_id = request.json.get("point_id")
+    text = (request.json.get("text") or "").strip()
+
+    if not match_id or not point_id:
+        return json_error("Match ID and Point ID required")
+
+    match = Match.query.get(match_id)
+    if not match or match.event != tournament_url:
+        return json_error("Match not found")
+
+    if not can_head_ref_match(tournament_url, current_user.id, match=match):
+        return json_error("Not authorized")
+
+    point = Point.query.get(point_id)
+    if not point or point.match != match_id:
+        return json_error("Point not found")
+
+    # Remove existing point note(s) for this point (target=match only)
+    MatchNote.query.filter_by(
+        match=match_id,
+        point_id=point_id,
+        target=MatchNoteTarget.MATCH,
+    ).delete()
+
+    if text:
+        note = MatchNote(
+            match=match_id,
+            point_id=point_id,
+            text=text,
+            target=MatchNoteTarget.MATCH,
+            created_by=current_user.id,
+        )
+        db.session.add(note)
+
+    db.session.commit()
+    return json_success()
 
 
 @bp.route("/<tournament_url>/delete-point-note", methods=["POST"])

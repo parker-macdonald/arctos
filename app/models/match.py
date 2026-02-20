@@ -216,9 +216,12 @@ class MatchNote(db.Model):
     player_id = db.Column(db.String(50), db.ForeignKey("players.id"))
     # Optional link to a specific point
     point_id = db.Column(db.String(36), db.ForeignKey("points.uuid"))
+    # Optional link to penalty type
+    penalty_type_id = db.Column(db.Integer, db.ForeignKey("penalty_types.id"))
 
     # Relationships
     match_obj = db.relationship("Match", backref="match_notes")
     creator = db.relationship("Player", foreign_keys=[created_by])
     player = db.relationship("Player", foreign_keys=[player_id])
     point_obj = db.relationship("Point", foreign_keys=[point_id], backref="point_notes")
+    penalty_type = db.relationship("PenaltyType")
