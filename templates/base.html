@@ -89,6 +89,22 @@
     </style>
 </head>
 <body>
+    <div id="maintenance-banner" class="maintenance-banner d-flex align-items-center justify-content-center gap-2 py-2 px-3 bg-warning text-dark" role="alert">
+        <span>Arctos will be down for scheduled maintenance on Monday, 2/23 from 4 to 7pm PST.</span>
+        <button type="button" id="maintenance-banner-ok" class="btn btn-sm btn-dark ms-2">OK</button>
+    </div>
+    <script>
+        (function() {
+            var banner = document.getElementById('maintenance-banner');
+            if (sessionStorage.getItem('maintenance-banner-dismissed')) {
+                banner.classList.add('d-none');
+            }
+            document.getElementById('maintenance-banner-ok').addEventListener('click', function() {
+                banner.classList.add('d-none');
+                sessionStorage.setItem('maintenance-banner-dismissed', '1');
+            });
+        })();
+    </script>
     <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
         <div class="container">
             <a class="navbar-brand" href="{{ url_for('main.index') }}">Home</a>
