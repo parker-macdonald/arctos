@@ -11,6 +11,31 @@ from app.domain.enums import RegistrationStatus
 from models import Tournament, PlayerRegistration, Match
 
 
+
+DEFAULT_PENALTY_COLORS = [
+    "FF0000",  # Red
+    "FF8C00",  # Dark Orange
+    "FFD700",  # Gold
+    "32CD32",  # Lime Green
+    "008000",  # Green
+    "00CED1",  # Dark Turquoise
+    "1E90FF",  # Dodger Blue
+    "0000FF",  # Blue
+    "8A2BE2",  # Blue Violet
+    "FF00FF",  # Magenta
+    "C71585",  # Medium Violet Red
+    "A52A2A",  # Brown
+    "808080",  # Gray
+    "000000",  # Black
+]
+
+def get_next_penalty_color(existing_colors: set[str]) -> str:
+    """Get the next available default color that isn't already used."""
+    for color in DEFAULT_PENALTY_COLORS:
+        if color not in existing_colors:
+            return color
+    return "000000"  # Default fallback
+
 def can_head_ref_match(tournament_url: str, player_id: str, match=None) -> bool:
     """
     Check if a player can head ref matches for a tournament.

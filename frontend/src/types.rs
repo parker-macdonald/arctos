@@ -88,6 +88,8 @@ pub struct TournamentDetailResponse {
     pub to_entries: Vec<ToEntry>,
     pub is_current_team_registered: bool,
     pub is_current_player_registered: bool,
+    #[serde(default)]
+    pub penalty_types: Vec<PenaltyType>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -424,6 +426,33 @@ pub struct CameraData {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PenaltyType {
+    pub id: i32,
+    pub name: String,
+    pub color: String,
+    /// Backend may send null when not set.
+    #[serde(default)]
+    pub desc: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PlayerPenaltyHistoryItem {
+    pub penalty_type_name: String,
+    pub match_name: String,
+    pub point_label: String,
+    pub date: String,
+    pub is_current_match: bool,
+    #[serde(default)]
+    pub is_current_point: bool,
+    pub note_uuid: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PlayerPenaltyHistoryResponse {
+    pub penalties: Vec<PlayerPenaltyHistoryItem>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MatchNoteData {
     pub text: String,
     pub target: String,
@@ -432,6 +461,7 @@ pub struct MatchNoteData {
     pub player_display: Option<String>,
     pub team_id: Option<String>,
     pub created_at: Option<String>,
+    pub penalty_type_id: Option<i32>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -441,6 +471,12 @@ pub struct MatchPlayerForNotes {
     pub display: String,
     #[serde(default)]
     pub profile_photo: Option<String>,
+    #[serde(default)]
+    pub team_side: Option<String>,
+    #[serde(default)]
+    pub in_this_match: bool,
+    #[serde(default)]
+    pub penalty_counts: std::collections::HashMap<String, i32>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -455,6 +491,8 @@ pub struct MatchDetailResponse {
     pub is_head_ref: bool,
     #[serde(default)]
     pub match_players: Vec<MatchPlayerForNotes>,
+    #[serde(default)]
+    pub penalty_types: Vec<PenaltyType>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

@@ -3,6 +3,11 @@ use crate::Route;
 use dioxus::prelude::*;
 use wasm_bindgen::JsCast;
 
+const PREDEFINED_COLORS: &[&str] = &[
+    "FF0000", "FF8C00", "FFD700", "32CD32", "008000", "00CED1", "1E90FF", "0000FF",
+    "8A2BE2", "FF00FF", "C71585", "A52A2A", "808080", "000000",
+];
+
 fn get_form_value(id: &str) -> String {
     let window = web_sys::window().unwrap();
     let doc = window.document().unwrap();
@@ -38,8 +43,12 @@ pub fn TournamentSettings(url: String) -> Element {
         let u = url_for_data.clone();
         async move { api::tournament_detail(&u).await.map_err(|e| e.to_string()) }
     });
+    let mut new_penalty_name = use_signal(|| String::new());
+    let mut show_color_picker_for = use_signal(|| None as Option<i32>);
+    let mut custom_color_hex = use_signal(|| String::new());
     let val = data.value();
     let _backend = api::base_url();
+    let url_form = url.clone();
     rsx! {
         if let Some(Ok(d)) = val.read().as_ref() {
             div { class: "row",
@@ -96,13 +105,13 @@ pub fn TournamentSettings(url: String) -> Element {
                                     if get_form_check("registration_open") {
                                         params.push(("registration_open".into(), "on".to_string()));
                                     }
-                                    let url_clone = url.clone();
                                     let nav = navigator.clone();
+                                    let url_submit = url_form.clone();
                                     spawn(async move {
-                                        match api::update_tournament_settings(&url_clone, &params).await {
+                                        match api::update_tournament_settings(&url_submit, &params).await {
                                             Ok(res) => {
                                                 if res.success {
-                                                    nav.push(Route::TournamentHome { url: url_clone });
+                                                    nav.push(Route::TournamentHome { url: url_submit });
                                                 }
                                             }
                                             Err(_) => {}
@@ -274,6 +283,167 @@ pub fn TournamentSettings(url: String) -> Element {
                                 }
                             }
                         }
+                    }
+
+                    div { class: "card mt-4",
+                        div { class: "card-header", h5 { class: "mb-0", "Penalty Types" } }
+                        div { class: "card-body",
+                            {
+                                let url_key = url.clone();
+                                rsx! {
+                            div { class: "input-group mb-3",
+                                input {
+                                    r#type: "text",
+                                    class: "form-control",
+                                    placeholder: "New penalty type name...",
+                                    value: "{new_penalty_name()}",
+                                    oninput: move |ev| new_penalty_name.set(ev.value().clone()),
+                                    onkeydown: move |ev| {
+                                        if ev.key().to_string() == "Enter" {
+                                            let name = new_penalty_name().trim().to_string();
+                                            if !name.is_empty() {
+                                                let u = url_key.clone();
+                                                let mut new_penalty_name = new_penalty_name;
+                                                let mut data = data.clone();
+                                                spawn(async move {
+                                                    if let Ok(_) = api::create_penalty_type(&u, &name, None, None).await {
+                                                        new_penalty_name.set(String::new());
+                                                        data.restart();
+                                                    }
+                                                });
+                                            }
+                                        }
+                                    }
+                                }
+                                button {
+                                    class: "btn btn-outline-secondary",
+                                    r#type: "button",
+                                    onclick: move |_| {
+                                        let name = new_penalty_name().trim().to_string();
+                                        if name.is_empty() { return; }
+                                        let u = url.clone();
+                                        let mut new_penalty_name = new_penalty_name;
+                                        let mut data = data.clone();
+                                        spawn(async move {
+                                            if let Ok(_) = api::create_penalty_type(&u, &name, None, None).await {
+                                                new_penalty_name.set(String::new());
+                                                data.restart();
+                                            }
+                                        });
+                                    },
+                                    "Add"
+                                }
+                            }
+                            div { class: "d-flex flex-wrap gap-2",
+                                for pt in d.penalty_types.iter() {
+                                    {
+                                        let pt_id = pt.id;
+                                        let color = pt.color.clone();
+                                        let name = pt.name.clone();
+                                        let is_editing_color = show_color_picker_for() == Some(pt_id);
+                                        let url_del = url.clone();
+                                        let url_apply = url.clone();
+                                        let mut data_del = data.clone();
+                                        let mut data_apply = data.clone();
+                                        let mut show_cp = show_color_picker_for;
+                                        rsx! {
+                                            div {
+                                                class: "badge d-flex align-items-center gap-2 p-2 border position-relative",
+                                                style: "color: black; background-color: #{color}33;",
+                                                div {
+                                                    class: "rounded-circle border",
+                                                    style: "width: 16px; height: 16px; background-color: #{color}; cursor: pointer;",
+                                                    onclick: move |_| {
+                                                        if show_cp() == Some(pt_id) {
+                                                            show_cp.set(None);
+                                                        } else {
+                                                            show_cp.set(Some(pt_id));
+                                                            custom_color_hex.set(color.clone());
+                                                        }
+                                                    }
+                                                }
+                                                span { "{name}" }
+                                                span {
+                                                    style: "cursor: pointer; opacity: 0.5;",
+                                                    onclick: move |_| {
+                                                        let u = url_del.clone();
+                                                        let mut data = data_del;
+                                                        spawn(async move {
+                                                            if let Ok(_) = api::delete_penalty_type(&u, pt_id).await {
+                                                                data.restart();
+                                                            }
+                                                        });
+                                                    },
+                                                    "×"
+                                                }
+                                                if is_editing_color {
+                                                    div {
+                                                        class: "position-absolute bg-white border rounded p-2 shadow",
+                                                        style: "z-index: 1000; top: 100%; left: 0;",
+                                                        div { class: "d-flex flex-wrap gap-1 mb-2", style: "width: 150px;",
+                                                            for c in PREDEFINED_COLORS.iter() {
+                                                                {
+                                                                    let url_c = url.clone();
+                                                                    let c_val = c.to_string();
+                                                                    let mut data_c = data.clone();
+                                                                    let mut show_cp_c = show_color_picker_for;
+                                                                    rsx! {
+                                                                        div {
+                                                                            class: "rounded-circle border",
+                                                                            style: "width: 20px; height: 20px; background-color: #{c}; cursor: pointer;",
+                                                                            onclick: move |_| {
+                                                                                let u = url_c.clone();
+                                                                                let cv = c_val.clone();
+                                                                                let mut data = data_c;
+                                                                                let mut show_cp = show_cp_c;
+                                                                                spawn(async move {
+                                                                                    if let Ok(_) = api::update_penalty_type(&u, pt_id, None, Some(&cv), None).await {
+                                                                                        data.restart();
+                                                                                        show_cp.set(None);
+                                                                                    }
+                                                                                });
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                        div { class: "input-group input-group-sm",
+                                                            span { class: "input-group-text", "#" }
+                                                            input {
+                                                                r#type: "text",
+                                                                class: "form-control",
+                                                                value: "{custom_color_hex()}",
+                                                                oninput: move |ev| custom_color_hex.set(ev.value().clone()),
+                                                            }
+                                                            button {
+                                                                class: "btn btn-outline-primary",
+                                                                r#type: "button",
+                                                                onclick: move |_| {
+                                                                    let u = url_apply.clone();
+                                                                    let c_val = custom_color_hex().clone();
+                                                                    let mut data = data_apply;
+                                                                    let mut show_cp = show_color_picker_for;
+                                                                    spawn(async move {
+                                                                        if let Ok(_) = api::update_penalty_type(&u, pt_id, None, Some(&c_val), None).await {
+                                                                            data.restart();
+                                                                            show_cp.set(None);
+                                                                        }
+                                                                    });
+                                                                },
+                                                                "✓"
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                }
+                }
                     }
                 }
             }
