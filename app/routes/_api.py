@@ -1867,8 +1867,9 @@ def tournament_match_detail(tournament_url):
         except:
             pass
 
-    # Helper to add players from a team
-    def add_team_players(team_id, team_side, selected_ids):
+    # Helper to add players from a team (registration). Skip any player whose id is in exclude_ids (e.g. playing for the other team).
+    def add_team_players(team_id, team_side, selected_ids, exclude_ids=None):
+        exclude_ids = exclude_ids or set()
         if not team_id:
             return
         regs = PlayerRegistration.query.filter_by(
@@ -1878,6 +1879,8 @@ def tournament_match_detail(tournament_url):
         ).all()
 
         for pr in regs:
+            if pr.player in exclude_ids:
+                continue
             player = Player.query.get(pr.player)
             if player:
                 display = get_player_display_from_registration(player, pr)
@@ -1892,8 +1895,70 @@ def tournament_match_detail(tournament_url):
                     }
                 )
 
-    add_team_players(match.team1, "team1", team1_selected)
-    add_team_players(match.team2, "team2", team2_selected)
+    # Team1: don't list players who are playing for team2 (in team2_selected).
+    add_team_players(match.team1, "team1", team1_selected, exclude_ids=team2_selected)
+    # Team2: don't list players who are playing for team1 (in team1_selected).
+    add_team_players(match.team2, "team2", team2_selected, exclude_ids=team1_selected)
+
+    # Include players who are in team2_selected but not on team2's roster (added via search on start-match).
+    existing_player_ids = {p["player_id"] for p in match_players}
+    for pid in team2_selected:
+        if pid in existing_player_ids:
+            continue
+        player = Player.query.get(pid)
+        if player:
+            pr = (
+                PlayerRegistration.query.filter_by(
+                    event=tournament_url,
+                    player=pid,
+                    status=RegistrationStatus.CONFIRMED,
+                ).first()
+            )
+            display = (
+                get_player_display_from_registration(player, pr)
+                if pr
+                else (player.name or pid)
+            )
+            match_players.append(
+                {
+                    "player_id": player.id,
+                    "name": player.name or "",
+                    "display": display,
+                    "profile_photo": getattr(player, "profile_photo", None),
+                    "team_side": "team2",
+                    "in_this_match": True,
+                }
+            )
+            existing_player_ids.add(pid)
+    # Same for team1_selected: players added via search to team1 only.
+    for pid in team1_selected:
+        if pid in existing_player_ids:
+            continue
+        player = Player.query.get(pid)
+        if player:
+            pr = (
+                PlayerRegistration.query.filter_by(
+                    event=tournament_url,
+                    player=pid,
+                    status=RegistrationStatus.CONFIRMED,
+                ).first()
+            )
+            display = (
+                get_player_display_from_registration(player, pr)
+                if pr
+                else (player.name or pid)
+            )
+            match_players.append(
+                {
+                    "player_id": player.id,
+                    "name": player.name or "",
+                    "display": display,
+                    "profile_photo": getattr(player, "profile_photo", None),
+                    "team_side": "team1",
+                    "in_this_match": True,
+                }
+            )
+            existing_player_ids.add(pid)
 
     # Calculate penalty counts for match players
     player_ids_in_match = [p["player_id"] for p in match_players]

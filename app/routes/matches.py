@@ -6,7 +6,7 @@ from flask import Blueprint, request, jsonify
 from flask_login import login_required, current_user
 from datetime import datetime, timezone
 import json
-from models import Match, Tournament, Point, PlayerRegistration, Player, Field, db
+from models import Match, Tournament, Point, PlayerRegistration, Player, Field, PenaltyType, db
 from app.filters import is_head_ref
 from app.utils.helpers import can_head_ref_match
 from app.utils.dependencies import apply_match_dependencies
@@ -890,11 +890,22 @@ def get_selection_notes(tournament_url):
     for n in player_notes + filtered_team_notes:
         all_notes[getattr(n, "uuid", id(n))] = n
 
+    penalty_type_ids = {getattr(n, "penalty_type_id", None) for n in all_notes.values() if getattr(n, "penalty_type_id", None)}
+    pt_map = {}
+    if penalty_type_ids:
+        for pt in PenaltyType.query.filter(
+            PenaltyType.event == tournament_url,
+            PenaltyType.id.in_(penalty_type_ids),
+        ).all():
+            pt_map[pt.id] = {"name": pt.name, "color": pt.color}
+
     notes_data = []
     for n in all_notes.values():
         # Get match to determine team_id
         match_obj = Match.query.get(n.match) if n.match else None
         payload = MatchNoteSerializer.to_dict(n, tournament_url, match=match_obj)
+        pt_id = payload.get("penalty_type_id")
+        pt_info = pt_map.get(pt_id) if pt_id else None
         # Keep response schema stable for this endpoint (subset only).
         notes_data.append(
             {
@@ -904,6 +915,9 @@ def get_selection_notes(tournament_url):
                 "player_name": payload.get("player_name"),
                 "player_display": payload.get("player_display"),
                 "team_id": payload.get("team_id"),
+                "penalty_type_id": pt_id,
+                "penalty_type_name": pt_info["name"] if pt_info else None,
+                "penalty_type_color": pt_info["color"] if pt_info else None,
             }
         )
 
