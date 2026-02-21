@@ -39,6 +39,7 @@ For TOs
     - [Breaks](#breaks)
     - [Joins](#joins)
     - [Ribbon Games](#ribbon-games)
+	- [Skip Conditions](#skip-conditions)
  - [YouTube Livestream Integration](#youtube-livestream-integration)
  - [OBS Scoreboard Integration](#obs-scoreboard-integration)
  - [Recording Matches](#recording-matches)
@@ -406,6 +407,15 @@ You can add other TOs by entering their exact username. Only TOs can
 mark people as paid and deregister others. Be aware that all TOs can
 add and remove other TOs!
 
+### Penalty Types
+
+Add penalties here. The description is optional. You can change the
+color to be whatever you want; it's mainly meant to make it easier for
+head refs to tell different penalties apart when viewing a list.
+
+Note that once a penalty has been made with a specific penalty type,
+that type cannot be deleted!
+
 ## Match Schedule Setup {#match-schedule-setup}
 
 From the schedule page, TOs can enter *edit mode*, which allows you to
@@ -534,9 +544,45 @@ matches, practice games, or matches that don't affect standings. When
 creating or editing a match, you can check the "Ribbon Game" checkbox
 to mark it as such.
 
-### Skip Conditions
+### Skip Conditions {#skip-conditions}
 
+Between tags and references, very nearly any tournament structure can
+be expressed. There are, however, some cases when you can't know *how
+many* matches will be run before the tournament begins. More
+concretely, consider the double-elmination bracket, where a second
+finals match must be run if it was the losing team's first loss.
 
+In order to implement this, dynamic (`fast` or `safe`) matches[^2] may
+have a *skip condition*, an boolean expression in lisp-like language
+called Arctos Schedule Script (ASS).
+
+#### Arctos Schedule Script
+
+An ASS expression is either an *atom* (a literal value or a function)
+or a *list* (of expressions). 
+
+Some examples of atoms are:
+- numbers: `1`, `2`, etc.
+- booleans: `true`, `false`
+- functions: `+`, `and`, `if`, etc.
+
+A list is a space-separated list of items. The parser tries to reduce
+expressions into atoms. It deals with lists by calling the first
+element of the list with the remainder of the list as arguments. if
+the first argument is not a list, it can't do anything, so it just
+gives up and lets the expression be a list.
+
+Take the following list for example:
+
+```
+(+ 1 2)
+```
+
+the first element is `+`, which is a function that takes two arguments. The parser knows how to call `+` and so this list can be reduced to the atom `3`.
+
+```
+(1 2 3)
+```
 
 ### Exporting and Importing Schedule Files {#exporting-and-importing-schedule-files}
 
@@ -666,3 +712,5 @@ bit large to display here well, but if you click the link, you can
 zoom in however much you want.
 
 ![](/static/run_match_pipeline.png)
+
+[^2]: static matches may not be skipped because if it is skipped, it's impossible to know when the next match should be, since the static match doesn't care what came before it.
