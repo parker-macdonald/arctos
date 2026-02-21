@@ -71,8 +71,9 @@ fn scores_by_set_from_points(points: &[&Value]) -> Vec<(String, u64, u64)> {
         .collect()
 }
 
-/// Stones elapsed (1.5s beats) between stamp and end (or now if end is None). Uses client time only.
+/// Stones elapsed = number of global 1.5s beat boundaries crossed (so counters tick in sync with global clock).
 fn stones_elapsed_beats(stamp_opt: Option<&str>, end_opt: Option<&str>) -> u32 {
+    const BEAT: f64 = 1.5;
     let start = stamp_opt
         .and_then(parse_iso_epoch)
         .unwrap_or(0) as f64;
@@ -80,17 +81,35 @@ fn stones_elapsed_beats(stamp_opt: Option<&str>, end_opt: Option<&str>) -> u32 {
         .and_then(parse_iso_epoch)
         .map(|t| t as f64)
         .unwrap_or_else(now_epoch_secs);
-    ((end - start) / 1.5).floor().max(0.0) as u32
+    let start_beat = (start / BEAT).floor() as i64;
+    let end_beat = (end / BEAT).floor() as i64;
+    (end_beat - start_beat).max(0) as u32
 }
 
-/// Stones elapsed using Bayesian filter for server time (ongoing point). Returns u32 for display.
+/// Stones elapsed with millisecond precision (global beat boundaries, same as table).
+fn stones_elapsed_beats_ms(stamp_opt: Option<&str>, end_opt: Option<&str>) -> u32 {
+    const BEAT: f64 = 1.5;
+    let start = stamp_opt
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        .map(|dt| dt.timestamp_millis() as f64 / 1000.0)
+        .unwrap_or(0.0);
+    let end = end_opt
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        .map(|dt| dt.timestamp_millis() as f64 / 1000.0)
+        .unwrap_or_else(now_epoch_secs);
+    let start_beat = (start / BEAT).floor() as i64;
+    let end_beat = (end / BEAT).floor() as i64;
+    (end_beat - start_beat).max(0) as u32
+}
+
+/// Stones elapsed = global 1.5s beat boundaries crossed. Uses Bayesian filter for server time when end is None (ongoing point).
 #[cfg(target_arch = "wasm32")]
 fn stones_elapsed_with_filter(
     stamp_opt: Option<&str>,
     end_opt: Option<&str>,
     filter: &Signal<BayesianOffsetFilter>,
 ) -> u32 {
-    const BEAT_INTERVAL: f64 = 1.5;
+    const BEAT: f64 = 1.5;
     let start = match stamp_opt.and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok()) {
         Some(parsed) => parsed.timestamp_millis() as f64 / 1000.0,
         None => return 0,
@@ -106,7 +125,9 @@ fn stones_elapsed_with_filter(
         let client_time = js_sys::Date::now() / 1000.0;
         client_time + filter.read().get_mean()
     };
-    ((end - start) / BEAT_INTERVAL).floor().max(0.0) as u32
+    let start_beat = (start / BEAT).floor() as i64;
+    let end_beat = (end / BEAT).floor() as i64;
+    (end_beat - start_beat).max(0) as u32
 }
 
 #[component]
@@ -423,7 +444,7 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                                         if set_type_stones {
                                             let at_start = p.get("stones_at_start").and_then(|s| s.as_u64()).unwrap_or(0);
                                             let stamp = p.get("stamp").and_then(|s| s.as_str());
-                                            let elapsed = stones_elapsed_beats(stamp, Some(end_iso.as_str())) as u64;
+                                            let elapsed = stones_elapsed_beats_ms(stamp, Some(end_iso.as_str())) as u64;
                                             let remaining = (at_start.saturating_sub(elapsed)) as u32;
                                             stones_remaining.set(remaining);
                                             final_stones_for_api = Some(remaining);
@@ -539,7 +560,7 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                                         if set_type_stones {
                                             let at_start = p.get("stones_at_start").and_then(|s| s.as_u64()).unwrap_or(0);
                                             let stamp = p.get("stamp").and_then(|s| s.as_str());
-                                            let elapsed = stones_elapsed_beats(stamp, Some(end_iso.as_str())) as u64;
+                                            let elapsed = stones_elapsed_beats_ms(stamp, Some(end_iso.as_str())) as u64;
                                             let remaining = (at_start.saturating_sub(elapsed)) as u32;
                                             stones_remaining.set(remaining);
                                             final_stones_for_api = Some(remaining);

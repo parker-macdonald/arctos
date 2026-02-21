@@ -646,8 +646,8 @@ async fn run_recording_loop(
                         chunk_count: Rc<RefCell<u32>>,
                         current_point_id: Rc<RefCell<Option<String>>>| {
         let mut options = MediaRecorderOptions::new();
-        options.video_bits_per_second(50_000_000);
-        options.audio_bits_per_second(128_000);
+        options.set_video_bits_per_second(50_000_000);
+        options.set_audio_bits_per_second(128_000);
         let mut chosen_container = "webm";
         for (mime, container) in MIME_PREFERENCE {
             if MediaRecorder::is_type_supported(mime) {

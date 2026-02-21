@@ -212,17 +212,16 @@ fn youtube_seek_seconds(point_stamp: Option<&str>, stream_start_time: Option<&st
     Some(secs.max(0.0))
 }
 
-/// Compute stones elapsed for a point using Bayesian filter for server time
+/// Compute stones elapsed = number of global 1.5s beat boundaries crossed (so counters tick in sync with global clock).
 #[cfg(target_arch = "wasm32")]
 fn compute_stones_elapsed(
     start_stamp: Option<&str>,
     end_stamp: Option<&str>,
     filter: &Signal<BayesianOffsetFilter>,
 ) -> String {
-    const BEAT_INTERVAL: f64 = 1.5;
-    
+    const BEAT: f64 = 1.5;
+
     let start = if let Some(s) = start_stamp {
-        // Parse ISO 8601 timestamp
         if let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(s) {
             parsed.timestamp_millis() as f64 / 1000.0
         } else {
@@ -231,27 +230,22 @@ fn compute_stones_elapsed(
     } else {
         return "0".to_string();
     };
-    
+
     let end = if let Some(e) = end_stamp {
-        // Parse ISO 8601 timestamp
         if let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(e) {
             parsed.timestamp_millis() as f64 / 1000.0
         } else {
-            // Ongoing point - use server time
             let client_time = js_sys::Date::now() / 1000.0;
-            let offset = filter.read().get_mean();
-            client_time + offset
+            client_time + filter.read().get_mean()
         }
     } else {
-        // Ongoing point - use server time
         let client_time = js_sys::Date::now() / 1000.0;
-        let offset = filter.read().get_mean();
-        client_time + offset
+        client_time + filter.read().get_mean()
     };
-    
-    // Use duration-based count (same as run_match): full 1.5s intervals within the segment only.
-    // Avoids off-by-one from boundary-based count when point start isn't on a beat boundary.
-    let elapsed = ((end - start) / BEAT_INTERVAL).floor().max(0.0) as i64;
+
+    let start_beat = (start / BEAT).floor() as i64;
+    let end_beat = (end / BEAT).floor() as i64;
+    let elapsed = (end_beat - start_beat).max(0);
     elapsed.to_string()
 }
 
