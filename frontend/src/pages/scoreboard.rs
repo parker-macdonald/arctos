@@ -231,12 +231,16 @@ pub fn Scoreboard(url: String, field: String) -> Element {
                         {
                             #[cfg(target_arch = "wasm32")]
                             let _ = stones_update_tick();
+                            // During a point: compute from points (live tick). Between points: use polled stones_remaining (like match page).
                             #[cfg(target_arch = "wasm32")]
-                            let remaining = s
-                                .points_for_stones
-                                .as_ref()
-                                .and_then(|pts| scoreboard_compute_stones_remaining(pts, &time_filter))
-                                .unwrap_or_else(|| stones.stones_remaining.unwrap_or(0));
+                            let remaining = {
+                                let during_point = s.points_for_stones.as_ref().and_then(|pts| pts.last()).map_or(false, |last| last.end_stamp.is_none());
+                                if during_point {
+                                    s.points_for_stones.as_ref().and_then(|pts| scoreboard_compute_stones_remaining(pts, &time_filter)).unwrap_or_else(|| stones.stones_remaining.unwrap_or(0))
+                                } else {
+                                    stones.stones_remaining.or_else(|| s.points_for_stones.as_ref().and_then(|pts| scoreboard_compute_stones_remaining(pts, &time_filter))).unwrap_or(0)
+                                }
+                            };
                             #[cfg(not(target_arch = "wasm32"))]
                             let remaining = stones.stones_remaining.unwrap_or(0);
                             let pct = if stones.stones_per_set == 0 {
