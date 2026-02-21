@@ -1,6 +1,6 @@
 # Data Accessibility Guide
 
-Updated: Jan 8, 2026
+Updated: Feb 20, 2026
 
 This document details when and how data that you explicitly enter is
 accessible to others.
@@ -23,6 +23,7 @@ Arctos will never publish, to anyone, your email address, phone number
  attached, we will never group injuries by user, etc.).
 
 ## Penalties
+
  - are visible to target forever on their profile
  - are visible forever on target's profile to all explicitly listed head
    refs and TOs for the tournament at which they were logged
