@@ -212,6 +212,35 @@ fn youtube_seek_seconds(point_stamp: Option<&str>, stream_start_time: Option<&st
     Some(secs.max(0.0))
 }
 
+/// Parse ISO timestamp to epoch seconds. Handles RFC3339 and naive ISO from Python (e.g. "2025-02-21T12:34:56.123456").
+fn parse_iso_to_secs(s: &str) -> Option<f64> {
+    let s = s.trim();
+    chrono::DateTime::parse_from_rfc3339(s)
+        .ok()
+        .map(|dt| dt.timestamp_millis() as f64 / 1000.0)
+        .or_else(|| {
+            let with_z = if s.ends_with('Z') || s.contains('+') || (s.contains('-') && s.len() > 10) {
+                s.to_string()
+            } else {
+                format!("{}Z", s.trim_end_matches('z').trim_end_matches('Z'))
+            };
+            chrono::DateTime::parse_from_rfc3339(&with_z).ok().map(|dt| dt.timestamp_millis() as f64 / 1000.0)
+        })
+        .or_else(|| {
+            let without_tz = s.trim_end_matches('z').trim_end_matches('Z').trim();
+            let base = if let Some(dot) = without_tz.find('.') {
+                &without_tz[..dot]
+            } else if let Some(plus) = without_tz.find('+') {
+                &without_tz[..plus]
+            } else {
+                without_tz
+            };
+            chrono::NaiveDateTime::parse_from_str(base, "%Y-%m-%dT%H:%M:%S")
+                .ok()
+                .map(|t| t.and_utc().timestamp() as f64)
+        })
+}
+
 /// Compute stones elapsed = number of global 1.5s beat boundaries crossed (so counters tick in sync with global clock).
 #[cfg(target_arch = "wasm32")]
 fn compute_stones_elapsed(
@@ -221,26 +250,17 @@ fn compute_stones_elapsed(
 ) -> String {
     const BEAT: f64 = 1.5;
 
-    let start = if let Some(s) = start_stamp {
-        if let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(s) {
-            parsed.timestamp_millis() as f64 / 1000.0
-        } else {
-            return "0".to_string();
-        }
-    } else {
-        return "0".to_string();
+    let start = match start_stamp.and_then(|s| parse_iso_to_secs(s)) {
+        Some(secs) => secs,
+        None => return "0".to_string(),
     };
 
-    let end = if let Some(e) = end_stamp {
-        if let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(e) {
-            parsed.timestamp_millis() as f64 / 1000.0
-        } else {
+    let end = match end_stamp.and_then(|s| parse_iso_to_secs(s)) {
+        Some(secs) => secs,
+        None => {
             let client_time = js_sys::Date::now() / 1000.0;
             client_time + filter.read().get_mean()
         }
-    } else {
-        let client_time = js_sys::Date::now() / 1000.0;
-        client_time + filter.read().get_mean()
     };
 
     let start_beat = (start / BEAT).floor() as i64;

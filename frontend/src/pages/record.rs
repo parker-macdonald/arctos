@@ -423,7 +423,14 @@ async fn initialize_camera_and_enumerate(
     };
 
     let mut constraints = MediaStreamConstraints::new();
-    constraints.video(&true.into());
+    let mut video_ideal = js_sys::Object::new();
+    let w = js_sys::Object::new();
+    js_sys::Reflect::set(&w, &"ideal".into(), &1920.into()).ok();
+    js_sys::Reflect::set(&video_ideal, &"width".into(), &w.into()).ok();
+    let h = js_sys::Object::new();
+    js_sys::Reflect::set(&h, &"ideal".into(), &1080.into()).ok();
+    js_sys::Reflect::set(&video_ideal, &"height".into(), &h.into()).ok();
+    constraints.video(&video_ideal.into());
     constraints.audio(&true.into());
 
     let promise = match media_devices.get_user_media_with_constraints(&constraints) {
@@ -496,10 +503,16 @@ async fn initialize_camera_and_enumerate(
         selected_camera_id.set(Some(device_id.clone()));
         set_stored_camera_device_id(&device_id);
         let mut specific_constraints = MediaStreamConstraints::new();
-        let mut video_constraint = js_sys::Object::new();
+        let video_constraint = js_sys::Object::new();
         let device_id_obj = js_sys::Object::new();
         js_sys::Reflect::set(&device_id_obj, &"exact".into(), &device_id.into()).ok();
         js_sys::Reflect::set(&video_constraint, &"deviceId".into(), &device_id_obj.into()).ok();
+        let w = js_sys::Object::new();
+        js_sys::Reflect::set(&w, &"ideal".into(), &1920.into()).ok();
+        js_sys::Reflect::set(&video_constraint, &"width".into(), &w.into()).ok();
+        let h = js_sys::Object::new();
+        js_sys::Reflect::set(&h, &"ideal".into(), &1080.into()).ok();
+        js_sys::Reflect::set(&video_constraint, &"height".into(), &h.into()).ok();
         specific_constraints.video(&video_constraint.into());
         specific_constraints.audio(&true.into());
 

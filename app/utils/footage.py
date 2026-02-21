@@ -1,12 +1,44 @@
 import json
 import logging
 from models import Match, Point, db
+import os
 from os import path
 import subprocess
 from itertools import groupby
 from datetime import datetime, timezone
 
 log = logging.getLogger(__name__)
+
+
+def _extract_mp4_init(file_path):
+    """Extract ftyp+moov (init segment) from an MP4 or fMP4 file. Returns bytes or None.
+    Stops at the first top-level 'moof' atom; fragment-only files (no moov) return None.
+    """
+    try:
+        with open(file_path, "rb") as f:
+            data = f.read()
+    except OSError:
+        return None
+    if len(data) < 8:
+        return None
+    pos = 0
+    while pos + 8 <= len(data):
+        size = int.from_bytes(data[pos : pos + 4], "big")
+        atype = data[pos + 4 : pos + 8]
+        if size == 0:
+            break
+        if size == 1 and pos + 16 <= len(data):
+            size = int.from_bytes(data[pos + 8 : pos + 16], "big")
+            if size < 16:
+                return None
+        elif size < 8:
+            return None
+        if atype == b"moof":
+            return data[:pos]
+        if pos + size > len(data):
+            break
+        pos += size
+    return None
 
 
 def _get_media_duration_sec(file_path, cwd=None):
@@ -118,37 +150,95 @@ def finalize_recording_worker(
             is_mp4 = first_filename.lower().endswith(".mp4")
 
             if is_mp4:
-                # MP4: concat chunks with cat (fast; chunks are fragments by design)
-                raw_name = f"session_{session_id}_raw.mp4"
-                raw_path = path.join(chunk_dir, raw_name)
-                cat_files = [
-                    c["filename"] for c in session_chunks
+                # MP4: use ffmpeg concat demuxer so we get one coherent file with correct duration.
+                # (Cat would glue fragments back-to-back; players/ffmpeg only read the first moov, so duration is wrong.)
+                existing_mp4 = [
+                    c for c in session_chunks
                     if path.exists(path.join(chunk_dir, c["filename"]))
                 ]
-                if not cat_files:
+                if not existing_mp4:
                     _log.warning("finalize_recording: session %s has no existing chunk files", session_id)
                     continue
-                try:
-                    with open(raw_path, "wb") as out:
-                        cat_result = subprocess.run(
-                            ["cat"] + cat_files,
-                            cwd=chunk_dir,
-                            stdout=out,
-                            timeout=300,
-                        )
-                except OSError as e:
-                    _log.warning("finalize_recording: session %s cat failed: %s", session_id, e)
-                    continue
-                if cat_result.returncode != 0 or not path.exists(raw_path) or path.getsize(raw_path) == 0:
+                # Use absolute paths in the list so ffmpeg always finds every chunk
+                concat_list_path = path.join(chunk_dir, f"session_{session_id}_concat_list.txt")
+                with open(concat_list_path, "w") as f:
+                    for c in existing_mp4:
+                        abs_path = path.join(chunk_dir, c["filename"])
+                        print(f"file {repr(path.abspath(abs_path))}", file=f)
+                print(f"finalize_recording: session {session_id} concat list has {len(existing_mp4)} chunk(s)")
+                raw_name = f"session_{session_id}_raw.mp4"
+                raw_path = path.join(chunk_dir, raw_name)
+                concat_result = subprocess.run(
+                    [
+                        "ffmpeg", "-f", "concat", "-safe", "0",
+                        "-i", concat_list_path,
+                        "-c", "copy", "-movflags", "+faststart",
+                        "-loglevel", "error", "-y", raw_name,
+                    ],
+                    cwd=chunk_dir,
+                    capture_output=True,
+                    text=True,
+                    timeout=300,
+                )
+                if concat_result.returncode != 0 or not path.exists(raw_path) or path.getsize(raw_path) == 0:
+                    # Concat often fails when later sessions use fragment-only chunks (no moov).
+                    # Fallback: prepend init segment (ftyp+moov) from the first session's first chunk,
+                    # then binary-concat this session's chunks so ffmpeg sees one fMP4 stream.
+                    stderr = (concat_result.stderr or "").strip()
                     _log.warning(
-                        "finalize_recording: session %s mp4 cat failed returncode=%s",
-                        session_id, cat_result.returncode,
+                        "finalize_recording: session %s mp4 concat failed returncode=%s stderr=%s",
+                        session_id, concat_result.returncode, stderr,
                     )
-                    continue
+                    first_session_chunks = sessions[0][1] if sessions else []
+                    init_chunk_path = (
+                        path.join(chunk_dir, first_session_chunks[0]["filename"])
+                        if first_session_chunks and path.exists(path.join(chunk_dir, first_session_chunks[0]["filename"]))
+                        else None
+                    )
+                    init_bytes = _extract_mp4_init(init_chunk_path) if init_chunk_path else None
+                    if init_bytes:
+                        print(f"finalize_recording: session {session_id} retrying with init segment + {len(existing_mp4)} fragment(s)")
+                        temp_fmp4 = path.join(chunk_dir, f"session_{session_id}_fmp4_temp.mp4")
+                        try:
+                            with open(temp_fmp4, "wb") as out:
+                                out.write(init_bytes)
+                                for c in existing_mp4:
+                                    chunk_path = path.join(chunk_dir, c["filename"])
+                                    with open(chunk_path, "rb") as inp:
+                                        out.write(inp.read())
+                            concat_result = subprocess.run(
+                                [
+                                    "ffmpeg", "-f", "mp4", "-i", path.basename(temp_fmp4),
+                                    "-c", "copy", "-movflags", "+faststart",
+                                    "-loglevel", "error", "-y", raw_name,
+                                ],
+                                cwd=chunk_dir,
+                                capture_output=True,
+                                text=True,
+                                timeout=300,
+                            )
+                            try:
+                                if path.exists(temp_fmp4):
+                                    os.remove(temp_fmp4)
+                            except OSError:
+                                pass
+                        except OSError as e:
+                            _log.warning("finalize_recording: session %s init+concat fallback failed: %s", session_id, e)
+                            continue
+                        if concat_result.returncode != 0 or not path.exists(raw_path) or path.getsize(raw_path) == 0:
+                            _log.warning(
+                                "finalize_recording: session %s init+concat ffmpeg failed returncode=%s stderr=%s",
+                                session_id, concat_result.returncode, (concat_result.stderr or "").strip(),
+                            )
+                            continue
+                    else:
+                        if init_chunk_path:
+                            print(f"finalize_recording: session {session_id} no init segment in first chunk, skipping")
+                        continue
                 print(f"finalize_recording: session {session_id} wrote raw mp4 ({path.getsize(raw_path)} bytes)")
                 raw_input_fmt = "mov"
                 raw_input_name = raw_name
-                included_chunks = session_chunks  # for segment_start_ms / point_ids below
+                included_chunks = existing_mp4
             else:
                 # WebM: drop chunks before first EBML header, then concat with cat
                 first_valid_index = None
@@ -262,6 +352,13 @@ def finalize_recording_worker(
                             pass
                 if raw_duration is not None and raw_duration > 0:
                     clip_end_sec = min(clip_end_sec, raw_duration)
+                    # If point metadata suggests a very short clip but raw is long, keep full duration
+                    if clip_end_sec < 30 and raw_duration > 120:
+                        print(
+                            f"finalize_recording: session {session_id} clip_end_sec={clip_end_sec:.1f}s "
+                            f"< 30s but raw_duration={raw_duration:.1f}s; using full duration"
+                        )
+                        clip_end_sec = None
 
             segment_name = segment_basename(session_id)
             # Re-encode to WebM (VP9/Opus) and optionally trim to clip_end_sec (cwd=chunk_dir).
@@ -296,6 +393,22 @@ def finalize_recording_worker(
             print(f"finalize_recording: session {session_id} failed: {e}")
             _log.exception("finalize_recording: session %s failed", session_id)
             continue
+
+    # Rebuild segment list from disk in session order so we never miss segments
+    # (e.g. if segment_files was from a partial run or only some sessions appended).
+    segment_files = []
+    for _sid, _chunks in sessions:
+        seg_path = path.join(chunk_dir, segment_basename(_sid))
+        if path.exists(seg_path) and path.getsize(seg_path) > 0:
+            _start_sec = _chunks[0]["chunk_start_timestamp"] / 1000.0
+            _pids = set()
+            for _c in _chunks:
+                _pid = _c.get("point_id")
+                if _pid and str(_pid).strip():
+                    _pids.add(str(_pid).strip())
+            segment_files.append((seg_path, _start_sec, _pids))
+    if segment_files:
+        print(f"finalize_recording: {len(segment_files)} segment(s) for final concat", flush=True)
 
     # 2. Concatenate all segment files and build in_video_times (relative names, cwd=chunk_dir)
     clips_txt = path.join(chunk_dir, "clips.txt")
