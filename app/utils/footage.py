@@ -1,7 +1,7 @@
 import json
 import logging
 from models import Match, Point, db
-from os import path, listdir, remove
+from os import path
 import subprocess
 from itertools import groupby
 from datetime import datetime, timezone
@@ -418,10 +418,4 @@ def finalize_recording_worker(
         print(f"finalize_recording: ERROR after ffmpeg: {e}", flush=True)
         _log.exception("finalize_recording: failed after ffmpeg")
 
-    # Cleanup: remove chunks, raw files; keep final_video, metadata.json, and per-session segment files.
-    for file in listdir(chunk_dir):
-        if file in ("final_video.webm", "metadata.json", "chunks_meta.json", "clips.txt"):
-            continue
-        if file.startswith("session_") and file.endswith("_segment.webm"):
-            continue
-        remove(path.join(chunk_dir, file))
+    # Do not delete chunks or raw files; keep everything for debugging and reruns.
