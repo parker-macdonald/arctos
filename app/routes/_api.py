@@ -1584,7 +1584,8 @@ def tournament_schedule_setup(tournament_url):
             }
         )
 
-    # Team Options
+    # Team Options: only teams with valid (confirmed) registration for this tournament.
+    # Create/edit match modals use this; match refs (MatchName::winner/loser) and tags (tag::Name) are offered separately.
     team_options = []
     seen = set()
     for tr in TeamRegistration.query.filter_by(
@@ -1600,22 +1601,6 @@ def tournament_schedule_setup(tournament_url):
                 }
             )
             seen.add(tr.team)
-    # Add teams referenced in matches (even if not registered or placeholder)
-    for m in matches_query:
-        for initial in [m.team1_initial, m.team2_initial]:
-            if not initial or initial in seen:
-                continue
-            if (
-                "::winner" in initial
-                or "::loser" in initial
-                or " winner" in initial
-                or " loser" in initial
-            ):
-                continue
-            team_options.append(
-                {"id": initial, "pseudonym": initial, "profile_photo": None}
-            )
-            seen.add(initial)
 
     return jsonify(
         {

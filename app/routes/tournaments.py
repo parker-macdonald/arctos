@@ -935,9 +935,9 @@ def add_match(tournament_url):
                 request.form["start_time"]
             )
 
-    # Set initial status: STATIC matches are READY_TO_START, others are NOT_STARTED
+    # Set initial status: STATIC matches are TIME_FINALIZED, others are NOT_STARTED
     if schedule_type == ScheduleType.STATIC:
-        match.status = MatchStatus.READY_TO_START
+        match.status = MatchStatus.TIME_FINALIZED
     else:
         match.status = MatchStatus.NOT_STARTED
 
