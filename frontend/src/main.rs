@@ -133,6 +133,9 @@ enum Route {
 
     #[route("/arctos-schedule-script")]
     ArctosScheduleScript {},
+
+    #[route("/data-accessibility-guide")]
+    DataAccessibilityGuide {},
 }
 
 fn main() {

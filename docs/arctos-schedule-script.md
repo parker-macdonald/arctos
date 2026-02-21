@@ -6,6 +6,7 @@ An ASS expression is either an *atom* (a literal value or a function)
 or a *list* (of expressions). 
 
 Some examples of atoms are:
+
 - numbers: `1`, `2`, etc.
 - booleans: `true`, `false`
 - nil: `nil` (the "nothing value")
@@ -106,6 +107,7 @@ parenthesis around it, so it's fine (but you can't write these as a
 literal).
 
 Now here are some fun things you can do with lists:
+
 - `(car LIST)`  - get first element of the list
 - `(cdr LIST)` - get all but the first element of the list
 - `(get INDEX LIST)` get the value of the list at index `INDEX` (so
