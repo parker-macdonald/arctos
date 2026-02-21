@@ -28,6 +28,20 @@ fn schedule_tz_offset_minutes() -> i64 {
     }
 }
 
+/// Convert a datetime-local value (local time, no timezone) to UTC ISO string for the API.
+fn local_datetime_to_utc_iso(local_str: &str) -> Option<String> {
+    use chrono::{FixedOffset, TimeZone, Utc};
+    let s = local_str.trim();
+    if s.is_empty() {
+        return None;
+    }
+    let ndt = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M").ok()?;
+    let offset_secs = schedule_tz_offset_minutes() * 60;
+    let offset = FixedOffset::east_opt(offset_secs as i32)?;
+    let local = offset.from_local_datetime(&ndt).single()?;
+    Some(local.with_timezone(&Utc).format("%Y-%m-%dT%H:%M:%SZ").to_string())
+}
+
 /// Effective start time for timeline/date nav: confirmed when set, else nominal.
 fn effective_start_str(m: &MatchSetupData) -> Option<&str> {
     m.confirmed_start_time.as_deref().or(m.nominal_start_time.as_deref())
@@ -899,7 +913,7 @@ fn CreateMatchModal(
                 start_time: if start_time().is_empty() {
                     None
                 } else {
-                    Some(start_time())
+                    local_datetime_to_utc_iso(&start_time()).or_else(|| Some(start_time()))
                 },
                 previous_match_id: if previous_match_id().is_empty() {
                     None
@@ -966,7 +980,7 @@ fn CreateMatchModal(
                 start_time: if start_time().is_empty() {
                     None
                 } else {
-                    Some(start_time())
+                    local_datetime_to_utc_iso(&start_time()).or_else(|| Some(start_time()))
                 },
                 previous_match_id: if previous_match_id().is_empty() {
                     None

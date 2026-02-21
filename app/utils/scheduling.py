@@ -71,6 +71,79 @@ def _all_schedule_deps_in(
     return all(dep.status in statuses for dep in deps)
 
 
+def _slot_resolved(
+    team_id: Optional[str],
+    initial: Optional[str],
+    tournament_url: str,
+    name_to_match: Dict,
+) -> bool:
+    """True if this team/ref slot is resolved to a specific team (or is empty)."""
+    if team_id and str(team_id).strip():
+        return True
+    if not initial or not str(initial).strip():
+        return True
+    initial = str(initial).strip()
+    if initial.lower().startswith("tag::"):
+        from app.models.tournament import Tag
+
+        tag_name = initial[5:].strip()
+        tag = Tag.query.filter_by(event=tournament_url, name=tag_name).first()
+        return bool(tag and tag.team)
+    if "::winner" in initial or "::loser" in initial:
+        base = initial.split("::")[0].strip()
+        dep = name_to_match.get(base)
+        return bool(dep and getattr(dep, "match_winner", None) is not None)
+    return False
+
+
+def _all_participating_teams_resolved(
+    match: object,
+    tournament_url: str,
+    name_to_match: Dict,
+) -> bool:
+    """
+    True if all participating teams (team1, team2, refs) are fully resolved:
+    each slot is either a concrete team ID, or a tag:: ref with the tag assigned to a team,
+    or a MatchName::winner/loser ref whose match is completed.
+    """
+    from app.domain.enums import ScheduleType
+
+    schedule_type = getattr(match, "schedule_type", None)
+    if schedule_type in (ScheduleType.BREAK, ScheduleType.JOIN):
+        return True
+
+    if not _slot_resolved(
+        getattr(match, "team1", None),
+        getattr(match, "team1_initial", None),
+        tournament_url,
+        name_to_match,
+    ):
+        return False
+    if not _slot_resolved(
+        getattr(match, "team2", None),
+        getattr(match, "team2_initial", None),
+        tournament_url,
+        name_to_match,
+    ):
+        return False
+
+    refs_raw = (getattr(match, "refs", None) or "") or ""
+    refs_initial_raw = (getattr(match, "refs_initial", None) or "") or ""
+    refs_parts = [p.strip() for p in refs_raw.split(",")]
+    refs_initial_parts = [p.strip() for p in refs_initial_raw.split(",")]
+    n_refs = max(len(refs_parts), len(refs_initial_parts))
+    for i in range(n_refs):
+        team_id = refs_parts[i] if i < len(refs_parts) else None
+        initial = refs_initial_parts[i] if i < len(refs_initial_parts) else None
+        if not team_id and not initial:
+            continue
+        if not _slot_resolved(team_id, initial, tournament_url, name_to_match):
+            return False
+
+    print(refs_raw, refs_initial_raw, refs_parts, refs_initial_parts)
+    return True
+
+
 def _procedure_with_match(
     graph: MatchGraph,
     node: MatchGraphNode,
@@ -130,7 +203,12 @@ def _procedure_with_match(
                 ScheduleType.SAFE,
                 ScheduleType.FAST,
             ):
-                node.status = MatchStatus.READY_TO_START
+                # Only mark READY_TO_START when all teams/refs are fully resolved
+                if _all_participating_teams_resolved(
+                    name_to_match[node.name], tournament_url, name_to_match
+                ):
+                    node.status = MatchStatus.READY_TO_START
+                # else: leave at TIME_FINALIZED (or NOT_STARTED for STATIC) until resolved
             else:
                 node.status = MatchStatus.COMPLETED
 
@@ -174,7 +252,9 @@ def run_scheduling(tournament_url: str) -> None:
         for name, field in order:
             node = graph.get_node(name, field)
             if node:
-                _procedure_with_match(graph, node, tournament_url, name_to_match)
+                _procedure_with_match(
+                    graph, node, tournament_url, name_to_match
+                )
         _write_graph_to_db(graph, uuid_to_match)
         db.session.commit()
     finally:
