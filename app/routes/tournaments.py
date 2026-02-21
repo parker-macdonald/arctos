@@ -329,17 +329,14 @@ def camera_url_api():
         if not field:
             return jsonify({"error": f'Field "{field_name}" not found'}), 404
 
-        # Generate the camera URL with key
+        # Generate the camera URL with key (frontend route, not a Flask endpoint)
         access_key = generate_camera_key(tournament_url, field_name)
-        from flask import url_for
         from urllib.parse import quote
 
-        camera_url = url_for(
-            "tournaments.record_page",
-            tournament_url=tournament_url,
-            field=quote(field_name),
-            camera_key=access_key,
-            _external=True,
+        base = request.url_root.rstrip("/")
+        camera_url = (
+            f"{base}/{tournament_url}/record"
+            f"?field={quote(field_name)}&camera_key={quote(access_key)}&camera_name="
         )
 
         return jsonify({"url": camera_url})
