@@ -5,27 +5,55 @@ use dioxus::prelude::*;
 #[cfg(target_arch = "wasm32")]
 use gloo_timers::callback::Interval;
 
-/// Compute stones remaining during an ongoing point (last point has no end_stamp). Uses Bayesian filter for server time.
+/// Compute stones elapsed = number of global 1.5s beat boundaries crossed (in sync with global clock). Server time when end is None.
 #[cfg(target_arch = "wasm32")]
-fn scoreboard_stones_during_point(
+fn scoreboard_stones_elapsed(
+    start_stamp: Option<&str>,
+    end_stamp: Option<&str>,
+    filter: &Signal<BayesianOffsetFilter>,
+) -> Option<u32> {
+    const BEAT: f64 = 1.5;
+    let start = start_stamp.and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())?;
+    let start_secs = start.timestamp_millis() as f64 / 1000.0;
+    let end_secs = match end_stamp {
+        Some(e) => chrono::DateTime::parse_from_rfc3339(e).ok()?.timestamp_millis() as f64 / 1000.0,
+        None => {
+            let client_time = js_sys::Date::now() / 1000.0;
+            client_time + filter.read().get_mean()
+        }
+    };
+    let start_beat = (start_secs / BEAT).floor() as i64;
+    let end_beat = (end_secs / BEAT).floor() as i64;
+    Some((end_beat - start_beat).max(0) as u32)
+}
+
+/// Compute stones remaining from points list (same logic as match page): during point = from ongoing; between = from last completed point.
+#[cfg(target_arch = "wasm32")]
+fn scoreboard_compute_stones_remaining(
     points: &[ScoreboardPointForStones],
     filter: &Signal<BayesianOffsetFilter>,
 ) -> Option<u32> {
-    const BEAT_INTERVAL: f64 = 1.5;
-    let last = points.last()?;
-    if last.end_stamp.is_some() {
+    if points.is_empty() {
         return None;
     }
-    let stones_at_start = last.stones_at_start?;
-    let start_stamp = last.stamp.as_deref()?;
-    let start = chrono::DateTime::parse_from_rfc3339(start_stamp)
-        .ok()?
-        .timestamp_millis() as f64
-        / 1000.0;
-    let client_time = js_sys::Date::now() / 1000.0;
-    let end = client_time + filter.read().get_mean();
-    let elapsed = ((end - start) / BEAT_INTERVAL).floor().max(0.0) as u32;
-    Some(stones_at_start.saturating_sub(elapsed))
+    let last = points.last()?;
+    // Ongoing point: compute from last point's stones_at_start and elapsed to now
+    if last.end_stamp.is_none() {
+        let stones_at_start = last.stones_at_start?;
+        let elapsed = scoreboard_stones_elapsed(last.stamp.as_deref(), None, filter)?;
+        return Some(stones_at_start.saturating_sub(elapsed));
+    }
+    // Between points: use last completed point's remaining (stones_at_start - elapsed for that point)
+    for pt in points.iter().rev() {
+        if let (Some(stones_at_start), Some(start), Some(end)) =
+            (pt.stones_at_start, pt.stamp.as_deref(), pt.end_stamp.as_deref())
+        {
+            if let Some(elapsed) = scoreboard_stones_elapsed(Some(start), Some(end), filter) {
+                return Some(stones_at_start.saturating_sub(elapsed));
+            }
+        }
+    }
+    None
 }
 
 fn get_query_param(name: &str) -> Option<String> {
@@ -207,7 +235,7 @@ pub fn Scoreboard(url: String, field: String) -> Element {
                             let remaining = s
                                 .points_for_stones
                                 .as_ref()
-                                .and_then(|pts| scoreboard_stones_during_point(pts, &time_filter))
+                                .and_then(|pts| scoreboard_compute_stones_remaining(pts, &time_filter))
                                 .unwrap_or_else(|| stones.stones_remaining.unwrap_or(0));
                             #[cfg(not(target_arch = "wasm32"))]
                             let remaining = stones.stones_remaining.unwrap_or(0);
