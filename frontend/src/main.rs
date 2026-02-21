@@ -130,6 +130,9 @@ enum Route {
 
     #[route("/license")]
     License {},
+
+    #[route("/arctos-schedule-script")]
+    ArctosScheduleScript {},
 }
 
 fn main() {
