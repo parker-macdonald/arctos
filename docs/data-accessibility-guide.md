@@ -12,15 +12,15 @@ Arctos will never publish, to anyone, your email address, phone number
 
 ## Injuries
  
- If injuries are set to Public, they are visible to everyone.  If they
- are set to Private, then if they are not healed, they are shown to
- refs when they start a match you are participating in.
- 
- In either case, injury (description, date, and status) may be
- published anonymously. This could be in the form of statistics or
- even a full release of information, but no identifying information
- nor structure will ever be published (ie, your username will not be
- attached, we will never group injuries by user, etc.).
+If injuries are set to Public, they are visible to everyone.  If they
+are set to Private, then if they are not healed, they are shown to
+refs when they start a match you are participating in.
+
+In either case, injury (description, date, and status) may be
+published anonymously. This could be in the form of statistics or
+even a full release of information, but no identifying information
+nor structure will ever be published (ie, your username will not be
+attached, we will never group injuries by user, etc.).
 
 ## Penalties
 
