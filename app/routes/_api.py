@@ -7,13 +7,16 @@ from flask import Blueprint, request, jsonify, session, redirect
 from datetime import datetime, timezone
 from pathlib import Path
 from flask_login import current_user, login_user, logout_user, login_required
-from sqlalchemy import or_
+from sqlalchemy import or_, func
+from sqlalchemy.orm import joinedload
 from app.services.tournament_service import TournamentService
 from app.utils.helpers import (
     is_valid_url_username,
     check_tournament_access,
     can_head_ref_match,
     resolve_team_name_to_id,
+    DEFAULT_PENALTY_COLORS,
+    get_next_penalty_color,
 )
 from app.utils.dependencies import apply_match_dependencies
 from app.serializers.match_note_serializer import MatchNoteSerializer
@@ -38,6 +41,7 @@ from models import (
     TeamRegistration,
     PlayerRegistration,
     TO,
+    PenaltyType,
     db,
 )
 import json
@@ -405,6 +409,13 @@ def tournament_detail(tournament_url):
                 .first()
                 is not None
             )
+    
+    penalty_types = PenaltyType.query.filter_by(event=tournament_url).all()
+    penalty_types_data = [
+        {"id": t.id, "name": t.name, "color": t.color, "desc": (t.desc or "")}
+        for t in penalty_types
+    ]
+
     return jsonify(
         {
             "tournament": _tournament_to_dict(tournament),
@@ -413,6 +424,7 @@ def tournament_detail(tournament_url):
             "to_entries": to_entries,
             "is_current_team_registered": is_current_team_registered,
             "is_current_player_registered": is_current_player_registered,
+            "penalty_types": penalty_types_data,
         }
     )
 
@@ -1841,34 +1853,156 @@ def tournament_match_detail(tournament_url):
     match_players = []
     from app.utils.player_helpers import get_player_display_from_registration
 
-    for team_players_json, _ in [
-        (match.team1_players, "team1"),
-        (match.team2_players, "team2"),
-    ]:
-        if not team_players_json:
-            continue
+    # Parse selected players for "in_this_match" check
+    team1_selected = set()
+    if match.team1_players:
         try:
-            player_ids = json.loads(team_players_json)
-            for pid in player_ids:
-                pr = PlayerRegistration.query.filter_by(
+            team1_selected = set(json.loads(match.team1_players))
+        except:
+            pass
+
+    team2_selected = set()
+    if match.team2_players:
+        try:
+            team2_selected = set(json.loads(match.team2_players))
+        except:
+            pass
+
+    # Helper to add players from a team (registration). Skip any player whose id is in exclude_ids (e.g. playing for the other team).
+    def add_team_players(team_id, team_side, selected_ids, exclude_ids=None):
+        exclude_ids = exclude_ids or set()
+        if not team_id:
+            return
+        regs = PlayerRegistration.query.filter_by(
+            event=tournament_url,
+            team=team_id,
+            status=RegistrationStatus.CONFIRMED,
+        ).all()
+
+        for pr in regs:
+            if pr.player in exclude_ids:
+                continue
+            player = Player.query.get(pr.player)
+            if player:
+                display = get_player_display_from_registration(player, pr)
+                match_players.append(
+                    {
+                        "player_id": player.id,
+                        "name": player.name or "",
+                        "display": display,
+                        "profile_photo": getattr(player, "profile_photo", None),
+                        "team_side": team_side,
+                        "in_this_match": player.id in selected_ids,
+                    }
+                )
+
+    # Team1: don't list players who are playing for team2 (in team2_selected).
+    add_team_players(match.team1, "team1", team1_selected, exclude_ids=team2_selected)
+    # Team2: don't list players who are playing for team1 (in team1_selected).
+    add_team_players(match.team2, "team2", team2_selected, exclude_ids=team1_selected)
+
+    # Include players who are in team2_selected but not on team2's roster (added via search on start-match).
+    existing_player_ids = {p["player_id"] for p in match_players}
+    for pid in team2_selected:
+        if pid in existing_player_ids:
+            continue
+        player = Player.query.get(pid)
+        if player:
+            pr = (
+                PlayerRegistration.query.filter_by(
                     event=tournament_url,
                     player=pid,
                     status=RegistrationStatus.CONFIRMED,
                 ).first()
-                if pr:
-                    player = Player.query.get(pid)
-                    if player:
-                        display = get_player_display_from_registration(player, pr)
-                        match_players.append(
-                            {
-                                "player_id": player.id,
-                                "name": player.name or "",
-                                "display": display,
-                                "profile_photo": getattr(player, "profile_photo", None),
-                            }
-                        )
-        except (json.JSONDecodeError, TypeError):
-            pass
+            )
+            display = (
+                get_player_display_from_registration(player, pr)
+                if pr
+                else (player.name or pid)
+            )
+            match_players.append(
+                {
+                    "player_id": player.id,
+                    "name": player.name or "",
+                    "display": display,
+                    "profile_photo": getattr(player, "profile_photo", None),
+                    "team_side": "team2",
+                    "in_this_match": True,
+                }
+            )
+            existing_player_ids.add(pid)
+    # Same for team1_selected: players added via search to team1 only.
+    for pid in team1_selected:
+        if pid in existing_player_ids:
+            continue
+        player = Player.query.get(pid)
+        if player:
+            pr = (
+                PlayerRegistration.query.filter_by(
+                    event=tournament_url,
+                    player=pid,
+                    status=RegistrationStatus.CONFIRMED,
+                ).first()
+            )
+            display = (
+                get_player_display_from_registration(player, pr)
+                if pr
+                else (player.name or pid)
+            )
+            match_players.append(
+                {
+                    "player_id": player.id,
+                    "name": player.name or "",
+                    "display": display,
+                    "profile_photo": getattr(player, "profile_photo", None),
+                    "team_side": "team1",
+                    "in_this_match": True,
+                }
+            )
+            existing_player_ids.add(pid)
+
+    # Calculate penalty counts for match players
+    player_ids_in_match = [p["player_id"] for p in match_players]
+    penalty_counts_map = {}
+
+    if player_ids_in_match:
+        # Count per player and penalty type
+        results = (
+            db.session.query(
+                MatchNote.player_id,
+                MatchNote.penalty_type_id,
+                func.count(MatchNote.uuid),
+            )
+            .join(Match)
+            .filter(
+                Match.event == tournament_url,
+                MatchNote.target == "player",
+                MatchNote.player_id.in_(player_ids_in_match),
+            )
+            .group_by(MatchNote.player_id, MatchNote.penalty_type_id)
+            .all()
+        )
+
+        for pid, pt_id, count in results:
+            if pid not in penalty_counts_map:
+                penalty_counts_map[pid] = {}
+            # Key: penalty_type_id (or "other" if None) -> count
+            key = str(pt_id) if pt_id is not None else "other"
+            penalty_counts_map[pid][key] = count
+
+    # Add counts to match_players
+    for p in match_players:
+        p["penalty_counts"] = penalty_counts_map.get(p["player_id"], {})
+
+    # Sort: in_this_match first, then by name
+    match_players.sort(key=lambda p: (not p["in_this_match"], p["display"]))
+
+    # Get penalty types
+    penalty_types = PenaltyType.query.filter_by(event=tournament_url).all()
+    penalty_types_data = [
+        {"id": t.id, "name": t.name, "color": t.color, "desc": (t.desc or "")}
+        for t in penalty_types
+    ]
 
     # Get point-specific notes - point notes (target='match') visible to everyone
     if points:
@@ -1910,6 +2044,7 @@ def tournament_match_detail(tournament_url):
                         "player_display": player_display,
                         "team_id": team_id,
                         "created_at": _dt_iso(n.created_at),
+                        "penalty_type_id": getattr(n, "penalty_type_id", None),
                     }
                 )
 
@@ -1960,6 +2095,7 @@ def tournament_match_detail(tournament_url):
             "point_notes_map": point_notes_map,
             "is_head_ref": is_head_ref,
             "match_players": match_players,
+            "penalty_types": penalty_types_data,
         }
     )
 
@@ -2030,6 +2166,11 @@ def tournament_match_state(tournament_url):
             "team2_score": team2_score,
             "scores_by_set": scores_by_set,
             "points": points_data,
+            "stones_remaining": (
+                match.stones_remaining
+                if getattr(match, "set_type", None) == SetType.STONES
+                else None
+            ),
             "finalized_at": finalized_at,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
@@ -2091,6 +2232,7 @@ def player_profile(player_id):
         try:
             all_player_notes = (
                 MatchNote.query.filter_by(player_id=player_id)
+                .options(joinedload(MatchNote.penalty_type))
                 .order_by(MatchNote.created_at.desc())
                 .all()
             )
@@ -2108,6 +2250,18 @@ def player_profile(player_id):
                     player_notes.append(note)
         except Exception:
             player_notes = []
+
+    penalty_type_ids = {
+        getattr(n, "penalty_type_id", None)
+        for n in player_notes
+        if getattr(n, "penalty_type_id", None)
+    }
+    pt_map = {}
+    if penalty_type_ids:
+        for pt in PenaltyType.query.filter(
+            PenaltyType.id.in_(penalty_type_ids)
+        ).all():
+            pt_map[pt.id] = {"name": pt.name, "color": pt.color, "desc": pt.desc or ""}
 
     player_note_rows = []
     if player_notes:
@@ -2127,11 +2281,25 @@ def player_profile(player_id):
                 order = match_to_points.get(match_id, [])
                 if note.point_id in order:
                     idx = order.index(note.point_id) + 1
+            pt_id = getattr(note, "penalty_type_id", None)
+            pt_rel = getattr(note, "penalty_type", None)
+            if pt_rel is not None:
+                pt_info = {"name": pt_rel.name, "color": pt_rel.color, "desc": pt_rel.desc or ""}
+            else:
+                pt_info = pt_map.get(pt_id) if pt_id else None
+            if pt_info is None and pt_id:
+                _pt = PenaltyType.query.get(pt_id)
+                if _pt:
+                    pt_info = {"name": _pt.name, "color": _pt.color, "desc": _pt.desc or ""}
             player_note_rows.append(
                 {
                     "created_at": _dt_iso(note.created_at),
-                    "text": note.text,
+                    "text": note.text or "",
                     "point_index": str(idx),
+                    "penalty_type_id": pt_id,
+                    "penalty_type_name": pt_info["name"] if pt_info else None,
+                    "penalty_type_color": pt_info["color"] if pt_info else None,
+                    "penalty_type_desc": pt_info.get("desc", "") if pt_info else None,
                     "match": (
                         {
                             "event": match_obj.event if match_obj else None,
@@ -3402,6 +3570,10 @@ def markdown_page(slug):
             "data-accessibility-guide.md",
             "Data Accessibility Guide",
         ),
+        "arctos-schedule-script": (
+            "arctos-schedule-script.md",
+            "Arctos Schedule Script",
+        ),
         "thanks": ("thanks.md", "Thanks"),
         "license": ("license.md", "License"),
         "terms": ("terms.md", "Terms and Conditions"),
@@ -3444,6 +3616,26 @@ MARKDOWN_CONTENT_CSS = """
 .markdown-content a:hover { text-decoration: underline; }
 .markdown-content img { max-width: 100%; height: auto; }
 .markdown-content hr { margin: 1em 0; border: 0; border-top: 1px solid var(--bs-border-color, #dee2e6); }
+.markdown-content .admonition { margin: 1em 0; padding: 0; border-radius: 6px; border: 1px solid; overflow: hidden; }
+.markdown-content .admonition .admonition-title { margin: 0; padding: 0.5em 0.75em; font-weight: 600; }
+.markdown-content .admonition p:not(.admonition-title) { padding: 0.5em 0.75em; margin-bottom: 0.5em; }
+.markdown-content .admonition p:not(.admonition-title):last-child { margin-bottom: 0; }
+.markdown-content .admonition.note { border-color: #0d6efd; background: rgba(13, 110, 253, 0.08); }
+.markdown-content .admonition.note .admonition-title { background: rgba(13, 110, 253, 0.2); color: #0a58ca; }
+.markdown-content .admonition.warning { border-color: #ffc107; background: rgba(255, 193, 7, 0.12); }
+.markdown-content .admonition.warning .admonition-title { background: rgba(255, 193, 7, 0.25); color: #856404; }
+.markdown-content .admonition.attention { border-color: #ffc107; background: rgba(255, 193, 7, 0.12); }
+.markdown-content .admonition.attention .admonition-title { background: rgba(255, 193, 7, 0.25); color: #856404; }
+.markdown-content .admonition.caution { border-color: #fd7e14; background: rgba(253, 126, 20, 0.1); }
+.markdown-content .admonition.caution .admonition-title { background: rgba(253, 126, 20, 0.2); color: #b35a0e; }
+.markdown-content .admonition.danger { border-color: #dc3545; background: rgba(220, 53, 69, 0.08); }
+.markdown-content .admonition.danger .admonition-title { background: rgba(220, 53, 69, 0.2); color: #b02a37; }
+.markdown-content .admonition.important { border-color: #fd7e14; background: rgba(253, 126, 20, 0.1); }
+.markdown-content .admonition.important .admonition-title { background: rgba(253, 126, 20, 0.2); color: #b35a0e; }
+.markdown-content .admonition.tip { border-color: #198754; background: rgba(25, 135, 84, 0.08); }
+.markdown-content .admonition.tip .admonition-title { background: rgba(25, 135, 84, 0.2); color: #146c43; }
+.markdown-content .admonition.hint { border-color: #198754; background: rgba(25, 135, 84, 0.08); }
+.markdown-content .admonition.hint .admonition-title { background: rgba(25, 135, 84, 0.2); color: #146c43; }
 """
 
 
@@ -3817,3 +4009,166 @@ def import_schedule_api(tournament_url):
         case Err(err):
             status_code = err.status_code if hasattr(err, "status_code") else 400
             return json_error(public_error_message(err), status_code=status_code)
+
+
+@bp.route("/<tournament_url>/penalty-types", methods=["GET"])
+def get_penalty_types(tournament_url):
+    """Get all penalty types for a tournament."""
+    types = PenaltyType.query.filter_by(event=tournament_url).all()
+    return jsonify({
+        "penalty_types": [
+            {
+                "id": t.id,
+                "name": t.name,
+                "color": t.color,
+                "desc": (t.desc or ""),
+            }
+            for t in types
+        ]
+    })
+
+
+@bp.route("/<tournament_url>/penalty-types", methods=["POST"])
+@login_required
+def create_penalty_type(tournament_url):
+    """Create a new penalty type."""
+    if not _check_to(tournament_url):
+        return jsonify({"error": "Forbidden"}), 403
+
+    data = request.get_json()
+    name = data.get("name")
+    if not name:
+        return jsonify({"error": "Name required"}), 400
+
+    if len(name) > 50:
+        return jsonify({"error": "Name too long"}), 400
+
+    desc = data.get("desc", "")
+    color = data.get("color")
+
+    if not color:
+        # Assign default color
+        existing = PenaltyType.query.filter_by(event=tournament_url).all()
+        existing_colors = {t.color for t in existing}
+        color = get_next_penalty_color(existing_colors)
+    else:
+        # Basic validation for hex color
+        color = color.strip().lstrip("#")
+        if len(color) != 6:
+            return jsonify({"error": "Invalid color format"}), 400
+
+    pt = PenaltyType(event=tournament_url, name=name, color=color, desc=desc)
+    db.session.add(pt)
+    db.session.commit()
+
+    return jsonify({
+        "success": True,
+        "penalty_type": {
+            "id": pt.id,
+            "name": pt.name,
+            "color": pt.color,
+            "desc": (pt.desc or ""),
+        },
+    })
+
+
+@bp.route("/<tournament_url>/penalty-types/<int:pt_id>", methods=["PATCH"])
+@login_required
+def update_penalty_type(tournament_url, pt_id):
+    """Update a penalty type."""
+    if not _check_to(tournament_url):
+        return jsonify({"error": "Forbidden"}), 403
+
+    pt = PenaltyType.query.filter_by(id=pt_id, event=tournament_url).first_or_404()
+
+    data = request.get_json()
+    if "name" in data:
+        name = data["name"]
+        if len(name) > 50:
+            return jsonify({"error": "Name too long"}), 400
+        pt.name = name
+    if "desc" in data:
+        pt.desc = data["desc"]
+    if "color" in data:
+        c = data["color"].strip().lstrip("#")
+        if len(c) == 6:
+            pt.color = c
+
+    db.session.commit()
+    return jsonify({"success": True})
+
+
+@bp.route("/<tournament_url>/penalty-types/<int:pt_id>", methods=["DELETE"])
+@login_required
+def delete_penalty_type(tournament_url, pt_id):
+    """Delete a penalty type."""
+    if not _check_to(tournament_url):
+        return jsonify({"error": "Forbidden"}), 403
+
+    pt = PenaltyType.query.filter_by(id=pt_id, event=tournament_url).first_or_404()
+
+    # Check if used
+    in_use = MatchNote.query.filter_by(penalty_type_id=pt.id).first()
+    if in_use:
+        return jsonify({"error": "Cannot delete penalty type that is in use."}), 409
+
+    db.session.delete(pt)
+    db.session.commit()
+    return jsonify({"success": True})
+
+
+@bp.route("/<tournament_url>/players/<player_id>/penalty-history", methods=["GET"])
+@login_required
+def get_player_penalty_history(tournament_url, player_id):
+    """List all penalties for a player in this tournament (chronological).
+    point_id: the point row from which the user opened the penalties modal; notes
+    for that point get is_current_point=True so the UI can show delete only for them.
+    """
+    if not _check_to(tournament_url):
+        return jsonify({"error": "Forbidden"}), 403
+    current_match_id = request.args.get("match_id")
+    current_point_id = request.args.get("point_id")  # point from which Penalties button was clicked
+    notes = (
+        db.session.query(MatchNote, Match.name, Point.set_number, MatchNote.created_at)
+        .join(Match, MatchNote.match == Match.uuid)
+        .filter(
+            Match.event == tournament_url,
+            MatchNote.target == "player",
+            MatchNote.player_id == player_id,
+        )
+        .outerjoin(Point, MatchNote.point_id == Point.uuid)
+        .order_by(MatchNote.created_at.asc())
+        .all()
+    )
+    penalty_type_ids = {n[0].penalty_type_id for n in notes if n[0].penalty_type_id}
+    pt_map = {}
+    if penalty_type_ids:
+        for pt in PenaltyType.query.filter(
+            PenaltyType.event == tournament_url,
+            PenaltyType.id.in_(penalty_type_ids),
+        ).all():
+            pt_map[pt.id] = pt.name
+    rows = []
+    for note, match_name, set_number, created_at in notes:
+        pt_name = (
+            pt_map.get(note.penalty_type_id) if note.penalty_type_id else (note.text or "Other")
+        )
+        point_label = f"Set {set_number}" if set_number else "-"
+        date_str = created_at.strftime("%m/%d") if created_at else "-"
+        is_current = str(note.match) == current_match_id if current_match_id else False
+        is_current_point = (
+            str(note.point_id) == current_point_id if current_point_id and note.point_id else False
+        )
+        rows.append(
+            {
+                "penalty_type_name": pt_name,
+                "match_name": match_name or "-",
+                "point_label": point_label,
+                "date": date_str,
+                "is_current_match": is_current,
+                "is_current_point": is_current_point,
+                "note_uuid": note.uuid,
+            }
+        )
+    return jsonify({"penalties": rows})
+

@@ -1023,7 +1023,7 @@ pub async fn get_point_notes(
 ) -> Result<Value, String> {
     let c = client();
     let url = format!(
-        "{}/{}/get-point-notes?match_id={}&point_id={}",
+        "{}/_api/{}/get-point-notes?match_id={}&point_id={}",
         base(),
         tournament_url,
         urlencoding::encode(match_id),
@@ -1046,7 +1046,7 @@ pub async fn get_selection_notes(
 ) -> Result<Value, String> {
     let c = client();
     let url = format!(
-        "{}/{}/get-selection-notes?match_id={}&team={}&player_ids={}",
+        "{}/_api/{}/get-selection-notes?match_id={}&team={}&player_ids={}",
         base(),
         tournament_url,
         urlencoding::encode(match_id),
@@ -1067,6 +1067,7 @@ pub async fn add_point_note(
     text: &str,
     target: &str,
     player_id: Option<&str>,
+    penalty_type_id: Option<i32>,
 ) -> Result<Value, String> {
     let c = client();
     let body = serde_json::json!({
@@ -1075,9 +1076,42 @@ pub async fn add_point_note(
         "text": text,
         "target": target,
         "player_id": player_id,
+        "penalty_type_id": penalty_type_id,
     });
     let r = with_credentials(
         c.post(format!("{}/_api/{}/add-point-note", base(), tournament_url)).json(&body),
+    )
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    let data: Value = response_json(r).await?;
+    let success = data.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+    if !success {
+        return Err(
+            data.get("error")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Request failed")
+                .to_string(),
+        );
+    }
+    Ok(data)
+}
+
+/// Set the single point note (target=match) for a point. Replaces any existing one. Pass empty text to clear.
+pub async fn set_point_note(
+    tournament_url: &str,
+    match_id: &str,
+    point_id: &str,
+    text: &str,
+) -> Result<Value, String> {
+    let c = client();
+    let body = serde_json::json!({
+        "match_id": match_id,
+        "point_id": point_id,
+        "text": text,
+    });
+    let r = with_credentials(
+        c.post(format!("{}/_api/{}/set-point-note", base(), tournament_url)).json(&body),
     )
     .send()
     .await
@@ -1786,4 +1820,95 @@ pub async fn import_schedule(
     } else {
         Err(data.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown error").to_string())
     }
+}
+
+#[derive(serde::Deserialize)]
+pub struct GetPenaltyTypesResponse {
+    pub penalty_types: Vec<PenaltyType>,
+}
+
+#[derive(serde::Deserialize)]
+pub struct CreatePenaltyTypeResponse {
+    pub success: bool,
+    pub penalty_type: PenaltyType,
+}
+
+pub async fn get_penalty_types(tournament_url: &str) -> Result<GetPenaltyTypesResponse, String> {
+    let c = client();
+    let r = c.get(format!("{}/_api/{}/penalty-types", base(), tournament_url))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    response_json(r).await
+}
+
+pub async fn create_penalty_type(tournament_url: &str, name: &str, color: Option<&str>, desc: Option<&str>) -> Result<CreatePenaltyTypeResponse, String> {
+    let c = client();
+    let body = serde_json::json!({
+        "name": name,
+        "color": color,
+        "desc": desc
+    });
+    let r = with_credentials(
+        c.post(format!("{}/_api/{}/penalty-types", base(), tournament_url)).json(&body)
+    ).send().await.map_err(|e| e.to_string())?;
+    response_json(r).await
+}
+
+pub async fn update_penalty_type(tournament_url: &str, pt_id: i32, name: Option<&str>, color: Option<&str>, desc: Option<&str>) -> Result<Value, String> {
+    let c = client();
+    let mut body = serde_json::Map::new();
+    if let Some(n) = name { body.insert("name".to_string(), serde_json::json!(n)); }
+    if let Some(c_val) = color { body.insert("color".to_string(), serde_json::json!(c_val)); }
+    if let Some(d) = desc { body.insert("desc".to_string(), serde_json::json!(d)); }
+    
+    let r = with_credentials(
+        c.patch(format!("{}/_api/{}/penalty-types/{}", base(), tournament_url, pt_id)).json(&body)
+    ).send().await.map_err(|e| e.to_string())?;
+    response_json(r).await
+}
+
+pub async fn delete_penalty_type(tournament_url: &str, pt_id: i32) -> Result<Value, String> {
+    let c = client();
+    let r = with_credentials(
+        c.delete(format!("{}/_api/{}/penalty-types/{}", base(), tournament_url, pt_id))
+    ).send().await.map_err(|e| e.to_string())?;
+    response_json(r).await
+}
+
+pub async fn get_player_penalty_history(
+    tournament_url: &str,
+    player_id: &str,
+    match_id: &str,
+    point_id: &str,
+) -> Result<crate::types::PlayerPenaltyHistoryResponse, String> {
+    let c = client();
+    let url = format!(
+        "{}/_api/{}/players/{}/penalty-history?match_id={}&point_id={}",
+        base(),
+        tournament_url,
+        player_id,
+        match_id,
+        urlencoding::encode(point_id),
+    );
+    let r = with_credentials(c.get(&url))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    response_json(r).await
+}
+
+pub async fn delete_point_note(
+    tournament_url: &str,
+    note_id: &str,
+) -> Result<Value, String> {
+    let c = client();
+    let body = serde_json::json!({ "note_id": note_id });
+    let r = with_credentials(
+        c.post(format!("{}/_api/{}/delete-point-note", base(), tournament_url)).json(&body)
+    )
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    response_json(r).await
 }

@@ -22,23 +22,23 @@ Arctos will never publish, to anyone, your email address, phone number
  nor structure will ever be published (ie, your username will not be
  attached, we will never group injuries by user, etc.).
 
-## Ref Notes (on players or teams)
+## Penalties
+ - are visible to target forever on their profile
  - are visible forever on target's profile to all explicitly listed head
    refs and TOs for the tournament at which they were logged
  - are visible during tournament on target's profile to all head refs for
    the tournament at which they were logged
- - are visible to head refs when starting or viewing a match in the same
-   tournament in which they were logged
- - are visible to target forever on their profile
+ - are visible to head refs when starting, running, or viewing a match in 
+   the same tournament in which they were logged
  - may be shown in aggregate statistics, but timestamp will be rounded
    to the day, and no information about author or target will not be
    shown besides the target type (team or player)
    
- The [user docs](/docs#ref-notes) have more information on the types
+ The [user docs](/docs#penalties) have more information on the types
  of notes, where they can be seen, and how they get written.
 
 !!! warning "Future Changes"  
-    the promises about ref note privacy may change in the future, but
+    the promises about penalty privacy may change in the future, but
     a) users will be notified of any such changes, and b) they will
     not apply retrospectively (ie, these rules will always apply to
     notes written under these rules)

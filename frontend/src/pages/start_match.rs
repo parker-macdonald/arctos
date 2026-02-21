@@ -1,4 +1,5 @@
 use crate::api;
+use crate::components::PenaltyDisplay;
 use crate::types::StartMatchPlayer;
 use crate::Route;
 use dioxus::prelude::*;
@@ -25,6 +26,7 @@ pub fn StartMatch(url: String, match_id: String) -> Element {
     let mut team2_search = use_signal(String::new);
     let mut notes_modal_show = use_signal(|| false);
     let mut notes_modal_content = use_signal(|| None as Option<Result<Vec<Value>, String>>);
+    let mut penalty_desc_modal = use_signal(|| None::<String>);
     let mut match_notes = use_signal(String::new);
     let navigator = use_navigator();
     let submit_url = url.clone();
@@ -196,14 +198,19 @@ pub fn StartMatch(url: String, match_id: String) -> Element {
                                                     class: "border p-3",
                                                     style: "max-height: 200px; overflow-y: auto;",
                                                     StartMatchPlayerList {
+                                                        team_key: "team1".to_string(),
                                                         players: d.all_players.clone(),
                                                         team_ids: team1_all(),
                                                         selected_ids: team1_selected(),
                                                         other_selected_ids: team2_selected(),
-                                                        on_toggle: move |(id, is_selected)| {
+                                                        on_toggle: move |(id, is_selected): (String, bool)| {
                                                             let mut selected = team1_selected();
                                                             if is_selected {
-                                                                selected.insert(id);
+                                                                selected.insert(id.clone());
+                                                                // Player can only play for one team: remove from team2 if now selected for team1.
+                                                                let mut other = team2_selected();
+                                                                other.remove(&id);
+                                                                team2_selected.set(other);
                                                             } else {
                                                                 selected.remove(&id);
                                                             }
@@ -311,14 +318,19 @@ pub fn StartMatch(url: String, match_id: String) -> Element {
                                                     class: "border p-3",
                                                     style: "max-height: 200px; overflow-y: auto;",
                                                     StartMatchPlayerList {
+                                                        team_key: "team2".to_string(),
                                                         players: d.all_players.clone(),
                                                         team_ids: team2_all(),
                                                         selected_ids: team2_selected(),
                                                         other_selected_ids: team1_selected(),
-                                                        on_toggle: move |(id, is_selected)| {
+                                                        on_toggle: move |(id, is_selected): (String, bool)| {
                                                             let mut selected = team2_selected();
                                                             if is_selected {
-                                                                selected.insert(id);
+                                                                selected.insert(id.clone());
+                                                                // Player can only play for one team: remove from team1 if now selected for team2.
+                                                                let mut other = team1_selected();
+                                                                other.remove(&id);
+                                                                team1_selected.set(other);
                                                             } else {
                                                                 selected.remove(&id);
                                                             }
@@ -468,31 +480,44 @@ pub fn StartMatch(url: String, match_id: String) -> Element {
                                     None => rsx! { div { class: "text-muted", "Loading…" } },
                                     Some(Err(e)) => rsx! { div { class: "text-danger", "{e}" } },
                                     Some(Ok(notes)) => {
-                                        let rows: Vec<(String, String)> = if notes.is_empty() {
-                                            vec![(String::new(), "No notes for this selection.".to_string())]
+                                        if notes.is_empty() {
+                                            rsx! {
+                                                div { class: "text-muted", "No notes for this selection." }
+                                            }
                                         } else {
-                                            notes.iter().map(|n| {
-                                                let text = n.get("text").and_then(|t| t.as_str()).unwrap_or("").to_string();
-                                                let target = n.get("player_display").and_then(|p| p.as_str())
+                                            let note_elems: Vec<_> = notes.iter().map(|n| {
+                                                let text = n.get("text").and_then(|t| t.as_str()).unwrap_or("").trim().to_string();
+                                                let type_name = n.get("penalty_type_name").and_then(|t| t.as_str()).map(|s| s.to_string());
+                                                let color = n.get("penalty_type_color").and_then(|c| c.as_str()).map(|s| s.trim_start_matches('#').to_string());
+                                                let target_display = n.get("player_display").and_then(|p| p.as_str())
                                                     .or_else(|| n.get("player_name").and_then(|p| p.as_str()))
                                                     .or_else(|| n.get("target").and_then(|t| t.as_str()))
                                                     .map(|t| {
                                                         if t == "team1" { team1_name.clone() } else if t == "team2" { team2_name.clone() } else { t.to_string() }
                                                     })
                                                     .unwrap_or_else(|| "Match".to_string());
-                                                (target, text)
-                                            }).collect()
-                                        };
-                                        rsx! {
-                                            div {
-                                                for (note_target, note_text) in rows.iter() {
-                                                    div {
-                                                        class: if note_text.as_str() == "No notes for this selection." { "text-muted" } else { "small text-muted border-start border-3 ps-2 mb-1" },
-                                                        if note_text.as_str() == "No notes for this selection." {
-                                                            "{note_text}"
-                                                        } else {
-                                                            "{note_target}: {note_text}"
-                                                        }
+                                                let target_profile_id = n.get("player_id").and_then(|v| v.as_str()).map(String::from);
+                                                let (border_color, display_text) = if let Some(ref tn) = type_name {
+                                                    (color.unwrap_or_else(|| "808080".to_string()), tn.clone())
+                                                } else {
+                                                    ("808080".to_string(), if text.is_empty() { "Other".to_string() } else { text })
+                                                };
+                                                let description = n.get("penalty_type_desc").and_then(|v| v.as_str()).map(|s| s.to_string()).filter(|s| !s.is_empty());
+                                                rsx! {
+                                                    PenaltyDisplay {
+                                                        border_color,
+                                                        display_text,
+                                                        description,
+                                                        target_display: Some(target_display),
+                                                        target_profile_id,
+                                                        on_description_click: move |d: Option<String>| penalty_desc_modal.set(d),
+                                                    }
+                                                }
+                                            }).collect();
+                                            rsx! {
+                                                div {
+                                                    for elem in note_elems.iter() {
+                                                        {elem}
                                                     }
                                                 }
                                             }
@@ -511,6 +536,23 @@ pub fn StartMatch(url: String, match_id: String) -> Element {
                         }
                     }
                 }
+                    if penalty_desc_modal().is_some() {
+                        div { class: "modal show", style: "display: block;",
+                            div { class: "modal-dialog modal-dialog-centered",
+                                div { class: "modal-content",
+                                    div { class: "modal-header",
+                                        h5 { class: "modal-title", "Penalty description" }
+                                        button { r#type: "button", class: "btn-close", onclick: move |_| penalty_desc_modal.set(None) }
+                                    }
+                                    div { class: "modal-body", "{penalty_desc_modal().as_ref().unwrap_or(&String::new())}" }
+                                    div { class: "modal-footer",
+                                        button { r#type: "button", class: "btn btn-secondary", onclick: move |_| penalty_desc_modal.set(None), "Close" }
+                                    }
+                                }
+                            }
+                        }
+                        div { class: "modal-backdrop show" }
+                    }
             } else {
                 div { }
             }
@@ -576,6 +618,7 @@ fn StartMatchSearchResults(
 
 #[component]
 fn StartMatchPlayerList(
+    team_key: String,
     players: Vec<StartMatchPlayer>,
     team_ids: Vec<String>,
     selected_ids: HashSet<String>,
@@ -599,17 +642,18 @@ fn StartMatchPlayerList(
                         };
                         let id = p.id.clone();
                         let id_for_toggle = id.clone();
+                        let input_id = format!("{}-{}", team_key, id);
                         rsx! {
                             div { class: "form-check",
                                 input {
                                     class: "form-check-input",
                                     r#type: "checkbox",
-                                    id: "{id}",
+                                    id: "{input_id}",
                                     checked: is_selected,
                                     disabled,
                                     onchange: move |_| on_toggle.call((id_for_toggle.clone(), !is_selected)),
                                 }
-                                label { class: "form-check-label", r#for: "{id}",
+                                label { class: "form-check-label", r#for: "{input_id}",
                                     {
                                         let mut label = p.jersey_name.clone().unwrap_or_else(|| p.name.clone());
                                         if let Some(num) = &p.jersey_number {

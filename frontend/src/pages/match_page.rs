@@ -1,4 +1,5 @@
 use crate::api;
+use crate::components::PenaltyDisplay;
 use crate::Route;
 use crate::stones_filter::BayesianOffsetFilter;
 use crate::types::{PointData, PointTimestamp};
@@ -46,6 +47,33 @@ fn same_time_seek_target(
         .iter()
         .find(|t| t.point_uuid.as_ref() == Some(point_uuid))?;
     Some(new_entry.in_video_start + offset)
+}
+
+/// (target_display, border_color, display_text, description, target_profile_id) for a point note when rendering penalties column.
+fn point_note_display(
+    note: &crate::types::MatchNoteData,
+    penalty_types: &[crate::types::PenaltyType],
+) -> (String, String, String, Option<String>, Option<String>) {
+    let target_display = note
+        .player_display
+        .as_deref()
+        .or(note.player_name.as_deref())
+        .unwrap_or(if note.target == "match" { "Point" } else { note.target.as_str() })
+        .to_string();
+    let (border_color, display_text, desc) = match note.penalty_type_id.and_then(|id| penalty_types.iter().find(|t| t.id == id)) {
+        Some(pt) => (
+            pt.color.clone(),
+            pt.name.clone(),
+            pt.desc.clone().filter(|s| !s.is_empty()),
+        ),
+        None => (
+            "808080".to_string(),
+            if note.text.is_empty() { "Other".to_string() } else { note.text.clone() },
+            None,
+        ),
+    };
+    let target_profile_id = note.player_id.clone();
+    (target_display, border_color, display_text, desc, target_profile_id)
 }
 
 fn get_query_param(name: &str) -> Option<String> {
@@ -221,9 +249,9 @@ fn compute_stones_elapsed(
         client_time + offset
     };
     
-    let start_count = (start / BEAT_INTERVAL).floor() as i64;
-    let end_count = (end / BEAT_INTERVAL).floor() as i64;
-    let elapsed = (end_count - start_count).max(0);
+    // Use duration-based count (same as run_match): full 1.5s intervals within the segment only.
+    // Avoids off-by-one from boundary-based count when point start isn't on a beat boundary.
+    let elapsed = ((end - start) / BEAT_INTERVAL).floor().max(0.0) as i64;
     elapsed.to_string()
 }
 
@@ -327,23 +355,29 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
     
     // Polling for live match state updates
     let poll_tick = use_signal(|| 0u32);
-    let poll_started = use_signal(|| false);
     let url_for_poll = url.clone();
     let match_id_for_poll = match_id.clone();
     
     #[cfg(target_arch = "wasm32")]
+    let poll_interval = use_signal(|| None as Option<Interval>);
+    #[cfg(target_arch = "wasm32")]
     {
         let mut poll_tick = poll_tick;
-        let mut poll_started = poll_started;
+        let mut poll_interval = poll_interval;
         use_effect(move || {
             if let Some(Ok(d)) = data.value().read().as_ref() {
-                if d.match_data.status == "IN_PROGRESS" && !poll_started() {
-                    let handle = Interval::new(1000, move || {
-                        poll_tick.set(poll_tick() + 1);
-                    });
-                    poll_started.set(true);
-                    std::mem::forget(handle);
+                if d.match_data.status == "IN_PROGRESS" {
+                    if poll_interval.read().is_none() {
+                        let handle = Interval::new(1000, move || {
+                            poll_tick.set(poll_tick() + 1);
+                        });
+                        poll_interval.set(Some(handle));
+                    }
+                } else {
+                    poll_interval.set(None);
                 }
+            } else {
+                poll_interval.set(None);
             }
         });
     }
@@ -368,7 +402,23 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
             }
         }
     });
-    
+
+    // Live points from polled state (so points table and score update every poll)
+    let live_points_signal = use_signal(|| None as Option<Vec<PointData>>);
+    use_effect(move || {
+        let _ = state_signal();
+        let mut live_points_signal = live_points_signal;
+        if let Some(Ok(state)) = state_signal.read().as_ref() {
+            if let Some(points_val) = state.get("points") {
+                if let Ok(pts) = serde_json::from_value::<Vec<PointData>>(points_val.clone()) {
+                    live_points_signal.set(Some(pts));
+                    return;
+                }
+            }
+        }
+        live_points_signal.set(None);
+    });
+
     // User info for permissions
     let user_info = use_resource(move || async move {
         api::me().await.ok()
@@ -406,16 +456,25 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
     #[cfg(target_arch = "wasm32")]
     let stones_update_tick = use_signal(|| 0u32);
     #[cfg(target_arch = "wasm32")]
+    let stones_update_interval = use_signal(|| None as Option<Interval>);
+    #[cfg(target_arch = "wasm32")]
     {
         let mut stones_update_tick = stones_update_tick;
+        let mut stones_update_interval = stones_update_interval;
         use_effect(move || {
             if let Some(Ok(d)) = data.value().read().as_ref() {
                 if d.match_data.status == "IN_PROGRESS" && d.match_data.set_type.as_deref() == Some("STONES") {
-                    let handle = Interval::new(100, move || {
-                        stones_update_tick.set(stones_update_tick() + 1);
-                    });
-                    std::mem::forget(handle);
+                    if stones_update_interval.read().is_none() {
+                        let handle = Interval::new(100, move || {
+                            stones_update_tick.set(stones_update_tick() + 1);
+                        });
+                        stones_update_interval.set(Some(handle));
+                    }
+                } else {
+                    stones_update_interval.set(None);
                 }
+            } else {
+                stones_update_interval.set(None);
             }
         });
     }
@@ -438,9 +497,10 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
     let fetched_stream_starts = use_signal(|| Vec::<Option<String>>::new());
     // Match UUID we have already triggered stream-start fetches for (so we only query once per load).
     let stream_starts_fetched_for_match = use_signal(|| None::<String>);
+    let mut penalty_desc_modal = use_signal(|| None::<String>);
 
     use_effect(move || {
-        let _ = (val.read().as_ref(), selected_camera_idx());
+        let _ = (val.read().as_ref(), selected_camera_idx(), live_points_signal());
         if let Some(Ok(d)) = val.read().as_ref() {
             let idx = selected_camera_idx().min(d.available_cameras.len().saturating_sub(1));
             if let Some(cam) = d.available_cameras.get(idx) {
@@ -449,7 +509,8 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                 point_timestamps_for_keys.set(Vec::new());
             }
             n_cameras_for_keys.set(d.available_cameras.len());
-            n_points_for_keys.set(d.points.len());
+            let n_pts = live_points_signal().as_ref().map(|p| p.len()).unwrap_or(d.points.len());
+            n_points_for_keys.set(n_pts);
         } else {
             point_timestamps_for_keys.set(Vec::new());
             n_cameras_for_keys.set(0);
@@ -824,7 +885,7 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
             {
                 let has_cameras = d.available_cameras.len() > 0 || d.camera_url.is_some();
                 let cameras = d.available_cameras.clone();
-                let points_for_footage = d.points.clone();
+                let points_for_footage: Vec<PointData> = live_points_signal().clone().unwrap_or_else(|| d.points.clone());
                 let base_url_footage = base_url.clone();
                 let footage_section = has_cameras.then(move || {
                     let points = points_for_footage.clone();
@@ -1351,36 +1412,36 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                             }
                         }
                         div { class: "card-body",
-                            // Stones remaining (for STONES matches) - compute from points
+                            // Stones remaining (for STONES matches): during point = from ongoing point's stamp + stones_at_start; between points = from server
                             if d.match_data.set_type.as_deref() == Some("STONES") {
-                                div { class: "row mb-3",
-                                    div { class: "col-md-6",
-                                        p {
-                                            strong { "Stones Remaining: " }
-                                            span { id: "live-stones-remaining",
-                                                {
-                                                    {
-                                                        #[cfg(target_arch = "wasm32")]
-                                                        {
-                                                            let _update_tick = stones_update_tick();
-                                                            let points_to_use = if let Some(Ok(_state)) = state_signal
-                                                                .read()
-                                                                .as_ref()
-                                                            {
-                                                                d.points.iter().collect::<Vec<_>>()
-                                                            } else {
-                                                                d.points.iter().collect::<Vec<_>>()
-                                                            };
-                                                            compute_stones_remaining(&points_to_use, &time_filter)
-                                                        }
-                                                        #[cfg(not(target_arch = "wasm32"))]
-                                                        {
-                                                            d.match_data
-                                                                .stones_remaining
-                                                                .map(|s| s.to_string())
-                                                                .unwrap_or_else(|| "??".to_string())
-                                                        }
-                                                    }
+                                {
+                                    #[cfg(target_arch = "wasm32")]
+                                    let stones_str: String = {
+                                        let _update_tick = stones_update_tick();
+                                        let points_for_stones: Vec<PointData> = live_points_signal()
+                                            .clone()
+                                            .unwrap_or_else(|| d.points.clone());
+                                        let points_refs: Vec<&PointData> = points_for_stones.iter().collect();
+                                        let last_ongoing = points_refs.last().map(|p| p.end_stamp.is_none()).unwrap_or(false);
+                                        let between_points = !points_refs.is_empty() && !last_ongoing;
+                                        if between_points {
+                                        if let Some(Ok(state)) = state_signal.read().as_ref() {
+                                            state.get("stones_remaining").and_then(|v| v.as_u64()).map(|s| s.to_string()).unwrap_or_else(|| compute_stones_remaining(&points_refs, &time_filter))
+                                        } else {
+                                            compute_stones_remaining(&points_refs, &time_filter)
+                                        }
+                                        } else {
+                                            compute_stones_remaining(&points_refs, &time_filter)
+                                        }
+                                    };
+                                    #[cfg(not(target_arch = "wasm32"))]
+                                    let stones_str: String = d.match_data.stones_remaining.map(|s| s.to_string()).unwrap_or_else(|| "??".to_string());
+                                    rsx! {
+                                        div { class: "row mb-3",
+                                            div { class: "col-md-6",
+                                                p {
+                                                    strong { "Stones Remaining: " }
+                                                    span { id: "live-stones-remaining", "{stones_str}" }
                                                 }
                                             }
                                         }
@@ -1496,15 +1557,38 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                         }
                         div { class: "card-body",
                             {
-                                let points_to_display: Vec<&crate::types::PointData> = d
-                                    .points
-                                    .iter()
-                                    .collect();
+                                let points_for_table: Vec<PointData> = live_points_signal()
+                                    .clone()
+                                    .unwrap_or_else(|| d.points.clone());
+                                let points_to_display: Vec<&PointData> = points_for_table.iter().collect();
                                 if points_to_display.is_empty() {
                                     rsx! {
                                         p { class: "text-muted", "No points recorded yet." }
                                     }
                                 } else {
+                                    let points_with_note_displays: Vec<(&PointData, Vec<_>)> = points_to_display
+                                        .iter()
+                                        .map(|pt| {
+                                            let notes = d.point_notes_map.get(&pt.uuid).cloned().unwrap_or_default();
+                                            let displays: Vec<_> = notes.iter().map(|n| point_note_display(n, &d.penalty_types)).collect();
+                                            let note_elems: Vec<_> = displays
+                                                .into_iter()
+                                                .map(|(target_display, border_color, display_text, desc, target_profile_id)| {
+                                                    rsx! {
+                                                        PenaltyDisplay {
+                                                            border_color,
+                                                            display_text,
+                                                            description: desc,
+                                                            target_display: Some(target_display),
+                                                            target_profile_id,
+                                                            on_description_click: move |d: Option<String>| penalty_desc_modal.set(d),
+                                                        }
+                                                    }
+                                                })
+                                                .collect();
+                                            (*pt, note_elems)
+                                        })
+                                        .collect();
                                     rsx! {
                                         div { class: "table-responsive",
                                             table { class: "table table-sm",
@@ -1515,10 +1599,13 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                                                         th { "Stones Elapsed" }
                                                         th { "Winner" }
                                                         th { "Rerun" }
+                                                        if d.is_head_ref {
+                                                            th { "Penalties" }
+                                                        }
                                                     }
                                                 }
                                                 tbody { id: "live-points-table",
-                                                    for (idx, pt) in points_to_display.iter().enumerate() {
+                                                    for (idx, (pt, note_elems)) in points_with_note_displays.iter().enumerate() {
                                                         tr { key: "{pt.uuid}", id: "live-point-row-{pt.uuid}",
                                                             td { "{idx + 1}" }
                                                             td { "{pt.set_number.unwrap_or(1)}" }
@@ -1556,6 +1643,15 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                                                                             span { class: "badge bg-warning", "Rerun" }
                                                                         } else {
                                                                             span { class: "badge bg-success", "Normal" }
+                                                                        }
+                                                                    }
+                                                                    if d.is_head_ref {
+                                                                        td {
+                                                                            div { class: "mt-1",
+                                                                                for elem in note_elems.iter() {
+                                                                                    {elem}
+                                                                                }
+                                                                            }
                                                                         }
                                                                     }
                                                                 }
@@ -1688,6 +1784,15 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                                                     } else {
                                                         format!("{}: ", target_display)
                                                     };
+                                                    let pt_id = note.penalty_type_id;
+                                                    let penalty_info = if let Some(id) = pt_id {
+                                                        d.penalty_types.iter().find(|t| t.id == id)
+                                                    } else {
+                                                        None
+                                                    };
+                                                    let penalty_desc_for_modal = penalty_info
+                                                        .and_then(|pt| pt.desc.clone())
+                                                        .filter(|s| !s.is_empty());
                                                     rsx! {
                                                         div {
                                                             class: "small text-muted border-start border-3 ps-2 mb-2",
@@ -1706,12 +1811,23 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                                                                             class: "text-decoration-none",
                                                                             "{target_display}"
                                                                         }
-                                                                        ": {note.text}"
+                                                                        ": "
                                                                     }
                                                                 } else {
-                                                                    rsx! { "{prefix}{note.text}" }
+                                                                    rsx! { "{prefix}" }
                                                                 }
                                                             }
+                                                            if let Some(pt) = penalty_info {
+                                                                PenaltyDisplay {
+                                                                    border_color: pt.color.clone(),
+                                                                    display_text: pt.name.clone(),
+                                                                    description: penalty_desc_for_modal.clone(),
+                                                                    target_display: None,
+                                                                    target_profile_id: None,
+                                                                    on_description_click: move |d: Option<String>| penalty_desc_modal.set(d),
+                                                                }
+                                                            }
+                                                            "{note.text}"
                                                             if let Some(created) = &note.created_at {
                                                                 div { class: "text-muted", style: "font-size: 0.75rem;",
                                                                     "{created.chars().take(16).collect::<String>().replace('T', \" \")}"
@@ -1732,6 +1848,23 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                         }
                     }
                 }
+            }
+            if penalty_desc_modal().is_some() {
+                div { class: "modal show", style: "display: block;",
+                    div { class: "modal-dialog modal-dialog-centered",
+                        div { class: "modal-content",
+                            div { class: "modal-header",
+                                h5 { class: "modal-title", "Penalty description" }
+                                button { r#type: "button", class: "btn-close", onclick: move |_| penalty_desc_modal.set(None) }
+                            }
+                            div { class: "modal-body", "{penalty_desc_modal().as_ref().unwrap_or(&String::new())}" }
+                            div { class: "modal-footer",
+                                button { r#type: "button", class: "btn btn-secondary", onclick: move |_| penalty_desc_modal.set(None), "Close" }
+                            }
+                        }
+                    }
+                }
+                div { class: "modal-backdrop show" }
             }
                 }
             }

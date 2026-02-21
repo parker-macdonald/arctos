@@ -1,6 +1,7 @@
 #![allow(non_snake_case)]
 
 mod api;
+mod components;
 mod pages;
 
 mod stones_filter;
@@ -129,6 +130,9 @@ enum Route {
 
     #[route("/license")]
     License {},
+
+    #[route("/arctos-schedule-script")]
+    ArctosScheduleScript {},
 }
 
 fn main() {
