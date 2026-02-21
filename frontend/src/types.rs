@@ -773,6 +773,8 @@ pub struct ScoreboardStateResponse {
     pub scores_by_set: Option<std::collections::HashMap<String, std::collections::HashMap<String, u32>>>,
     pub sets: Option<Vec<u32>>,
     pub stones_info: Option<StonesInfo>,
+    #[serde(default)]
+    pub points_for_stones: Option<Vec<ScoreboardPointForStones>>,
     pub prev_match: Option<PrevNextMatch>,
     pub next_match: Option<PrevNextMatch>,
     pub timestamp: String,
@@ -782,6 +784,14 @@ pub struct ScoreboardStateResponse {
 pub struct StonesInfo {
     pub stones_per_set: u32,
     pub stones_remaining: Option<u32>,
+}
+
+/// Point data for live stones computation on scoreboard (STONES matches).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ScoreboardPointForStones {
+    pub stamp: Option<String>,
+    pub end_stamp: Option<String>,
+    pub stones_at_start: Option<u32>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

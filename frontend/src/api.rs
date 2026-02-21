@@ -668,6 +668,8 @@ pub struct RecordChunkMeta {
     pub chunk_length_ms: u32,
     pub camera_name: String,
     pub key: Option<String>,
+    /// Container for the chunk: "mp4" (H.265/HEVC) or "webm". Backend uses this for file extension and re-encode.
+    pub container: String,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -699,6 +701,8 @@ pub async fn record_upload_chunk(meta: &RecordChunkMeta, chunk_blob: &web_sys::B
     if let Some(ref k) = meta.key {
         form.append_with_str("camera_key", k).map_err(|_| "append key failed")?;
     }
+    form.append_with_str("container", &meta.container)
+        .map_err(|_| "append container failed")?;
     form.append_with_blob("chunk", chunk_blob)
         .map_err(|_| "append chunk failed")?;
 
@@ -745,6 +749,7 @@ pub struct RecordChunkMeta {
     pub chunk_length_ms: u32,
     pub camera_name: String,
     pub key: Option<String>,
+    pub container: String,
 }
 
 pub async fn record_finalize(

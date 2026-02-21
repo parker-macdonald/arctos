@@ -1,7 +1,32 @@
 use crate::api;
+use crate::stones_filter::BayesianOffsetFilter;
+use crate::types::ScoreboardPointForStones;
 use dioxus::prelude::*;
 #[cfg(target_arch = "wasm32")]
 use gloo_timers::callback::Interval;
+
+/// Compute stones remaining during an ongoing point (last point has no end_stamp). Uses Bayesian filter for server time.
+#[cfg(target_arch = "wasm32")]
+fn scoreboard_stones_during_point(
+    points: &[ScoreboardPointForStones],
+    filter: &Signal<BayesianOffsetFilter>,
+) -> Option<u32> {
+    const BEAT_INTERVAL: f64 = 1.5;
+    let last = points.last()?;
+    if last.end_stamp.is_some() {
+        return None;
+    }
+    let stones_at_start = last.stones_at_start?;
+    let start_stamp = last.stamp.as_deref()?;
+    let start = chrono::DateTime::parse_from_rfc3339(start_stamp)
+        .ok()?
+        .timestamp_millis() as f64
+        / 1000.0;
+    let client_time = js_sys::Date::now() / 1000.0;
+    let end = client_time + filter.read().get_mean();
+    let elapsed = ((end - start) / BEAT_INTERVAL).floor().max(0.0) as u32;
+    Some(stones_at_start.saturating_sub(elapsed))
+}
 
 fn get_query_param(name: &str) -> Option<String> {
     #[cfg(target_arch = "wasm32")]
@@ -47,6 +72,54 @@ pub fn Scoreboard(url: String, field: String) -> Element {
         }
     });
     let val = data.value();
+
+    // Bayesian filter and 100ms tick for live stones during a point (same as match page).
+    #[cfg(target_arch = "wasm32")]
+    let time_filter = use_signal(|| BayesianOffsetFilter::default());
+    #[cfg(target_arch = "wasm32")]
+    let stones_update_tick = use_signal(|| 0u32);
+    #[cfg(target_arch = "wasm32")]
+    let server_time_started = use_signal(|| false);
+    #[cfg(target_arch = "wasm32")]
+    let stones_interval_handle = use_signal(|| None as Option<Interval>);
+    #[cfg(target_arch = "wasm32")]
+    {
+        let mut time_filter = time_filter;
+        let mut server_time_started = server_time_started;
+        let mut stones_update_tick = stones_update_tick;
+        let mut stones_interval_handle = stones_interval_handle;
+        use_effect(move || {
+            let guard = val.read();
+            let s: Option<&crate::types::ScoreboardStateResponse> = guard.as_ref().and_then(|r| r.as_ref().ok());
+            let Some(s) = s else { return };
+            if !s.has_active_match || s.stones_info.is_none() {
+                stones_interval_handle.set(None);
+                return;
+            }
+            if !server_time_started() {
+                server_time_started.set(true);
+                let mut filter = time_filter;
+                spawn(async move {
+                    loop {
+                        let client_send = js_sys::Date::now() / 1000.0;
+                        if let Ok(res) = api::server_time().await {
+                            let client_receive = js_sys::Date::now() / 1000.0;
+                            let rtt = client_receive - client_send;
+                            let offset = res.server_time - client_receive + (rtt / 2.0);
+                            filter.write().update(offset);
+                        }
+                        gloo_timers::future::TimeoutFuture::new(997).await;
+                    }
+                });
+            }
+            if stones_interval_handle.read().is_none() {
+                let handle = Interval::new(100, move || {
+                    stones_update_tick.set(stones_update_tick() + 1);
+                });
+                stones_interval_handle.set(Some(handle));
+            }
+        });
+    }
     rsx! {
         style { r#"
         * {{ margin: 0; padding: 0; box-sizing: border-box; }}
@@ -128,17 +201,26 @@ pub fn Scoreboard(url: String, field: String) -> Element {
                     }
                     if let Some(stones) = &s.stones_info {
                         {
+                            #[cfg(target_arch = "wasm32")]
+                            let _ = stones_update_tick();
+                            #[cfg(target_arch = "wasm32")]
+                            let remaining = s
+                                .points_for_stones
+                                .as_ref()
+                                .and_then(|pts| scoreboard_stones_during_point(pts, &time_filter))
+                                .unwrap_or_else(|| stones.stones_remaining.unwrap_or(0));
+                            #[cfg(not(target_arch = "wasm32"))]
+                            let remaining = stones.stones_remaining.unwrap_or(0);
                             let pct = if stones.stones_per_set == 0 {
                                 0.0
                             } else {
-                                let remaining = stones.stones_remaining.unwrap_or(0) as f64;
-                                (remaining / stones.stones_per_set as f64) * 100.0
+                                (remaining as f64 / stones.stones_per_set as f64) * 100.0
                             };
                             rsx! {
                                 div { class: "stones-info",
                                     div { class: "stones-header",
                                         span { "Stones remaining" }
-                                        span { class: "stones-count", "{stones.stones_remaining.unwrap_or(0)} / {stones.stones_per_set}" }
+                                        span { class: "stones-count", "{remaining} / {stones.stones_per_set}" }
                                     }
                                     div { class: "progress-bar-container",
                                         div { class: "progress-bar", style: "width: {pct}%;" }
