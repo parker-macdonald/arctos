@@ -1,5 +1,6 @@
 mod about;
 mod add_injury;
+mod arctos_schedule_script;
 mod bracket;
 mod docs;
 mod edit_injury;
@@ -39,6 +40,7 @@ mod bracket_setup;
 
 pub use about::About;
 pub use add_injury::AddInjury;
+pub use arctos_schedule_script::ArctosScheduleScript;
 pub use bracket::Bracket;
 pub use docs::Docs;
 pub use edit_injury::EditInjury;

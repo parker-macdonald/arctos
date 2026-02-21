@@ -556,33 +556,7 @@ In order to implement this, dynamic (`fast` or `safe`) matches[^2] may
 have a *skip condition*, an boolean expression in lisp-like language
 called Arctos Schedule Script (ASS).
 
-#### Arctos Schedule Script
-
-An ASS expression is either an *atom* (a literal value or a function)
-or a *list* (of expressions). 
-
-Some examples of atoms are:
-- numbers: `1`, `2`, etc.
-- booleans: `true`, `false`
-- functions: `+`, `and`, `if`, etc.
-
-A list is a space-separated list of items. The parser tries to reduce
-expressions into atoms. It deals with lists by calling the first
-element of the list with the remainder of the list as arguments. if
-the first argument is not a list, it can't do anything, so it just
-gives up and lets the expression be a list.
-
-Take the following list for example:
-
-```
-(+ 1 2)
-```
-
-the first element is `+`, which is a function that takes two arguments. The parser knows how to call `+` and so this list can be reduced to the atom `3`.
-
-```
-(1 2 3)
-```
+You can see the full ASS docs [here](/arctos-schedule-script).
 
 ### Exporting and Importing Schedule Files {#exporting-and-importing-schedule-files}
 

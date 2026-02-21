@@ -3570,6 +3570,10 @@ def markdown_page(slug):
             "data-accessibility-guide.md",
             "Data Accessibility Guide",
         ),
+        "arctos-schedule-script": (
+            "arctos-schedule-script.md",
+            "Arctos Schedule Script",
+        ),
         "thanks": ("thanks.md", "Thanks"),
         "license": ("license.md", "License"),
         "terms": ("terms.md", "Terms and Conditions"),

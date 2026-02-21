@@ -49,6 +49,7 @@ fn page_title_for_route(route: &Route) -> String {
         Route::Terms { .. } => "Terms".into(),
         Route::Thanks { .. } => "Thanks".into(),
         Route::License { .. } => "License".into(),
+        Route::ArctosScheduleScript { .. } => "Arctos Schedule Script".into(),
     }
 }
 
