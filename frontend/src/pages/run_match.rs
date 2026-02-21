@@ -1,6 +1,7 @@
 use crate::api;
 use crate::components::PenaltyDisplay;
 use crate::Route;
+use crate::stones_filter::BayesianOffsetFilter;
 use dioxus::prelude::*;
 use serde_json::Value;
 #[cfg(target_arch = "wasm32")]
@@ -70,7 +71,7 @@ fn scores_by_set_from_points(points: &[&Value]) -> Vec<(String, u64, u64)> {
         .collect()
 }
 
-/// Stones elapsed (1.5s beats) between stamp and end (or now if end is None).
+/// Stones elapsed (1.5s beats) between stamp and end (or now if end is None). Uses client time only.
 fn stones_elapsed_beats(stamp_opt: Option<&str>, end_opt: Option<&str>) -> u32 {
     let start = stamp_opt
         .and_then(parse_iso_epoch)
@@ -80,6 +81,32 @@ fn stones_elapsed_beats(stamp_opt: Option<&str>, end_opt: Option<&str>) -> u32 {
         .map(|t| t as f64)
         .unwrap_or_else(now_epoch_secs);
     ((end - start) / 1.5).floor().max(0.0) as u32
+}
+
+/// Stones elapsed using Bayesian filter for server time (ongoing point). Returns u32 for display.
+#[cfg(target_arch = "wasm32")]
+fn stones_elapsed_with_filter(
+    stamp_opt: Option<&str>,
+    end_opt: Option<&str>,
+    filter: &Signal<BayesianOffsetFilter>,
+) -> u32 {
+    const BEAT_INTERVAL: f64 = 1.5;
+    let start = match stamp_opt.and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok()) {
+        Some(parsed) => parsed.timestamp_millis() as f64 / 1000.0,
+        None => return 0,
+    };
+    let end = if let Some(e) = end_opt {
+        if let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(e) {
+            parsed.timestamp_millis() as f64 / 1000.0
+        } else {
+            let client_time = js_sys::Date::now() / 1000.0;
+            client_time + filter.read().get_mean()
+        }
+    } else {
+        let client_time = js_sys::Date::now() / 1000.0;
+        client_time + filter.read().get_mean()
+    };
+    ((end - start) / BEAT_INTERVAL).floor().max(0.0) as u32
 }
 
 #[component]
@@ -138,7 +165,43 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
         }
     }
 
-    // Tick for live stones elapsed and time elapsed (re-render every 500ms / 1s when needed).
+    // Bayesian filter for server time sync (stones elapsed during ongoing point).
+    #[cfg(target_arch = "wasm32")]
+    let time_filter = use_signal(|| BayesianOffsetFilter::default());
+    #[cfg(target_arch = "wasm32")]
+    let server_time_loop_started = use_signal(|| false);
+    #[cfg(target_arch = "wasm32")]
+    {
+        let binding = detail.value();
+        let mut time_filter = time_filter;
+        let mut server_time_loop_started = server_time_loop_started;
+        use_effect(move || {
+            if server_time_loop_started() {
+                return;
+            }
+            let guard = binding.try_read();
+            let Ok(ref g) = guard else { return };
+            let Some(Ok(d)) = g.as_ref() else { return };
+            if d.match_data.set_type.as_deref() == Some("STONES") && d.match_data.status == "IN_PROGRESS" {
+                server_time_loop_started.set(true);
+                let mut filter = time_filter;
+                spawn(async move {
+                    loop {
+                        let client_send = js_sys::Date::now() / 1000.0;
+                        if let Ok(res) = api::server_time().await {
+                            let client_receive = js_sys::Date::now() / 1000.0;
+                            let rtt = client_receive - client_send;
+                            let offset = res.server_time - client_receive + (rtt / 2.0);
+                            filter.write().update(offset);
+                        }
+                        gloo_timers::future::TimeoutFuture::new(997).await;
+                    }
+                });
+            }
+        });
+    }
+
+    // Tick for live stones elapsed and time elapsed (every 100ms for accuracy).
     let live_tick = use_signal(|| 0u32);
     #[cfg(target_arch = "wasm32")]
     let live_tick_interval = use_signal(|| None as Option<Interval>);
@@ -151,7 +214,7 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
             if live_tick_interval.read().is_some() {
                 return;
             }
-            let handle = Interval::new(500, move || {
+            let handle = Interval::new(100, move || {
                 live_tick.set(live_tick() + 1);
             });
             live_tick_interval.set(Some(handle));
@@ -292,6 +355,9 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                         let rerolled = pt.get("rerolled").and_then(|v| v.as_bool()).unwrap_or(false);
                         let stamp = pt.get("stamp").and_then(|s| s.as_str());
                         let end_stamp = pt.get("end_stamp").and_then(|e| e.as_str());
+                        #[cfg(target_arch = "wasm32")]
+                        let elapsed = stones_elapsed_with_filter(stamp, end_stamp, &time_filter);
+                        #[cfg(not(target_arch = "wasm32"))]
                         let elapsed = stones_elapsed_beats(stamp, end_stamp);
                         PointRow { point_id, set_num, winner, rerolled, elapsed }
                     })
@@ -306,6 +372,9 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                             .and_then(|pt| {
                                 let at_start = pt.get("stones_at_start").and_then(|s| s.as_u64())?;
                                 let stamp = pt.get("stamp").and_then(|s| s.as_str());
+                                #[cfg(target_arch = "wasm32")]
+                                let elapsed = stones_elapsed_with_filter(stamp, None, &time_filter) as u64;
+                                #[cfg(not(target_arch = "wasm32"))]
                                 let elapsed = stones_elapsed_beats(stamp, None) as u64;
                                 Some((at_start.saturating_sub(elapsed)) as u32)
                             })
@@ -583,6 +652,8 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                     .container .mobile-sticky-button,.container #finalize-match-btn{display:none}}";
                 let mut state_signal = state_signal;
                 let mut action_error = action_error;
+                let set_type_stones_reroll = set_type_stones;
+                let mut stones_remaining_reroll = stones_remaining;
                 let point_table_rows: Vec<_> = point_rows
                     .iter()
                     .map(|r| {
@@ -735,6 +806,14 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                                                         }
                                                     }
                                                     state_signal.set(Some(Ok(state)));
+                                                }
+                                                // Adjust stone counter: rerun = add this point's stones back, un-rerun = subtract
+                                                if set_type_stones_reroll {
+                                                    if checked {
+                                                        stones_remaining_reroll.set(stones_remaining_reroll() + elapsed);
+                                                    } else {
+                                                        stones_remaining_reroll.set(stones_remaining_reroll().saturating_sub(elapsed));
+                                                    }
                                                 }
                                                 let u = u_reroll.clone();
                                                 let p = pid_reroll.clone();

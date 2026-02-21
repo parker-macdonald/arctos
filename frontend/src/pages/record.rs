@@ -611,11 +611,17 @@ async fn run_recording_loop(
     use wasm_bindgen::JsCast;
     use web_sys::{MediaRecorder, MediaRecorderOptions};
 
-    let mut options = MediaRecorderOptions::new();
-    options.video_bits_per_second(25_000_000);
-    options.audio_bits_per_second(128_000);
+    // Prefer H.265/HEVC (mp4), fall back to WebM. Order: hev1, hvc1, then vp9/webm.
+    const MIME_PREFERENCE: &[(&str, &str)] = &[
+        ("video/mp4; codecs=hev1", "mp4"),
+        ("video/mp4; codecs=hvc1", "mp4"),
+        ("video/mp4", "mp4"),
+        ("video/webm; codecs=vp9", "webm"),
+        ("video/webm", "webm"),
+    ];
 
     let key_ref = key.clone();
+    let container_ref: Rc<RefCell<String>> = Rc::new(RefCell::new("webm".to_string()));
 
     // Recorder state: recorder, status, started_at (ms), current_session_id (new id each time this recorder is started).
     struct RecorderState {
@@ -627,11 +633,24 @@ async fn run_recording_loop(
 
     // Use a persistent chunk_count for chunk_start_timestamp (storage is drained often so queue length is not a valid index).
     // point_id is read at chunk capture time so chunks get the point that was in progress when recorded, not when drained.
+    let container_for_recorder = container_ref.clone();
     let make_recorder = |stream: &web_sys::MediaStream,
                         storage_queue: Rc<RefCell<Vec<StoredChunk>>>,
                         session_start: Rc<RefCell<f64>>,
                         chunk_count: Rc<RefCell<u32>>,
                         current_point_id: Rc<RefCell<Option<String>>>| {
+        let mut options = MediaRecorderOptions::new();
+        options.video_bits_per_second(50_000_000);
+        options.audio_bits_per_second(128_000);
+        let mut chosen_container = "webm";
+        for (mime, container) in MIME_PREFERENCE {
+            if MediaRecorder::is_type_supported(mime) {
+                options.set_mime_type(mime);
+                chosen_container = container;
+                break;
+            }
+        }
+        *container_for_recorder.borrow_mut() = chosen_container.to_string();
         let r = MediaRecorder::new_with_media_stream_and_media_recorder_options(stream, &options)
             .ok()?;
         let sq = storage_queue.clone();
@@ -817,6 +836,7 @@ async fn run_recording_loop(
             chunk_length_ms: 1000,
             camera_name: camera_name.clone(),
             key: key_ref.clone(),
+            container: container_ref.borrow().clone(),
         };
         for (state, storage_rc) in [
             (&state1, storage1.clone()),
