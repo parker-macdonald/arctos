@@ -3,6 +3,8 @@ Authentication routes: logout, check-username, Google OAuth (login + callback on
 Login and register are handled by the SPA and _api.
 """
 
+import os
+
 from flask import (
     Blueprint,
     request,
@@ -11,6 +13,7 @@ from flask import (
     jsonify,
     session,
     current_app,
+    url_for,
 )
 from flask_login import login_user, logout_user, login_required, current_user
 from models import Player, Team
@@ -23,6 +26,31 @@ bp = Blueprint("auth", __name__, url_prefix="/_api")
 oauth = OAuth()
 
 _SPA_BASE = "/"
+
+
+def _frontend_base():
+    """Base URL for redirecting to the frontend (no trailing slash)."""
+    base = current_app.config.get("EXTERNAL_BASE_URL", "").strip()
+    if base:
+        return base.rstrip("/")
+    return None
+
+
+def _redirect_to_frontend(path=""):
+    """Redirect to the frontend; path should start with / (e.g. /auth/google/choose-account-type)."""
+    base = _frontend_base()
+    if base:
+        return redirect(f"{base}{path}" if path.startswith("/") else f"{base}/{path}")
+    return redirect(_SPA_BASE + path.lstrip("/") if path else _SPA_BASE)
+
+
+def _google_callback_uri():
+    """Redirect URI for Google OAuth; must match Google Cloud Console exactly."""
+    base = _frontend_base()
+    if base:
+        script = os.environ.get("SCRIPT_NAME", "").rstrip("/")
+        return f"{base}{script}/_api/auth/google/callback"
+    return url_for("auth.google_callback", _external=True)
 
 
 @bp.route("/check-username", methods=["GET"])
@@ -56,7 +84,7 @@ def logout():
     """User logout."""
     logout_user()
     flash("You have been logged out", "info")
-    return redirect(_SPA_BASE)
+    return _redirect_to_frontend("/")
 
 
 @bp.route("/auth/google/login")
@@ -69,11 +97,9 @@ def google_login():
             "Google sign-in is not configured. Please contact the administrator.",
             "error",
         )
-        return redirect(_SPA_BASE)
+        return _redirect_to_frontend("/")
 
-    from flask import url_for
-    redirect_uri = url_for("auth.google_callback", _external=True)
-
+    redirect_uri = _google_callback_uri()
     google = oauth.google
     return google.authorize_redirect(redirect_uri)
 
@@ -107,7 +133,7 @@ def google_callback():
 
         if not google_id:
             flash("Failed to authenticate with Google", "error")
-            return redirect(_SPA_BASE)
+            return _redirect_to_frontend("/")
 
         user = Player.query.filter_by(google_id=google_id).first()
         if not user:
@@ -116,15 +142,15 @@ def google_callback():
         if user:
             login_user(user)
             flash("Successfully logged in with Google!", "success")
-            return redirect(_SPA_BASE)
+            return _redirect_to_frontend("/")
 
         session["google_oauth_data"] = {
             "google_id": google_id,
             "email": email,
             "name": name,
         }
-        return redirect(_SPA_BASE + "/auth/google/choose-account-type")
+        return _redirect_to_frontend("/auth/google/choose-account-type")
 
     except Exception as e:
         flash(f"Error during Google authentication: {str(e)}", "error")
-        return redirect(_SPA_BASE)
+        return _redirect_to_frontend("/")

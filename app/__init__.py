@@ -49,6 +49,11 @@ def create_app(config=None):
     app.config["GOOGLE_CLIENT_ID"] = os.environ.get("GOOGLE_CLIENT_ID", "")
     app.config["GOOGLE_CLIENT_SECRET"] = os.environ.get("GOOGLE_CLIENT_SECRET", "")
 
+    # Public base URL for OAuth and redirects (e.g. https://example.com). When set, used for
+    # Google redirect_uri and post-login redirects so they work behind proxies and match
+    # the authorized redirect URI in Google Cloud Console. No trailing slash.
+    app.config["EXTERNAL_BASE_URL"] = os.environ.get("EXTERNAL_BASE_URL", "").rstrip("/")
+
     # Handle subpath deployment
     if "SCRIPT_NAME" in os.environ:
         app.config["APPLICATION_ROOT"] = os.environ["SCRIPT_NAME"]
