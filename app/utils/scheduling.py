@@ -140,7 +140,6 @@ def _all_participating_teams_resolved(
         if not _slot_resolved(team_id, initial, tournament_url, name_to_match):
             return False
 
-    print(refs_raw, refs_initial_raw, refs_parts, refs_initial_parts)
     return True
 
 

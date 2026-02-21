@@ -36,15 +36,18 @@ pub fn StartMatch(url: String, match_id: String) -> Element {
     let home_url = url.clone();
     let data_snapshot = val.read().clone();
 
+    // One-time init when data loads; avoid depending on team1_all/team2_all so setting them doesn't re-trigger the effect (prevents render loop / browser slowdown).
+    let mut has_initialized_teams = use_signal(|| false);
     use_effect(move || {
-        if let Some(Ok(d)) = val.read().as_ref() {
-            if team1_all().is_empty() {
+        let binding = val.read();
+        let data_ready = binding.as_ref().and_then(|r| r.as_ref().ok());
+        if let Some(d) = data_ready {
+            if !has_initialized_teams() {
                 team1_all.set(d.team1_players.iter().map(|p| p.id.clone()).collect());
                 team1_selected.set(d.team1_players.iter().map(|p| p.id.clone()).collect::<HashSet<_>>());
-            }
-            if team2_all().is_empty() {
                 team2_all.set(d.team2_players.iter().map(|p| p.id.clone()).collect());
                 team2_selected.set(d.team2_players.iter().map(|p| p.id.clone()).collect::<HashSet<_>>());
+                has_initialized_teams.set(true);
             }
         }
     });
