@@ -611,10 +611,16 @@ async fn run_recording_loop(
     use wasm_bindgen::JsCast;
     use web_sys::{MediaRecorder, MediaRecorderOptions};
 
-    // Prefer H.265/HEVC (mp4), fall back to WebM. Order: hev1, hvc1, then vp9/webm.
+    // Prefer H.265/HEVC (mp4), fall back to WebM. Use full codec strings (like avc1.42E01E for H.264).
+    // HEVC: hvc1/hev1 + profile.compat.level.constraint (e.g. 1.6.L93.B0 = Main profile, level 3.1).
     const MIME_PREFERENCE: &[(&str, &str)] = &[
-        ("video/mp4; codecs=hev1", "mp4"),
+        ("video/mp4; codecs=hvc1.1.6.L93.B0", "mp4"),
+        ("video/mp4; codecs=hev1.1.6.L93.B0", "mp4"),
+        ("video/mp4; codecs=hvc1.1.6.L93", "mp4"),
+        ("video/mp4; codecs=hev1.1.6.L93", "mp4"),
         ("video/mp4; codecs=hvc1", "mp4"),
+        ("video/mp4; codecs=hev1", "mp4"),
+        ("video/mp4; codecs=avc1.42E01E", "mp4"),
         ("video/mp4", "mp4"),
         ("video/webm; codecs=vp9", "webm"),
         ("video/webm", "webm"),

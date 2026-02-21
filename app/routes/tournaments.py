@@ -513,6 +513,12 @@ def record_upload_chunk():
     if chunk_file.filename == "":
         return jsonify({"error": "Empty chunk file"}), 400
 
+    # Container: "mp4" (H.265/HEVC) or "webm". Default webm for backward compatibility.
+    container = (request.form.get("container") or "webm").strip().lower()
+    if container not in ("mp4", "webm"):
+        container = "webm"
+    chunk_ext = container
+
     upload_dir = os.path.join(
         current_app.root_path,
         "../static/uploads/videos",
@@ -527,21 +533,21 @@ def record_upload_chunk():
     chunk_index = len(
         list(filter(lambda x: not x.endswith(".json"), os.listdir(upload_dir)))
     )
-    chunk_filename = f"chunk_{chunk_index}.webm"
+    chunk_filename = f"chunk_{chunk_index}.{chunk_ext}"
     chunk_path = os.path.join(upload_dir, chunk_filename)
     chunk_file.save(chunk_path)
 
-    # Debug: log saved chunk size and first 4 bytes (WebM/EBML magic is 1a 45 df a3)
+    # Debug: log saved chunk size and format
     try:
         with open(chunk_path, "rb") as f:
             head = f.read(4)
         file_size = os.path.getsize(chunk_path)
         current_app.logger.info(
-            "record chunk %s: size=%s bytes, first4=%s (EBML=%s)",
+            "record chunk %s: size=%s bytes, ext=%s, first4=%s",
             chunk_index,
             file_size,
+            chunk_ext,
             head.hex() if len(head) == 4 else "short",
-            head == b"\x1a\x45\xdf\xa3" if len(head) == 4 else False,
         )
     except Exception as e:
         current_app.logger.warning("record chunk debug read failed: %s", e)

@@ -319,13 +319,30 @@ def scoreboard_state():
                 "team2_score": sum(1 for p in set_points if p.winner == "TEAM2"),
             }
 
-        # For STONES matches, get stones info
+        # For STONES matches, get stones info and points for live stones during a point
         stones_info = None
+        points_for_stones = None
         if match.set_type == "STONES":
             stones_info = {
                 "stones_per_set": match.stones_per_set or match.nstonesperset or 100,
                 "stones_remaining": match.stones_remaining,
             }
+            def _iso_z(dt):
+                if dt is None:
+                    return None
+                s = dt.isoformat()
+                if dt.tzinfo is None and not s.endswith("Z"):
+                    s = s + "Z"
+                return s
+
+            points_for_stones = [
+                {
+                    "stamp": _iso_z(p.stamp),
+                    "end_stamp": _iso_z(p.end_stamp),
+                    "stones_at_start": p.stones_at_start,
+                }
+                for p in points
+            ]
 
         return jsonify(
             {
@@ -338,6 +355,7 @@ def scoreboard_state():
                 "scores_by_set": scores_by_set,
                 "sets": sets,
                 "stones_info": stones_info,
+                "points_for_stones": points_for_stones,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             }
         )
