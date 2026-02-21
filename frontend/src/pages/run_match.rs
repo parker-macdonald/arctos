@@ -690,6 +690,7 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                         let u_del = url.clone();
                         let u_notes = url.clone();
                         let id_notes = match_id.clone();
+                        let id_reroll_match = match_id.clone();
                         let pid = r.point_id.clone();
                         let pid_inc = pid.clone();
                         let pid_dec = pid.clone();
@@ -829,22 +830,40 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                                                     state_signal.set(Some(Ok(state)));
                                                 }
                                                 // Adjust stone counter: rerun = add this point's stones back, un-rerun = subtract
-                                                if set_type_stones_reroll {
-                                                    if checked {
-                                                        stones_remaining_reroll.set(stones_remaining_reroll() + elapsed);
+                                                let prev_stones = stones_remaining_reroll();
+                                                let (stones_to_send, stones_prev) = if set_type_stones_reroll {
+                                                    let new_val = if checked {
+                                                        prev_stones + elapsed
                                                     } else {
-                                                        stones_remaining_reroll.set(stones_remaining_reroll().saturating_sub(elapsed));
-                                                    }
-                                                }
+                                                        prev_stones.saturating_sub(elapsed)
+                                                    };
+                                                    stones_remaining_reroll.set(new_val);
+                                                    (Some(new_val), prev_stones)
+                                                } else {
+                                                    (None, prev_stones)
+                                                };
                                                 let u = u_reroll.clone();
+                                                let id_reroll = id_reroll_match.clone();
                                                 let p = pid_reroll.clone();
                                                 let mut state_signal = state_signal;
                                                 let mut action_error = action_error;
+                                                let mut stones_remaining_reroll = stones_remaining_reroll;
                                                 spawn(async move {
                                                     let body = serde_json::json!({ "point_id": p, "rerolled": checked });
                                                     match api::update_point(&u, &p, &body).await {
-                                                        Ok(_) => { action_error.set(None); }
-                                                        Err(e) => { action_error.set(Some(e)); state_signal.set(prev); }
+                                                        Ok(_) => {
+                                                            action_error.set(None);
+                                                            if let Some(n) = stones_to_send {
+                                                                let _ = api::update_stones(&u, &id_reroll, n).await;
+                                                            }
+                                                        }
+                                                        Err(e) => {
+                                                            action_error.set(Some(e));
+                                                            state_signal.set(prev);
+                                                            if stones_to_send.is_some() {
+                                                                stones_remaining_reroll.set(stones_prev);
+                                                            }
+                                                        }
                                                     }
                                                 });
                                             },

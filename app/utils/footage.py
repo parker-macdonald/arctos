@@ -118,31 +118,31 @@ def finalize_recording_worker(
             is_mp4 = first_filename.lower().endswith(".mp4")
 
             if is_mp4:
-                # MP4: concat with ffmpeg concat demuxer, then re-encode to WebM
-                concat_list_path = path.join(chunk_dir, f"session_{session_id}_concat_list.txt")
-                with open(concat_list_path, "w") as f:
-                    for c in session_chunks:
-                        chunk_path = path.join(chunk_dir, c["filename"])
-                        if path.exists(chunk_path):
-                            # Paths in list file are relative to list file dir
-                            print(f"file {repr(path.basename(c['filename']))}", file=f)
+                # MP4: concat chunks with cat (fast; chunks are fragments by design)
                 raw_name = f"session_{session_id}_raw.mp4"
                 raw_path = path.join(chunk_dir, raw_name)
-                concat_result = subprocess.run(
-                    [
-                        "ffmpeg", "-f", "concat", "-safe", "0",
-                        "-i", path.basename(concat_list_path),
-                        "-c", "copy", "-loglevel", "error", "-y", raw_name,
-                    ],
-                    cwd=chunk_dir,
-                    capture_output=True,
-                    text=True,
-                    timeout=300,
-                )
-                if concat_result.returncode != 0 or not path.exists(raw_path) or path.getsize(raw_path) == 0:
+                cat_files = [
+                    c["filename"] for c in session_chunks
+                    if path.exists(path.join(chunk_dir, c["filename"]))
+                ]
+                if not cat_files:
+                    _log.warning("finalize_recording: session %s has no existing chunk files", session_id)
+                    continue
+                try:
+                    with open(raw_path, "wb") as out:
+                        cat_result = subprocess.run(
+                            ["cat"] + cat_files,
+                            cwd=chunk_dir,
+                            stdout=out,
+                            timeout=300,
+                        )
+                except OSError as e:
+                    _log.warning("finalize_recording: session %s cat failed: %s", session_id, e)
+                    continue
+                if cat_result.returncode != 0 or not path.exists(raw_path) or path.getsize(raw_path) == 0:
                     _log.warning(
-                        "finalize_recording: session %s mp4 concat failed returncode=%s stderr=%s",
-                        session_id, concat_result.returncode, (concat_result.stderr or "").strip(),
+                        "finalize_recording: session %s mp4 cat failed returncode=%s",
+                        session_id, cat_result.returncode,
                     )
                     continue
                 print(f"finalize_recording: session {session_id} wrote raw mp4 ({path.getsize(raw_path)} bytes)")
@@ -150,14 +150,14 @@ def finalize_recording_worker(
                 raw_input_name = raw_name
                 included_chunks = session_chunks  # for segment_start_ms / point_ids below
             else:
-                # WebM: drop chunks before first EBML header, then binary concat
+                # WebM: drop chunks before first EBML header, then concat with cat
                 first_valid_index = None
                 for i, c in enumerate(session_chunks):
                     chunk_path = path.join(chunk_dir, c["filename"])
                     if not path.exists(chunk_path):
                         continue
                     with open(chunk_path, "rb") as inp:
-                        data = inp.read()
+                        data = inp.read(4)
                     if len(data) >= 4 and data[:4] == EBML_MAGIC:
                         first_valid_index = i
                         break
@@ -179,19 +179,29 @@ def finalize_recording_worker(
 
                 raw_name = raw_basename(session_id)
                 raw_path = path.join(chunk_dir, raw_name)
+                cat_files = [
+                    c["filename"] for c in included_chunks
+                    if path.exists(path.join(chunk_dir, c["filename"]))
+                ]
+                if not cat_files:
+                    _log.warning("finalize_recording: session %s no existing chunk files after EBML skip", session_id)
+                    continue
                 try:
                     with open(raw_path, "wb") as out:
-                        for c in included_chunks:
-                            chunk_path = path.join(chunk_dir, c["filename"])
-                            if not path.exists(chunk_path):
-                                continue
-                            with open(chunk_path, "rb") as inp:
-                                out.write(inp.read())
+                        cat_result = subprocess.run(
+                            ["cat"] + cat_files,
+                            cwd=chunk_dir,
+                            stdout=out,
+                            timeout=300,
+                        )
                 except OSError as e:
-                    _log.warning("finalize_recording: session %s binary concat failed: %s", session_id, e)
+                    _log.warning("finalize_recording: session %s cat failed: %s", session_id, e)
                     continue
-                if not path.exists(raw_path) or path.getsize(raw_path) == 0:
-                    _log.warning("finalize_recording: session %s produced empty raw file", session_id)
+                if cat_result.returncode != 0 or not path.exists(raw_path) or path.getsize(raw_path) == 0:
+                    _log.warning(
+                        "finalize_recording: session %s webm cat failed returncode=%s",
+                        session_id, cat_result.returncode,
+                    )
                     continue
 
                 print(f"finalize_recording: session {session_id} wrote raw webm ({path.getsize(raw_path)} bytes)")
