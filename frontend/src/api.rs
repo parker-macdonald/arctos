@@ -782,6 +782,31 @@ pub async fn record_finalize(
     Ok(())
 }
 
+pub async fn rerun_video_finalization(
+    tournament_url: &str,
+    field_name: &str,
+    match_id: &str,
+) -> Result<serde_json::Value, String> {
+    let c = client();
+    let body = serde_json::json!({
+        "tournament": tournament_url,
+        "field": field_name,
+        "match_id": match_id,
+    });
+    let r = with_credentials(
+        c.post(format!("{}/_api/record/rerun-finalization", base()))
+            .json(&body),
+    )
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    if !r.status().is_success() {
+        let text = r.text().await.unwrap_or_default();
+        return Err(text);
+    }
+    response_json(r).await
+}
+
 pub async fn server_time() -> Result<ServerTimeResponse, String> {
     let c = client();
     let r = with_credentials(c.get(format!("{}/_api/server-time", base())))

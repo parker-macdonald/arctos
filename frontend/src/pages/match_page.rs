@@ -417,8 +417,11 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
     let user_info = use_resource(move || async move {
         api::me().await.ok()
     });
-    
-    
+
+    // Message after "Rerun video finalization" (success or error)
+    let rerun_finalization_msg = use_signal(|| None as Option<String>);
+    let rerun_tournament = url.clone();
+
     // Bayesian filter for server time sync (for stones elapsed calculation)
     #[cfg(target_arch = "wasm32")]
     let time_filter = use_signal(|| BayesianOffsetFilter::default());
@@ -1375,6 +1378,48 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                                                 },
                                                 class: "btn btn-warning",
                                                 "Run Match"
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            if d.is_head_ref && d.match_data.field.is_some() {
+                                {
+                                    let u_rerun = rerun_tournament.clone();
+                                    let f_rerun = d.match_data.field.clone().unwrap_or_default();
+                                    let m_rerun = d.match_data.uuid.clone();
+                                    let mut msg_sig = rerun_finalization_msg;
+                                    rsx! {
+                                        div { class: "row mt-2",
+                                            div { class: "col-12",
+                                                div { class: "d-flex gap-2 align-items-center",
+                                                    button {
+                                                        class: "btn btn-outline-secondary btn-sm",
+                                                        r#type: "button",
+                                                        onclick: move |_| {
+                                                            let u = u_rerun.clone();
+                                                            let f = f_rerun.clone();
+                                                            let m = m_rerun.clone();
+                                                            let mut msg = msg_sig;
+                                                            msg.set(Some("Submitting…".to_string()));
+                                                            spawn(async move {
+                                                                match api::rerun_video_finalization(&u, &f, &m).await {
+                                                                    Ok(res) => {
+                                                                        let s = res.get("message").and_then(|v| v.as_str()).unwrap_or("Done");
+                                                                        msg.set(Some(s.to_string()));
+                                                                    }
+                                                                    Err(e) => {
+                                                                        msg.set(Some(format!("Error: {}", e)));
+                                                                    }
+                                                                }
+                                                            });
+                                                        },
+                                                        "Rerun video finalization"
+                                                    }
+                                                    if let Some(m) = rerun_finalization_msg() {
+                                                        span { class: "text-muted small", "{m}" }
+                                                    }
+                                                }
                                             }
                                         }
                                     }
