@@ -53,18 +53,24 @@ def scoreboard():
         team2_obj = Team.query.get(m.team2) if m.team2 else None
 
         # Get team names - prefer initial (for dynamic teams), then registration pseudonym, then team name
-        # Handle empty strings as well as None
+        # Handle empty strings and missing registration (e.g. dynamic/unregistered team)
+        reg1 = (
+            TeamRegistration.query.filter_by(event=tournament_url, team=m.team1).first()
+            if m.team1
+            else None
+        )
         team1_name = (
-            TeamRegistration.query.filter_by(event=tournament_url, team=m.team1)
-            .first()
-            .pseudonym
+            (reg1.pseudonym if reg1 and reg1.pseudonym else (team1_obj.name if team1_obj else m.team1_initial))
             if m.team1
             else m.team1_initial
         )
+        reg2 = (
+            TeamRegistration.query.filter_by(event=tournament_url, team=m.team2).first()
+            if m.team2
+            else None
+        )
         team2_name = (
-            TeamRegistration.query.filter_by(event=tournament_url, team=m.team2)
-            .first()
-            .pseudonym
+            (reg2.pseudonym if reg2 and reg2.pseudonym else (team2_obj.name if team2_obj else m.team2_initial))
             if m.team2
             else m.team2_initial
         )
@@ -259,18 +265,24 @@ def scoreboard_state():
         team2_obj = Team.query.get(m.team2) if m.team2 else None
 
         # Get team names - prefer initial (for dynamic teams), then registration pseudonym, then team name
-        # Handle empty strings as well as None
+        # Handle empty strings and missing registration (e.g. dynamic/unregistered team)
+        reg1 = (
+            TeamRegistration.query.filter_by(event=tournament_url, team=m.team1).first()
+            if m.team1
+            else None
+        )
         team1_name = (
-            TeamRegistration.query.filter_by(event=tournament_url, team=m.team1)
-            .first()
-            .pseudonym
+            (reg1.pseudonym if reg1 and reg1.pseudonym else (team1_obj.name if team1_obj else m.team1_initial))
             if m.team1
             else m.team1_initial
         )
+        reg2 = (
+            TeamRegistration.query.filter_by(event=tournament_url, team=m.team2).first()
+            if m.team2
+            else None
+        )
         team2_name = (
-            TeamRegistration.query.filter_by(event=tournament_url, team=m.team2)
-            .first()
-            .pseudonym
+            (reg2.pseudonym if reg2 and reg2.pseudonym else (team2_obj.name if team2_obj else m.team2_initial))
             if m.team2
             else m.team2_initial
         )

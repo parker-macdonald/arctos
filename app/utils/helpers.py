@@ -91,20 +91,27 @@ def can_head_ref_match(tournament_url: str, player_id: str, match=None) -> bool:
 
 def resolve_team_name_to_id(team_name, tournament_url):
     """Resolve a team name/pseudonym to (team_id, initial_display) for a tournament.
-    Returns (id, None) when found; (None, team_name) when not found so caller can store display text.
+    Only resolves to a team ID when that team has a CONFIRMED registration for the event.
+    Match refs (MatchName::winner/loser) and tag refs (tag::Name) are not resolved here and
+    are stored as initial display text. Returns (id, None) when found; (None, team_name) otherwise.
     """
-    from models import TeamRegistration
+    from models import TeamRegistration, Team
 
-    # Try exact match on team ID
-    from models import Team
-
+    # Try exact match on team ID - only accept if team is registered (CONFIRMED) for this event
     team = Team.query.filter_by(id=team_name).first()
     if team:
-        return (team.id, None)
+        reg = TeamRegistration.query.filter_by(
+            event=tournament_url, team=team.id, status=RegistrationStatus.CONFIRMED
+        ).first()
+        if reg:
+            return (team.id, None)
+        return (None, team_name)
 
-    # Try pseudonym in tournament
+    # Try pseudonym in tournament - only CONFIRMED registrations
     reg = TeamRegistration.query.filter_by(
-        event=tournament_url, pseudonym=team_name
+        event=tournament_url,
+        pseudonym=team_name,
+        status=RegistrationStatus.CONFIRMED,
     ).first()
     if reg:
         return (reg.team, None)
