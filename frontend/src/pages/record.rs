@@ -3,6 +3,7 @@
 use crate::api;
 use crate::types::{RecordMatchStatusResponse, RecordPointData};
 use crate::Route;
+use dioxus::core::use_drop;
 use dioxus::prelude::*;
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -10,6 +11,8 @@ use std::rc::Rc;
 
 #[cfg(target_arch = "wasm32")]
 use crate::api::RecordChunkMeta;
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::JsCast;
 
 #[cfg(target_arch = "wasm32")]
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -179,6 +182,29 @@ pub fn Record(url: String, field: ReadSignal<String>, camera_key: ReadSignal<Str
                 )
                 .await;
             });
+        });
+    }
+
+    // Stop camera and clear video when leaving the record page (wasm only).
+    #[cfg(target_arch = "wasm32")]
+    {
+        let preview_stream_for_drop = preview_stream.to_owned();
+        use_drop(move || {
+            if let Some(stream) = preview_stream_for_drop() {
+                let tracks = stream.get_tracks();
+                for i in 0..tracks.length() {
+                    if let Some(track) = tracks.get(i).dyn_ref::<web_sys::MediaStreamTrack>() {
+                        track.stop();
+                    }
+                }
+            }
+            if let Some(window) = web_sys::window() {
+                if let Some(doc) = window.document() {
+                    if let Some(el) = doc.get_element_by_id("record-preview") {
+                        let _ = el.dyn_into::<web_sys::HtmlMediaElement>().map(|media| media.set_src_object(None));
+                    }
+                }
+            }
         });
     }
 

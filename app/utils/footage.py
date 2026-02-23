@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 from models import Match, Point, db
 import os
 from os import path
@@ -10,35 +11,41 @@ from datetime import datetime, timezone
 log = logging.getLogger(__name__)
 
 
-def _extract_mp4_init(file_path):
-    """Extract ftyp+moov (init segment) from an MP4 or fMP4 file. Returns bytes or None.
-    Stops at the first top-level 'moof' atom; fragment-only files (no moov) return None.
-    """
+def _chunk_timestamp_sort_key(c):
+    """Return a comparable value for chunk_start_timestamp (ms float or ISO string)."""
+    raw = c.get("chunk_start_timestamp")
+    if raw is None:
+        return 0.0
+    if isinstance(raw, (int, float)):
+        return float(raw)
+    s = str(raw).strip()
+    if not s:
+        return 0.0
+    # Parse ISO 8601 (e.g. 2025-02-23T19:30:00.123Z)
     try:
-        with open(file_path, "rb") as f:
-            data = f.read()
-    except OSError:
+        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+        return dt.timestamp() * 1000.0
+    except (ValueError, TypeError):
+        return 0.0
+
+
+def _chunk_timestamp_to_iso_utc(c):
+    """Return chunk_start_timestamp as ISO 8601 UTC string for stream_start_time."""
+    raw = c.get("chunk_start_timestamp")
+    if raw is None:
         return None
-    if len(data) < 8:
-        return None
-    pos = 0
-    while pos + 8 <= len(data):
-        size = int.from_bytes(data[pos : pos + 4], "big")
-        atype = data[pos + 4 : pos + 8]
-        if size == 0:
-            break
-        if size == 1 and pos + 16 <= len(data):
-            size = int.from_bytes(data[pos + 8 : pos + 16], "big")
-            if size < 16:
-                return None
-        elif size < 8:
+    if isinstance(raw, (int, float)):
+        try:
+            dt = datetime.fromtimestamp(float(raw) / 1000.0, tz=timezone.utc)
+            return dt.isoformat().replace("+00:00", "Z")
+        except (ValueError, OSError):
             return None
-        if atype == b"moof":
-            return data[:pos]
-        if pos + size > len(data):
-            break
-        pos += size
-    return None
+    s = str(raw).strip()
+    if not s:
+        return None
+    if s.endswith("Z") or "+" in s or re.search(r"-\d{2}:\d{2}$", s):
+        return s
+    return s if s.endswith("Z") else f"{s.rstrip('zZ')}Z"
 
 
 def _get_media_duration_sec(file_path, cwd=None):
@@ -76,20 +83,23 @@ def _get_media_duration_sec(file_path, cwd=None):
 def finalize_recording_worker(
     logger, tournament_url, field_name, match_id, camera_name, chunk_dir
 ):
+    """
+    1. Concatenate all chunks with the same session_id in order of chunk_start_timestamp using cat.
+    2. Fix each joined raw file with ffmpeg (-c copy -map 0 -tag:v hvc1 -movflags +faststart for MP4).
+    3. Concatenate all session outputs with the concat demuxer.
+    4. Compute point_timestamps and stream_start_time (UTC) for the frontend to scrub to points.
+    """
     import sys
     print(f"finalize_recording: worker started match_id={match_id} chunk_dir={chunk_dir}", flush=True)
     sys.stdout.flush()
     sys.stderr.flush()
 
-    # Use module logger so output is visible when worker runs in a thread; fall back to print.
     _log = logger or log
-    # Use absolute normalized path so ffmpeg and list files work regardless of worker cwd
     chunk_dir = path.abspath(path.normpath(chunk_dir))
-    # Check if first chunk exists (webm or mp4)
+
     first_webm = path.join(chunk_dir, "chunk_0.webm")
     first_mp4 = path.join(chunk_dir, "chunk_0.mp4")
     if not path.exists(first_webm) and not path.exists(first_mp4):
-        print(f"finalize_recording: early exit - no chunk_0.webm or chunk_0.mp4 in {chunk_dir}", flush=True)
         _log.warning("finalize_recording: no chunk_0.webm or chunk_0.mp4 in %s", chunk_dir)
         return
 
@@ -97,370 +107,172 @@ def finalize_recording_worker(
         all_meta = list(json.load(f).values())
 
     if not all_meta:
-        print("finalize_recording: early exit - no chunks in chunks_meta.json", flush=True)
         _log.warning("finalize_recording: no chunks in chunks_meta.json")
         return
 
-    # Group chunks by session_id, sort each group by chunk_start_timestamp (ms)
+    # Group by session_id, sort each group by chunk_start_timestamp
     def session_key(x):
         return x.get("session_id") or ""
 
     sorted_meta = sorted(
-        all_meta, key=lambda c: (c.get("session_id") or "", c["chunk_start_timestamp"])
+        all_meta,
+        key=lambda c: (session_key(c), _chunk_timestamp_sort_key(c)),
     )
     sessions = []
     for sid, group in groupby(sorted_meta, key=session_key):
         if not sid:
             continue
-        chunks = list(group)
-        sessions.append((sid, sorted(chunks, key=lambda c: c["chunk_start_timestamp"])))
+        chunks = sorted(list(group), key=_chunk_timestamp_sort_key)
+        sessions.append((sid, chunks))
+
+    sessions.sort(key=lambda s: _chunk_timestamp_sort_key(s[1][0]) if s[1] else 0.0)
 
     if not sessions:
-        print("finalize_recording: early exit - no sessions with session_id", flush=True)
         _log.warning("finalize_recording: no sessions with session_id in chunks_meta")
         return
 
-    # Sort sessions by first chunk's start time
-    sessions.sort(key=lambda s: s[1][0]["chunk_start_timestamp"])
-    print(f"finalize_recording: {len(sessions)} session(s), {len(all_meta)} chunks total", flush=True)
-    _log.info("finalize_recording: %d session(s), %d chunks", len(sessions), len(all_meta))
+    # Detect container from first chunk
+    first_filename = sessions[0][1][0].get("filename", "")
+    is_mp4 = first_filename.lower().endswith(".mp4")
+    ext = "mp4" if is_mp4 else "webm"
 
     pts = Point.query.filter_by(match=match_id).order_by(Point.stamp.asc()).all()
     point_by_uuid = {str(pt.uuid): pt for pt in pts}
 
-    segment_files = (
-        []
-    )  # (segment_path, segment_start_sec, clip_end_sec, point_ids_in_segment)
-    EXTRA_TAIL_SEC = 5.0
-
-    raw_basename = lambda sid: f"session_{sid}_raw.webm"
-    segment_basename = lambda sid: f"session_{sid}_segment.webm"
-
-    EBML_MAGIC = bytes([0x1A, 0x45, 0xDF, 0xA3])
+    session_outputs = []  # list of (session_id, output_basename, segment_start_sec, point_uuids_in_session)
+    stream_start_iso = None  # ISO UTC of very first chunk start
 
     for session_id, session_chunks in sessions:
-        session_chunks = sorted(session_chunks, key=lambda c: c["chunk_start_timestamp"])
-        n_chunks = len(session_chunks)
-        print(f"finalize_recording: processing session {session_id} ({n_chunks} chunks)")
-        _log.info("finalize_recording: processing session %s (%d chunks)", session_id, n_chunks)
-
-        try:
-            # Detect container from first chunk filename
-            first_filename = session_chunks[0]["filename"] if session_chunks else ""
-            is_mp4 = first_filename.lower().endswith(".mp4")
-
-            if is_mp4:
-                # MP4: use ffmpeg concat demuxer so we get one coherent file with correct duration.
-                # (Cat would glue fragments back-to-back; players/ffmpeg only read the first moov, so duration is wrong.)
-                existing_mp4 = [
-                    c for c in session_chunks
-                    if path.exists(path.join(chunk_dir, c["filename"]))
-                ]
-                if not existing_mp4:
-                    _log.warning("finalize_recording: session %s has no existing chunk files", session_id)
-                    continue
-                # Use absolute paths in the list so ffmpeg always finds every chunk
-                concat_list_path = path.join(chunk_dir, f"session_{session_id}_concat_list.txt")
-                with open(concat_list_path, "w") as f:
-                    for c in existing_mp4:
-                        abs_path = path.join(chunk_dir, c["filename"])
-                        print(f"file {repr(path.abspath(abs_path))}", file=f)
-                print(f"finalize_recording: session {session_id} concat list has {len(existing_mp4)} chunk(s)")
-                raw_name = f"session_{session_id}_raw.mp4"
-                raw_path = path.join(chunk_dir, raw_name)
-                concat_result = subprocess.run(
-                    [
-                        "ffmpeg", "-f", "concat", "-safe", "0",
-                        "-i", concat_list_path,
-                        "-c", "copy", "-movflags", "+faststart",
-                        "-loglevel", "error", "-y", raw_name,
-                    ],
-                    cwd=chunk_dir,
-                    capture_output=True,
-                    text=True,
-                    timeout=300,
-                )
-                if concat_result.returncode != 0 or not path.exists(raw_path) or path.getsize(raw_path) == 0:
-                    # Concat often fails when later sessions use fragment-only chunks (no moov).
-                    # Fallback: prepend init segment (ftyp+moov) from the first session's first chunk,
-                    # then binary-concat this session's chunks so ffmpeg sees one fMP4 stream.
-                    stderr = (concat_result.stderr or "").strip()
-                    _log.warning(
-                        "finalize_recording: session %s mp4 concat failed returncode=%s stderr=%s",
-                        session_id, concat_result.returncode, stderr,
-                    )
-                    first_session_chunks = sessions[0][1] if sessions else []
-                    init_chunk_path = (
-                        path.join(chunk_dir, first_session_chunks[0]["filename"])
-                        if first_session_chunks and path.exists(path.join(chunk_dir, first_session_chunks[0]["filename"]))
-                        else None
-                    )
-                    init_bytes = _extract_mp4_init(init_chunk_path) if init_chunk_path else None
-                    if init_bytes:
-                        print(f"finalize_recording: session {session_id} retrying with init segment + {len(existing_mp4)} fragment(s)")
-                        temp_fmp4 = path.join(chunk_dir, f"session_{session_id}_fmp4_temp.mp4")
-                        try:
-                            with open(temp_fmp4, "wb") as out:
-                                out.write(init_bytes)
-                                for c in existing_mp4:
-                                    chunk_path = path.join(chunk_dir, c["filename"])
-                                    with open(chunk_path, "rb") as inp:
-                                        out.write(inp.read())
-                            concat_result = subprocess.run(
-                                [
-                                    "ffmpeg", "-f", "mp4", "-i", path.basename(temp_fmp4),
-                                    "-c", "copy", "-movflags", "+faststart",
-                                    "-loglevel", "error", "-y", raw_name,
-                                ],
-                                cwd=chunk_dir,
-                                capture_output=True,
-                                text=True,
-                                timeout=300,
-                            )
-                            try:
-                                if path.exists(temp_fmp4):
-                                    os.remove(temp_fmp4)
-                            except OSError:
-                                pass
-                        except OSError as e:
-                            _log.warning("finalize_recording: session %s init+concat fallback failed: %s", session_id, e)
-                            continue
-                        if concat_result.returncode != 0 or not path.exists(raw_path) or path.getsize(raw_path) == 0:
-                            _log.warning(
-                                "finalize_recording: session %s init+concat ffmpeg failed returncode=%s stderr=%s",
-                                session_id, concat_result.returncode, (concat_result.stderr or "").strip(),
-                            )
-                            continue
-                    else:
-                        if init_chunk_path:
-                            print(f"finalize_recording: session {session_id} no init segment in first chunk, skipping")
-                        continue
-                print(f"finalize_recording: session {session_id} wrote raw mp4 ({path.getsize(raw_path)} bytes)")
-                raw_input_fmt = "mov"
-                raw_input_name = raw_name
-                included_chunks = existing_mp4
-            else:
-                # WebM: drop chunks before first EBML header, then concat with cat
-                first_valid_index = None
-                for i, c in enumerate(session_chunks):
-                    chunk_path = path.join(chunk_dir, c["filename"])
-                    if not path.exists(chunk_path):
-                        continue
-                    with open(chunk_path, "rb") as inp:
-                        data = inp.read(4)
-                    if len(data) >= 4 and data[:4] == EBML_MAGIC:
-                        first_valid_index = i
-                        break
-                if first_valid_index is None:
-                    print(f"finalize_recording: session {session_id} has no chunk with EBML header, skipping")
-                    _log.warning(
-                        "finalize_recording: session %s has no chunk with EBML header, skipping",
-                        session_id,
-                    )
-                    continue
-                included_chunks = session_chunks[first_valid_index:]
-                if first_valid_index > 0:
-                    print(f"finalize_recording: session {session_id} dropping {first_valid_index} chunk(s) before first EBML")
-                    _log.info(
-                        "finalize_recording: session %s dropping %d chunk(s) before first EBML",
-                        session_id,
-                        first_valid_index,
-                    )
-
-                raw_name = raw_basename(session_id)
-                raw_path = path.join(chunk_dir, raw_name)
-                cat_files = [
-                    c["filename"] for c in included_chunks
-                    if path.exists(path.join(chunk_dir, c["filename"]))
-                ]
-                if not cat_files:
-                    _log.warning("finalize_recording: session %s no existing chunk files after EBML skip", session_id)
-                    continue
-                try:
-                    with open(raw_path, "wb") as out:
-                        cat_result = subprocess.run(
-                            ["cat"] + cat_files,
-                            cwd=chunk_dir,
-                            stdout=out,
-                            timeout=300,
-                        )
-                except OSError as e:
-                    _log.warning("finalize_recording: session %s cat failed: %s", session_id, e)
-                    continue
-                if cat_result.returncode != 0 or not path.exists(raw_path) or path.getsize(raw_path) == 0:
-                    _log.warning(
-                        "finalize_recording: session %s webm cat failed returncode=%s",
-                        session_id, cat_result.returncode,
-                    )
-                    continue
-
-                print(f"finalize_recording: session {session_id} wrote raw webm ({path.getsize(raw_path)} bytes)")
-                raw_input_fmt = "webm"
-                raw_input_name = raw_name
-
-            segment_start_ms = included_chunks[0]["chunk_start_timestamp"]
-            segment_start_sec = segment_start_ms / 1000.0
-
-            # Point IDs that appear in this session (from included chunks only)
-            point_ids_in_session = set()
-            for c in included_chunks:
-                pid = c.get("point_id")
-                if pid and str(pid).strip():
-                    point_ids_in_session.add(str(pid).strip())
-
-            # Clip end: 5 seconds after the end of the last point in this segment
-            clip_end_sec = None
-            if point_ids_in_session:
-                last_end_ts = None
-                for pid in point_ids_in_session:
-                    if pid not in point_by_uuid:
-                        continue
-                    pt = point_by_uuid[pid]
-                    if pt.end_stamp is None:
-                        continue
-                    end_ts = pt.end_stamp.replace(tzinfo=timezone.utc).timestamp()
-                    if last_end_ts is None or end_ts > last_end_ts:
-                        last_end_ts = end_ts
-                if last_end_ts is not None:
-                    clip_end_sec = (last_end_ts - segment_start_sec) + EXTRA_TAIL_SEC
-            else:
-                clip_end_sec = None
-
-            if clip_end_sec is not None and clip_end_sec > 0:
-                # Get raw duration to cap clip_end_sec (run in chunk_dir so path has no spaces).
-                # ffprobe may return N/A for concatenated WebM; treat as unknown and don't cap.
-                print(f"finalize_recording: session {session_id} running ffprobe...")
-                probe = subprocess.run(
-                    [
-                        "ffprobe",
-                        "-i", raw_input_name,
-                        "-show_entries", "format=duration",
-                        "-v", "quiet", "-of", "csv=p=0",
-                    ],
-                    capture_output=True,
-                    text=True,
-                    cwd=chunk_dir,
-                    timeout=30,
-                )
-                raw_duration = None
-                if probe.returncode == 0 and probe.stdout:
-                    s = probe.stdout.strip()
-                    if s and s != "N/A":
-                        try:
-                            raw_duration = float(s)
-                        except ValueError:
-                            pass
-                if raw_duration is not None and raw_duration > 0:
-                    clip_end_sec = min(clip_end_sec, raw_duration)
-                    # If point metadata suggests a very short clip but raw is long, keep full duration
-                    if clip_end_sec < 30 and raw_duration > 120:
-                        print(
-                            f"finalize_recording: session {session_id} clip_end_sec={clip_end_sec:.1f}s "
-                            f"< 30s but raw_duration={raw_duration:.1f}s; using full duration"
-                        )
-                        clip_end_sec = None
-
-            segment_name = segment_basename(session_id)
-            # Re-encode to WebM (VP9/Opus) and optionally trim to clip_end_sec (cwd=chunk_dir).
-            print(f"finalize_recording: session {session_id} running ffmpeg...")
-            cmd = [
-                "ffmpeg", "-f", raw_input_fmt, "-i", raw_input_name,
-                "-c:v", "libvpx-vp9", "-crf", "16", "-b:v", "0",
-                "-c:a", "libopus",
-                "-fflags", "+genpts", "-avoid_negative_ts", "make_zero",
-                "-loglevel", "error", "-y", segment_name,
-            ]
-            if clip_end_sec is not None and clip_end_sec > 0:
-                idx = cmd.index(raw_input_name) + 1
-                cmd = cmd[:idx] + ["-t", str(clip_end_sec)] + cmd[idx:]
-            result = subprocess.run(cmd, cwd=chunk_dir, capture_output=True, text=True, timeout=600)
-
-            segment_path = path.join(chunk_dir, segment_name)
-            if path.exists(segment_path) and path.getsize(segment_path) > 0:
-                segment_files.append((segment_path, segment_start_sec, point_ids_in_session))
-                print(f"finalize_recording: wrote {segment_name} for session {session_id}")
-            else:
-                print(f"finalize_recording: session {session_id} ffmpeg failed or produced no output (returncode={result.returncode})")
-                _log.warning(
-                    "finalize_recording: session %s ffmpeg returncode=%s stderr=%s",
-                    session_id,
-                    result.returncode,
-                    (result.stderr or "").strip() or "(none)",
-                )
-                if result.stderr:
-                    print(result.stderr.strip())
-        except Exception as e:
-            print(f"finalize_recording: session {session_id} failed: {e}")
-            _log.exception("finalize_recording: session %s failed", session_id)
+        # Only include chunks that exist on disk, in order
+        ordered_chunks = [
+            c for c in session_chunks
+            if path.exists(path.join(chunk_dir, c["filename"]))
+        ]
+        if not ordered_chunks:
+            _log.warning("finalize_recording: session %s has no existing chunk files", session_id)
             continue
 
-    # Rebuild segment list from disk in session order so we never miss segments
-    # (e.g. if segment_files was from a partial run or only some sessions appended).
-    segment_files = []
-    for _sid, _chunks in sessions:
-        seg_path = path.join(chunk_dir, segment_basename(_sid))
-        if path.exists(seg_path) and path.getsize(seg_path) > 0:
-            _start_sec = _chunks[0]["chunk_start_timestamp"] / 1000.0
-            _pids = set()
-            for _c in _chunks:
-                _pid = _c.get("point_id")
-                if _pid and str(_pid).strip():
-                    _pids.add(str(_pid).strip())
-            segment_files.append((seg_path, _start_sec, _pids))
-    if segment_files:
-        print(f"finalize_recording: {len(segment_files)} segment(s) for final concat", flush=True)
+        if stream_start_iso is None:
+            stream_start_iso = _chunk_timestamp_to_iso_utc(ordered_chunks[0])
 
-    # 2. Concatenate all segment files and build in_video_times (relative names, cwd=chunk_dir)
-    clips_txt = path.join(chunk_dir, "clips.txt")
-    with open(clips_txt, "w") as f:
-        for seg_path, _, _ in segment_files:
-            if path.exists(seg_path):
-                print(f"file {repr(path.basename(seg_path))}", file=f)
+        segment_start_ms = _chunk_timestamp_sort_key(ordered_chunks[0])
+        segment_start_sec = segment_start_ms / 1000.0
 
-    if segment_files:
-        # Re-encode (do not use -c copy): concat+copy produces WebM with broken
-        # duration/timestamps that browsers reject as "corrupted"; VLC plays it.
-        # Re-encoding yields a single Segment with correct duration and cues.
-        subprocess.run(
-            [
-                "ffmpeg",
-                "-f", "concat", "-safe", "0",
-                "-i", "clips.txt",
-                "-c:v", "libvpx-vp9", "-crf", "16", "-b:v", "0",
-                "-c:a", "libopus",
-                "-fflags", "+genpts", "-avoid_negative_ts", "make_zero",
-                "-loglevel", "error", "-y", "final_video.webm",
-            ],
+        # 1. Cat chunks into one raw file
+        joined_raw = path.join(chunk_dir, f"joined_raw_{session_id}.{ext}")
+        cat_files = [c["filename"] for c in ordered_chunks]
+        try:
+            with open(joined_raw, "wb") as out:
+                subprocess.run(
+                    ["cat"] + cat_files,
+                    cwd=chunk_dir,
+                    stdout=out,
+                    timeout=300,
+                    check=True,
+                )
+        except (OSError, subprocess.CalledProcessError) as e:
+            _log.warning("finalize_recording: session %s cat failed: %s", session_id, e)
+            continue
+
+        if not path.exists(joined_raw) or path.getsize(joined_raw) == 0:
+            _log.warning("finalize_recording: session %s joined raw empty or missing", session_id)
+            continue
+
+        # 2. Fix with ffmpeg
+        session_basename = f"session_{session_id}.{ext}"
+        session_output_path = path.join(chunk_dir, session_basename)
+        if is_mp4:
+            fix_cmd = [
+                "ffmpeg", "-i", path.basename(joined_raw),
+                "-c", "copy", "-map", "0",
+                "-tag:v", "hvc1", "-movflags", "+faststart",
+                "-loglevel", "error", "-y", session_basename,
+            ]
+        else:
+            fix_cmd = [
+                "ffmpeg", "-i", path.basename(joined_raw),
+                "-c", "copy", "-map", "0",
+                "-loglevel", "error", "-y", session_basename,
+            ]
+        result = subprocess.run(
+            fix_cmd,
             cwd=chunk_dir,
-            timeout=900,
+            capture_output=True,
+            text=True,
+            timeout=300,
         )
+        if result.returncode != 0 or not path.exists(session_output_path) or path.getsize(session_output_path) == 0:
+            _log.warning(
+                "finalize_recording: session %s ffmpeg fix failed returncode=%s stderr=%s",
+                session_id, result.returncode, (result.stderr or "").strip(),
+            )
+            if result.stderr:
+                print(result.stderr.strip(), flush=True)
+            continue
 
-    print("finalize_recording: building point_timestamps (in-video start times)...", flush=True)
+        point_uuids = set()
+        for c in ordered_chunks:
+            pid = c.get("point_id")
+            if pid and str(pid).strip():
+                point_uuids.add(str(pid).strip())
+
+        session_outputs.append((session_id, session_basename, segment_start_sec, point_uuids))
+        print(f"finalize_recording: session {session_id} -> {session_basename}", flush=True)
+
+    if not session_outputs:
+        _log.warning("finalize_recording: no session outputs produced")
+        return
+
+    # 3. Concat all sessions with concat demuxer
+    final_basename = f"final_video.{ext}"
+    final_path = path.join(chunk_dir, final_basename)
+    concat_list_path = path.join(chunk_dir, "concat_sessions.txt")
+    with open(concat_list_path, "w") as f:
+        for _sid, basename, _start, _pids in session_outputs:
+            abs_path = path.abspath(path.join(chunk_dir, basename))
+            print(f"file {repr(abs_path)}", file=f)
+
+    concat_cmd = [
+        "ffmpeg", "-f", "concat", "-safe", "0",
+        "-i", path.basename(concat_list_path),
+        "-c", "copy",
+        "-loglevel", "error", "-y", final_basename,
+    ]
+    result = subprocess.run(
+        concat_cmd,
+        cwd=chunk_dir,
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
+    if result.returncode != 0 or not path.exists(final_path) or path.getsize(final_path) == 0:
+        _log.warning(
+            "finalize_recording: concat failed returncode=%s stderr=%s",
+            result.returncode, (result.stderr or "").strip(),
+        )
+        if result.stderr:
+            print(result.stderr.strip(), flush=True)
+        return
+
+    print(f"finalize_recording: wrote {final_basename}", flush=True)
+
+    # 4. Compute point_timestamps and stream_start_time for frontend scrubbing
     try:
-        # --- Algorithm: in-video start time for each point ---
-        # The final video is a concatenation of segment files. Each segment has a world-time start
-        # (segment_start_sec) and a duration. For each point we need: at what second in the final
-        # video does this point start?
-        #
-        # 1. Get duration of each segment file (so we know how much video time each segment occupies).
-        # 2. Video offset for segment j = sum of durations of segments 0..j-1.
-        # 3. For each point (in match order) that has footage and is completed (has end_stamp):
-        #    - Find which segment contains this point (point's uuid in that segment's point_ids).
-        #    - Point in-video start = segment_video_offset + (point_start_world_sec - segment_start_world_sec).
-
         segment_durations = []
-        for seg_path, _, _ in segment_files:
+        for _sid, basename, _start, _pids in session_outputs:
+            seg_path = path.join(chunk_dir, basename)
             d = _get_media_duration_sec(seg_path, cwd=chunk_dir)
             if d is None or d <= 0:
-                _log.warning("finalize_recording: could not get duration for %s", path.basename(seg_path))
+                _log.warning("finalize_recording: could not get duration for %s", basename)
                 d = 0.0
             segment_durations.append(d)
+
         video_offset = [0.0]
         for d in segment_durations:
             video_offset.append(video_offset[-1] + d)
 
         points_with_footage = set()
-        for _, _, pids in segment_files:
+        for _sid, _basename, _start, pids in session_outputs:
             points_with_footage.update(pids)
 
         point_timestamps = []
@@ -470,15 +282,14 @@ def finalize_recording_worker(
             if pt.stamp is None or pt.end_stamp is None:
                 continue
             pt_start_sec = pt.stamp.replace(tzinfo=timezone.utc).timestamp()
-            # Find segment index j that contains this point
             segment_index = None
-            for j, (_, seg_start_sec, pids) in enumerate(segment_files):
+            for j, (_sid, _basename, seg_start_sec, pids) in enumerate(session_outputs):
                 if str(pt.uuid) in pids:
                     segment_index = j
                     break
             if segment_index is None:
                 continue
-            seg_start_sec = segment_files[segment_index][1]
+            seg_start_sec = session_outputs[segment_index][2]
             in_video_start = video_offset[segment_index] + (pt_start_sec - seg_start_sec)
             in_video_start = max(0.0, in_video_start)
             point_timestamps.append({
@@ -486,49 +297,34 @@ def finalize_recording_worker(
                 "in_video_start": round(in_video_start, 3),
             })
 
-        print(f"finalize_recording: point_timestamps (by uuid): {point_timestamps}", flush=True)
+        print(f"finalize_recording: point_timestamps (count={len(point_timestamps)})", flush=True)
         _log.info("finalize_recording: point_timestamps=%s", point_timestamps)
 
-        metadata_path = path.join(chunk_dir, "metadata.json")
-        if path.exists(metadata_path):
-            with open(metadata_path, "r") as f:
-                metadata = json.load(f)
-            metadata["point_timestamps"] = point_timestamps
-            with open(metadata_path, "w") as f:
-                json.dump(metadata, f)
+        video_path = path.join(
+            "static", "uploads", "videos",
+            tournament_url, field_name, match_id, camera_name, final_basename,
+        ).replace("\\", "/")
 
-        print(f"finalize_recording: match id: {match_id}", flush=True)
         match = Match.query.filter_by(uuid=match_id).first()
         if not match:
-            print(f"finalize_recording: ERROR match not found uuid={match_id}", flush=True)
             _log.error("finalize_recording: match not found uuid=%s", match_id)
         else:
-            stream_starts = (
-                json.loads(match.camera_stream_starts)
-                if match.camera_stream_starts
-                else dict()
-            )
-            print(f"finalize_recording: STREAM STARTS before: {stream_starts}", flush=True)
+            stream_starts = {}
+            if match.camera_stream_starts:
+                try:
+                    stream_starts = json.loads(match.camera_stream_starts)
+                except (TypeError, ValueError):
+                    stream_starts = {}
             stream_starts[camera_name] = {
-                "video_path": path.join(
-                    "static",
-                    "uploads",
-                    "videos",
-                    tournament_url,
-                    field_name,
-                    match_id,
-                    camera_name,
-                    "final_video.webm",
-                ).replace("\\", "/"),
+                "video_path": video_path,
                 "point_timestamps": point_timestamps,
                 "type": "recorded",
+                "stream_start_time": stream_start_iso,
             }
             match.camera_stream_starts = json.dumps(stream_starts)
             db.session.commit()
             print(f"finalize_recording: committed camera_stream_starts for match {match_id}", flush=True)
             _log.info("finalize_recording: committed camera_stream_starts for match %s", match_id)
     except Exception as e:
-        print(f"finalize_recording: ERROR after ffmpeg: {e}", flush=True)
-        _log.exception("finalize_recording: failed after ffmpeg")
-
-    # Do not delete chunks or raw files; keep everything for debugging and reruns.
+        print(f"finalize_recording: ERROR after concat: {e}", flush=True)
+        _log.exception("finalize_recording: failed after concat")
