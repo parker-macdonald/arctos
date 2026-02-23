@@ -11,8 +11,11 @@ pub fn EditPlayerProfile(player_id: String) -> Element {
     let mut phone = use_signal(|| "".to_string());
     let mut location = use_signal(|| "".to_string());
     let mut bio = use_signal(|| "".to_string());
+    let mut profile_photo = use_signal(|| None::<String>);
     let mut error = use_signal(|| None::<String>);
     let mut loading = use_signal(|| true);
+    let mut photo_upload_error = use_signal(|| None::<String>);
+    let mut photo_uploading = use_signal(|| false);
 
     let _fetch = use_resource(use_reactive(&player_id, move |id| async move {
         loading.set(true);
@@ -23,6 +26,7 @@ pub fn EditPlayerProfile(player_id: String) -> Element {
                 phone.set(p.phone.unwrap_or_default());
                 location.set(p.location.unwrap_or_default());
                 bio.set(p.bio.unwrap_or_default());
+                profile_photo.set(p.profile_photo);
             }
             Err(e) => error.set(Some(e)),
         }
@@ -86,6 +90,64 @@ pub fn EditPlayerProfile(player_id: String) -> Element {
                         div { class: "card-body",
                             if let Some(err) = error() {
                                 div { class: "alert alert-danger", "{err}" }
+                            }
+                            if let Some(err) = photo_upload_error() {
+                                div { class: "alert alert-warning", "Photo: {err}" }
+                            }
+                            div { class: "mb-3",
+                                label { class: "form-label", "Profile Picture" }
+                                if let Some(photo) = profile_photo() {
+                                    div { class: "d-flex align-items-center gap-3 mb-2",
+                                        img {
+                                            src: "{api::base_url()}/static/{photo}",
+                                            alt: "Profile",
+                                            class: "rounded-circle",
+                                            style: "width: 80px; height: 80px; object-fit: cover;"
+                                        }
+                                        span { class: "text-muted", "Upload a new image to replace." }
+                                    }
+                                } else {
+                                    p { class: "text-muted small mb-2", "No profile picture set." }
+                                }
+                                input {
+                                    class: "form-control",
+                                    r#type: "file",
+                                    accept: "image/*",
+                                    disabled: photo_uploading(),
+                                    onchange: move |evt| {
+                                        let pid = player_id.clone();
+                                        #[cfg(target_arch = "wasm32")]
+                                        {
+                                            use dioxus::html::HasFileData;
+                                            let files = evt.files();
+                                            if let Some(file) = files.into_iter().next() {
+                                                photo_upload_error.set(None);
+                                                photo_uploading.set(true);
+                                                spawn(async move {
+                                                    match file.read_bytes().await {
+                                                        Ok(bytes) => {
+                                                            match api::upload_player_profile_photo(&pid, bytes).await {
+                                                                Ok(path) => {
+                                                                    profile_photo.set(Some(path));
+                                                                }
+                                                                Err(e) => {
+                                                                    photo_upload_error.set(Some(e));
+                                                                }
+                                                            }
+                                                        }
+                                                        Err(_) => {
+                                                            photo_upload_error.set(Some("Failed to read file".to_string()));
+                                                        }
+                                                    }
+                                                    photo_uploading.set(false);
+                                                });
+                                            }
+                                        }
+                                    }
+                                }
+                                if photo_uploading() {
+                                    span { class: "spinner-border spinner-border-sm ms-2", role: "status" }
+                                }
                             }
                             form {
                                 onsubmit: onsubmit,

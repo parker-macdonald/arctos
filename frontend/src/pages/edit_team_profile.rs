@@ -12,8 +12,11 @@ pub fn EditTeamProfile(team_id: String) -> Element {
     let mut email = use_signal(|| "".to_string());
     let mut website = use_signal(|| "".to_string());
     let mut about = use_signal(|| "".to_string());
+    let mut profile_photo = use_signal(|| None::<String>);
     let mut error = use_signal(|| None::<String>);
     let mut loading = use_signal(|| true);
+    let mut photo_upload_error = use_signal(|| None::<String>);
+    let mut photo_uploading = use_signal(|| false);
 
     let _fetch = use_resource(use_reactive(&team_id, move |id| async move {
         loading.set(true);
@@ -25,6 +28,7 @@ pub fn EditTeamProfile(team_id: String) -> Element {
                 email.set(t.email.unwrap_or_default());
                 website.set(t.website.unwrap_or_default());
                 about.set(t.about.unwrap_or_default());
+                profile_photo.set(t.profile_photo);
             }
             Err(e) => error.set(Some(e)),
         }
@@ -89,6 +93,64 @@ pub fn EditTeamProfile(team_id: String) -> Element {
                         div { class: "card-body",
                             if let Some(err) = error() {
                                 div { class: "alert alert-danger", "{err}" }
+                            }
+                            if let Some(err) = photo_upload_error() {
+                                div { class: "alert alert-warning", "Photo: {err}" }
+                            }
+                            div { class: "mb-3",
+                                label { class: "form-label", "Profile Picture" }
+                                if let Some(photo) = profile_photo() {
+                                    div { class: "d-flex align-items-center gap-3 mb-2",
+                                        img {
+                                            src: "{api::base_url()}/static/{photo}",
+                                            alt: "Team",
+                                            class: "rounded",
+                                            style: "width: 80px; height: 80px; object-fit: cover;"
+                                        }
+                                        span { class: "text-muted", "Upload a new image to replace." }
+                                    }
+                                } else {
+                                    p { class: "text-muted small mb-2", "No profile picture set." }
+                                }
+                                input {
+                                    class: "form-control",
+                                    r#type: "file",
+                                    accept: "image/*",
+                                    disabled: photo_uploading(),
+                                    onchange: move |evt| {
+                                        let tid = team_id.clone();
+                                        #[cfg(target_arch = "wasm32")]
+                                        {
+                                            use dioxus::html::HasFileData;
+                                            let files = evt.files();
+                                            if let Some(file) = files.into_iter().next() {
+                                                photo_upload_error.set(None);
+                                                photo_uploading.set(true);
+                                                spawn(async move {
+                                                    match file.read_bytes().await {
+                                                        Ok(bytes) => {
+                                                            match api::upload_team_profile_photo(&tid, bytes).await {
+                                                                Ok(path) => {
+                                                                    profile_photo.set(Some(path));
+                                                                }
+                                                                Err(e) => {
+                                                                    photo_upload_error.set(Some(e));
+                                                                }
+                                                            }
+                                                        }
+                                                        Err(_) => {
+                                                            photo_upload_error.set(Some("Failed to read file".to_string()));
+                                                        }
+                                                    }
+                                                    photo_uploading.set(false);
+                                                });
+                                            }
+                                        }
+                                    }
+                                }
+                                if photo_uploading() {
+                                    span { class: "spinner-border spinner-border-sm ms-2", role: "status" }
+                                }
                             }
                             form {
                                 onsubmit: onsubmit,

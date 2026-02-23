@@ -1522,6 +1522,62 @@ pub async fn update_team_profile(
     }
 }
 
+/// Upload player profile photo. Overwrites previous; backend uses predictable path.
+pub async fn upload_player_profile_photo(
+    player_id: &str,
+    bytes: bytes::Bytes,
+) -> Result<String, String> {
+    let c = client();
+    let r = with_credentials(
+        c.post(format!("{}/_api/players/{}/profile-photo", base(), player_id))
+            .body(bytes),
+    )
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    let data: Value = response_json(r).await?;
+    if data.get("success").and_then(|v| v.as_bool()) == Some(true) {
+        data.get("path")
+            .and_then(|v| v.as_str())
+            .map(String::from)
+            .ok_or_else(|| "No path in response".to_string())
+    } else {
+        Err(data
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Upload failed")
+            .to_string())
+    }
+}
+
+/// Upload team profile photo. Overwrites previous; backend uses predictable path.
+pub async fn upload_team_profile_photo(
+    team_id: &str,
+    bytes: bytes::Bytes,
+) -> Result<String, String> {
+    let c = client();
+    let r = with_credentials(
+        c.post(format!("{}/_api/teams/{}/profile-photo", base(), team_id))
+            .body(bytes),
+    )
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    let data: Value = response_json(r).await?;
+    if data.get("success").and_then(|v| v.as_bool()) == Some(true) {
+        data.get("path")
+            .and_then(|v| v.as_str())
+            .map(String::from)
+            .ok_or_else(|| "No path in response".to_string())
+    } else {
+        Err(data
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Upload failed")
+            .to_string())
+    }
+}
+
 pub async fn get_my_player_registration(
     tournament_url: &str,
 ) -> Result<MyPlayerRegistrationResponse, String> {

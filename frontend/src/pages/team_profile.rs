@@ -224,8 +224,18 @@ pub fn TeamProfile(id: Signal<String>) -> Element {
             div { class: "row",
                 div { class: "col-md-8",
                     div { class: "card",
-                        div { class: "card-header",
+                        div { class: "card-header d-flex justify-content-between align-items-center",
                             h5 { class: "mb-0", "Team Information" }
+                            if me.read().as_ref().and_then(|r| r.as_ref().ok())
+                                .map(|u| u.user_type == "team" && u.id == d.team.id)
+                                .unwrap_or(false)
+                            {
+                                Link {
+                                    to: Route::EditTeamProfile { team_id: d.team.id.clone() },
+                                    class: "btn btn-outline-secondary btn-sm",
+                                    "✎"
+                                }
+                            }
                         }
                         div { class: "card-body",
                             if let Some(photo) = &d.team.profile_photo {
