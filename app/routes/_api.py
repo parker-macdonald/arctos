@@ -3771,6 +3771,46 @@ def upload_team_profile_photo(team_id):
     return jsonify({"success": True, "path": rel_path})
 
 
+@bp.route("/players/<player_id>/profile-photo", methods=["DELETE"])
+@login_required
+def delete_player_profile_photo(player_id):
+    """Remove player profile photo."""
+    if current_user.id != player_id or current_user.__class__.__name__ != "Player":
+        return jsonify({"error": "You can only remove a photo from your own profile"}), 403
+    player = Player.query.get_or_404(player_id)
+    old_path = player.profile_photo
+    if old_path:
+        old_full = os.path.join(current_app.root_path, "..", "static", old_path)
+        if os.path.isfile(old_full):
+            try:
+                os.remove(old_full)
+            except OSError:
+                pass
+    player.profile_photo = None
+    db.session.commit()
+    return jsonify({"success": True})
+
+
+@bp.route("/teams/<team_id>/profile-photo", methods=["DELETE"])
+@login_required
+def delete_team_profile_photo(team_id):
+    """Remove team profile photo."""
+    if current_user.id != team_id or current_user.__class__.__name__ != "Team":
+        return jsonify({"error": "You can only remove a photo from your own team profile"}), 403
+    team = Team.query.get_or_404(team_id)
+    old_path = team.profile_photo
+    if old_path:
+        old_full = os.path.join(current_app.root_path, "..", "static", old_path)
+        if os.path.isfile(old_full):
+            try:
+                os.remove(old_full)
+            except OSError:
+                pass
+    team.profile_photo = None
+    db.session.commit()
+    return jsonify({"success": True})
+
+
 @bp.route("/tournaments/<tournament_url>/registrations/player/me", methods=["GET"])
 @login_required
 def get_my_player_registration(tournament_url):

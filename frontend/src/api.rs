@@ -654,6 +654,143 @@ pub async fn record_match_status(
     response_json(r).await
 }
 
+/// TO: request preview for a field (record pages will start sending frames).
+pub async fn request_preview(tournament_url: &str, field_name: &str) -> Result<(), String> {
+    let c = client();
+    let r = with_credentials(
+        c.post(format!("{}/_api/record/request-preview", base()))
+            .json(&serde_json::json!({
+                "tournament": tournament_url,
+                "field": field_name,
+            })),
+    )
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    let data: Value = response_json(r).await?;
+    if data.get("success").and_then(|v| v.as_bool()) == Some(true) {
+        Ok(())
+    } else {
+        Err(data.get("error").and_then(|v| v.as_str()).unwrap_or("Failed to request preview").to_string())
+    }
+}
+
+/// TO: release preview for a field (record pages will stop sending frames).
+pub async fn release_preview(tournament_url: &str, field_name: &str) -> Result<(), String> {
+    let c = client();
+    let r = with_credentials(
+        c.post(format!("{}/_api/record/release-preview", base()))
+            .json(&serde_json::json!({
+                "tournament": tournament_url,
+                "field": field_name,
+            })),
+    )
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    let data: Value = response_json(r).await?;
+    if data.get("success").and_then(|v| v.as_bool()) == Some(true) {
+        Ok(())
+    } else {
+        Err(data.get("error").and_then(|v| v.as_str()).unwrap_or("Failed to release preview").to_string())
+    }
+}
+
+/// Record page: upload a preview frame (JPEG bytes). Requires camera_key.
+pub async fn upload_preview_frame(
+    tournament_url: &str,
+    field_name: &str,
+    camera_key: &str,
+    camera_name: &str,
+    jpeg_bytes: bytes::Bytes,
+) -> Result<(), String> {
+    let c = client();
+    let url = format!(
+        "{}/_api/record/preview-frame?tournament={}&field={}&camera_name={}&camera_key={}",
+        base(),
+        urlencoding::encode(tournament_url),
+        urlencoding::encode(field_name),
+        urlencoding::encode(camera_name),
+        urlencoding::encode(camera_key),
+    );
+    let r = with_credentials(c.post(&url).body(jpeg_bytes))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    let data: Value = response_json(r).await?;
+    if data.get("success").and_then(|v| v.as_bool()) == Some(true) {
+        Ok(())
+    } else {
+        Err(data.get("error").and_then(|v| v.as_str()).unwrap_or("Failed to upload preview frame").to_string())
+    }
+}
+
+/// Record page: poll whether the pending frame was consumed (so we can send the next one).
+pub async fn is_preview_frame_consumed(
+    tournament_url: &str,
+    field_name: &str,
+    camera_name: &str,
+    camera_key: &str,
+) -> Result<bool, String> {
+    let c = client();
+    let r = with_credentials(
+        c.get(format!("{}/_api/record/preview-frame-consumed", base()))
+            .query(&[
+                ("tournament", tournament_url),
+                ("field", field_name),
+                ("camera_name", camera_name),
+                ("camera_key", camera_key),
+            ]),
+    )
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    let data: Value = response_json(r).await?;
+    data.get("consumed")
+        .and_then(|v| v.as_bool())
+        .ok_or_else(|| "Invalid response from preview-frame-consumed".to_string())
+}
+
+/// TO: list camera names that have a recent preview frame for this field.
+pub async fn list_preview_cameras(
+    tournament_url: &str,
+    field_name: &str,
+) -> Result<Vec<String>, String> {
+    let c = client();
+    let r = with_credentials(
+        c.get(format!("{}/_api/record/preview-cameras", base()))
+            .query(&[("tournament", tournament_url), ("field", field_name)]),
+    )
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    let data: Value = response_json(r).await?;
+    let arr = data.get("cameras").and_then(|v| v.as_array()).ok_or("Invalid cameras response")?;
+    let list: Vec<String> = arr
+        .iter()
+        .filter_map(|v| v.as_str().map(String::from))
+        .collect();
+    Ok(list)
+}
+
+/// TO: URL for the preview frame image (with cache-bust query). Use as <img src=...>.
+pub fn preview_frame_url(
+    tournament_url: &str,
+    field_name: &str,
+    camera_name: &str,
+    cache_bust: &str,
+) -> String {
+    let base = base_url();
+    format!(
+        "{}/_api/record/preview-frame?tournament={}&field={}&camera_name={}&t={}",
+        base,
+        urlencoding::encode(tournament_url),
+        urlencoding::encode(field_name),
+        urlencoding::encode(camera_name),
+        urlencoding::encode(cache_bust),
+    )
+}
+
 /// Metadata for a single chunk upload (record page).
 #[cfg(target_arch = "wasm32")]
 #[derive(Clone)]
@@ -1550,6 +1687,27 @@ pub async fn upload_player_profile_photo(
     }
 }
 
+/// Remove player profile photo.
+pub async fn delete_player_profile_photo(player_id: &str) -> Result<(), String> {
+    let c = client();
+    let r = with_credentials(
+        c.delete(format!("{}/_api/players/{}/profile-photo", base(), player_id)),
+    )
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    let data: Value = response_json(r).await?;
+    if data.get("success").and_then(|v| v.as_bool()) == Some(true) {
+        Ok(())
+    } else {
+        Err(data
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Failed to remove photo")
+            .to_string())
+    }
+}
+
 /// Upload team profile photo. Overwrites previous; backend uses predictable path.
 pub async fn upload_team_profile_photo(
     team_id: &str,
@@ -1574,6 +1732,27 @@ pub async fn upload_team_profile_photo(
             .get("error")
             .and_then(|v| v.as_str())
             .unwrap_or("Upload failed")
+            .to_string())
+    }
+}
+
+/// Remove team profile photo.
+pub async fn delete_team_profile_photo(team_id: &str) -> Result<(), String> {
+    let c = client();
+    let r = with_credentials(
+        c.delete(format!("{}/_api/teams/{}/profile-photo", base(), team_id)),
+    )
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    let data: Value = response_json(r).await?;
+    if data.get("success").and_then(|v| v.as_bool()) == Some(true) {
+        Ok(())
+    } else {
+        Err(data
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Failed to remove photo")
             .to_string())
     }
 }

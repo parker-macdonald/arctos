@@ -16,6 +16,7 @@ pub fn EditPlayerProfile(player_id: String) -> Element {
     let mut loading = use_signal(|| true);
     let mut photo_upload_error = use_signal(|| None::<String>);
     let mut photo_uploading = use_signal(|| false);
+    let mut photo_removing = use_signal(|| false);
 
     let _fetch = use_resource(use_reactive(&player_id, move |id| async move {
         loading.set(true);
@@ -34,6 +35,7 @@ pub fn EditPlayerProfile(player_id: String) -> Element {
     }));
 
     let player_id_for_submit = player_id.clone();
+    let player_id_for_remove = player_id.clone();
     let onsubmit = move |_evt: Event<FormData>| {
         let player_id = player_id_for_submit.clone();
         async move {
@@ -104,7 +106,30 @@ pub fn EditPlayerProfile(player_id: String) -> Element {
                                             class: "rounded-circle",
                                             style: "width: 80px; height: 80px; object-fit: cover;"
                                         }
-                                        span { class: "text-muted", "Upload a new image to replace." }
+                                        div { class: "d-flex flex-column gap-1",
+                                            span { class: "text-muted", "Upload a new image to replace." }
+                                            button {
+                                                class: "btn btn-outline-danger btn-sm align-self-start",
+                                                r#type: "button",
+                                                disabled: photo_removing(),
+                                                onclick: move |_| {
+                                                    let pid = player_id_for_remove.clone();
+                                                    photo_upload_error.set(None);
+                                                    photo_removing.set(true);
+                                                    spawn(async move {
+                                                        match api::delete_player_profile_photo(&pid).await {
+                                                            Ok(()) => profile_photo.set(None),
+                                                            Err(e) => photo_upload_error.set(Some(e)),
+                                                        }
+                                                        photo_removing.set(false);
+                                                    });
+                                                },
+                                                if photo_removing() {
+                                                    span { class: "spinner-border spinner-border-sm me-1", role: "status" }
+                                                }
+                                                "Remove picture"
+                                            }
+                                        }
                                     }
                                 } else {
                                     p { class: "text-muted small mb-2", "No profile picture set." }

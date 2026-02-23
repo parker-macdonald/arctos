@@ -14,6 +14,7 @@ from flask_executor import Executor
 
 from datetime import datetime, timedelta, timezone
 import json
+import time
 
 from flask_login.utils import urlencode
 from urllib3.util import url
@@ -52,6 +53,7 @@ from app.utils.camera_helpers import (
     get_camera_key_from_request,
     require_camera_key,
 )
+from app.utils import preview_store
 
 from app.domain.enums import (
     MatchStatus,
@@ -370,6 +372,8 @@ def record_match_status():
     if not field:
         return jsonify({"error": "Field not found"}), 404
 
+    preview_requested = preview_store.is_preview_requested(tournament_url, field_name)
+
     # Helper function to get points for a match
     def get_points_data(match):
         points = Point.query.filter_by(match=match.uuid).order_by(Point.stamp).all()
@@ -433,6 +437,7 @@ def record_match_status():
                         ),
                         "status": match.status,
                         "points": get_points_data(match),
+                        "preview_requested": preview_requested,
                     }
                 )
             else:
@@ -443,11 +448,16 @@ def record_match_status():
                         "match_id": match.uuid,
                         "status": match.status,
                         "reason": "match_completed",
+                        "preview_requested": preview_requested,
                     }
                 )
         else:
             # Match not found - might have been deleted, stop recording
-            return jsonify({"hasActiveMatch": False, "reason": "match_not_found"})
+            return jsonify({
+                "hasActiveMatch": False,
+                "reason": "match_not_found",
+                "preview_requested": preview_requested,
+            })
 
     # No specific match tracked - find any active match on this field
     match = Match.query.filter_by(
@@ -467,10 +477,129 @@ def record_match_status():
                 ),
                 "status": match.status,
                 "points": get_points_data(match),
+                "preview_requested": preview_requested,
             }
         )
     else:
-        return jsonify({"hasActiveMatch": False})
+        return jsonify({
+            "hasActiveMatch": False,
+            "preview_requested": preview_requested,
+        })
+
+
+@bp.route("/record/request-preview", methods=["POST"])
+@login_required
+def record_request_preview():
+    """TO requests preview for a field; creates sentinel so record pages send frames."""
+    data = request.get_json(silent=True) or {}
+    tournament_url = (data.get("tournament") or request.args.get("tournament") or "").strip()
+    field_name = (data.get("field") or request.args.get("field") or "").strip()
+    if not tournament_url or not field_name:
+        return jsonify({"error": "tournament and field required"}), 400
+    if is_not_TO(tournament_url):
+        return jsonify({"error": "Only tournament organizers can request preview"}), 403
+    field = Field.query.filter_by(event=tournament_url, name=field_name).first()
+    if not field:
+        return jsonify({"error": "Field not found"}), 404
+    preview_store.set_preview_requested(tournament_url, field_name)
+    return jsonify({"success": True})
+
+
+@bp.route("/record/release-preview", methods=["POST", "DELETE"])
+@login_required
+def record_release_preview():
+    """TO releases preview for a field; deletes sentinel and optionally cleans pending/serving."""
+    data = request.get_json(silent=True) or {}
+    tournament_url = (data.get("tournament") or request.args.get("tournament") or "").strip()
+    field_name = (data.get("field") or request.args.get("field") or "").strip()
+    if not tournament_url or not field_name:
+        return jsonify({"error": "tournament and field required"}), 400
+    if is_not_TO(tournament_url):
+        return jsonify({"error": "Only tournament organizers can release preview"}), 403
+    preview_store.clear_preview_requested(tournament_url, field_name)
+    return jsonify({"success": True})
+
+
+@bp.route("/record/preview-frame", methods=["POST"])
+def record_preview_frame_post():
+    """Record page uploads a preview frame (JPEG). Writes to path A (pending). Requires camera_key."""
+    tournament_url = (request.args.get("tournament") or request.form.get("tournament") or "").strip()
+    field_name = (request.args.get("field") or request.form.get("field") or "").strip()
+    camera_name = (request.args.get("camera_name") or request.form.get("camera_name") or "camera").strip() or "camera"
+    if not tournament_url or not field_name:
+        return jsonify({"error": "tournament and field required"}), 400
+    is_valid, error_response = require_camera_key(tournament_url, field_name)
+    if not is_valid:
+        return error_response[0], error_response[1]
+    field = Field.query.filter_by(event=tournament_url, name=field_name).first()
+    if not field:
+        return jsonify({"error": "Field not found"}), 404
+    data = request.get_data()
+    if not data:
+        return jsonify({"error": "No image data"}), 400
+    preview_store.write_pending(tournament_url, field_name, camera_name, data)
+    return jsonify({"success": True})
+
+
+@bp.route("/record/preview-frame-consumed", methods=["GET"])
+def record_preview_frame_consumed():
+    """Record page polls: true if no file at A (frame was consumed by TO). Requires camera_key."""
+    tournament_url = request.args.get("tournament", "").strip()
+    field_name = request.args.get("field", "").strip()
+    camera_name = (request.args.get("camera_name") or "camera").strip() or "camera"
+    if not tournament_url or not field_name:
+        return jsonify({"error": "tournament and field required"}), 400
+    is_valid, error_response = require_camera_key(tournament_url, field_name)
+    if not is_valid:
+        return error_response[0], error_response[1]
+    consumed = not preview_store.has_pending(tournament_url, field_name, camera_name)
+    return jsonify({"consumed": consumed})
+
+
+@bp.route("/record/preview-cameras", methods=["GET"])
+@login_required
+def record_preview_cameras():
+    """TO: list camera_name s that have a recent frame for this field (for dropdown)."""
+    tournament_url = request.args.get("tournament", "").strip()
+    field_name = request.args.get("field", "").strip()
+    if not tournament_url or not field_name:
+        return jsonify({"error": "tournament and field required"}), 400
+    if is_not_TO(tournament_url):
+        return jsonify({"error": "Only tournament organizers can list preview cameras"}), 403
+    field = Field.query.filter_by(event=tournament_url, name=field_name).first()
+    if not field:
+        return jsonify({"error": "Field not found"}), 404
+    cameras = preview_store.list_cameras_with_recent_frame(tournament_url, field_name)
+    return jsonify({"cameras": cameras})
+
+
+@bp.route("/record/preview-frame", methods=["GET"])
+@login_required
+def record_preview_frame_get():
+    """TO: get latest preview frame for a camera. Moves A→B then serves B, or serves stale B or 204."""
+    from flask import send_file
+    import io
+
+    tournament_url = request.args.get("tournament", "").strip()
+    field_name = request.args.get("field", "").strip()
+    camera_name = (request.args.get("camera_name") or "camera").strip() or "camera"
+    if not tournament_url or not field_name:
+        return jsonify({"error": "tournament and field required"}), 400
+    if is_not_TO(tournament_url):
+        return jsonify({"error": "Only tournament organizers can get preview frame"}), 403
+    # Move pending to serving if we have a new frame
+    preview_store.move_pending_to_serving(tournament_url, field_name, camera_name)
+    data, mtime = preview_store.read_serving(tournament_url, field_name, camera_name)
+    if not data:
+        return "", 204
+    # Optional: treat stale B as "camera offline" after RECENT_MTIME_SEC
+    if mtime and (time.time() - mtime) > preview_store.RECENT_MTIME_SEC:
+        return "", 204
+    return send_file(
+        io.BytesIO(data),
+        mimetype="image/jpeg",
+        as_attachment=False,
+    )
 
 
 @bp.route("/record/upload-chunk", methods=["POST"])
