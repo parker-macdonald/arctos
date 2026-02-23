@@ -1073,6 +1073,9 @@ pub struct RecordMatchStatusResponse {
     pub status: Option<String>,
     pub points: Option<Vec<RecordPointData>>,
     pub reason: Option<String>,
+    /// True when a TO has requested preview for this field; record page should send preview frames.
+    #[serde(default)]
+    pub preview_requested: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

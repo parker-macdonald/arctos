@@ -606,6 +606,125 @@ fn latest_point_in_progress(points: &[RecordPointData], now_ms: f64) -> Option<&
         })
 }
 
+/// Capture one frame from #record-preview video as JPEG (max width 640, quality 0.7). WASM only.
+#[cfg(target_arch = "wasm32")]
+async fn capture_preview_frame() -> Result<bytes::Bytes, String> {
+    use wasm_bindgen::closure::Closure;
+    use wasm_bindgen::JsCast;
+
+    let window = web_sys::window().ok_or("no window")?;
+    let doc = window.document().ok_or("no document")?;
+    let video_el = doc
+        .get_element_by_id("record-preview")
+        .ok_or("no record-preview element")?;
+    let video = video_el
+        .dyn_ref::<web_sys::HtmlVideoElement>()
+        .ok_or("record-preview is not a video")?
+        .clone();
+    let vw = video.video_width();
+    let vh = video.video_height();
+    if vw == 0 || vh == 0 {
+        return Err("video not ready".to_string());
+    }
+    let (canvas_w, canvas_h) = if vw > 640 {
+        (640u32, (vh as u32 * 640 / vw as u32))
+    } else {
+        (vw as u32, vh as u32)
+    };
+    let canvas = doc
+        .create_element("canvas")
+        .map_err(|_| "create canvas")?
+        .dyn_into::<web_sys::HtmlCanvasElement>()
+        .map_err(|_| "canvas")?;
+    canvas.set_width(canvas_w);
+    canvas.set_height(canvas_h);
+    let ctx = canvas
+        .get_context("2d")
+        .map_err(|_| "get context")?
+        .ok_or("no context")?
+        .dyn_into::<web_sys::CanvasRenderingContext2d>()
+        .map_err(|_| "2d")?;
+    ctx.draw_image_with_html_video_element_and_sw_and_sh_and_dx_and_dy_and_dw_and_dh(
+        &video,
+        0.0,
+        0.0,
+        vw as f64,
+        vh as f64,
+        0.0,
+        0.0,
+        canvas_w as f64,
+        canvas_h as f64,
+    )
+    .map_err(|_| "draw".to_string())?;
+    let promise = js_sys::Promise::new(&mut |resolve, reject| {
+        let resolve = resolve.clone();
+        let reject = reject.clone();
+        let closure = Closure::once(move |blob: wasm_bindgen::JsValue| {
+            if blob.is_null() || blob.is_undefined() {
+                let _ = reject.call1(&wasm_bindgen::JsValue::NULL, &wasm_bindgen::JsValue::undefined());
+            } else {
+                let _ = resolve.call1(&wasm_bindgen::JsValue::NULL, &blob);
+            }
+        });
+        let _ = canvas.to_blob_with_type(closure.as_ref().unchecked_ref(), "image/jpeg");
+        closure.forget();
+    });
+    let blob_js =
+        wasm_bindgen_futures::JsFuture::from(promise).await.map_err(|_| "toBlob failed".to_string())?;
+    let blob = blob_js
+        .dyn_into::<web_sys::Blob>()
+        .map_err(|_| "blob".to_string())?;
+    let ab = wasm_bindgen_futures::JsFuture::from(blob.array_buffer())
+        .await
+        .map_err(|_| "array_buffer".to_string())?;
+    let arr = js_sys::Uint8Array::new(&ab);
+    let vec = arr.to_vec();
+    Ok(bytes::Bytes::from(vec))
+}
+
+/// Preview sender loop: capture frame, POST, poll consumed until true, repeat. Stops when stop_flag is set.
+#[cfg(target_arch = "wasm32")]
+async fn run_preview_sender_loop(
+    stop_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    tournament_url: String,
+    field: String,
+    camera_key: String,
+    camera_name: String,
+) {
+    use std::sync::atomic::Ordering;
+
+    while !stop_flag.load(Ordering::SeqCst) {
+        let bytes = match capture_preview_frame().await {
+            Ok(b) => b,
+            Err(_) => {
+                gloo_timers::future::TimeoutFuture::new(500).await;
+                continue;
+            }
+        };
+        if let Err(_) = api::upload_preview_frame(
+            &tournament_url,
+            &field,
+            &camera_key,
+            &camera_name,
+            bytes,
+        )
+        .await
+        {
+            gloo_timers::future::TimeoutFuture::new(500).await;
+            continue;
+        }
+        while !stop_flag.load(Ordering::SeqCst) {
+            match api::is_preview_frame_consumed(&tournament_url, &field, &camera_name, &camera_key).await {
+                Ok(true) => break,
+                Ok(false) => {}
+                Err(_) => break,
+            }
+            gloo_timers::future::TimeoutFuture::new(300).await;
+        }
+        gloo_timers::future::TimeoutFuture::new(200).await;
+    }
+}
+
 #[cfg(target_arch = "wasm32")]
 async fn run_recording_loop(
     stream: web_sys::MediaStream,
@@ -619,7 +738,8 @@ async fn run_recording_loop(
     mut is_uploading_sig: Signal<bool>,
     mut upload_count_sig: Signal<u32>,
 ) {
-    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+    use std::sync::Arc;
     use wasm_bindgen::closure::Closure;
     use wasm_bindgen::JsCast;
     use web_sys::{MediaRecorder, MediaRecorderOptions};
@@ -761,6 +881,8 @@ async fn run_recording_loop(
     let mut last_poll_data: Option<RecordMatchStatusResponse> = None;
     let mut point_was_in_progress = false;
     let chunk_index_global = AtomicU32::new(0);
+    let mut preview_stop: Option<Arc<AtomicBool>> = None;
+    let mut preview_sender_running = false;
 
     loop {
         let poll_result = api::record_match_status(
@@ -790,6 +912,29 @@ async fn run_recording_loop(
                 }
             }
         };
+
+        // Start or stop the preview sender task based on data.preview_requested.
+        if data.preview_requested && !preview_sender_running {
+            if let Some(ref key_str) = key {
+                let stop = Arc::new(AtomicBool::new(false));
+                let stop_c = stop.clone();
+                let tour = tournament_url.clone();
+                let f = field.clone();
+                let k = key_str.clone();
+                let cam = camera_name.clone();
+                dioxus::prelude::spawn(async move {
+                    run_preview_sender_loop(stop_c, tour, f, k, cam).await;
+                });
+                preview_stop = Some(stop);
+                preview_sender_running = true;
+            }
+        } else if !data.preview_requested && preview_sender_running {
+            if let Some(ref s) = preview_stop {
+                s.store(true, Ordering::SeqCst);
+            }
+            preview_stop = None;
+            preview_sender_running = false;
+        }
 
         let now_ms = js_sys::Date::now();
         let points = data.points.as_deref().unwrap_or(&[]);
