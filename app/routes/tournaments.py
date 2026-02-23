@@ -659,15 +659,69 @@ def record_upload_chunk():
     )
     os.makedirs(upload_dir, exist_ok=True)
 
-    # Save chunk with index in filename for ordering
-    chunk_index = len(
-        list(filter(lambda x: not x.endswith(".json"), os.listdir(upload_dir)))
-    )
-    chunk_filename = f"chunk_{chunk_index}.{chunk_ext}"
-    chunk_path = os.path.join(upload_dir, chunk_filename)
-    chunk_file.save(chunk_path)
+    chunks_meta_path = os.path.join(upload_dir, "chunks_meta.json")
 
-    # Debug: log saved chunk size and format
+    def parse_timestamp(val):
+        if val is None or val == "":
+            return None
+        s = str(val).strip()
+        if not s:
+            return None
+        try:
+            return float(val)
+        except (TypeError, ValueError):
+            pass
+        if "T" in s and ("Z" in s or "+" in s or "-" in s[-6:]):
+            return s  # Store ISO string as-is; footage.py accepts both
+        try:
+            return float(s)
+        except ValueError:
+            return s
+
+    chunk_index = None
+    try:
+        file_mode = "r+" if os.path.exists(chunks_meta_path) else "w+"
+        with open(chunks_meta_path, file_mode) as lock_file:
+            try:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except IOError:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+
+            lock_file.seek(0)
+            content = lock_file.read()
+            if content.strip():
+                try:
+                    chunks_meta = json.loads(content)
+                except (json.JSONDecodeError, ValueError):
+                    chunks_meta = {}
+            else:
+                chunks_meta = {}
+
+            # Assign index under lock so concurrent uploads never get same index or overwrite
+            chunk_index = len(chunks_meta)
+            chunk_filename = f"chunk_{chunk_index}.{chunk_ext}"
+            chunk_path = os.path.join(upload_dir, chunk_filename)
+            chunk_file.save(chunk_path)
+
+            chunk_meta = {
+                "filename": chunk_filename,
+                "session_id": session_id,
+                "chunk_start_timestamp": parse_timestamp(chunk_start_timestamp),
+                "chunk_duration": float(chunk_duration),
+                "point_id": point_id,
+                "camera_name": camera_name,
+                "recording_session_start_time": parse_timestamp(recording_session_start_time),
+            }
+            chunks_meta[str(chunk_index)] = chunk_meta
+
+            lock_file.seek(0)
+            lock_file.truncate(0)
+            json.dump(chunks_meta, lock_file, indent=2)
+            lock_file.flush()
+    except (IOError, OSError) as e:
+        print("error writing :sob:")
+        return jsonify({"error": "Failed to save chunk"}), 500
+
     try:
         with open(chunk_path, "rb") as f:
             head = f.read(4)
@@ -681,54 +735,6 @@ def record_upload_chunk():
         )
     except Exception as e:
         current_app.logger.warning("record chunk debug read failed: %s", e)
-
-    # Load or create chunks metadata with file locking to prevent race conditions
-    chunks_meta_path = os.path.join(upload_dir, "chunks_meta.json")
-    chunks_meta = {}
-
-    # Use file locking to prevent concurrent write issues
-    try:
-        # Open file in read-write mode, create if it doesn't exist
-        file_mode = "r+" if os.path.exists(chunks_meta_path) else "w+"
-        with open(chunks_meta_path, file_mode) as lock_file:
-            # Acquire exclusive lock
-            try:
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except IOError:
-                # If we can't get the lock immediately, wait for it
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
-
-            # Read existing metadata
-            lock_file.seek(0)
-            content = lock_file.read()
-            if content.strip():
-                try:
-                    chunks_meta = json.loads(content)
-                except (json.JSONDecodeError, ValueError):
-                    chunks_meta = {}
-
-            # Store chunk metadata
-            chunk_meta = {
-                "filename": chunk_filename,
-                "session_id": session_id,
-                "chunk_start_timestamp": (
-                    float(chunk_start_timestamp)
-                ),  # Absolute world time in milliseconds
-                "chunk_duration": (float(chunk_duration)),  # Duration in milliseconds
-                "point_id": point_id,
-                "camera_name": camera_name,
-                "recording_session_start_time": (float(recording_session_start_time)),
-            }
-            chunks_meta[str(chunk_index)] = chunk_meta  # Use string key for consistency
-
-            # Write metadata back
-            lock_file.seek(0)
-            lock_file.truncate(0)
-            json.dump(chunks_meta, lock_file, indent=2)
-            lock_file.flush()
-            # Lock is released when file is closed
-    except (IOError, OSError) as e:
-        print("error writing :sob:")
 
     return jsonify(
         {"success": True, "chunk_index": chunk_index, "session_id": session_id}

@@ -67,7 +67,6 @@ def _get_media_duration_sec(file_path, cwd=None):
         cwd=run_cwd,
         capture_output=True,
         text=True,
-        timeout=30,
     )
     if result.returncode != 0 or not result.stdout:
         return None
@@ -167,7 +166,6 @@ def finalize_recording_worker(
                     ["cat"] + cat_files,
                     cwd=chunk_dir,
                     stdout=out,
-                    timeout=300,
                     check=True,
                 )
         except (OSError, subprocess.CalledProcessError) as e:
@@ -199,7 +197,6 @@ def finalize_recording_worker(
             cwd=chunk_dir,
             capture_output=True,
             text=True,
-            timeout=300,
         )
         if result.returncode != 0 or not path.exists(session_output_path) or path.getsize(session_output_path) == 0:
             _log.warning(
@@ -223,6 +220,8 @@ def finalize_recording_worker(
         _log.warning("finalize_recording: no session outputs produced")
         return
 
+    print(f"finalize_recording: {len(session_outputs)} session(s) for concat", flush=True)
+
     # 3. Concat all sessions with concat demuxer
     final_basename = f"final_video.{ext}"
     final_path = path.join(chunk_dir, final_basename)
@@ -230,7 +229,8 @@ def finalize_recording_worker(
     with open(concat_list_path, "w") as f:
         for _sid, basename, _start, _pids in session_outputs:
             abs_path = path.abspath(path.join(chunk_dir, basename))
-            print(f"file {repr(abs_path)}", file=f)
+            f.write(f"file {repr(abs_path)}\n")
+    _log.info("finalize_recording: wrote concat_sessions.txt with %d entries", len(session_outputs))
 
     concat_cmd = [
         "ffmpeg", "-f", "concat", "-safe", "0",
@@ -243,7 +243,6 @@ def finalize_recording_worker(
         cwd=chunk_dir,
         capture_output=True,
         text=True,
-        timeout=600,
     )
     if result.returncode != 0 or not path.exists(final_path) or path.getsize(final_path) == 0:
         _log.warning(
