@@ -1236,16 +1236,17 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                     }
 
                     div { class: "mobile-button-wrapper d-md-none",
-                        button {
-                            class: "btn btn-warning btn-lg",
-                            onclick: move |_| {
-                                navigator.push(Route::FinalizeMatch {
-                                    url: url_finalize_mobile.clone(),
-                                    match_id: id_finalize_mobile.clone(),
-                                });
-                            },
-                            disabled: has_in_progress,
-                            if has_in_progress { "Finalize (Point in Progress)" } else { "Finalize Match" }
+                        if !has_in_progress {
+                            button {
+                                class: "btn btn-warning btn-lg",
+                                onclick: move |_| {
+                                    navigator.push(Route::FinalizeMatch {
+                                        url: url_finalize_mobile.clone(),
+                                        match_id: id_finalize_mobile.clone(),
+                                    });
+                                },
+                                "Finalize Match"
+                            }
                         }
                         button {
                             class: "{point_button_class}",
