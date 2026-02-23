@@ -508,10 +508,10 @@ async fn initialize_camera_and_enumerate(
         js_sys::Reflect::set(&device_id_obj, &"exact".into(), &device_id.into()).ok();
         js_sys::Reflect::set(&video_constraint, &"deviceId".into(), &device_id_obj.into()).ok();
         let w = js_sys::Object::new();
-        js_sys::Reflect::set(&w, &"ideal".into(), &1920.into()).ok();
+        js_sys::Reflect::set(&w, &"ideal".into(), &3840.into()).ok();
         js_sys::Reflect::set(&video_constraint, &"width".into(), &w.into()).ok();
         let h = js_sys::Object::new();
-        js_sys::Reflect::set(&h, &"ideal".into(), &1080.into()).ok();
+        js_sys::Reflect::set(&h, &"ideal".into(), &2160.into()).ok();
         js_sys::Reflect::set(&video_constraint, &"height".into(), &h.into()).ok();
         specific_constraints.video(&video_constraint.into());
         specific_constraints.audio(&true.into());
@@ -779,7 +779,7 @@ async fn run_recording_loop(
                         chunk_count: Rc<RefCell<u32>>,
                         current_point_id: Rc<RefCell<Option<String>>>| {
         let mut options = MediaRecorderOptions::new();
-        options.set_video_bits_per_second(50_000_000);
+        options.set_video_bits_per_second(70_000_000);
         options.set_audio_bits_per_second(128_000);
         let mut chosen_container = "webm";
         for (mime, container) in MIME_PREFERENCE {
