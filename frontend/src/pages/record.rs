@@ -1019,8 +1019,23 @@ async fn run_recording_loop(
                     *session_start1.borrow_mut() = now_ms;
                     *chunk_count1.borrow_mut() = 0;
                     state1.borrow_mut().started_at = Some(now_ms);
-                    state1.borrow_mut().current_session_id = uuid_style_id();
-                    if let Some(r) = state1.borrow().recorder.as_ref() {
+                    let new_sid = uuid_style_id();
+                    state1.borrow_mut().current_session_id = new_sid.clone();
+                    *session_id1.borrow_mut() = new_sid.clone();
+                    // After a match ends we take and stop both recorders, so they are None for the next match. Recreate if needed.
+                    if state1.borrow().recorder.is_none() {
+                        if let Some(r) = make_recorder(
+                            &stream,
+                            storage1.clone(),
+                            session_start1.clone(),
+                            chunk_count1.clone(),
+                            current_point_id.clone(),
+                            session_id1.clone(),
+                        ) {
+                            let _ = r.start_with_time_slice(1000);
+                            state1.borrow_mut().recorder = Some(r);
+                        }
+                    } else if let Some(r) = state1.borrow().recorder.as_ref() {
                         let state_str: String = js_sys::Reflect::get(r.as_ref(), &"state".into())
                             .ok()
                             .and_then(|v| v.as_string())
@@ -1029,9 +1044,23 @@ async fn run_recording_loop(
                             let _ = r.start_with_time_slice(1000);
                         }
                     }
-                    let new_sid = uuid_style_id();
-                    state1.borrow_mut().current_session_id = new_sid.clone();
-                    *session_id1.borrow_mut() = new_sid;
+                    if state2.borrow().recorder.is_none() {
+                        *session_start2.borrow_mut() = now_ms;
+                        *chunk_count2.borrow_mut() = 0;
+                        let sid2 = uuid_style_id();
+                        *session_id2.borrow_mut() = sid2.clone();
+                        state2.borrow_mut().current_session_id = sid2;
+                        if let Some(r) = make_recorder(
+                            &stream,
+                            storage2.clone(),
+                            session_start2.clone(),
+                            chunk_count2.clone(),
+                            current_point_id.clone(),
+                            session_id2.clone(),
+                        ) {
+                            state2.borrow_mut().recorder = Some(r);
+                        }
+                    }
                 }
             }
             gloo_timers::future::TimeoutFuture::new(500).await;
