@@ -809,6 +809,17 @@ pub struct RecordChunkMeta {
     pub container: String,
 }
 
+/// Convert epoch milliseconds to ISO 8601 UTC string (e.g. "2025-02-23T19:30:00.123Z").
+#[cfg(target_arch = "wasm32")]
+fn epoch_ms_to_iso8601_utc(ms: f64) -> String {
+    use chrono::TimeZone;
+    chrono::Utc
+        .timestamp_millis_opt(ms as i64)
+        .single()
+        .map(|dt| dt.to_rfc3339())
+        .unwrap_or_else(|| ms.to_string())
+}
+
 #[cfg(target_arch = "wasm32")]
 pub async fn record_upload_chunk(meta: &RecordChunkMeta, chunk_blob: &web_sys::Blob) -> Result<(), String> {
     use wasm_bindgen::JsCast;
@@ -823,9 +834,9 @@ pub async fn record_upload_chunk(meta: &RecordChunkMeta, chunk_blob: &web_sys::B
         .map_err(|_| "append match_id failed")?;
     form.append_with_str("session_id", &meta.session_id)
         .map_err(|_| "append session_id failed")?;
-    form.append_with_str("chunk_start_timestamp", &meta.chunk_start_timestamp.to_string())
+    form.append_with_str("chunk_start_timestamp", &epoch_ms_to_iso8601_utc(meta.chunk_start_timestamp))
         .map_err(|_| "append chunk_start_timestamp failed")?;
-    form.append_with_str("recording_session_start_time", &meta.recording_session_start_time.to_string())
+    form.append_with_str("recording_session_start_time", &epoch_ms_to_iso8601_utc(meta.recording_session_start_time))
         .map_err(|_| "append recording_session_start_time failed")?;
     form.append_with_str("chunk_duration", &meta.chunk_length_ms.to_string())
         .map_err(|_| "append chunk_duration failed")?;
