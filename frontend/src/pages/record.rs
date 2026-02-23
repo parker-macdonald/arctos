@@ -158,6 +158,7 @@ pub fn Record(url: String, field: ReadSignal<String>, camera_key: ReadSignal<Str
     let mut is_recording = use_signal(|| false);
     let mut is_uploading = use_signal(|| false);
     let mut upload_count = use_signal(|| 0u32);
+    let mut upload_total = use_signal(|| 0u32);
     let mut available_cameras = use_signal(|| Vec::<(String, String)>::new());
     let mut selected_camera_id = use_signal(|| None::<String>);
     let mut preview_stream = use_signal(|| None::<web_sys::MediaStream>);
@@ -193,6 +194,7 @@ pub fn Record(url: String, field: ReadSignal<String>, camera_key: ReadSignal<Str
         let is_recording_sig = is_recording.to_owned();
         let is_uploading_sig = is_uploading.to_owned();
         let upload_count_sig = upload_count.to_owned();
+        let upload_total_sig = upload_total.to_owned();
         let preview_stream_sig = preview_stream.to_owned();
         use_effect(move || {
             let stream_opt = preview_stream_sig();
@@ -219,6 +221,7 @@ pub fn Record(url: String, field: ReadSignal<String>, camera_key: ReadSignal<Str
                     is_recording_sig,
                     is_uploading_sig,
                     upload_count_sig,
+                    upload_total_sig,
                 )
                 .await;
             });
@@ -335,6 +338,19 @@ pub fn Record(url: String, field: ReadSignal<String>, camera_key: ReadSignal<Str
                                 div { class: "alert alert-info", id: "record-status",
                                     status_line { status }
                                 }
+                                if is_uploading() {
+                                    div { class: "alert alert-info",
+                                        {
+                                            let n = upload_count();
+                                            let total = upload_total();
+                                            if total > 0 {
+                                                format!("↑ Uploading video chunks... ({n}/{total})")
+                                            } else {
+                                                format!("↑ Uploading video chunks... ({n})")
+                                            }
+                                        }
+                                    }
+                                }
                                 div {
                                     id: "record-video-container",
                                     style: format!("display: {};", if matches!(status(), RecordStatus::Connected) { "block" } else { "none" }),
@@ -351,11 +367,6 @@ pub fn Record(url: String, field: ReadSignal<String>, camera_key: ReadSignal<Str
                                         if is_recording() {
                                             div { class: "alert alert-danger",
                                                 "● Recording... "
-                                            }
-                                        }
-                                        if is_uploading() {
-                                            div { class: "alert alert-info",
-                                                "↑ Uploading video chunks... ({upload_count()})"
                                             }
                                         }
                                     }
@@ -737,6 +748,7 @@ async fn run_recording_loop(
     mut is_recording_sig: Signal<bool>,
     mut is_uploading_sig: Signal<bool>,
     mut upload_count_sig: Signal<u32>,
+    mut upload_total_sig: Signal<u32>,
 ) {
     use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
     use std::sync::Arc;
@@ -1009,6 +1021,7 @@ async fn run_recording_loop(
             if state.borrow().status == RecorderStatus::Recording {
                 let chunk_session_id = state.borrow().current_session_id.clone();
                 let drained: Vec<StoredChunk> = storage_rc.borrow_mut().drain(..).collect();
+                let n = drained.len();
                 for st in drained {
                     let _idx = chunk_index_global.fetch_add(1, Ordering::Relaxed);
                     let meta = RecordChunkMeta {
@@ -1022,6 +1035,9 @@ async fn run_recording_loop(
                     upload_queue
                         .borrow_mut()
                         .push_back(UploadQueueItem::Chunk { meta, blob: st.blob });
+                }
+                if n > 0 {
+                    upload_total_sig.set(upload_total_sig() + n as u32);
                 }
             }
         }
