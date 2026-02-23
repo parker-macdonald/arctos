@@ -9,7 +9,7 @@ pub fn Thanks() -> Element {
     rsx! {
         if let Some(Ok(d)) = val.read().as_ref() {
             div { class: "row",
-                div { class: "col-lg-10 mx-auto",
+                div { class: "col-lg-6 mx-auto",
                     div { dangerous_inner_html: "{d.html}" }
                 }
             }
