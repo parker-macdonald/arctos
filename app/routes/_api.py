@@ -3,9 +3,10 @@ Internal JSON API for the Dioxus SPA. All routes live under /_api/.
 Do not use /api/ — that is reserved for a future public API.
 """
 
-from flask import Blueprint, request, jsonify, session, redirect
+from flask import Blueprint, request, jsonify, session, redirect, current_app
 from datetime import datetime, timezone
 from pathlib import Path
+import os
 from flask_login import current_user, login_user, logout_user, login_required
 from sqlalchemy import or_, func
 from sqlalchemy.orm import joinedload
@@ -3691,6 +3692,83 @@ def update_team_profile(team_id):
 
     db.session.commit()
     return jsonify({"success": True})
+
+
+def _profile_photo_upload_dir():
+    return os.path.join(current_app.root_path, "..", "static", "uploads", "profiles")
+
+
+def _safe_profile_photo_filename(prefix, entity_id):
+    """Sanitize entity id for use in filename (alphanumeric and underscore only)."""
+    safe = "".join(c if c.isalnum() or c == "_" else "_" for c in entity_id)
+    return f"{prefix}_{safe}.jpg"
+
+
+@bp.route("/players/<player_id>/profile-photo", methods=["POST"])
+@login_required
+def upload_player_profile_photo(player_id):
+    """Upload or replace player profile photo. Uses predictable path so overwrites previous."""
+    if current_user.id != player_id or current_user.__class__.__name__ != "Player":
+        return jsonify({"error": "You can only upload a photo for your own profile"}), 403
+    player = Player.query.get_or_404(player_id)
+    data = request.get_data()
+    if not data or len(data) == 0:
+        return jsonify({"error": "No image data"}), 400
+    upload_dir = _profile_photo_upload_dir()
+    os.makedirs(upload_dir, exist_ok=True)
+    # Predictable name: one file per player, always overwritten
+    filename = _safe_profile_photo_filename("player", player_id)
+    file_path = os.path.join(upload_dir, filename)
+    old_path = player.profile_photo
+    rel_path = f"uploads/profiles/{filename}"
+    try:
+        if old_path and old_path != rel_path:
+            old_full = os.path.join(current_app.root_path, "..", "static", old_path)
+            if os.path.isfile(old_full):
+                try:
+                    os.remove(old_full)
+                except OSError:
+                    pass
+        with open(file_path, "wb") as f:
+            f.write(data)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    player.profile_photo = rel_path
+    db.session.commit()
+    return jsonify({"success": True, "path": rel_path})
+
+
+@bp.route("/teams/<team_id>/profile-photo", methods=["POST"])
+@login_required
+def upload_team_profile_photo(team_id):
+    """Upload or replace team profile photo. Uses predictable path so overwrites previous."""
+    if current_user.id != team_id or current_user.__class__.__name__ != "Team":
+        return jsonify({"error": "You can only upload a photo for your own team profile"}), 403
+    team = Team.query.get_or_404(team_id)
+    data = request.get_data()
+    if not data or len(data) == 0:
+        return jsonify({"error": "No image data"}), 400
+    upload_dir = _profile_photo_upload_dir()
+    os.makedirs(upload_dir, exist_ok=True)
+    filename = _safe_profile_photo_filename("team", team_id)
+    file_path = os.path.join(upload_dir, filename)
+    old_path = team.profile_photo
+    rel_path = f"uploads/profiles/{filename}"
+    try:
+        if old_path and old_path != rel_path:
+            old_full = os.path.join(current_app.root_path, "..", "static", old_path)
+            if os.path.isfile(old_full):
+                try:
+                    os.remove(old_full)
+                except OSError:
+                    pass
+        with open(file_path, "wb") as f:
+            f.write(data)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    team.profile_photo = rel_path
+    db.session.commit()
+    return jsonify({"success": True, "path": rel_path})
 
 
 @bp.route("/tournaments/<tournament_url>/registrations/player/me", methods=["GET"])
