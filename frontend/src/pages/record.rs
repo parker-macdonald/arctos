@@ -1123,6 +1123,13 @@ async fn run_recording_loop(
                 };
                 *session_start_longer.borrow_mut() = now_ms;
                 *chunk_count_longer.borrow_mut() = 0;
+                let new_sid = uuid_style_id();
+                longer.borrow_mut().current_session_id = new_sid.clone();
+                if std::ptr::eq(longer.as_ref(), state1.as_ref()) {
+                    *session_id1.borrow_mut() = new_sid.clone();
+                } else {
+                    *session_id2.borrow_mut() = new_sid.clone();
+                }
                 if let Some(new_r) = make_recorder(
                     &stream,
                     if std::ptr::eq(longer.as_ref(), state1.as_ref()) {
@@ -1138,13 +1145,6 @@ async fn run_recording_loop(
                     let _ = new_r.start_with_time_slice(1000);
                     longer.borrow_mut().recorder = Some(new_r);
                     longer.borrow_mut().started_at = Some(now_ms);
-                    let new_sid = uuid_style_id();
-                    longer.borrow_mut().current_session_id = new_sid.clone();
-                    if std::ptr::eq(longer.as_ref(), state1.as_ref()) {
-                        *session_id1.borrow_mut() = new_sid;
-                    } else {
-                        *session_id2.borrow_mut() = new_sid;
-                    }
                 }
             } else if longer_run_secs > 5.0 {
                 let is_inactive = shorter
@@ -1160,7 +1160,15 @@ async fn run_recording_loop(
                     })
                     .unwrap_or(true);
                 if is_inactive {
-                    web_sys::console::log_1(&format!("shorter recorder is inactive, starting it").into());
+                    web_sys::console::log_1(&format!("shorter recorder is inactive, replacing with new recorder for fresh init segment").into());
+                    if let Some(old_r) = shorter.borrow_mut().recorder.take() {
+                        let _ = old_r.stop();
+                    }
+                    if std::ptr::eq(shorter.as_ref(), state1.as_ref()) {
+                        storage1.borrow_mut().clear();
+                    } else {
+                        storage2.borrow_mut().clear();
+                    }
                     let session_start_shorter = if std::ptr::eq(shorter.as_ref(), state1.as_ref()) {
                         session_start1.clone()
                     } else {
@@ -1171,19 +1179,36 @@ async fn run_recording_loop(
                     } else {
                         chunk_count2.clone()
                     };
+                    let session_id_shorter = if std::ptr::eq(shorter.as_ref(), state1.as_ref()) {
+                        session_id1.clone()
+                    } else {
+                        session_id2.clone()
+                    };
                     *session_start_shorter.borrow_mut() = now_ms;
                     *chunk_count_shorter.borrow_mut() = 0;
-                    if let Some(r) = shorter.borrow().recorder.as_ref() {
-                        let _ = r.start_with_time_slice(1000);
-                    }
-                    shorter.borrow_mut().started_at = Some(now_ms);
                     let new_sid = uuid_style_id();
                     shorter.borrow_mut().current_session_id = new_sid.clone();
                     if std::ptr::eq(shorter.as_ref(), state1.as_ref()) {
-                        *session_id1.borrow_mut() = new_sid;
+                        *session_id1.borrow_mut() = new_sid.clone();
                     } else {
-                        *session_id2.borrow_mut() = new_sid;
+                        *session_id2.borrow_mut() = new_sid.clone();
                     }
+                    if let Some(new_r) = make_recorder(
+                        &stream,
+                        if std::ptr::eq(shorter.as_ref(), state1.as_ref()) {
+                            storage1.clone()
+                        } else {
+                            storage2.clone()
+                        },
+                        session_start_shorter,
+                        chunk_count_shorter,
+                        current_point_id.clone(),
+                        session_id_shorter,
+                    ) {
+                        let _ = new_r.start_with_time_slice(1000);
+                        shorter.borrow_mut().recorder = Some(new_r);
+                    }
+                    shorter.borrow_mut().started_at = Some(now_ms);
                 }
             }
         }
