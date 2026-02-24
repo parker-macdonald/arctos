@@ -184,6 +184,12 @@ pub fn TeamProfile(id: Signal<String>) -> Element {
 
     let mut expanded_event = use_signal(|| Option::<String>::None);
     let mut players_cache = use_signal(|| PlayersCache::new());
+    // When switching to a different team, clear roster cache and collapse so we don't show the previous team's players.
+    use_effect(move || {
+        let current_id = id();
+        players_cache.set(PlayersCache::new());
+        expanded_event.set(None);
+    });
     let team_id_for_fetch = id().clone();
     use_effect(move || {
         let expanded = expanded_event();
