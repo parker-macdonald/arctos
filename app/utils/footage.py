@@ -496,7 +496,7 @@ def finalize_recording_worker(
                 if fn:
                     to_remove.append(path.join(chunk_dir, fn))
             to_remove.append(path.join(chunk_dir, "chunks_meta.json"))
-            for sid, _ in session_outputs:
+            for sid, _basename, _start, _pids in session_outputs:
                 to_remove.append(path.join(chunk_dir, f"joined_raw_{sid}.{ext}"))
             for _sid, basename, _start, _pids in session_outputs:
                 to_remove.append(path.join(chunk_dir, basename))
