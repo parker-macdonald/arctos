@@ -11,10 +11,17 @@ const PREDEFINED_COLORS: &[&str] = &[
 fn get_form_value(id: &str) -> String {
     let window = web_sys::window().unwrap();
     let doc = window.document().unwrap();
-    doc.get_element_by_id(id)
-        .and_then(|e| e.dyn_into::<web_sys::HtmlInputElement>().ok())
-        .map(|e| e.value())
-        .unwrap_or_default()
+    let el = match doc.get_element_by_id(id) {
+        Some(e) => e,
+        None => return String::new(),
+    };
+    if let Ok(input) = el.clone().dyn_into::<web_sys::HtmlInputElement>() {
+        return input.value();
+    }
+    if let Ok(select) = el.dyn_into::<web_sys::HtmlSelectElement>() {
+        return select.value();
+    }
+    String::new()
 }
 
 fn get_form_textarea(id: &str) -> String {
@@ -394,6 +401,61 @@ fn PenaltyTypesTableBody(
 }
 
 #[component]
+fn ToRow(
+    to_entry: crate::types::ToEntry,
+    url: String,
+    data: Resource<Result<crate::types::TournamentDetailResponse, String>>,
+    to_error: Signal<Option<String>>,
+) -> Element {
+    let url_remove = url.clone();
+    let mut data_remove = data.clone();
+    rsx! {
+        li { class: "list-group-item d-flex justify-content-between align-items-center",
+            div {
+                strong { "{to_entry.user_name}" }
+                br {}
+                small { class: "text-muted",
+                    "{to_entry.user_type.to_uppercase()} ({to_entry.user_id})"
+                    if to_entry.is_current_user {
+                        span { class: "badge bg-primary ms-1", "You" }
+                    } else { }
+                }
+            }
+            if !to_entry.is_current_user {
+                button {
+                    r#type: "button",
+                    class: "btn btn-sm btn-outline-danger",
+                    onclick: move |_| {
+                        let to_id = to_entry.id;
+                        let to_name = to_entry.user_name.clone();
+                        let url_clone = url_remove.clone();
+                        let msg = format!("Are you sure you want to remove {} as a TO?", to_name);
+                        let ok = web_sys::window()
+                            .and_then(|w| w.confirm_with_message(&msg).ok())
+                            .unwrap_or(false);
+                        if !ok { return; }
+                        to_error.set(None);
+                        spawn(async move {
+                            match api::remove_tournament_to(&url_clone, to_id).await {
+                                Ok(res) => {
+                                    if res.success {
+                                        data_remove.restart();
+                                    } else if let Some(e) = res.error {
+                                        to_error.set(Some(e));
+                                    }
+                                }
+                                Err(e) => { to_error.set(Some(e)); }
+                            }
+                        });
+                    },
+                    "Remove"
+                }
+            } else { }
+        }
+    }
+}
+
+#[component]
 pub fn TournamentSettings(url: String) -> Element {
     let navigator = use_navigator();
     let url_for_data = url.clone();
@@ -409,6 +471,7 @@ pub fn TournamentSettings(url: String) -> Element {
     let mut edit_error = use_signal(|| None as Option<String>);
     let mut show_color_picker_for = use_signal(|| None as Option<i32>);
     let mut custom_color_hex = use_signal(|| String::new());
+    let mut to_error = use_signal(|| None as Option<String>);
     let val = data.value();
     let _backend = api::base_url();
     let url_form = url.clone();
@@ -648,8 +711,10 @@ pub fn TournamentSettings(url: String) -> Element {
                             }
                         }
                     }
+                }
 
-                    div { class: "card mt-4",
+                div { class: "col-md-4",
+                    div { class: "card",
                         div { class: "card-header", h5 { class: "mb-0", "Penalty Types" } }
                         div { class: "card-body",
                             div { class: "table-responsive",
@@ -677,6 +742,84 @@ pub fn TournamentSettings(url: String) -> Element {
                                             custom_color_hex: custom_color_hex,
                                         }
                                     }
+                                }
+                            }
+                        }
+                    }
+
+                    div { class: "card mt-4",
+                        div { class: "card-header",
+                            h5 { class: "mb-0", "Tournament Organizers" }
+                        }
+                        div { class: "card-body",
+                            if !d.to_entries.is_empty() {
+                                ul { class: "list-group list-group-flush mb-3",
+                                    for to_entry in d.to_entries.iter() {
+                                        ToRow {
+                                            to_entry: to_entry.clone(),
+                                            url: url.clone(),
+                                            data: data.clone(),
+                                            to_error: to_error,
+                                        }
+                                    }
+                                }
+                            } else {
+                                p { class: "text-muted", "No TOs found" }
+                            }
+                            hr {}
+                            h6 { class: "mb-3", "Add New TO" }
+                            if let Some(ref e) = to_error() {
+                                div { class: "alert alert-danger mb-3", "{e}" }
+                            }
+                            form {
+                                class: "row g-2 align-items-end",
+                                onsubmit: move |ev| {
+                                    ev.prevent_default();
+                                    let user_type = get_form_value("to_user_type");
+                                    let user_id = get_form_value("to_user_id").trim().to_string();
+                                    if user_id.is_empty() {
+                                        to_error.set(Some("User ID is required.".to_string()));
+                                        return;
+                                    }
+                                    to_error.set(None);
+                                    let url_add = url.clone();
+                                    let mut data_add = data.clone();
+                                    let mut to_err = to_error.clone();
+                                    spawn(async move {
+                                        match api::add_tournament_to(&url_add, &user_type, &user_id).await {
+                                            Ok(res) => {
+                                                if res.success {
+                                                    data_add.restart();
+                                                } else if let Some(e) = res.error {
+                                                    to_err.set(Some(e));
+                                                }
+                                            }
+                                            Err(e) => { to_err.set(Some(e)); }
+                                        }
+                                    });
+                                },
+                                div { class: "col-auto",
+                                    label { class: "form-label", r#for: "to_user_type", "User Type" }
+                                    select {
+                                        class: "form-select form-select-sm",
+                                        id: "to_user_type",
+                                        name: "to_user_type",
+                                        option { value: "player", "Player" }
+                                        option { value: "team", "Team" }
+                                    }
+                                }
+                                div { class: "col-auto",
+                                    label { class: "form-label", r#for: "to_user_id", "User ID" }
+                                    input {
+                                        class: "form-control form-control-sm",
+                                        id: "to_user_id",
+                                        name: "to_user_id",
+                                        r#type: "text",
+                                        placeholder: "Case-sensitive",
+                                    }
+                                }
+                                div { class: "col-auto",
+                                    button { r#type: "submit", class: "btn btn-primary btn-sm", "Add TO" }
                                 }
                             }
                         }

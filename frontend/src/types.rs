@@ -237,10 +237,15 @@ pub struct BracketTeamInfo {
     pub display_text: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ToEntry {
+    pub id: i32,
     pub user_id: String,
     pub user_type: String,
+    #[serde(default)]
+    pub user_name: String,
+    #[serde(default)]
+    pub is_current_user: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
