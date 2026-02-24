@@ -488,6 +488,27 @@ def finalize_recording_worker(
             db.session.commit()
             print(f"finalize_recording: committed camera_stream_starts for match {match_id}", flush=True)
             _log.info("finalize_recording: committed camera_stream_starts for match %s", match_id)
+
+            # Delete all chunks and intermediate files; keep only final_video.{ext}
+            to_remove = []
+            for c in all_meta:
+                fn = c.get("filename")
+                if fn:
+                    to_remove.append(path.join(chunk_dir, fn))
+            to_remove.append(path.join(chunk_dir, "chunks_meta.json"))
+            for sid, _ in session_outputs:
+                to_remove.append(path.join(chunk_dir, f"joined_raw_{sid}.{ext}"))
+            for _sid, basename, _start, _pids in session_outputs:
+                to_remove.append(path.join(chunk_dir, basename))
+            to_remove.append(path.join(chunk_dir, "concat_sessions.txt"))
+            for fp in to_remove:
+                try:
+                    if path.exists(fp):
+                        os.remove(fp)
+                        _log.debug("finalize_recording: removed %s", fp)
+                except OSError as e:
+                    _log.warning("finalize_recording: could not remove %s: %s", fp, e)
+            print(f"finalize_recording: deleted {len(to_remove)} chunk/intermediate file(s)", flush=True)
     except Exception as e:
         print(f"finalize_recording: ERROR after concat: {e}", flush=True)
         _log.exception("finalize_recording: failed after concat")
