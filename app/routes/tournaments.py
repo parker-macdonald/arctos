@@ -806,59 +806,6 @@ def record_finalize():
     )
 
 
-@bp.route("/record/rerun-finalization", methods=["POST"])
-@login_required
-def record_rerun_finalization():
-    """Rerun video finalization for all cameras of a match. Based on existing folders in the match's directory. Requires head ref."""
-    data = request.get_json() or {}
-    tournament_url = data.get("tournament")
-    field_name = data.get("field")
-    match_id = data.get("match_id")
-    if not tournament_url or not field_name or not match_id:
-        return jsonify({"error": "Missing tournament, field, or match_id"}), 400
-    match = Match.query.filter_by(uuid=match_id).first()
-    if not match or match.event != tournament_url:
-        return jsonify({"error": "Match not found"}), 404
-    if not can_head_ref_match(tournament_url, current_user.id, match=match):
-        return jsonify({"error": "Not authorized to rerun finalization for this match"}), 403
-    match_dir = path.join(
-        current_app.root_path,
-        "../static/uploads/videos",
-        tournament_url,
-        field_name,
-        match_id,
-    )
-    if not path.isdir(match_dir):
-        return jsonify({"error": "Recording directory not found", "cameras": []}), 404
-    camera_names = [
-        name for name in listdir(match_dir)
-        if path.isdir(path.join(match_dir, name))
-        and path.exists(path.join(match_dir, name, "chunks_meta.json"))
-    ]
-    app = current_app._get_current_object()
-    logger = current_app.logger
-    for camera_name in camera_names:
-        chunk_dir = path.join(match_dir, camera_name)
-
-        def run_finalize_with_app_context(cam_name, c_dir):
-            with app.app_context():
-                finalize_recording_worker(
-                    logger,
-                    tournament_url,
-                    field_name,
-                    match_id,
-                    cam_name,
-                    c_dir,
-                )
-
-        executor.submit(run_finalize_with_app_context, camera_name, chunk_dir)
-    return jsonify({
-        "success": True,
-        "message": f"Rerun finalization submitted for {len(camera_names)} camera(s)",
-        "cameras": camera_names,
-    })
-
-
 @bp.route("/<tournament_url>/update-settings", methods=["POST"])
 @login_required
 def update_tournament_settings(tournament_url):
