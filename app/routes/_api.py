@@ -378,10 +378,29 @@ def tournament_detail(tournament_url):
                 "profile_photo": getattr(p, "profile_photo", None) if p else None,
             }
         )
-    to_entries = [
-        {"user_id": e.user_id, "user_type": e.user_type}
-        for e in TO.query.filter_by(event=tournament_url).all()
-    ]
+    to_rows = TO.query.filter_by(event=tournament_url).all()
+    to_entries = []
+    for e in to_rows:
+        if e.user_type == "player":
+            user = Player.query.get(e.user_id)
+            user_name = user.name if user else e.user_id
+        else:
+            user = Team.query.get(e.user_id)
+            user_name = user.name if user else e.user_id
+        is_current = (
+            current_user.is_authenticated
+            and current_user.id == e.user_id
+            and current_user.__class__.__name__.lower() == e.user_type
+        )
+        to_entries.append(
+            {
+                "id": e.id,
+                "user_id": e.user_id,
+                "user_type": e.user_type,
+                "user_name": user_name,
+                "is_current_user": is_current,
+            }
+        )
     is_current_team_registered = False
     is_current_player_registered = False
     if current_user.is_authenticated:

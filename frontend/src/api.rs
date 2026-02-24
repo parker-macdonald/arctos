@@ -262,6 +262,28 @@ pub async fn update_tournament_settings(
     post_form_status(&url, params).await
 }
 
+pub async fn add_tournament_to(
+    tournament_url: &str,
+    user_type: &str,
+    user_id: &str,
+) -> Result<StatusResponse, String> {
+    let params = vec![
+        ("user_type".into(), user_type.to_string()),
+        ("user_id".into(), user_id.to_string()),
+    ];
+    let url = format!("{}/_api/{}/add-to", base(), tournament_url);
+    post_form_status(&url, &params).await
+}
+
+pub async fn remove_tournament_to(
+    tournament_url: &str,
+    to_id: i32,
+) -> Result<StatusResponse, String> {
+    let params = vec![("to_id".into(), to_id.to_string())];
+    let url = format!("{}/_api/{}/remove-to", base(), tournament_url);
+    post_form_status(&url, &params).await
+}
+
 pub async fn mark_team_paid(
     tournament_url: &str,
     registration_id: u32,
