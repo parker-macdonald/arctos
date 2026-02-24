@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Optional
 
+from app.domain.enums import MatchStatus, RegistrationStatus
 from app.error_values import Err, Ok, Result, allow_Q, option
 from app.exceptions import (
     ArctosError,
@@ -123,12 +124,19 @@ class RegistrationService:
         ).first()
 
         team_id = (team_id or "").strip() or None
-        status = "CONFIRMED" if not team_id else "PENDING_TEAM_APPROVAL"
+        status = (
+            RegistrationStatus.CONFIRMED
+            if not team_id
+            else RegistrationStatus.PENDING_TEAM_APPROVAL
+        )
 
         # Enforce exactly one PlayerRegistration row per (event, player).
         # If a player was previously rejected/cancelled, allow resubmission by updating that row.
         if existing_reg:
-            if existing_reg.status not in ("REJECTED", "CANCELLED"):
+            if existing_reg.status not in (
+                RegistrationStatus.REJECTED,
+                RegistrationStatus.CANCELLED,
+            ):
                 return Err(
                     ValidationError(
                         "You already have a registration for this tournament"
@@ -165,21 +173,35 @@ class RegistrationService:
     @staticmethod
     @allow_Q
     def deregister_team(tournament_url: str, team_id: str) -> Result[None, ArctosError]:
-        from models import Tournament, TeamRegistration, PlayerRegistration, db
+        from models import Match, Tournament, TeamRegistration, PlayerRegistration, db
 
         tournament = RegistrationService._get_tournament(tournament_url).Q()
         RegistrationService._require_registration_open_for_deregister(tournament).Q()
 
         team_registration = TeamRegistration.query.filter_by(
-            event=tournament_url, team=team_id, status="CONFIRMED"
+            event=tournament_url, team=team_id, status=RegistrationStatus.CONFIRMED
         ).first()
         if not team_registration:
             return Err(ValidationError("You are not registered for this tournament"))
 
-        team_registration.status = "CANCELLED"
+        in_progress = (
+            Match.query.filter_by(event=tournament_url, status=MatchStatus.IN_PROGRESS)
+            .filter(
+                (Match.team1 == team_id) | (Match.team2 == team_id)
+            )
+            .first()
+        )
+        if in_progress:
+            return Err(
+                ValidationError(
+                    "Cannot deregister once your team has played in a match that is in progress."
+                )
+            )
+
+        team_registration.status = RegistrationStatus.CANCELLED
 
         PlayerRegistration.query.filter_by(event=tournament_url, team=team_id).update(
-            {"status": "CANCELLED"}
+            {"status": RegistrationStatus.CANCELLED}
         )
 
         db.session.commit()
@@ -190,7 +212,7 @@ class RegistrationService:
     def deregister_player(
         tournament_url: str, player_id: str
     ) -> Result[None, ArctosError]:
-        from models import Tournament, PlayerRegistration, db
+        from models import Match, Tournament, PlayerRegistration, db
 
         tournament = RegistrationService._get_tournament(tournament_url).Q()
         RegistrationService._require_registration_open_for_deregister(tournament).Q()
@@ -198,14 +220,37 @@ class RegistrationService:
         player_registration = (
             PlayerRegistration.query.filter_by(event=tournament_url, player=player_id)
             .filter(
-                PlayerRegistration.status.in_(["PENDING_TEAM_APPROVAL", "CONFIRMED"])
+                PlayerRegistration.status.in_(
+                    [
+                        RegistrationStatus.PENDING_TEAM_APPROVAL,
+                        RegistrationStatus.CONFIRMED,
+                    ]
+                )
             )
             .first()
         )
         if not player_registration:
             return Err(ValidationError("You are not registered for this tournament"))
 
-        player_registration.status = "CANCELLED"
+        player_team = player_registration.team
+        if player_team:
+            in_progress = (
+                Match.query.filter_by(
+                    event=tournament_url, status=MatchStatus.IN_PROGRESS
+                )
+                .filter(
+                    (Match.team1 == player_team) | (Match.team2 == player_team)
+                )
+                .first()
+            )
+            if in_progress:
+                return Err(
+                    ValidationError(
+                        "Cannot deregister once you have played in a match that is in progress."
+                    )
+                )
+
+        player_registration.status = RegistrationStatus.CANCELLED
 
         db.session.commit()
         return Ok(None)

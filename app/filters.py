@@ -165,6 +165,7 @@ def camera_url(tournament_url, field_name):
         return ""
 
     try:
+        from flask_login.utils import urlencode
         from app.utils.camera_helpers import generate_camera_key
 
         access_key = generate_camera_key(tournament_url, field_name)
@@ -173,8 +174,8 @@ def camera_url(tournament_url, field_name):
         base_url = url_for(
             "tournaments.camera_page",
             tournament_url=tournament_url,
-            field=field_name,
-            key=access_key,
+            field=urlencode(field_name),
+            camera_key=access_key,
             _external=True,
         )
         return base_url

@@ -1,0 +1,1784 @@
+use crate::api;
+use crate::components::PenaltyDisplay;
+use crate::Route;
+use crate::stones_filter::BayesianOffsetFilter;
+use dioxus::prelude::*;
+use serde_json::Value;
+#[cfg(target_arch = "wasm32")]
+use gloo_timers::callback::Interval;
+
+/// Parse ISO timestamp to epoch seconds (for stones elapsed).
+/// Handles RFC3339 (with Z or offset), and naive ISO from Python (e.g. "2025-02-16T19:34:56.123456").
+fn parse_iso_epoch(s: &str) -> Option<i64> {
+    let s = s.trim();
+    chrono::DateTime::parse_from_rfc3339(s)
+        .ok()
+        .map(|dt| dt.timestamp())
+        .or_else(|| {
+            let with_z = if s.ends_with('Z') || s.contains('+') || (s.contains('-') && s.len() > 10) {
+                s.to_string()
+            } else {
+                format!("{}Z", s.trim_end_matches('z').trim_end_matches('Z'))
+            };
+            chrono::DateTime::parse_from_rfc3339(&with_z).ok().map(|dt| dt.timestamp())
+        })
+        .or_else(|| {
+            // Naive ISO from Python isoformat() (no Z), possibly with fractional seconds
+            let without_tz = s.trim_end_matches('z').trim_end_matches('Z').trim();
+            let base = if let Some(dot) = without_tz.find('.') {
+                &without_tz[..dot]
+            } else if let Some(plus) = without_tz.find('+') {
+                &without_tz[..plus]
+            } else {
+                without_tz
+            };
+            chrono::NaiveDateTime::parse_from_str(base, "%Y-%m-%dT%H:%M:%S")
+                .ok()
+                .map(|t| t.and_utc().timestamp())
+        })
+}
+
+#[cfg(target_arch = "wasm32")]
+fn now_epoch_secs() -> f64 {
+    js_sys::Date::new_0().get_time() / 1000.0
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn now_epoch_secs() -> f64 {
+    chrono::Utc::now().timestamp() as f64
+}
+
+/// Compute scores_by_set from points array (client-authoritative; same logic as server).
+fn scores_by_set_from_points(points: &[&Value]) -> Vec<(String, u64, u64)> {
+    let mut by_set: std::collections::BTreeMap<u64, (u64, u64)> = std::collections::BTreeMap::new();
+    for pt in points {
+        let set_num = pt.get("set_number").and_then(|n| n.as_u64()).unwrap_or(1);
+        let winner = pt.get("winner").and_then(|w| w.as_str()).unwrap_or("none");
+        let rerolled = pt.get("rerolled").and_then(|r| r.as_bool()).unwrap_or(false);
+        if rerolled {
+            continue;
+        }
+        let entry = by_set.entry(set_num).or_insert((0, 0));
+        if winner == "TEAM1" {
+            entry.0 += 1;
+        } else if winner == "TEAM2" {
+            entry.1 += 1;
+        }
+    }
+    by_set
+        .into_iter()
+        .map(|(k, (t1, t2))| (k.to_string(), t1, t2))
+        .collect()
+}
+
+/// Stones elapsed = number of global 1.5s beat boundaries crossed (so counters tick in sync with global clock).
+fn stones_elapsed_beats(stamp_opt: Option<&str>, end_opt: Option<&str>) -> u32 {
+    const BEAT: f64 = 1.5;
+    let start = stamp_opt
+        .and_then(parse_iso_epoch)
+        .unwrap_or(0) as f64;
+    let end = end_opt
+        .and_then(parse_iso_epoch)
+        .map(|t| t as f64)
+        .unwrap_or_else(now_epoch_secs);
+    let start_beat = (start / BEAT).floor() as i64;
+    let end_beat = (end / BEAT).floor() as i64;
+    (end_beat - start_beat).max(0) as u32
+}
+
+/// Stones elapsed with millisecond precision (global beat boundaries, same as table).
+fn stones_elapsed_beats_ms(stamp_opt: Option<&str>, end_opt: Option<&str>) -> u32 {
+    const BEAT: f64 = 1.5;
+    let start = stamp_opt
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        .map(|dt| dt.timestamp_millis() as f64 / 1000.0)
+        .unwrap_or(0.0);
+    let end = end_opt
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        .map(|dt| dt.timestamp_millis() as f64 / 1000.0)
+        .unwrap_or_else(now_epoch_secs);
+    let start_beat = (start / BEAT).floor() as i64;
+    let end_beat = (end / BEAT).floor() as i64;
+    (end_beat - start_beat).max(0) as u32
+}
+
+/// Stones elapsed = global 1.5s beat boundaries crossed. Uses Bayesian filter for server time when end is None (ongoing point).
+#[cfg(target_arch = "wasm32")]
+fn stones_elapsed_with_filter(
+    stamp_opt: Option<&str>,
+    end_opt: Option<&str>,
+    filter: &Signal<BayesianOffsetFilter>,
+) -> u32 {
+    const BEAT: f64 = 1.5;
+    let start = match stamp_opt.and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok()) {
+        Some(parsed) => parsed.timestamp_millis() as f64 / 1000.0,
+        None => return 0,
+    };
+    let end = if let Some(e) = end_opt {
+        if let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(e) {
+            parsed.timestamp_millis() as f64 / 1000.0
+        } else {
+            let client_time = js_sys::Date::now() / 1000.0;
+            client_time + filter.read().get_mean()
+        }
+    } else {
+        let client_time = js_sys::Date::now() / 1000.0;
+        client_time + filter.read().get_mean()
+    };
+    let start_beat = (start / BEAT).floor() as i64;
+    let end_beat = (end / BEAT).floor() as i64;
+    (end_beat - start_beat).max(0) as u32
+}
+
+#[component]
+pub fn RunMatch(url: String, match_id: String) -> Element {
+    let navigator = use_navigator();
+    let url_for_detail = url.clone();
+    let id_for_detail = match_id.clone();
+    let detail = use_resource(move || {
+        let u = url_for_detail.clone();
+        let id = id_for_detail.clone();
+        async move {
+            api::match_detail(&u, Some(&id), None)
+                .await
+                .map_err(|e| e.to_string())
+        }
+    });
+
+    let state_signal = use_signal(|| None as Option<Result<Value, String>>);
+    let state_loaded = use_signal(|| false);
+    let url_for_state = url.clone();
+    let id_for_state = match_id.clone();
+    use_effect(move || {
+        if state_loaded() {
+            return;
+        }
+        let u = url_for_state.clone();
+        let id = id_for_state.clone();
+        let mut state_signal = state_signal;
+        let mut state_loaded = state_loaded;
+        state_loaded.set(true);
+        spawn(async move {
+            match api::match_state(&u, &id).await {
+                Ok(v) => state_signal.set(Some(Ok(v))),
+                Err(e) => state_signal.set(Some(Err(e))),
+            }
+        });
+    });
+
+    // In-progress point: when Some, button shows "End Point" and we tick stones.
+    let mut current_point = use_signal(|| None as Option<String>);
+    // Sync current_point from state: if latest point has no end_stamp, we're in End Point mode.
+    let state_for_sync = state_signal();
+    if let Some(Ok(ref v)) = state_for_sync {
+        let points_arr = v.get("points").and_then(|p| p.as_array());
+        let points: Vec<&Value> = points_arr.map(|a| a.iter().collect()).unwrap_or_default();
+        if let Some(last) = points.last() {
+            let end_stamp = last.get("end_stamp").and_then(|e| e.as_str());
+            if end_stamp.is_none() || end_stamp == Some("") {
+                let uuid = last.get("uuid").and_then(|u| u.as_str()).unwrap_or("");
+                if !uuid.is_empty() && current_point().as_deref() != Some(uuid) {
+                    current_point.set(Some(uuid.to_string()));
+                }
+            } else if current_point().as_deref() == last.get("uuid").and_then(|u| u.as_str()) {
+                current_point.set(None);
+            }
+        }
+    }
+
+    // Bayesian filter for server time sync (stones elapsed during ongoing point).
+    #[cfg(target_arch = "wasm32")]
+    let time_filter = use_signal(|| BayesianOffsetFilter::default());
+    #[cfg(target_arch = "wasm32")]
+    let server_time_loop_started = use_signal(|| false);
+    #[cfg(target_arch = "wasm32")]
+    {
+        let binding = detail.value();
+        let mut time_filter = time_filter;
+        let mut server_time_loop_started = server_time_loop_started;
+        use_effect(move || {
+            if server_time_loop_started() {
+                return;
+            }
+            let guard = binding.try_read();
+            let Ok(ref g) = guard else { return };
+            let Some(Ok(d)) = g.as_ref() else { return };
+            if d.match_data.set_type.as_deref() == Some("STONES") && d.match_data.status == "IN_PROGRESS" {
+                server_time_loop_started.set(true);
+                let mut filter = time_filter;
+                spawn(async move {
+                    loop {
+                        let client_send = js_sys::Date::now() / 1000.0;
+                        if let Ok(res) = api::server_time().await {
+                            let client_receive = js_sys::Date::now() / 1000.0;
+                            let rtt = client_receive - client_send;
+                            let offset = res.server_time - client_receive + (rtt / 2.0);
+                            filter.write().update(offset);
+                        }
+                        gloo_timers::future::TimeoutFuture::new(997).await;
+                    }
+                });
+            }
+        });
+    }
+
+    // Tick for live stones elapsed and time elapsed (every 100ms for accuracy).
+    let live_tick = use_signal(|| 0u32);
+    #[cfg(target_arch = "wasm32")]
+    let live_tick_interval = use_signal(|| None as Option<Interval>);
+    #[cfg(target_arch = "wasm32")]
+    {
+        let mut live_tick = live_tick;
+        let mut live_tick_interval = live_tick_interval;
+        use_effect(move || {
+            let _ = current_point();
+            if live_tick_interval.read().is_some() {
+                return;
+            }
+            let handle = Interval::new(100, move || {
+                live_tick.set(live_tick() + 1);
+            });
+            live_tick_interval.set(Some(handle));
+        });
+    }
+
+    let action_error = use_signal(|| Option::<String>::None);
+    let mut notes_modal_point_id = use_signal(|| None as Option<String>);
+    let mut notes_modal_notes = use_signal(|| None as Option<Result<Vec<Value>, String>>);
+    let mut notes_modal_new_text = use_signal(|| String::new());
+    let mut notes_modal_target = use_signal(|| "match".to_string());
+    let mut notes_modal_player_id = use_signal(|| None as Option<String>);
+    let mut notes_modal_player_query = use_signal(|| String::new());
+    // Point row from which the user opened the Penalties modal; delete is only allowed for that point's penalties.
+    let mut penalties_modal_point_id = use_signal(|| None as Option<String>);
+    let mut penalties_step = use_signal(|| 1);
+    let mut penalties_selected_player_id = use_signal(|| None as Option<String>);
+    /// Single selection: Some(pt_id) or None; "Other" is separate (penalties_other_selected).
+    let mut penalties_selected_type = use_signal(|| None as Option<i32>);
+    let mut penalties_other_text = use_signal(|| String::new());
+    let mut penalties_other_selected = use_signal(|| false);
+    /// (player_id, penalties) after fetching for selected player.
+    let mut penalty_history_signal = use_signal(|| None as Option<(String, Vec<crate::types::PlayerPenaltyHistoryItem>)>);
+    /// Display name of the player currently selected in the penalties modal (step 2).
+    let mut penalties_selected_player_display = use_signal(|| String::new());
+    let mut point_notes_map_signal =
+        use_signal(|| std::collections::HashMap::<String, Vec<Value>>::new());
+    let mut point_notes_seeded = use_signal(|| false);
+    let mut penalty_desc_modal = use_signal(|| None::<String>);
+    // Local stones remaining (for STONES set type); synced from match/state when not ticking.
+    let mut stones_remaining = use_signal(|| 100u32);
+    // When true, stones input shows stones_edit_value so we don't overwrite typing with display_stones.
+    let mut stones_input_focused = use_signal(|| false);
+    let mut stones_edit_value = use_signal(|| String::new());
+    // Time elapsed (seconds) from match confirmed start (UTC); correct after reload.
+    let mut time_elapsed_secs = use_signal(|| 0u64);
+
+    use_effect(move || {
+        if point_notes_seeded() {
+            return;
+        }
+        let binding = detail.value();
+        let Ok(guard) = binding.try_read() else { return };
+        let Some(Ok(ref d)) = guard.as_ref() else { return };
+        point_notes_seeded.set(true);
+        let mut map = point_notes_map_signal();
+        for (pid, notes) in &d.point_notes_map {
+            let v: Vec<Value> = notes
+                .iter()
+                .filter_map(|n| serde_json::to_value(n).ok())
+                .collect();
+            map.insert(pid.clone(), v);
+        }
+        point_notes_map_signal.set(map);
+    });
+
+    let detail_view = match detail.value().try_read() {
+        Ok(guard) => match guard.as_ref() {
+            Some(Ok(d)) => {
+                let m = &d.match_data;
+                let set_type_stones = m.set_type.as_deref() == Some("STONES");
+                let initial_stones = m
+                    .stones_remaining
+                    .or(m.stones_per_set)
+                    .unwrap_or(100);
+                // Initialize stones once from match
+                if stones_remaining() == 100 && initial_stones != 100 {
+                    stones_remaining.set(initial_stones);
+                }
+                let team1 = m.team1_name.as_str();
+                let team2 = m.team2_name.as_str();
+                // Refs by pseudonym (refs_display), same as team1_name/team2_name
+                let refs_display = m
+                    .refs_display
+                    .as_deref()
+                    .or(m.r#refs_initial.as_deref())
+                    .or(m.r#refs.as_deref())
+                    .unwrap_or("-");
+                let field_display = m.field.as_deref().unwrap_or("TBA");
+                let length_display = m.nominal_length.map(|n| format!("{} min", n));
+                // Elapsed since match confirmed start (UTC). Difference with current time is
+                // timezone-independent; correct after page reload.
+                let start_iso = m.confirmed_start_time.as_deref();
+                let _ = live_tick();
+                let now_secs = now_epoch_secs() as u64;
+                let time_elapsed_str = match start_iso.and_then(parse_iso_epoch) {
+                    Some(start_secs) => {
+                        let start_u = start_secs.max(0) as u64;
+                        let elapsed = now_secs.saturating_sub(start_u);
+                        time_elapsed_secs.set(elapsed);
+                        format!("{:02}:{:02}", elapsed / 60, elapsed % 60)
+                    }
+                    None => {
+                        time_elapsed_secs.set(0);
+                        "—".to_string()
+                    }
+                };
+
+                let state_opt = state_signal();
+                let state_value: Option<&Value> = state_opt.as_ref().and_then(|r| r.as_ref().ok());
+                let points: Vec<&Value> = state_value
+                    .and_then(|v| v.get("points").and_then(|p| p.as_array()))
+                    .map(|a| a.iter().collect())
+                    .unwrap_or_default();
+                let score_rows: Vec<(String, u64, u64)> = scores_by_set_from_points(&points);
+                let finalized = state_value
+                    .and_then(|v| v.get("finalized_at").and_then(|f| f.as_str()))
+                    .is_some();
+                let show_notes_modal = notes_modal_point_id().is_some();
+                let show_penalties_modal = penalties_modal_point_id().is_some();
+                let notes_modal_pid = notes_modal_point_id().clone().unwrap_or_default();
+                let penalties_modal_pid = penalties_modal_point_id().clone().unwrap_or_default();
+                let url_notes = url.clone();
+                let id_notes = match_id.clone();
+                let url_notes_submit = url_notes.clone();
+                let id_notes_submit = id_notes.clone();
+                let team1_notes = team1.to_string();
+                let team2_notes = team2.to_string();
+
+                let default_set = points
+                    .last()
+                    .and_then(|p| p.get("set_number").and_then(|n| n.as_u64()))
+                    .unwrap_or(1) as u32;
+
+                struct PointRow {
+                    point_id: String,
+                    set_num: u32,
+                    winner: String,
+                    rerolled: bool,
+                    elapsed: u32,
+                }
+                let point_rows: Vec<PointRow> = points
+                    .iter()
+                    .map(|pt| {
+                        let point_id = pt.get("uuid").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                        let set_num = pt.get("set_number").and_then(|v| v.as_u64()).unwrap_or(1) as u32;
+                        let winner = pt.get("winner").and_then(|v| v.as_str()).unwrap_or("none").to_string();
+                        let rerolled = pt.get("rerolled").and_then(|v| v.as_bool()).unwrap_or(false);
+                        let stamp = pt.get("stamp").and_then(|s| s.as_str());
+                        let end_stamp = pt.get("end_stamp").and_then(|e| e.as_str());
+                        #[cfg(target_arch = "wasm32")]
+                        let elapsed = stones_elapsed_with_filter(stamp, end_stamp, &time_filter);
+                        #[cfg(not(target_arch = "wasm32"))]
+                        let elapsed = stones_elapsed_beats(stamp, end_stamp);
+                        PointRow { point_id, set_num, winner, rerolled, elapsed }
+                    })
+                    .collect();
+
+                // Stones display: during an active point show stones_at_start - elapsed (ticks down); otherwise show stones_remaining.
+                let display_stones = if set_type_stones {
+                    if let Some(ref cp) = current_point() {
+                        points
+                            .iter()
+                            .find(|p| p.get("uuid").and_then(|u| u.as_str()) == Some(cp.as_str()))
+                            .and_then(|pt| {
+                                let at_start = pt.get("stones_at_start").and_then(|s| s.as_u64())?;
+                                let stamp = pt.get("stamp").and_then(|s| s.as_str());
+                                #[cfg(target_arch = "wasm32")]
+                                let elapsed = stones_elapsed_with_filter(stamp, None, &time_filter) as u64;
+                                #[cfg(not(target_arch = "wasm32"))]
+                                let elapsed = stones_elapsed_beats(stamp, None) as u64;
+                                Some((at_start.saturating_sub(elapsed)) as u32)
+                            })
+                            .unwrap_or(stones_remaining())
+                    } else {
+                        stones_remaining()
+                    }
+                } else {
+                    stones_remaining()
+                };
+                let stones_input_value = if stones_input_focused() {
+                    stones_edit_value().clone()
+                } else {
+                    display_stones.to_string()
+                };
+                let url_stones_blur = url.clone();
+                let id_stones_blur = match_id.clone();
+
+                let url_start = url.clone();
+                let id_start = match_id.clone();
+                let mut current_point = current_point;
+                let mut stones_remaining = stones_remaining;
+                let mut state_signal_start = state_signal;
+                let on_start_end_point = move |_| {
+                    let u = url_start.clone();
+                    let id = id_start.clone();
+                    let point_opt = current_point();
+                    let mut err_out = action_error;
+                    let mut current_point = current_point;
+                    let mut stones_remaining = stones_remaining;
+                    let mut state_signal = state_signal_start;
+                    let set_type_stones = set_type_stones;
+                    let default_set = default_set;
+                    let stones_val = stones_remaining();
+                    if let Some(point_id) = point_opt {
+                        // End current point — optimistic: set end_stamp and clear current_point
+                        let end_iso = chrono::Utc::now().to_rfc3339();
+                        let prev = state_signal().clone();
+                        let mut final_stones_for_api: Option<u32> = None;
+                        if let Some(Ok(ref state)) = prev.clone() {
+                            let mut state = state.clone();
+                            if let Some(points) = state.get_mut("points").and_then(|p| p.as_array_mut()) {
+                                for p in points.iter_mut() {
+                                    if p.get("uuid").and_then(|v| v.as_str()) == Some(point_id.as_str()) {
+                                        p["end_stamp"] = serde_json::json!(end_iso);
+                                        if set_type_stones {
+                                            let at_start = p.get("stones_at_start").and_then(|s| s.as_u64()).unwrap_or(0);
+                                            let stamp = p.get("stamp").and_then(|s| s.as_str());
+                                            let elapsed = stones_elapsed_beats_ms(stamp, Some(end_iso.as_str())) as u64;
+                                            let remaining = (at_start.saturating_sub(elapsed)) as u32;
+                                            stones_remaining.set(remaining);
+                                            final_stones_for_api = Some(remaining);
+                                        }
+                                        break;
+                                    }
+                                }
+                            }
+                            state_signal.set(Some(Ok(state)));
+                        }
+                        current_point.set(None);
+                        let point_id = point_id.clone();
+                        let id_for_stones = id.clone();
+                        let u_for_stones = u.clone();
+                        spawn(async move {
+                            err_out.set(None);
+                            let body = serde_json::json!({ "point_id": point_id, "end_stamp": end_iso });
+                            match api::update_point(&u_for_stones, &point_id, &body).await {
+                                Ok(_) => {
+                                    err_out.set(None);
+                                    if let Some(n) = final_stones_for_api {
+                                        let _ = api::update_stones(&u_for_stones, &id_for_stones, n).await;
+                                    }
+                                }
+                                Err(e) => {
+                                    err_out.set(Some(e));
+                                    state_signal.set(prev);
+                                    current_point.set(Some(point_id));
+                                }
+                            }
+                        });
+                    } else {
+                        // Start new point — optimistic: add pending point, set current_point
+                        let pending_id = format!("pending-{}", chrono::Utc::now().timestamp_millis());
+                        let stamp_iso = chrono::Utc::now().to_rfc3339();
+                        let new_point = serde_json::json!({
+                            "uuid": pending_id,
+                            "set_number": default_set,
+                            "winner": "none",
+                            "rerolled": false,
+                            "stamp": stamp_iso,
+                            "end_stamp": serde_json::Value::Null,
+                            "stones_at_start": if set_type_stones { serde_json::json!(stones_val) } else { serde_json::Value::Null },
+                        });
+                        let prev = state_signal().clone();
+                        if let Some(Ok(ref state)) = prev.clone() {
+                            let mut state = state.clone();
+                            if let Some(points) = state.get_mut("points").and_then(|p| p.as_array_mut()) {
+                                points.push(new_point);
+                            }
+                            state_signal.set(Some(Ok(state)));
+                        }
+                        current_point.set(Some(pending_id.clone()));
+                        let stones_at_start = if set_type_stones { Some(stones_val) } else { None };
+                        spawn(async move {
+                            err_out.set(None);
+                            match api::add_point(&u, &id, default_set, Some(chrono::Utc::now().timestamp_millis() as u64), stones_at_start).await {
+                                Ok(resp) => {
+                                    let real_id = resp.get("point_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                                    if !real_id.is_empty() {
+                                        if let Some(Ok(ref state)) = state_signal() {
+                                            let mut state = state.clone();
+                                            if let Some(points) = state.get_mut("points").and_then(|p| p.as_array_mut()) {
+                                                for p in points.iter_mut() {
+                                                    if p.get("uuid").and_then(|v| v.as_str()) == Some(pending_id.as_str()) {
+                                                        p["uuid"] = serde_json::json!(real_id);
+                                                        break;
+                                                    }
+                                                }
+                                            }
+                                            state_signal.set(Some(Ok(state)));
+                                        }
+                                        current_point.set(Some(real_id));
+                                    }
+                                    err_out.set(None);
+                                }
+                                Err(e) => {
+                                    err_out.set(Some(e));
+                                    state_signal.set(prev);
+                                    current_point.set(None);
+                                }
+                            }
+                        });
+                    }
+                };
+
+                let url_mobile = url.clone();
+                let id_mobile = match_id.clone();
+                let mut current_point_mobile = current_point;
+                let mut stones_remaining_mobile = stones_remaining;
+                let mut state_signal_mobile = state_signal;
+                let on_start_end_point_mobile = move |_| {
+                    let u = url_mobile.clone();
+                    let id = id_mobile.clone();
+                    let point_opt = current_point_mobile();
+                    let mut err_out = action_error;
+                    let mut current_point = current_point_mobile;
+                    let mut stones_remaining = stones_remaining_mobile;
+                    let mut state_signal = state_signal_mobile;
+                    let set_type_stones = set_type_stones;
+                    let default_set = default_set;
+                    let stones_val = stones_remaining();
+                    if let Some(point_id) = point_opt {
+                        let end_iso = chrono::Utc::now().to_rfc3339();
+                        let prev = state_signal().clone();
+                        let mut final_stones_for_api: Option<u32> = None;
+                        if let Some(Ok(ref state)) = prev.clone() {
+                            let mut state = state.clone();
+                            if let Some(points) = state.get_mut("points").and_then(|p| p.as_array_mut()) {
+                                for p in points.iter_mut() {
+                                    if p.get("uuid").and_then(|v| v.as_str()) == Some(point_id.as_str()) {
+                                        p["end_stamp"] = serde_json::json!(end_iso);
+                                        if set_type_stones {
+                                            let at_start = p.get("stones_at_start").and_then(|s| s.as_u64()).unwrap_or(0);
+                                            let stamp = p.get("stamp").and_then(|s| s.as_str());
+                                            let elapsed = stones_elapsed_beats_ms(stamp, Some(end_iso.as_str())) as u64;
+                                            let remaining = (at_start.saturating_sub(elapsed)) as u32;
+                                            stones_remaining.set(remaining);
+                                            final_stones_for_api = Some(remaining);
+                                        }
+                                        break;
+                                    }
+                                }
+                            }
+                            state_signal.set(Some(Ok(state)));
+                        }
+                        current_point.set(None);
+                        let point_id = point_id.clone();
+                        let id_for_stones = id.clone();
+                        let u_for_stones = u.clone();
+                        spawn(async move {
+                            err_out.set(None);
+                            let body = serde_json::json!({ "point_id": point_id, "end_stamp": end_iso });
+                            match api::update_point(&u_for_stones, &point_id, &body).await {
+                                Ok(_) => {
+                                    err_out.set(None);
+                                    if let Some(n) = final_stones_for_api {
+                                        let _ = api::update_stones(&u_for_stones, &id_for_stones, n).await;
+                                    }
+                                }
+                                Err(e) => {
+                                    err_out.set(Some(e));
+                                    state_signal.set(prev);
+                                    current_point.set(Some(point_id));
+                                }
+                            }
+                        });
+                    } else {
+                        let pending_id = format!("pending-{}", chrono::Utc::now().timestamp_millis());
+                        let stamp_iso = chrono::Utc::now().to_rfc3339();
+                        let new_point = serde_json::json!({
+                            "uuid": pending_id,
+                            "set_number": default_set,
+                            "winner": "none",
+                            "rerolled": false,
+                            "stamp": stamp_iso,
+                            "end_stamp": serde_json::Value::Null,
+                            "stones_at_start": if set_type_stones { serde_json::json!(stones_val) } else { serde_json::Value::Null },
+                        });
+                        let prev = state_signal().clone();
+                        if let Some(Ok(ref state)) = prev.clone() {
+                            let mut state = state.clone();
+                            if let Some(points) = state.get_mut("points").and_then(|p| p.as_array_mut()) {
+                                points.push(new_point);
+                            }
+                            state_signal.set(Some(Ok(state)));
+                        }
+                        current_point.set(Some(pending_id.clone()));
+                        let stones_at_start = if set_type_stones { Some(stones_val) } else { None };
+                        spawn(async move {
+                            err_out.set(None);
+                            match api::add_point(&u, &id, default_set, Some(chrono::Utc::now().timestamp_millis() as u64), stones_at_start).await {
+                                Ok(resp) => {
+                                    let real_id = resp.get("point_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                                    if !real_id.is_empty() {
+                                        if let Some(Ok(ref state)) = state_signal() {
+                                            let mut state = state.clone();
+                                            if let Some(points) = state.get_mut("points").and_then(|p| p.as_array_mut()) {
+                                                for p in points.iter_mut() {
+                                                    if p.get("uuid").and_then(|v| v.as_str()) == Some(pending_id.as_str()) {
+                                                        p["uuid"] = serde_json::json!(real_id);
+                                                        break;
+                                                    }
+                                                }
+                                            }
+                                            state_signal.set(Some(Ok(state)));
+                                        }
+                                        current_point.set(Some(real_id));
+                                    }
+                                    err_out.set(None);
+                                }
+                                Err(e) => {
+                                    err_out.set(Some(e));
+                                    state_signal.set(prev);
+                                    current_point.set(None);
+                                }
+                            }
+                        });
+                    }
+                };
+
+                let url_finalize_btn = url.clone();
+                let id_finalize_btn = match_id.clone();
+                let url_finalize_mobile = url.clone();
+                let id_finalize_mobile = match_id.clone();
+
+                let has_in_progress = current_point().is_some();
+                let point_button_text = if has_in_progress {
+                    "End Point"
+                } else {
+                    "Start Point"
+                };
+                let point_button_class = if has_in_progress {
+                    "btn btn-danger btn-lg w-100 mobile-sticky-button"
+                } else {
+                    "btn btn-success btn-lg w-100 mobile-sticky-button"
+                };
+
+                let run_match_css = ".set-number-controls{display:flex;flex-direction:column;align-items:center;gap:2px;width:40px}\
+                    .set-number-controls .set-number-display{font-size:1rem;font-weight:600;text-align:center;min-width:30px;padding:4px 0}\
+                    .set-number-controls button{width:28px;height:24px;padding:0;font-size:14px}\
+                    .delete-point-btn{background:#dc3545;color:white;border:none;width:28px;height:28px;padding:0;border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:16px;line-height:1;cursor:pointer}\
+                    .delete-point-btn:hover{background:#c82333}\
+                    @media (max-width:768px){.mobile-button-wrapper{position:fixed;bottom:0;left:0;right:0;z-index:1000;background:white;padding:0;margin:0;box-shadow:0 -2px 10px rgba(0,0,0,0.1);display:flex;flex-direction:row}\
+                    .mobile-button-wrapper .btn{border-radius:0;margin:0;flex:1}\
+                    .container .mobile-sticky-button,.container #finalize-match-btn{display:none}}";
+                let mut state_signal = state_signal;
+                let mut action_error = action_error;
+                let set_type_stones_reroll = set_type_stones;
+                let mut stones_remaining_reroll = stones_remaining;
+                let point_table_rows: Vec<_> = point_rows
+                    .iter()
+                    .map(|r| {
+                        let pt_id = r.point_id.as_str();
+                        let set_num = r.set_num;
+                        let winner_val = r.winner.as_str();
+                        let rerolled = r.rerolled;
+                        let elapsed = r.elapsed;
+                        let u_inc = url.clone();
+                        let u_dec = url.clone();
+                        let u_winner = url.clone();
+                        let u_reroll = url.clone();
+                        let u_del = url.clone();
+                        let u_notes = url.clone();
+                        let id_notes = match_id.clone();
+                        let id_reroll_match = match_id.clone();
+                        let pid = r.point_id.clone();
+                        let pid_inc = pid.clone();
+                        let pid_dec = pid.clone();
+                        let pid_winner = pid.clone();
+                        let pid_reroll = pid.clone();
+                        let pid_del = pid.clone();
+                        let pid_list = pid.clone();
+                        let team1 = team1.to_string();
+                        let team2 = team2.to_string();
+                        rsx! {
+                            tr { key: "{pt_id}", id: "point-row-{pt_id}",
+                                td {
+                                    div { class: "set-number-controls",
+                                        button {
+                                            class: "btn btn-sm btn-outline-secondary",
+                                            r#type: "button",
+                                            onclick: move |_| {
+                                                let new_set = (set_num + 1).max(1);
+                                                let prev = state_signal().clone();
+                                                if let Some(Ok(ref state)) = prev.clone() {
+                                                    let mut state = state.clone();
+                                                    if let Some(points) = state.get_mut("points").and_then(|p| p.as_array_mut()) {
+                                                        for p in points.iter_mut() {
+                                                            if p.get("uuid").and_then(|v| v.as_str()) == Some(pid_inc.as_str()) {
+                                                                p["set_number"] = serde_json::json!(new_set);
+                                                                break;
+                                                            }
+                                                        }
+                                                    }
+                                                    state_signal.set(Some(Ok(state)));
+                                                }
+                                                let u = u_inc.clone();
+                                                let p = pid_inc.clone();
+                                                let mut state_signal = state_signal;
+                                                let mut action_error = action_error;
+                                                spawn(async move {
+                                                    let body = serde_json::json!({ "point_id": p, "set_number": new_set });
+                                                    match api::update_point(&u, &p, &body).await {
+                                                        Ok(_) => { action_error.set(None); }
+                                                        Err(e) => { action_error.set(Some(e)); state_signal.set(prev); }
+                                                    }
+                                                });
+                                            },
+                                            "+"
+                                        }
+                                        span { class: "set-number-display", id: "set-display-{pt_id}", "{set_num}" }
+                                        button {
+                                            class: "btn btn-sm btn-outline-secondary",
+                                            r#type: "button",
+                                            onclick: move |_| {
+                                                let new_set = (set_num as i64 - 1).max(1) as u32;
+                                                let prev = state_signal().clone();
+                                                if let Some(Ok(ref state)) = prev.clone() {
+                                                    let mut state = state.clone();
+                                                    if let Some(points) = state.get_mut("points").and_then(|p| p.as_array_mut()) {
+                                                        for p in points.iter_mut() {
+                                                            if p.get("uuid").and_then(|v| v.as_str()) == Some(pid_dec.as_str()) {
+                                                                p["set_number"] = serde_json::json!(new_set);
+                                                                break;
+                                                            }
+                                                        }
+                                                    }
+                                                    state_signal.set(Some(Ok(state)));
+                                                }
+                                                let u = u_dec.clone();
+                                                let p = pid_dec.clone();
+                                                let mut state_signal = state_signal;
+                                                let mut action_error = action_error;
+                                                spawn(async move {
+                                                    let body = serde_json::json!({ "point_id": p, "set_number": new_set });
+                                                    match api::update_point(&u, &p, &body).await {
+                                                        Ok(_) => { action_error.set(None); }
+                                                        Err(e) => { action_error.set(Some(e)); state_signal.set(prev); }
+                                                    }
+                                                });
+                                            },
+                                            "−"
+                                        }
+                                    }
+                                }
+                                td { id: "stones-{pt_id}", "{elapsed}" }
+                                td {
+                                    select {
+                                        class: "form-select form-select-sm",
+                                        value: "{winner_val}",
+                                        onchange: move |ev| {
+                                            let val = ev.value();
+                                            let prev = state_signal().clone();
+                                            if let Some(Ok(ref state)) = prev.clone() {
+                                                let mut state = state.clone();
+                                                if let Some(points) = state.get_mut("points").and_then(|p| p.as_array_mut()) {
+                                                    for p in points.iter_mut() {
+                                                        if p.get("uuid").and_then(|v| v.as_str()) == Some(pid_winner.as_str()) {
+                                                            p["winner"] = serde_json::json!(val);
+                                                            break;
+                                                        }
+                                                    }
+                                                }
+                                                state_signal.set(Some(Ok(state)));
+                                            }
+                                            let u = u_winner.clone();
+                                            let p = pid_winner.clone();
+                                            let mut state_signal = state_signal;
+                                            let mut action_error = action_error;
+                                            spawn(async move {
+                                                let body = serde_json::json!({ "point_id": p, "winner": val });
+                                                match api::update_point(&u, &p, &body).await {
+                                                    Ok(_) => { action_error.set(None); }
+                                                    Err(e) => { action_error.set(Some(e)); state_signal.set(prev); }
+                                                }
+                                            });
+                                        },
+                                        option { value: "none", selected: winner_val == "none", "None" }
+                                        option { value: "TEAM1", selected: winner_val == "TEAM1", "{team1}" }
+                                        option { value: "TEAM2", selected: winner_val == "TEAM2", "{team2}" }
+                                    }
+                                }
+                                td {
+                                    div { class: "form-check",
+                                        input {
+                                            class: "form-check-input",
+                                            r#type: "checkbox",
+                                            checked: rerolled,
+                                            onchange: move |ev| {
+                                                let checked = ev.checked();
+                                                let prev = state_signal().clone();
+                                                if let Some(Ok(ref state)) = prev.clone() {
+                                                    let mut state = state.clone();
+                                                    if let Some(points) = state.get_mut("points").and_then(|p| p.as_array_mut()) {
+                                                        for p in points.iter_mut() {
+                                                            if p.get("uuid").and_then(|v| v.as_str()) == Some(pid_reroll.as_str()) {
+                                                                p["rerolled"] = serde_json::json!(checked);
+                                                                break;
+                                                            }
+                                                        }
+                                                    }
+                                                    state_signal.set(Some(Ok(state)));
+                                                }
+                                                // Adjust stone counter: rerun = add this point's stones back, un-rerun = subtract
+                                                let prev_stones = stones_remaining_reroll();
+                                                let (stones_to_send, stones_prev) = if set_type_stones_reroll {
+                                                    let new_val = if checked {
+                                                        prev_stones + elapsed
+                                                    } else {
+                                                        prev_stones.saturating_sub(elapsed)
+                                                    };
+                                                    stones_remaining_reroll.set(new_val);
+                                                    (Some(new_val), prev_stones)
+                                                } else {
+                                                    (None, prev_stones)
+                                                };
+                                                let u = u_reroll.clone();
+                                                let id_reroll = id_reroll_match.clone();
+                                                let p = pid_reroll.clone();
+                                                let mut state_signal = state_signal;
+                                                let mut action_error = action_error;
+                                                let mut stones_remaining_reroll = stones_remaining_reroll;
+                                                spawn(async move {
+                                                    let body = serde_json::json!({ "point_id": p, "rerolled": checked });
+                                                    match api::update_point(&u, &p, &body).await {
+                                                        Ok(_) => {
+                                                            action_error.set(None);
+                                                            if let Some(n) = stones_to_send {
+                                                                let _ = api::update_stones(&u, &id_reroll, n).await;
+                                                            }
+                                                        }
+                                                        Err(e) => {
+                                                            action_error.set(Some(e));
+                                                            state_signal.set(prev);
+                                                            if stones_to_send.is_some() {
+                                                                stones_remaining_reroll.set(stones_prev);
+                                                            }
+                                                        }
+                                                    }
+                                                });
+                                            },
+                                        }
+                                    }
+                                }
+                                td {
+                                    div { class: "d-flex gap-1",
+                                        {
+                                            let pid_notes = pid.clone();
+                                            let pid_penalties = pid.clone();
+                                            let u_notes_btn = u_notes.clone();
+                                            let id_notes_btn = id_notes.clone();
+                                            rsx! {
+                                                button {
+                                                    class: "btn btn-sm btn-outline-secondary",
+                                                    title: "Point Note",
+                                                    onclick: move |_| {
+                                                        notes_modal_point_id.set(Some(pid_notes.clone()));
+                                                        notes_modal_notes.set(None);
+                                                        notes_modal_new_text.set(String::new());
+                                                        let u = u_notes_btn.clone();
+                                                        let id = id_notes_btn.clone();
+                                                        let pid_fetch = pid_notes.clone();
+                                                        let mut notes_modal_notes = notes_modal_notes;
+                                                        let mut notes_modal_new_text = notes_modal_new_text;
+                                                        let mut point_notes_map_signal = point_notes_map_signal;
+                                                        spawn(async move {
+                                                            match api::get_point_notes(&u, &id, &pid_fetch).await {
+                                                                Ok(v) => {
+                                                                    let notes = v.get("notes").and_then(|n| n.as_array()).cloned().unwrap_or_default();
+                                                                    let point_note_text = notes.iter()
+                                                                        .find(|n| n.get("target").and_then(|t| t.as_str()) == Some("match"))
+                                                                        .and_then(|n| n.get("text").and_then(|t| t.as_str()))
+                                                                        .unwrap_or("")
+                                                                        .to_string();
+                                                                    notes_modal_new_text.set(point_note_text);
+                                                                    notes_modal_notes.set(Some(Ok(notes.clone())));
+                                                                    let mut m = point_notes_map_signal();
+                                                                    m.insert(pid_fetch.clone(), notes);
+                                                                    point_notes_map_signal.set(m);
+                                                                }
+                                                                Err(e) => notes_modal_notes.set(Some(Err(e))),
+                                                            }
+                                                        });
+                                                    },
+                                                    "📝"
+                                                }
+                                                button {
+                                                    class: "btn btn-sm btn-outline-danger",
+                                                    title: "Penalties",
+                                                    onclick: move |_| {
+                                                        penalties_modal_point_id.set(Some(pid_penalties.clone()));
+                                                        penalties_step.set(1);
+                                                        penalties_selected_player_id.set(None);
+                                                        penalties_selected_type.set(None);
+                                                        penalties_other_text.set(String::new());
+                                                        penalties_other_selected.set(false);
+                                                        penalty_history_signal.set(None);
+                                                        notes_modal_notes.set(None);
+                                                        let u = u_notes.clone();
+                                                        let id = id_notes.clone();
+                                                        let pid_fetch = pid_penalties.clone();
+                                                        let mut notes_modal_notes = notes_modal_notes;
+                                                        let mut point_notes_map_signal = point_notes_map_signal;
+                                                        spawn(async move {
+                                                            match api::get_point_notes(&u, &id, &pid_fetch).await {
+                                                                Ok(v) => {
+                                                                    let notes = v.get("notes").and_then(|n| n.as_array()).cloned().unwrap_or_default();
+                                                                    notes_modal_notes.set(Some(Ok(notes.clone())));
+                                                                    let mut m = point_notes_map_signal();
+                                                                    m.insert(pid_fetch.clone(), notes);
+                                                                    point_notes_map_signal.set(m);
+                                                                }
+                                                                Err(e) => notes_modal_notes.set(Some(Err(e))),
+                                                            }
+                                                        });
+                                                    },
+                                                    "🚩"
+                                                }
+                                            }
+                                        }
+                                    }
+                                    div { class: "mt-1",
+                                        for note_val in point_notes_map_signal().get(&pid_list).cloned().unwrap_or_default().iter() {
+                                            {
+                                                let note_text = note_val.get("text").and_then(|t| t.as_str()).unwrap_or("");
+                                                let target = note_val.get("target").and_then(|t| t.as_str()).unwrap_or("match");
+                                                let target_display = note_val.get("player_display").and_then(|p| p.as_str())
+                                                    .or_else(|| note_val.get("player_name").and_then(|p| p.as_str()))
+                                                    .unwrap_or(if target == "match" { "Point" } else { target })
+                                                    .to_string();
+                                                let target_profile_id = note_val.get("player_id").and_then(|v| v.as_str()).map(String::from);
+                                                let pt_id = note_val.get("penalty_type_id").and_then(|v| v.as_i64()).map(|v| v as i32);
+                                                let penalty_info = if let Some(id) = pt_id {
+                                                    d.penalty_types.iter().find(|t| t.id == id)
+                                                } else {
+                                                    None
+                                                };
+                                                let (border_color, display_text) = if let Some(pt) = penalty_info {
+                                                    (pt.color.clone(), pt.name.clone())
+                                                } else {
+                                                    ("808080".to_string(), if note_text.is_empty() { "Other".to_string() } else { note_text.to_string() })
+                                                };
+                                                let description = penalty_info
+                                                    .and_then(|pt| pt.desc.clone())
+                                                    .filter(|s| !s.is_empty());
+
+                                                rsx! {
+                                                    PenaltyDisplay {
+                                                        border_color,
+                                                        display_text,
+                                                        description,
+                                                        target_display: Some(target_display),
+                                                        target_profile_id,
+                                                        on_description_click: move |d: Option<String>| penalty_desc_modal.set(d),
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                td {
+                                    button {
+                                        class: "delete-point-btn",
+                                        title: "Delete",
+                                        onclick: move |_| {
+                                            let prev = state_signal().clone();
+                                            if let Some(Ok(ref state)) = prev.clone() {
+                                                let mut state = state.clone();
+                                                if let Some(points) = state.get_mut("points").and_then(|p| p.as_array_mut()) {
+                                                    points.retain(|p| p.get("uuid").and_then(|v| v.as_str()) != Some(pid_del.as_str()));
+                                                }
+                                                state_signal.set(Some(Ok(state)));
+                                            }
+                                            let u = u_del.clone();
+                                            let p = pid_del.clone();
+                                            let mut state_signal = state_signal;
+                                            let mut action_error = action_error;
+                                            spawn(async move {
+                                                match api::delete_point(&u, &p).await {
+                                                    Ok(_) => { action_error.set(None); }
+                                                    Err(e) => {
+                                                        action_error.set(Some(e));
+                                                        state_signal.set(prev);
+                                                    }
+                                                }
+                                            });
+                                        },
+                                        "×"
+                                    }
+                                }
+                            }
+                        }
+                    })
+                    .collect();
+                rsx! {
+                    div { class: "container mt-4",
+                        style { "{run_match_css}" }
+                        div { class: "row",
+                            div { class: "col-md-12",
+                                h2 { "Run Match: {m.name}" }
+                                p { class: "small text-muted mb-1",
+                                    "Note: although there's a delay when clicking start/end point, the stone count is done correctly (it's computed from when you first click it)."
+                                }
+                                div { class: "row d-none d-md-flex",
+                                    div { class: "col-md-4",
+                                        p { class: "mb-0",
+                                            strong { "Teams: " }
+                                            "{team1} vs {team2}"
+                                        }
+                                    }
+                                    div { class: "col-md-4",
+                                        p { class: "mb-0",
+                                            strong { "Refs: " }
+                                            "{refs_display}"
+                                        }
+                                    }
+                                    div { class: "col-md-2",
+                                        if let Some(len) = length_display {
+                                            p { class: "mb-0",
+                                                strong { "Length: " }
+                                                "{len}"
+                                            }
+                                        }
+                                    }
+                                    div { class: "col-md-2",
+                                        p { class: "mb-0",
+                                            strong { "Field: " }
+                                            "{field_display}"
+                                        }
+                                    }
+                                }
+                                div { class: "row d-md-none",
+                                    div { class: "col-12",
+                                        p { class: "small mb-0",
+                                            "{team1} vs {team2}"
+                                            " | Refs: {refs_display}"
+                                            if let Some(len) = m.nominal_length {
+                                                " | {len}m"
+                                            }
+                                            " | Field: {field_display}"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        div { class: "row mb-4",
+                            div { class: "col-md-12",
+                                div { class: "card",
+                                    div { class: "card-body",
+                                        div { class: "row",
+                                            div { class: "col-md-6 mb-4 mb-md-0",
+                                                div { id: "score-by-set",
+                                                    div { class: "row mb-1",
+                                                        div { class: "col-12 text-center mb-1",
+                                                            h4 { class: "mb-0", "Score" }
+                                                        }
+                                                    }
+                                                    div { class: "row mb-1",
+                                                        div { class: "col-5 text-center",
+                                                            small { class: "text-muted", "{team1}" }
+                                                        }
+                                                        div { class: "col-2" }
+                                                        div { class: "col-5 text-center",
+                                                            small { class: "text-muted", "{team2}" }
+                                                        }
+                                                    }
+                                                    if score_rows.is_empty() {
+                                                        div { class: "text-muted text-center", "No points yet" }
+                                                    } else {
+                                                        for (set_num, t1, t2) in score_rows.iter() {
+                                                            div { class: "row mb-0", key: "{set_num}",
+                                                                div { class: "col-5 text-center",
+                                                                    strong { id: "team1-set-{set_num}-score", "{t1}" }
+                                                                }
+                                                                div { class: "col-2 text-center",
+                                                                    small { class: "text-muted", "Set {set_num}" }
+                                                                }
+                                                                div { class: "col-5 text-center",
+                                                                    strong { id: "team2-set-{set_num}-score", "{t2}" }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            div { class: "col-md-6",
+                                                div { class: "row",
+                                                    if set_type_stones {
+                                                        div { class: "col-6 text-center d-flex flex-column align-items-center",
+                                                            h4 { class: "mb-1", "Stone Count" }
+                                                            p { class: "small mb-0", "(click to edit)" }
+                                                            input {
+                                                                r#type: "number",
+                                                                class: "form-control-plaintext text-center display-4 m-0 p-0",
+                                                                id: "stones-remaining",
+                                                                style: "width: 6ch; line-height: 1; font-size: 3rem; height: 64px; min-width: 6ch;",
+                                                                value: "{stones_input_value}",
+                                                                onfocus: move |_| {
+                                                                    stones_input_focused.set(true);
+                                                                    stones_edit_value.set(display_stones.to_string());
+                                                                },
+                                                                onblur: move |_| {
+                                                                    let s = stones_edit_value();
+                                                                    if let Ok(n) = s.parse::<u32>() {
+                                                                        stones_remaining.set(n);
+                                                                        let u = url_stones_blur.clone();
+                                                                        let id = id_stones_blur.clone();
+                                                                        spawn(async move {
+                                                                            let _ = api::update_stones(&u, &id, n).await;
+                                                                        });
+                                                                    }
+                                                                    stones_input_focused.set(false);
+                                                                },
+                                                                oninput: move |ev| {
+                                                                    let s = ev.value();
+                                                                    stones_edit_value.set(s.clone());
+                                                                    if let Ok(n) = s.parse::<u32>() {
+                                                                        stones_remaining.set(n);
+                                                                        let u = url.clone();
+                                                                        let id = match_id.clone();
+                                                                        spawn(async move {
+                                                                            let _ = api::update_stones(&u, &id, n).await;
+                                                                        });
+                                                                    }
+                                                                },
+                                                            }
+                                                        }
+                                                    }
+                                                    div { class: if set_type_stones { "col-6 text-center" } else { "col-12 text-center" },
+                                                        h4 { class: "mb-1", "Time Elapsed" }
+                                                        h2 { id: "time-elapsed", class: "mb-0", "{time_elapsed_str}" }
+                                                    }
+                                                }
+                                                div { class: "row mt-3",
+                                                    div { class: "col-12",
+                                                        button {
+                                                            id: "point-button",
+                                                            class: "{point_button_class}",
+                                                            onclick: on_start_end_point,
+                                                            disabled: finalized,
+                                                            "{point_button_text}"
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if let Some(e) = action_error() {
+                            div { class: "alert alert-danger mt-2", "{e}" }
+                        }
+
+                        div { class: "row",
+                            div { class: "col-md-12",
+                                div { class: "card",
+                                    div { class: "card-header",
+                                        h5 { class: "mb-0", "Points" }
+                                    }
+                                    div { class: "card-body",
+                                        div { class: "table-responsive",
+                                            table { class: "table table-sm", id: "points-table",
+                                                thead {
+                                                    tr {
+                                                        th { "Set" }
+                                                        th { "🪨" }
+                                                        th { "Winner" }
+                                                        th { "Rerun" }
+                                                        th { "Notes" }
+                                                        th { "" }
+                                                    }
+                                                }
+                                                tbody { id: "points-table-body",
+                                                    for node in point_table_rows.iter() {
+                                                        {node.clone()}
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        div { class: "row mt-4",
+                            div { class: "col-12",
+                                button {
+                                    id: "finalize-match-btn",
+                                    class: "btn btn-warning btn-lg w-100",
+                                    onclick: move |_| {
+                                        navigator.push(Route::FinalizeMatch {
+                                            url: url_finalize_btn.clone(),
+                                            match_id: id_finalize_btn.clone(),
+                                        });
+                                    },
+                                    disabled: has_in_progress,
+                                    if has_in_progress {
+                                        "Finalize Match (Point in Progress)"
+                                    } else {
+                                        "Finalize Match"
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    div { class: "mobile-button-wrapper d-md-none",
+                        if !has_in_progress {
+                            button {
+                                class: "btn btn-warning btn-lg",
+                                onclick: move |_| {
+                                    navigator.push(Route::FinalizeMatch {
+                                        url: url_finalize_mobile.clone(),
+                                        match_id: id_finalize_mobile.clone(),
+                                    });
+                                },
+                                "Finalize Match"
+                            }
+                        }
+                        button {
+                            class: "{point_button_class}",
+                            onclick: on_start_end_point_mobile,
+                            disabled: finalized,
+                            "{point_button_text}"
+                        }
+                    }
+
+                    if show_notes_modal {
+                        div {
+                            class: "modal show",
+                            style: "display: block; background: rgba(0,0,0,0.5);",
+                            role: "dialog",
+                            tabindex: "-1",
+                            onclick: move |_| {
+                                notes_modal_point_id.set(None);
+                            },
+                            div {
+                                class: "modal-dialog modal-lg",
+                                onclick: move |ev| { ev.stop_propagation(); },
+                                div { class: "modal-content",
+                                    div { class: "modal-header",
+                                        h5 { class: "modal-title", "Notes for Point" }
+                                        button {
+                                            r#type: "button",
+                                            class: "btn-close",
+                                            aria_label: "Close",
+                                            onclick: move |_| notes_modal_point_id.set(None),
+                                        }
+                                    }
+                                    div { class: "modal-body",
+                                        match notes_modal_notes().as_ref() {
+                                            None => rsx! {
+                                                div { class: "text-muted", "Loading…" }
+                                            },
+                                            Some(Err(e)) => rsx! {
+                                                div { class: "text-danger", "{e}" }
+                                            },
+                                            Some(Ok(_)) => rsx! {
+                                                label { class: "form-label", "Note for this point" }
+                                                textarea {
+                                                    class: "form-control",
+                                                    rows: "3",
+                                                    placeholder: "Enter note (optional)",
+                                                    value: "{notes_modal_new_text()}",
+                                                    oninput: move |ev| notes_modal_new_text.set(ev.value().clone()),
+                                                }
+                                            },
+                                        }
+                                    }
+                                    div { class: "modal-footer",
+                                        button {
+                                            r#type: "button",
+                                            class: "btn btn-secondary",
+                                            onclick: move |_| notes_modal_point_id.set(None),
+                                            "Close"
+                                        }
+                                        button {
+                                            r#type: "button",
+                                            class: "btn btn-primary",
+                                            disabled: !notes_modal_notes().as_ref().is_some_and(|r| r.is_ok()),
+                                            onclick: move |_| {
+                                                let text = notes_modal_new_text().trim().to_string();
+                                                let u = url_notes_submit.clone();
+                                                let id = id_notes_submit.clone();
+                                                let pid = notes_modal_pid.clone();
+                                                let mut point_notes_map_signal = point_notes_map_signal;
+                                                notes_modal_point_id.set(None);
+                                                spawn(async move {
+                                                    if api::set_point_note(&u, &id, &pid, &text).await.is_ok() {
+                                                        if let Ok(v) = api::get_point_notes(&u, &id, &pid).await {
+                                                            let notes = v.get("notes").and_then(|n| n.as_array()).cloned().unwrap_or_default();
+                                                            let mut m = point_notes_map_signal();
+                                                            m.insert(pid, notes);
+                                                            point_notes_map_signal.set(m);
+                                                        }
+                                                    }
+                                                });
+                                            },
+                                            "Save"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if show_penalties_modal {
+                        {
+                            let pid_close1 = penalties_modal_pid.clone();
+                            let u_close1 = url_notes.clone();
+                            let mid_close1 = id_notes.clone();
+                            let pid_close2 = penalties_modal_pid.clone();
+                            let u_close2 = url_notes.clone();
+                            let mid_close2 = id_notes.clone();
+                            let pid_close3 = penalties_modal_pid.clone();
+                            let u_close3 = url_notes.clone();
+                            let mid_close3 = id_notes.clone();
+                        rsx! {
+                        div {
+                            class: "modal show",
+                            style: "display: block; background: rgba(0,0,0,0.5);",
+                            role: "dialog",
+                            tabindex: "-1",
+                            onclick: move |_| {
+                                let pid = pid_close1.clone();
+                                let u = u_close1.clone();
+                                let mid = mid_close1.clone();
+                                let mut pn_sig = point_notes_map_signal.clone();
+                                penalties_modal_point_id.set(None);
+                                spawn(async move {
+                                    if let Ok(v) = api::get_point_notes(&u, &mid, &pid).await {
+                                        let notes = v.get("notes").and_then(|n| n.as_array()).cloned().unwrap_or_default();
+                                        let mut m = pn_sig();
+                                        m.insert(pid, notes);
+                                        pn_sig.set(m);
+                                    }
+                                });
+                            },
+                            div {
+                                class: "modal-dialog modal-lg",
+                                onclick: move |ev| { ev.stop_propagation(); },
+                                div { class: "modal-content",
+                                    div { class: "modal-header",
+                                        h5 { class: "modal-title", "Penalties" }
+                                        button {
+                                            r#type: "button",
+                                            class: "btn-close",
+                                            aria_label: "Close",
+                                            onclick: move |_| {
+                                                let pid = pid_close2.clone();
+                                                let u = u_close2.clone();
+                                                let mid = mid_close2.clone();
+                                                let mut pn_sig = point_notes_map_signal.clone();
+                                                penalties_modal_point_id.set(None);
+                                                spawn(async move {
+                                                    if let Ok(v) = api::get_point_notes(&u, &mid, &pid).await {
+                                                        let notes = v.get("notes").and_then(|n| n.as_array()).cloned().unwrap_or_default();
+                                                        let mut m = pn_sig();
+                                                        m.insert(pid, notes);
+                                                        pn_sig.set(m);
+                                                    }
+                                                });
+                                            },
+                                        }
+                                    }
+                                    div { class: "modal-body",
+                                        if penalties_step() == 1 {
+                                            {
+                                                let pid_fetch_team1 = penalties_modal_pid.clone();
+                                                let pid_fetch_team2 = penalties_modal_pid.clone();
+                                                rsx! {
+                                            div { class: "row",
+                                                div { class: "col-6",
+                                                    h6 { class: "mb-2 text-center", "{team1_notes}" }
+                                                    div { class: "list-group", style: "max-height: 400px; overflow-y: auto;",
+                                                        for p in d.match_players.iter().filter(|p| p.team_side.as_deref() == Some("team1")) {
+                                                            {
+                                                                let pid = p.player_id.clone();
+                                                                let display = p.display.clone();
+                                                                let base_url = api::base_url();
+                                                                let u_hist = url_notes.clone();
+                                                                let mid_hist = id_notes.clone();
+                                                                let point_id_hist = pid_fetch_team1.clone();
+                                                                rsx! {
+                                                                    button {
+                                                                        class: "list-group-item list-group-item-action d-flex align-items-center gap-2",
+                                                                        onclick: move |_| {
+                                                                            penalties_selected_player_id.set(Some(pid.clone()));
+                                                                            penalties_selected_player_display.set(display.clone());
+                                                                            penalties_step.set(2);
+                                                                            let pid_fetch = pid.clone();
+                                                                            let u = u_hist.clone();
+                                                                            let mid = mid_hist.clone();
+                                                                            let point_id_for_spawn = point_id_hist.clone();
+                                                                            spawn(async move {
+                                                                                if let Ok(res) = api::get_player_penalty_history(&u, &pid_fetch, &mid, &point_id_for_spawn).await {
+                                                                                    penalty_history_signal.set(Some((pid_fetch, res.penalties)));
+                                                                                } else {
+                                                                                    penalty_history_signal.set(Some((pid_fetch, vec![])));
+                                                                                }
+                                                                            });
+                                                                        },
+                                                                        if let Some(ph) = &p.profile_photo {
+                                                                            img { src: "{base_url}/static/{ph}", class: "rounded-circle", style: "width: 32px; height: 32px; object-fit: cover;" }
+                                                                        }
+                                                                        div {
+                                                                            div { "{p.display}" }
+                                                                            small { class: "text-muted", "{p.name}" }
+                                                                        }
+                                                                        if p.in_this_match {
+                                                                            span { class: "badge bg-primary ms-auto", "Playing" }
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                div { class: "col-6",
+                                                    h6 { class: "mb-2 text-center", "{team2_notes}" }
+                                                    div { class: "list-group", style: "max-height: 400px; overflow-y: auto;",
+                                                        for p in d.match_players.iter().filter(|p| p.team_side.as_deref() == Some("team2")) {
+                                                            {
+                                                                let pid = p.player_id.clone();
+                                                                let display2 = p.display.clone();
+                                                                let base_url = api::base_url();
+                                                                let u_hist2 = url_notes.clone();
+                                                                let mid_hist2 = id_notes.clone();
+                                                                let point_id_hist2 = pid_fetch_team2.clone();
+                                                                rsx! {
+                                                                    button {
+                                                                        class: "list-group-item list-group-item-action d-flex align-items-center gap-2",
+                                                                        onclick: move |_| {
+                                                                            penalties_selected_player_id.set(Some(pid.clone()));
+                                                                            penalties_selected_player_display.set(display2.clone());
+                                                                            penalties_step.set(2);
+                                                                            let pid_fetch = pid.clone();
+                                                                            let u = u_hist2.clone();
+                                                                            let mid = mid_hist2.clone();
+                                                                            let point_id_for_spawn2 = point_id_hist2.clone();
+                                                                            spawn(async move {
+                                                                                if let Ok(res) = api::get_player_penalty_history(&u, &pid_fetch, &mid, &point_id_for_spawn2).await {
+                                                                                    penalty_history_signal.set(Some((pid_fetch, res.penalties)));
+                                                                                } else {
+                                                                                    penalty_history_signal.set(Some((pid_fetch, vec![])));
+                                                                                }
+                                                                            });
+                                                                        },
+                                                                        if let Some(ph) = &p.profile_photo {
+                                                                            img { src: "{base_url}/static/{ph}", class: "rounded-circle", style: "width: 32px; height: 32px; object-fit: cover;" }
+                                                                        }
+                                                                        div {
+                                                                            div { "{p.display}" }
+                                                                            small { class: "text-muted", "{p.name}" }
+                                                                        }
+                                                                        if p.in_this_match {
+                                                                            span { class: "badge bg-primary ms-auto", "Playing" }
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                                }
+                                            }
+                                        } else if let Some(player) = d.match_players.iter().find(|p| Some(&p.player_id) == penalties_selected_player_id().as_ref()) {
+                                            {
+                                                let history_for_player: Option<Vec<_>> = penalty_history_signal().as_ref().and_then(|(pid, list)| if pid == &player.player_id { Some(list.clone()) } else { None });
+                                                let penalty_color_by_name: std::collections::HashMap<String, String> = d.penalty_types.iter().map(|t| (t.name.clone(), t.color.clone())).collect();
+                                                rsx! {
+                                            div {
+                                                div { class: "d-flex align-items-center gap-3 mb-3 p-3 border rounded bg-light",
+                                                    if let Some(ph) = &player.profile_photo {
+                                                        img { src: "{api::base_url()}/static/{ph}", class: "rounded-circle", style: "width: 64px; height: 64px; object-fit: cover;" }
+                                                    }
+                                                    div {
+                                                        h5 { class: "mb-0", "{player.display}" }
+                                                        div { class: "text-muted", "{player.name}" }
+                                                    }
+                                                }
+                                                h6 { class: "mb-2", "Penalty history this tournament" }
+                                                div { class: "table-responsive mb-3",
+                                                    table { class: "table table-sm table-striped mb-0",
+                                                        thead { class: "table-light",
+                                                            tr {
+                                                                th { "Penalty type" }
+                                                                th { "Match" }
+                                                                th { "Date" }
+                                                                th { "" }
+                                                                th { class: "text-end", style: "min-width: 2.5rem;", "" }
+                                                            }
+                                                        }
+                                                        tbody {
+                                                            if let Some(list) = history_for_player {
+                                                                for item in list.iter() {
+                                                                    {
+                                                                        let row_color = penalty_color_by_name.get(&item.penalty_type_name).cloned().unwrap_or_else(|| "808080".to_string());
+                                                                        // is_current_point: penalty belongs to the point row from which Penalties was clicked
+                                                                        let can_delete = item.is_current_point && item.note_uuid.is_some();
+                                                                        let note_uuid_owned = item.note_uuid.clone().unwrap_or_default();
+                                                                        let u_del = url_notes.clone();
+                                                                        let mid_del = id_notes.clone();
+                                                                        let pid_del = penalties_modal_pid.clone();
+                                                                        let pl_id_del = player.player_id.clone();
+                                                                        let mut ph_sig = penalty_history_signal.clone();
+                                                                        let mut pn_sig = point_notes_map_signal.clone();
+                                                                        rsx! {
+                                                                            tr {
+                                                                                td { style: format!("border-left: 8px solid #{}; background-color: #{}22;", row_color, row_color), "{item.penalty_type_name}" }
+                                                                                td { "{item.match_name}" }
+                                                                                td { "{item.date}" }
+                                                                                td {
+                                                                                    if item.is_current_match {
+                                                                                        span { class: "badge bg-info", "current match" }
+                                                                                    }
+                                                                                }
+                                                                                td { class: "text-end align-middle",
+                                                                                    if can_delete && !note_uuid_owned.is_empty() {
+                                                                                        button {
+                                                                                            r#type: "button",
+                                                                                            class: "btn btn-sm btn-outline-danger border-danger",
+                                                                                            style: "min-width: 2rem; font-size: 1.1rem; line-height: 1;",
+                                                                                            title: "Remove penalty from this point",
+                                                                                            onclick: move |_| {
+                                                                                                let uuid = note_uuid_owned.clone();
+                                                                                                let u = u_del.clone();
+                                                                                                let mid = mid_del.clone();
+                                                                                                let pid = pid_del.clone();
+                                                                                                let pl_id = pl_id_del.clone();
+                                                                                                spawn(async move {
+                                                                                                    if api::delete_point_note(&u, &uuid).await.is_ok() {
+                                                                                                        if let Ok(v) = api::get_point_notes(&u, &mid, &pid).await {
+                                                                                                            let notes = v.get("notes").and_then(|n| n.as_array()).cloned().unwrap_or_default();
+                                                                                                            let mut m = pn_sig();
+                                                                                                            m.insert(pid.clone(), notes.clone());
+                                                                                                            pn_sig.set(m);
+                                                                                                        }
+                                                                                                        if let Ok(res) = api::get_player_penalty_history(&u, &pl_id, &mid, &pid).await {
+                                                                                                            ph_sig.set(Some((pl_id, res.penalties)));
+                                                                                                        }
+                                                                                                    }
+                                                                                                });
+                                                                                            },
+                                                                                            "×"
+                                                                                        }
+                                                                                    } else {
+                                                                                        span { class: "text-muted", "—" }
+                                                                                    }
+                                                                                }
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                }
+                                                            } else {
+                                                                tr {
+                                                                    td { colspan: "5", class: "text-muted text-center", "Loading…" }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                h6 { class: "mb-2", "Select penalty type" }
+                                                div { class: "d-flex flex-wrap gap-2 mb-3",
+                                                    for pt in d.penalty_types.iter() {
+                                                        {
+                                                            let pt_id = pt.id;
+                                                            let selected = penalties_selected_type() == Some(pt_id);
+                                                            let pt_desc = pt.desc.clone().filter(|s| !s.is_empty());
+                                                            let show_pt_help = pt_desc.is_some();
+                                                            rsx! {
+                                                                button {
+                                                                    class: if selected { "btn btn-dark" } else { "btn btn-outline-dark" },
+                                                                    style: if selected { format!("background-color: #{}; border-color: #{};", pt.color, pt.color) } else { format!("color: black; border-color: #{}; background-color: white;", pt.color) },
+                                                                    onclick: move |_| {
+                                                                        if penalties_selected_type() == Some(pt_id) {
+                                                                            penalties_selected_type.set(None);
+                                                                        } else {
+                                                                            penalties_selected_type.set(Some(pt_id));
+                                                                            penalties_other_selected.set(false);
+                                                                        }
+                                                                    },
+                                                                    "{pt.name}"
+                                                                    if show_pt_help {
+                                                                        span {
+                                                                            class: "ms-1 cursor-pointer d-inline-flex align-items-center",
+                                                                            title: "Description",
+                                                                            onclick: move |ev| {
+                                                                                ev.stop_propagation();
+                                                                                penalty_desc_modal.set(pt_desc.clone());
+                                                                            },
+                                                                            img {
+                                                                                src: "/static/question-mark.svg",
+                                                                                alt: "?",
+                                                                                style: "width: 14px; height: 14px; filter: invert(27%) sepia(51%) saturate(2878%) hue-rotate(224deg); vertical-align: middle;",
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                    {
+                                                        let selected = penalties_other_selected();
+                                                        rsx! {
+                                                            button {
+                                                                class: if selected { "btn btn-secondary" } else { "btn btn-outline-secondary" },
+                                                                onclick: move |_| {
+                                                                    if selected {
+                                                                        penalties_other_selected.set(false);
+                                                                    } else {
+                                                                        penalties_other_selected.set(true);
+                                                                        penalties_selected_type.set(None);
+                                                                    }
+                                                                },
+                                                                "Other"
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                if penalties_other_selected() {
+                                                    div { class: "mb-3",
+                                                        label { "Other penalty description" }
+                                                        input {
+                                                            class: "form-control",
+                                                            value: "{penalties_other_text()}",
+                                                            oninput: move |ev| penalties_other_text.set(ev.value().clone()),
+                                                            placeholder: "Describe penalty..."
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    {
+                                        let pid_for_add = penalties_modal_pid.clone();
+                                        rsx! {
+                                    div { class: "modal-footer",
+                                        if penalties_step() == 2 {
+                                            button {
+                                                class: "btn btn-outline-secondary me-auto",
+                                                onclick: move |_| {
+                                                    penalties_step.set(1);
+                                                    penalties_selected_type.set(None);
+                                                    penalties_other_selected.set(false);
+                                                    penalties_other_text.set(String::new());
+                                                },
+                                                "Back"
+                                            }
+                                            button {
+                                                class: "btn btn-primary",
+                                                onclick: move |_| {
+                                                    let selected_pt = penalties_selected_type();
+                                                    let other = penalties_other_selected();
+                                                    let other_text = penalties_other_text();
+                                                    let pid = pid_for_add.clone();
+                                                    let mid = id_notes.clone();
+                                                    let pl_id = penalties_selected_player_id().clone();
+                                                    let u = url_notes.clone();
+                                                    if selected_pt.is_none() && !other { return; }
+                                                    if other && other_text.trim().is_empty() { return; }
+                                                    if let Some(player_id) = pl_id {
+                                                        let u2 = u.clone();
+                                                        let mid2 = mid.clone();
+                                                        let pid2 = pid.clone();
+                                                        let mut point_notes_map_signal = point_notes_map_signal;
+                                                        let mut notes_modal_notes = notes_modal_notes;
+                                                        let mut penalty_history_signal = penalty_history_signal;
+                                                        spawn(async move {
+                                                            let ok = if let Some(pt_id) = selected_pt {
+                                                                api::add_point_note(&u2, &mid2, &pid2, "", "player", Some(&player_id), Some(pt_id)).await.is_ok()
+                                                            } else {
+                                                                api::add_point_note(&u2, &mid2, &pid2, &other_text, "player", Some(&player_id), None).await.is_ok()
+                                                            };
+                                                            if ok {
+                                                                if let Ok(v) = api::get_point_notes(&u2, &mid2, &pid2).await {
+                                                                    let notes = v.get("notes").and_then(|n| n.as_array()).cloned().unwrap_or_default();
+                                                                    let mut m = point_notes_map_signal();
+                                                                    m.insert(pid2.clone(), notes.clone());
+                                                                    point_notes_map_signal.set(m);
+                                                                    notes_modal_notes.set(Some(Ok(notes)));
+                                                                }
+                                                                if let Ok(res) = api::get_player_penalty_history(&u2, &player_id, &mid2, &pid2).await {
+                                                                    penalty_history_signal.set(Some((player_id.clone(), res.penalties)));
+                                                                }
+                                                            }
+                                                        });
+                                                        penalties_selected_type.set(None);
+                                                        penalties_other_selected.set(false);
+                                                        penalties_other_text.set(String::new());
+                                                    }
+                                                },
+                                                "Add penalty"
+                                            }
+                                        }
+                                        button {
+                                            r#type: "button",
+                                            class: "btn btn-secondary",
+                                            onclick: move |_| {
+                                                let pid = pid_close3.clone();
+                                                let u = u_close3.clone();
+                                                let mid = mid_close3.clone();
+                                                let mut pn_sig = point_notes_map_signal.clone();
+                                                penalties_modal_point_id.set(None);
+                                                spawn(async move {
+                                                    if let Ok(v) = api::get_point_notes(&u, &mid, &pid).await {
+                                                        let notes = v.get("notes").and_then(|n| n.as_array()).cloned().unwrap_or_default();
+                                                        let mut m = pn_sig();
+                                                        m.insert(pid, notes);
+                                                        pn_sig.set(m);
+                                                    }
+                                                });
+                                            },
+                                            "Close"
+                                        }
+                                        }
+                                    }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        }
+                    }
+                    if penalty_desc_modal().is_some() {
+                        div { class: "modal show", style: "display: block;",
+                            div { class: "modal-dialog modal-dialog-centered",
+                                div { class: "modal-content",
+                                    div { class: "modal-header",
+                                        h5 { class: "modal-title", "Penalty description" }
+                                        button { r#type: "button", class: "btn-close", onclick: move |_| penalty_desc_modal.set(None) }
+                                    }
+                                    div { class: "modal-body", "{penalty_desc_modal().as_ref().unwrap_or(&String::new())}" }
+                                    div { class: "modal-footer",
+                                        button { r#type: "button", class: "btn btn-secondary", onclick: move |_| penalty_desc_modal.set(None), "Close" }
+                                    }
+                                }
+                            }
+                        }
+                        div { class: "modal-backdrop show" }
+                    }
+                }
+            }
+            Some(Err(e)) => rsx! { p { class: "text-danger", "{e}" } },
+            None => rsx! { p { "Loading…" } },
+        },
+        Err(_) => rsx! { p { "Loading…" } },
+    };
+    rsx! { {detail_view} }
+}

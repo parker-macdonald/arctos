@@ -1,5 +1,6 @@
 import pytest
 
+from app.domain.enums import MatchStatus
 from app.utils.dependencies import apply_match_dependencies
 from models import Match, db
 
@@ -13,8 +14,8 @@ def test_apply_match_dependencies_substitutes_winner_loser_and_refs(
         completed = Match(
             name="Match A",
             event=tournament_url,
-            schedule_type="DYNAMIC",
-            status="COMPLETED",
+            schedule_type="SAFE",
+            status=MatchStatus.COMPLETED,
             team1="team_1",
             team2="team_2",
             match_winner="TEAM1",
@@ -22,8 +23,8 @@ def test_apply_match_dependencies_substitutes_winner_loser_and_refs(
         dependent = Match(
             name="Match B",
             event=tournament_url,
-            schedule_type="DYNAMIC",
-            status="NOT_STARTED",
+            schedule_type="SAFE",
+            status=MatchStatus.NOT_STARTED,
             team1=None,
             team2=None,
             refs=None,
@@ -50,8 +51,8 @@ def test_apply_match_dependencies_noop_when_no_winner(test_db, tournament):
         completed = Match(
             name="Match A",
             event=tournament_url,
-            schedule_type="DYNAMIC",
-            status="COMPLETED",
+            schedule_type="SAFE",
+            status=MatchStatus.COMPLETED,
             team1="team_1",
             team2="team_2",
             match_winner=None,
@@ -59,8 +60,8 @@ def test_apply_match_dependencies_noop_when_no_winner(test_db, tournament):
         dependent = Match(
             name="Match B",
             event=tournament_url,
-            schedule_type="DYNAMIC",
-            status="NOT_STARTED",
+            schedule_type="SAFE",
+            status=MatchStatus.NOT_STARTED,
             team1=None,
             team2=None,
             team1_initial="Match A::winner",

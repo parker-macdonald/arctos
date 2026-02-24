@@ -5,8 +5,10 @@ Tournament-oriented application services.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
 
+from app.domain.enums import TeamRegistrationStatus
 from app.services.permission_service import PermissionService
 from app.utils.user_helpers import is_player, is_team
 from app.error_values import Some
@@ -58,7 +60,7 @@ class TournamentService:
                 db.session.query(
                     TeamRegistration.event, func.count(TeamRegistration.id)
                 )
-                .filter(TeamRegistration.status == "CONFIRMED")
+                .filter(TeamRegistration.status == TeamRegistrationStatus.CONFIRMED)
                 .filter(TeamRegistration.event.in_([t.url for t in tournaments]))
                 .group_by(TeamRegistration.event)
                 .all()
@@ -92,8 +94,21 @@ class TournamentService:
                             "amount_paid": reg.amount_paid or 0.0,
                         }
 
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        upcoming_tournaments: List[Any] = []
+        past_tournaments: List[Any] = []
+        for t in tournaments:
+            effective_end = t.end_date if t.end_date is not None else t.start_date
+            if effective_end < now:
+                past_tournaments.append(t)
+            else:
+                upcoming_tournaments.append(t)
+        past_tournaments.sort(key=lambda t: (t.end_date or t.start_date), reverse=True)
+
         return {
-            "tournaments": tournaments,
+            "tournaments": tournaments,  # legacy; template can use upcoming/past
+            "upcoming_tournaments": upcoming_tournaments,
+            "past_tournaments": past_tournaments,
             "to_tournaments": [],  # legacy
             "team_counts": team_counts,
             "user_reg_status": user_reg_status,

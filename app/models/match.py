@@ -5,7 +5,15 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import foreign
 
-from app.domain.enums import WinnerSide, parse_enum
+from app.domain.enums import (
+    WinnerSide,
+    MatchStatus,
+    ScheduleType,
+    WinnerSide,
+    SetType,
+    parse_enum,
+    MatchNoteTarget,
+)
 from app.models.base import db
 from app.error_values import Some
 
@@ -28,10 +36,10 @@ class Match(db.Model):
     completed_time = db.Column(db.DateTime)
     nominal_length = db.Column(db.Integer)  # minutes
     schedule_type = db.Column(
-        db.String(20), default="STATIC"
-    )  # STATIC, DYNAMIC, BREAK, JOIN
+        db.Enum(ScheduleType), default=ScheduleType.STATIC
+    )  # STATIC, SAFE, FAST, BREAK, JOIN
     set_type = db.Column(
-        db.String(20), default="SETS"
+        db.Enum(SetType), default=SetType.SETS
     )  # SETS, STONES (only for non-BREAK/JOIN matches)
     ribbon = db.Column(
         db.Boolean, default=False
@@ -41,7 +49,7 @@ class Match(db.Model):
         db.Integer
     )  # DEPRECATED: Use stones_per_set instead. Kept for backward compatibility.
     status = db.Column(
-        db.String(20), default="NOT_STARTED"
+        db.Enum(MatchStatus), default=MatchStatus.NOT_STARTED
     )  # NOT_STARTED, IN_PROGRESS, COMPLETED
     initial_notes = db.Column(
         db.Text
@@ -54,7 +62,7 @@ class Match(db.Model):
     stones_remaining = db.Column(db.Integer)  # for STONES matches
     finalized_by = db.Column(db.String(50))  # user ID who finalized the match
     final_notes = db.Column(db.Text)  # final notes
-    match_winner = db.Column(db.String(10))  # 'TEAM1' or 'TEAM2'
+    match_winner = db.Column(db.Enum(WinnerSide))  # 'TEAM1' or 'TEAM2'
     team1_signature = db.Column(db.Text)  # signature data
     team2_signature = db.Column(db.Text)  # signature data
     finalized_at = db.Column(db.DateTime)  # when match was finalized
@@ -63,13 +71,13 @@ class Match(db.Model):
     camera_stream_starts = db.Column(
         db.Text
     )  # JSON object mapping camera_index to stream start time (ISO format)
-    time_finalized = db.Column(
-        db.Boolean, default=False
-    )  # True when start time is finalized (all dependencies started)
     previous_match = db.Column(
         db.String(36), db.ForeignKey("matches.uuid"), nullable=True
     )
     next_match = db.Column(db.String(36), db.ForeignKey("matches.uuid"), nullable=True)
+    skip_condition = db.Column(
+        db.Text, default="false"
+    )  # DSL expression that determines if match should be skipped
 
     # Relationships
     previous_match_obj = db.relationship(
@@ -86,31 +94,45 @@ class Match(db.Model):
         post_update=True,
         backref="next_of",
     )
+
+    def get_skip_condition_dependencies(self) -> dict[str, set[str]]:
+        """
+        Analyze the skip condition to determine which matches it depends on.
+
+        Returns:
+            Dictionary with keys:
+            - "direct": Set of match names that must be completed (winner/loser determined)
+              for this skip condition to evaluate fully
+            - "skip_condition": Set of match names whose status must be known for (is-skipped MATCH)
+              to evaluate
+
+        Example:
+            If skip_condition is "(== 0 (losses [Match1::winner]))", this will return:
+            {"direct": {"Match1"}, "skip_condition": set()}
+
+            If skip_condition is "(is-skipped {Match2})", this will return:
+            {"direct": set(), "skip_condition": {"Match2"}}
+        """
+        from app.utils.dsl_dependency_analyzer import MatchDependencyAnalyzer
+
+        if not self.skip_condition:
+            return {"direct": set(), "skip_condition": set()}
+
+        analyzer = MatchDependencyAnalyzer(self.event)
+        return analyzer.analyze(self.skip_condition)
+
     team1_registration = db.relationship(
         "TeamRegistration",
         primaryjoin="and_(Match.team1 == foreign(TeamRegistration.team), Match.event == TeamRegistration.event)",
         uselist=False,
+        viewonly=True,
     )
     team2_registration = db.relationship(
         "TeamRegistration",
         primaryjoin="and_(Match.team2 == foreign(TeamRegistration.team), Match.event == TeamRegistration.event)",
         uselist=False,
+        viewonly=True,
     )
-
-    def started(self) -> bool:
-        return self.status in ("IN_PROGRESS", "COMPLETED")
-
-    @property
-    def is_not_started(self) -> bool:
-        return self.status == "NOT_STARTED"
-
-    @property
-    def is_in_progress(self) -> bool:
-        return self.status == "IN_PROGRESS"
-
-    @property
-    def is_completed(self) -> bool:
-        return self.status == "COMPLETED"
 
     @property
     def winner_team_id(self) -> str | None:
@@ -132,15 +154,21 @@ class Match(db.Model):
             case _:
                 return None
 
+    @property
+    def is_time_finalized(self) -> bool:
+        """True when start time is locked: status is TIME_FINALIZED or any later state (READY_TO_START, IN_PROGRESS, COMPLETED, SKIPPED)."""
+        if self.status is None:
+            return False
+        return self.status != MatchStatus.NOT_STARTED
+
     def finalize(self) -> None:
-        self.time_finalized = True
         self.finalized_at = datetime.now(timezone.utc).replace(tzinfo=None)
-        if self.schedule_type in ("JOIN", "BREAK"):
+        if self.schedule_type in (ScheduleType.JOIN, ScheduleType.BREAK):
             self.confirmed_start_time = self.nominal_start_time
-            self.status = "COMPLETED"
+            self.status = MatchStatus.COMPLETED
             self.completed_time = (
                 self.nominal_start_time
-                if self.schedule_type == "JOIN"
+                if self.schedule_type == ScheduleType.JOIN
                 else self.nominal_start_time + timedelta(minutes=self.nominal_length)
             )
 
@@ -177,7 +205,9 @@ class MatchNote(db.Model):
     uuid = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     match = db.Column(db.String(36), db.ForeignKey("matches.uuid"), nullable=False)
     text = db.Column(db.Text, nullable=False)
-    target = db.Column(db.String(50))  # 'TEAM1', 'TEAM2', 'MATCH', or player name
+    target = db.Column(
+        db.Enum(MatchNoteTarget, values_callable=lambda obj: [e.value for e in obj])
+    )
     created_by = db.Column(db.String(50), db.ForeignKey("players.id"), nullable=False)
     created_at = db.Column(
         db.DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None)
@@ -186,9 +216,12 @@ class MatchNote(db.Model):
     player_id = db.Column(db.String(50), db.ForeignKey("players.id"))
     # Optional link to a specific point
     point_id = db.Column(db.String(36), db.ForeignKey("points.uuid"))
+    # Optional link to penalty type
+    penalty_type_id = db.Column(db.Integer, db.ForeignKey("penalty_types.id"))
 
     # Relationships
     match_obj = db.relationship("Match", backref="match_notes")
     creator = db.relationship("Player", foreign_keys=[created_by])
     player = db.relationship("Player", foreign_keys=[player_id])
     point_obj = db.relationship("Point", foreign_keys=[point_id], backref="point_notes")
+    penalty_type = db.relationship("PenaltyType")

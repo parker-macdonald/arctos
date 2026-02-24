@@ -28,6 +28,13 @@ def parse_enum(enum_cls: type[TEnum], value: object) -> Option[TEnum]:
         return Null()
 
 
+class MatchNoteTarget(StrEnum):
+    TEAM1 = "team1"
+    TEAM2 = "team2"
+    MATCH = "match"
+    PLAYER = "player"
+
+
 class RegistrationStatus(StrEnum):
     PENDING_TEAM_APPROVAL = "PENDING_TEAM_APPROVAL"
     CONFIRMED = "CONFIRMED"
@@ -35,15 +42,42 @@ class RegistrationStatus(StrEnum):
     CANCELLED = "CANCELLED"
 
 
+class TeamRegistrationStatus(StrEnum):
+    CONFIRMED = "CONFIRMED"
+    CANCELLED = "CANCELLED"
+
+
 class MatchStatus(StrEnum):
+    """Match statuses.
+    NOT_STARTED: initial state
+
+    TIME_FINALIZED: start time will not be pushed back any
+    further. match is guaranteed not to be skipped.
+
+    READY_TO_START: all ref and playing teams are known; game will
+    start as soon as everyone is present.
+
+    IN_PROGRESS: match has been started but not finished
+
+    COMPLETED: match is done! both start and end stamps exist.
+
+    SKIPPED: match has been skipped (effectively completed). start and
+    end stamps are equal and are the time that the match was marked
+    skipped.
+    """
+
     NOT_STARTED = "NOT_STARTED"
+    TIME_FINALIZED = "TIME_FINALIZED"
+    READY_TO_START = "READY_TO_START"
     IN_PROGRESS = "IN_PROGRESS"
     COMPLETED = "COMPLETED"
+    SKIPPED = "SKIPPED"
 
 
 class ScheduleType(StrEnum):
     STATIC = "STATIC"
-    DYNAMIC = "DYNAMIC"
+    SAFE = "SAFE"
+    FAST = "FAST"
     BREAK = "BREAK"
     JOIN = "JOIN"
 
