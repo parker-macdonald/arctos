@@ -1040,7 +1040,8 @@ async fn run_recording_loop(
                             .ok()
                             .and_then(|v| v.as_string())
                             .unwrap_or_default();
-                        if state_str == "inactive" {
+                        // Start unless already recording (some browsers may not report "inactive")
+                        if state_str != "recording" {
                             let _ = r.start_with_time_slice(1000);
                         }
                     }
