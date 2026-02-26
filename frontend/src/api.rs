@@ -50,6 +50,15 @@ pub struct StatusResponse {
     pub error: Option<String>,
 }
 
+#[derive(serde::Deserialize)]
+pub struct CreateTournamentResponse {
+    pub success: bool,
+    #[allow(dead_code)]
+    pub message: Option<String>,
+    pub error: Option<String>,
+    pub url: Option<String>,
+}
+
 async fn response_json<T: serde::de::DeserializeOwned>(
     resp: reqwest::Response,
 ) -> Result<T, String> {
@@ -388,6 +397,39 @@ pub async fn deregister_player(tournament_url: &str) -> Result<StatusResponse, S
 pub async fn deregister_team(tournament_url: &str) -> Result<StatusResponse, String> {
     let url = format!("{}/_api/{}/deregister-team", base(), tournament_url);
     post_form_status(&url, &[]).await
+}
+
+pub async fn create_tournament(
+    name: &str,
+    url_slug: &str,
+    permission_key: &str,
+) -> Result<CreateTournamentResponse, String> {
+    let params: Vec<(String, String)> = vec![
+        ("name".into(), name.to_string()),
+        ("url".into(), url_slug.to_string()),
+        ("permission_key".into(), permission_key.to_string()),
+    ];
+    let url = format!("{}/_api/create-tournament", base());
+    let c = client();
+    let r = with_credentials(c.post(&url).form(&params))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    response_json(r).await
+}
+
+pub async fn delete_tournament(
+    tournament_url: &str,
+    confirm_url: &str,
+) -> Result<StatusResponse, String> {
+    let params: Vec<(String, String)> = vec![("confirm_url".into(), confirm_url.to_string())];
+    let url = format!("{}/_api/{}/delete", base(), tournament_url);
+    let c = client();
+    let r = with_credentials(c.post(&url).form(&params))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    response_json(r).await
 }
 
 pub async fn tournament_manage(

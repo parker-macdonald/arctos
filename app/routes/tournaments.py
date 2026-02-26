@@ -209,7 +209,7 @@ def create_tournament():
     db.session.add(to_entry)
     db.session.commit()
 
-    return jsonify({"success": True, "message": f'Tournament "{name}" created successfully!'}), 200
+    return jsonify({"success": True, "message": f'Tournament "{name}" created successfully!', "url": url}), 200
 
 
 
@@ -1991,9 +1991,12 @@ def delete_tournament(tournament_url):
         Tag,
         SideComp,
         SideCompResult,
+        PenaltyType,
     )
 
-    # Delete in order to respect foreign key constraints
+    # Delete in order to respect foreign key constraints.
+    # Order: side comp results -> side comps; points & match notes -> matches;
+    # then penalty types, head refs, registrations, TOs, fields, tags; finally tournament.
 
     side_comps = SideComp.query.filter_by(event=tournament_url).all()
     side_comp_ids = [sc.id for sc in side_comps]
@@ -2014,6 +2017,8 @@ def delete_tournament(tournament_url):
             synchronize_session=False
         )
     Match.query.filter_by(event=tournament_url).delete(synchronize_session=False)
+    # PenaltyType after MatchNote (notes reference penalty_type_id)
+    PenaltyType.query.filter_by(event=tournament_url).delete(synchronize_session=False)
     HeadRef.query.filter_by(event=tournament_url).delete(synchronize_session=False)
     PlayerRegistration.query.filter_by(event=tournament_url).delete(
         synchronize_session=False

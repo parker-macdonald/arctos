@@ -1,10 +1,20 @@
 use crate::api;
+use crate::Route;
 use dioxus::prelude::*;
+use wasm_bindgen::JsCast;
+
+fn get_form_value(id: &str) -> String {
+    let doc = web_sys::window().and_then(|w| w.document()).unwrap();
+    doc.get_element_by_id(id)
+        .and_then(|e| e.dyn_into::<web_sys::HtmlInputElement>().ok())
+        .map(|e| e.value())
+        .unwrap_or_default()
+}
 
 #[component]
 pub fn NewTournament() -> Element {
-    let backend_url = api::base_url();
-    let create_url = format!("{}/create-tournament", backend_url);
+    let navigator = use_navigator();
+    let mut error = use_signal(|| None::<String>);
 
     rsx! {
         div { class: "row justify-content-center",
@@ -14,7 +24,39 @@ pub fn NewTournament() -> Element {
                         h3 { class: "mb-0", "Create New Tournament" }
                     }
                     div { class: "card-body",
-                        form { method: "POST", action: "{create_url}",
+                        if let Some(ref err) = error() {
+                            div { class: "alert alert-danger mb-3", "{err}" }
+                        }
+                        form {
+                            onsubmit: move |ev| {
+                                ev.prevent_default();
+                                error.set(None);
+                                let name = get_form_value("name");
+                                let url_slug = get_form_value("url");
+                                let permission_key = get_form_value("permission_key");
+                                if name.is_empty() || url_slug.is_empty() || permission_key.is_empty() {
+                                    error.set(Some("Please fill in all fields.".to_string()));
+                                    return;
+                                }
+                                let nav = navigator.clone();
+                                spawn(async move {
+                                    match api::create_tournament(&name, &url_slug, &permission_key).await {
+                                        Ok(res) if res.success => {
+                                            if let Some(url) = res.url {
+                                                nav.push(Route::TournamentHome { url });
+                                            } else {
+                                                error.set(Some("Tournament created but no URL returned.".to_string()));
+                                            }
+                                        }
+                                        Ok(res) => {
+                                            error.set(Some(res.error.unwrap_or_else(|| "Creation failed.".to_string())));
+                                        }
+                                        Err(e) => {
+                                            error.set(Some(e));
+                                        }
+                                    }
+                                });
+                            },
                             div { class: "mb-3",
                                 label { r#for: "name", class: "form-label", "Tournament Name" }
                                 input { r#type: "text", class: "form-control", id: "name", name: "name", required: true }
