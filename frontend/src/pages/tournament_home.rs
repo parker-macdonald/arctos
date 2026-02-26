@@ -28,6 +28,7 @@ fn format_date_display(start: &str, end: Option<&String>) -> String {
 #[component]
 pub fn TournamentHome(url: String) -> Element {
     let url_for_data = url.clone();
+    let navigator = use_navigator();
     let mut refresh = use_signal(|| 0u32);
     let data = use_resource(move || {
         let _ = refresh();
@@ -39,12 +40,14 @@ pub fn TournamentHome(url: String) -> Element {
     let backend = api::base_url();
     let mut delete_modal_open = use_signal(|| false);
     let mut delete_confirm_url = use_signal(|| String::new());
+    let mut delete_error = use_signal(|| None::<String>);
     let mut show_edit_player_modal = use_signal(|| false);
     let mut show_edit_team_modal = use_signal(|| false);
     let mut show_deregister_player_confirm = use_signal(|| false);
     let mut show_deregister_team_confirm = use_signal(|| false);
     let url_for_deregister_player = url.clone();
     let url_for_deregister_team = url.clone();
+    let url_for_delete_confirm = url.clone();
     let mut about_markdown = use_signal(|| Option::<String>::None);
     use_effect(move || {
         let v = val.read();
@@ -201,6 +204,7 @@ pub fn TournamentHome(url: String) -> Element {
                                         onclick: move |_| {
                                             delete_modal_open.set(true);
                                             delete_confirm_url.set(String::new());
+                                            delete_error.set(None);
                                         },
                                         "Delete Tournament"
                                     }
@@ -509,13 +513,40 @@ pub fn TournamentHome(url: String) -> Element {
                                 button { class: "btn-close", onclick: move |_| delete_modal_open.set(false) }
                             }
                             div { class: "modal-body",
+                                if let Some(ref err) = delete_error() {
+                                    div { class: "alert alert-danger mb-3", "{err}" }
+                                }
                                 div { class: "alert alert-danger",
                                     strong { "Warning: " }
                                     "This action cannot be undone. All matches, registrations, and data will be permanently removed."
                                 }
                                 p { "To confirm, type the tournament URL exactly:" }
                                 p { class: "text-center mb-2", strong { "{url}" } }
-                                form { id: "delete-tournament-form", action: "{backend}/{url}/delete", method: "post",
+                                form {
+                                    id: "delete-tournament-form",
+                                    onsubmit: move |ev| {
+                                        ev.prevent_default();
+                                        if delete_confirm_url() != url_for_delete_confirm {
+                                            return;
+                                        }
+                                        delete_error.set(None);
+                                        let nav = navigator.clone();
+                                        let url_submit = url_for_delete_confirm.clone();
+                                        let confirm = delete_confirm_url();
+                                        spawn(async move {
+                                            match api::delete_tournament(&url_submit, &confirm).await {
+                                                Ok(res) if res.success => {
+                                                    nav.push(Route::Index {});
+                                                }
+                                                Ok(res) => {
+                                                    delete_error.set(Some(res.error.unwrap_or_else(|| "Delete failed.".to_string())));
+                                                }
+                                                Err(e) => {
+                                                    delete_error.set(Some(e));
+                                                }
+                                            }
+                                        });
+                                    },
                                     div { class: "mb-3",
                                         label { class: "form-label", "Tournament URL:" }
                                         input {
