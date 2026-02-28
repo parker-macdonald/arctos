@@ -313,16 +313,14 @@ def _tournament_to_dict(t):
 
 @bp.route("/tournaments", methods=["GET"])
 def tournaments():
-    """List tournaments (same visibility as homepage). Returns { upcoming, past, team_counts, user_reg_status }."""
+    """List tournaments (same visibility as homepage). Returns { tournaments, team_counts, user_reg_status }."""
     ctx = TournamentService.get_homepage_context(current_user)
     team_counts = ctx["team_counts"]
     user_reg_status = ctx["user_reg_status"]
-    upcoming = [_tournament_to_dict(t) for t in ctx["upcoming_tournaments"]]
-    past = [_tournament_to_dict(t) for t in ctx["past_tournaments"]]
+    all_tournaments = [_tournament_to_dict(t) for t in ctx["tournaments"]]
     return jsonify(
         {
-            "upcoming": upcoming,
-            "past": past,
+            "tournaments": all_tournaments,
             "team_counts": team_counts,
             "user_reg_status": user_reg_status,
         }
