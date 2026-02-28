@@ -42,6 +42,34 @@ fn local_datetime_to_utc_iso(local_str: &str) -> Option<String> {
     Some(local.with_timezone(&Utc).format("%Y-%m-%dT%H:%M:%SZ").to_string())
 }
 
+/// Convert a UTC-ish ISO datetime string from the API into a `datetime-local` value (local time, no timezone).
+fn utc_iso_to_local_datetime_input(iso: &str) -> Option<String> {
+    use chrono::NaiveDateTime;
+    let s = iso.trim();
+    if s.is_empty() {
+        return None;
+    }
+
+    let utc_dt = if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
+        dt.naive_utc()
+    } else if let Ok(dt) = NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%.f") {
+        dt
+    } else if let Ok(dt) = NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S") {
+        dt
+    } else if let Ok(dt) = NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M") {
+        dt
+    } else if let Ok(dt) = NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S") {
+        dt
+    } else if let Ok(dt) = NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M") {
+        dt
+    } else {
+        return None;
+    };
+
+    let local = utc_dt + chrono::Duration::minutes(schedule_tz_offset_minutes());
+    Some(local.format("%Y-%m-%dT%H:%M").to_string())
+}
+
 /// Effective start time for timeline/date nav: confirmed when set, else nominal.
 fn effective_start_str(m: &MatchSetupData) -> Option<&str> {
     m.confirmed_start_time.as_deref().or(m.nominal_start_time.as_deref())
@@ -1249,18 +1277,10 @@ fn CreateMatchModal(
                                 div { class: "col-md-6",
                                     div { class: "mb-3",
                                         label { class: "form-label", "Field" }
-                                        input {
-                                            class: "form-control",
-                                            "type": "text",
-                                            list: "field-list-create",
+                                        select {
+                                            class: "form-select",
                                             value: "{field}",
-                                            placeholder: "Select or type field name",
-                                            oninput: move |e| {
-                                                let val = e.value();
-                                                on_field_change(val);
-                                            },
-                                        }
-                                        datalist { id: "field-list-create",
+                                            onchange: move |e| on_field_change(e.value()),
                                             option { value: "", "Select Field" }
                                             for f in &data.fields {
                                                 option { value: "{f.name}", "{f.name}" }
@@ -1649,7 +1669,7 @@ fn FieldsModal(
     let mut preview_modal_closed = use_signal(|| None::<std::sync::Arc<std::sync::atomic::AtomicBool>>);
     let mut preview_cameras = use_signal(|| vec![] as Vec<String>);
     let mut preview_selected_camera = use_signal(|| String::new());
-    let mut preview_cache_bust = use_signal(|| "0".to_string());
+    let preview_cache_bust = use_signal(|| "0".to_string());
     let mut editing_field_id = use_signal(|| None::<u32>);
     let mut editing_name = use_signal(|| "".to_string());
     let mut editing_camera_urls = use_signal(|| vec!["".to_string()]);
@@ -3351,12 +3371,7 @@ fn EditMatchModal(
     let mut length = use_signal(|| m.nominal_length.unwrap_or(60));
     
     let start_time_init = if let Some(t) = &m.nominal_start_time {
-        // Format for datetime-local: YYYY-MM-DDTHH:MM
-        if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(t) {
-            dt.format("%Y-%m-%dT%H:%M").to_string()
-        } else {
-            t.chars().take(16).collect::<String>()
-        }
+        utc_iso_to_local_datetime_input(t).unwrap_or_else(|| t.chars().take(16).collect::<String>())
     } else {
         "".to_string()
     };
@@ -3492,7 +3507,11 @@ fn EditMatchModal(
                 field: Some(field()),
                 schedule_type: Some(schedule_type()),
                 length: len,
-                start_time: if start_time().is_empty() { None } else { Some(start_time()) },
+                start_time: if start_time().is_empty() {
+                    None
+                } else {
+                    local_datetime_to_utc_iso(&start_time()).or_else(|| Some(start_time()))
+                },
                 previous_match_id: Some(previous_match_id()),
                 refs: Some(refs_vec),
                 team1: Some(team1()),
@@ -3783,18 +3802,10 @@ fn EditMatchModal(
                                 div { class: "col-md-6",
                                     div { class: "mb-3",
                                         label { class: "form-label", "Field" }
-                                        input {
-                                            class: "form-control",
-                                            "type": "text",
-                                            list: "field-list-edit",
+                                        select {
+                                            class: "form-select",
                                             value: "{field}",
-                                            placeholder: "Select or type field name",
-                                            oninput: move |e| {
-                                                let val = e.value();
-                                                on_field_change_edit(val);
-                                            },
-                                        }
-                                        datalist { id: "field-list-edit",
+                                            onchange: move |e| on_field_change_edit(e.value()),
                                             option { value: "", "Select Field" }
                                             for f in &data.fields {
                                                 option { value: "{f.name}", "{f.name}" }
