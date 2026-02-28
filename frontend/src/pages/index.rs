@@ -1,6 +1,7 @@
 use crate::api;
 use crate::types::{Tournament, UserRegStatus};
 use crate::Route;
+use chrono::{Local, NaiveDate};
 use dioxus::prelude::*;
 
 fn format_date(iso: &str) -> String {
@@ -16,6 +17,37 @@ fn format_date_display(start: &str, end: Option<&String>) -> String {
     }
 }
 
+/// True if the tournament's end date (or start date if no end) has fully passed in the user's local timezone.
+fn is_past_in_local_tz(t: &Tournament) -> bool {
+    let end_str = t.end_date.as_deref().unwrap_or(&t.start_date);
+    let date_str = end_str.get(..10).unwrap_or(end_str);
+    match NaiveDate::parse_from_str(date_str, "%Y-%m-%d") {
+        Ok(end_date) => Local::now().date_naive() > end_date,
+        Err(_) => false,
+    }
+}
+
+/// Split tournaments into upcoming (end not yet passed in local TZ) and past, sorted for display.
+fn split_upcoming_past(tournaments: &[Tournament]) -> (Vec<Tournament>, Vec<Tournament>) {
+    let mut upcoming: Vec<_> = tournaments
+        .iter()
+        .filter(|t| !is_past_in_local_tz(t))
+        .cloned()
+        .collect();
+    let mut past: Vec<_> = tournaments
+        .iter()
+        .filter(|t| is_past_in_local_tz(t))
+        .cloned()
+        .collect();
+    upcoming.sort_by(|a, b| a.start_date.cmp(&b.start_date));
+    past.sort_by(|a, b| {
+        let ea = a.end_date.as_deref().unwrap_or(&a.start_date);
+        let eb = b.end_date.as_deref().unwrap_or(&b.start_date);
+        eb.cmp(ea)
+    });
+    (upcoming, past)
+}
+
 #[component]
 pub fn Index() -> Element {
     let tournaments = use_resource(move || async move {
@@ -27,44 +59,51 @@ pub fn Index() -> Element {
         div { class: "row",
             div { class: "col-12",
                 if let Some(Ok(data)) = val.read().as_ref() {
-                    if !data.upcoming.is_empty() || !data.past.is_empty() {
-                        h2 { class: "mb-3", "Upcoming Events" }
-                        div { class: "row mb-4",
-                            for t in data.upcoming.iter() {
-                                {
-                                    let count = data.team_counts.get(&t.url).copied().unwrap_or(0);
-                                    let urs = data.user_reg_status.get(&t.url).cloned();
-                                    rsx! {
-                                        TournamentCard {
-                                            tournament: t.clone(),
-                                            team_count: count,
-                                            user_reg_status: urs
+                    {
+                        let (upcoming, past) = split_upcoming_past(&data.tournaments);
+                        if !upcoming.is_empty() || !past.is_empty() {
+                            rsx! {
+                                h2 { class: "mb-3", "Upcoming Events" }
+                                div { class: "row mb-4",
+                                    for t in upcoming.iter() {
+                                        {
+                                            let count = data.team_counts.get(&t.url).copied().unwrap_or(0);
+                                            let urs = data.user_reg_status.get(&t.url).cloned();
+                                            rsx! {
+                                                TournamentCard {
+                                                    tournament: t.clone(),
+                                                    team_count: count,
+                                                    user_reg_status: urs
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                h2 { class: "mb-3", "Past Events" }
+                                div { class: "row",
+                                    for t in past.iter() {
+                                        {
+                                            let count = data.team_counts.get(&t.url).copied().unwrap_or(0);
+                                            let urs = data.user_reg_status.get(&t.url).cloned();
+                                            rsx! {
+                                                TournamentCard {
+                                                    tournament: t.clone(),
+                                                    team_count: count,
+                                                    user_reg_status: urs
+                                                }
+                                            }
                                         }
                                     }
                                 }
                             }
-                        }
-                        h2 { class: "mb-3", "Past Events" }
-                        div { class: "row",
-                            for t in data.past.iter() {
-                                {
-                                    let count = data.team_counts.get(&t.url).copied().unwrap_or(0);
-                                    let urs = data.user_reg_status.get(&t.url).cloned();
-                                    rsx! {
-                                        TournamentCard {
-                                            tournament: t.clone(),
-                                            team_count: count,
-                                            user_reg_status: urs
-                                        }
-                                    }
+                        } else {
+                            rsx! {
+                                h2 { "Upcoming Events" }
+                                div { class: "alert alert-info",
+                                    h4 { "No tournaments available" }
+                                    p { "Check back later for upcoming events!" }
                                 }
                             }
-                        }
-                    } else {
-                        h2 { "Upcoming Events" }
-                        div { class: "alert alert-info",
-                            h4 { "No tournaments available" }
-                            p { "Check back later for upcoming events!" }
                         }
                     }
                 } else if let Some(Err(e)) = val.read().as_ref() {

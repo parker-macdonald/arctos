@@ -39,8 +39,7 @@ pub struct Tournament {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TournamentsResponse {
-    pub upcoming: Vec<Tournament>,
-    pub past: Vec<Tournament>,
+    pub tournaments: Vec<Tournament>,
     pub team_counts: std::collections::HashMap<String, u32>,
     pub user_reg_status: std::collections::HashMap<String, UserRegStatus>,
 }
