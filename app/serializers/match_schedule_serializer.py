@@ -25,6 +25,8 @@ class MatchScheduleSerializer:
             result["id"] = tag.id
         if tag.name:
             result["name"] = tag.name
+        if getattr(tag, "team", None):
+            result["team"] = tag.team
         return result
 
     @staticmethod
@@ -50,18 +52,23 @@ class MatchScheduleSerializer:
         if match.name:
             result["name"] = match.name
 
-        # Optional string fields - only include if non-empty
-        # Note: team1, team2, refs are NOT exported - they are derived from _initial fields
+        # Optional string fields - only include if non-empty.
+        # Prefer _initial (user tokens: tag::X, Match::winner, or explicit id); fall back to
+        # team1/team2/refs when set directly so export still includes team info.
         if match.team1_initial:
             result["team1_initial"] = match.team1_initial
+        elif getattr(match, "team1", False):
+            result["team1_initial"] = match.team1
         if match.team2_initial:
             result["team2_initial"] = match.team2_initial
+        elif getattr(match, "team2", False):
+            result["team2_initial"] = match.team2
         if match.refs_initial:
             result["refs_initial"] = match.refs_initial
+        elif getattr(match, "refs", False):
+            result["refs_initial"] = match.refs
         if match.field:
             result["field"] = match.field
-        if match.skip_condition:
-            result["skip_condition"] = match.skip_condition
         if match.skip_condition:
             result["skip_condition"] = match.skip_condition
 
@@ -123,6 +130,7 @@ class MatchScheduleSerializer:
         result = {
             "event": tournament_url,
             "name": name,
+            "team": str(data.get("team", "")).strip() or None,
         }
 
         # Include id if present (for same-tournament updates)
