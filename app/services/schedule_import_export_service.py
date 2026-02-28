@@ -18,6 +18,18 @@ if TYPE_CHECKING:  # pragma: no cover
     from models import Field, Match, Tag
 
 
+def _is_explicit_team_id(token: str) -> bool:
+    """True if the token is an explicit team ID (not tag:: or match::winner/loser)."""
+    if not token or not str(token).strip():
+        return False
+    t = str(token).strip()
+    if t.lower().startswith("tag::"):
+        return False
+    if "::winner" in t.lower() or "::loser" in t.lower():
+        return False
+    return True
+
+
 @dataclass(frozen=True)
 class ImportResult:
     """Result of an import operation."""
@@ -171,6 +183,60 @@ class ScheduleImportExportService:
         return errors
 
     @staticmethod
+    def _validate_teams_registered(
+        tournament_url: str,
+        tags_data: list[dict],
+        matches_data: list[dict],
+    ) -> list[str]:
+        """
+        Ensure every team referenced by ID (in tags or matches) is registered for the tournament.
+        Returns a list of error messages; empty if all referenced teams are registered.
+        """
+        from app.domain.enums import TeamRegistrationStatus
+        from models import TeamRegistration
+
+        # Collect all team IDs referenced by ID (not tag:: or match::winner/loser)
+        team_ids: set[str] = set()
+
+        for tag in tags_data:
+            team_val = str(tag.get("team", "")).strip()
+            if team_val:
+                team_ids.add(team_val)
+
+        for m in matches_data:
+            for field_name in ("team1_initial", "team2_initial"):
+                tok = str(m.get(field_name, "")).strip()
+                if tok and _is_explicit_team_id(tok):
+                    team_ids.add(tok)
+            refs_raw = str(m.get("refs_initial", "")).strip()
+            if refs_raw:
+                for part in refs_raw.split(","):
+                    tok = part.strip()
+                    if tok and _is_explicit_team_id(tok):
+                        team_ids.add(tok)
+
+        if not team_ids:
+            return []
+
+        registered_team_ids: set[str] = {
+            reg.team
+            for reg in TeamRegistration.query.filter_by(event=tournament_url)
+            .filter(TeamRegistration.status != TeamRegistrationStatus.CANCELLED)
+            .all()
+        }
+
+        unregistered = team_ids - registered_team_ids
+        if not unregistered:
+            return []
+
+        errors: list[str] = []
+        for tid in sorted(unregistered):
+            errors.append(
+                f"Team '{tid}' is not registered for this tournament."
+            )
+        return errors
+
+    @staticmethod
     @allow_Q
     def export_schedule(tournament_url: str) -> Result[str, ArctosError]:
         """
@@ -296,6 +362,13 @@ class ScheduleImportExportService:
             res = MatchScheduleSerializer.match_from_dict(match_data, tournament_url)
             if isinstance(res, Err):
                 errors.append(f"Match validation error: {res.value.message}")
+
+        # 5. Ensure all teams referenced by ID (tags and matches) are registered
+        errors.extend(
+            ScheduleImportExportService._validate_teams_registered(
+                tournament_url, tags_data, matches_data
+            )
+        )
 
         # If any validation errors, abort before making any changes
         if errors:
