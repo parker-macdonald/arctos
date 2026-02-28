@@ -1342,9 +1342,9 @@ fn CreateMatchModal(
                                                 value: team1(),
                                                 on_change: move |s| team1.set(s),
                                                 multiple: false,
-                                                placeholder: "Pseudonym, MatchName::winner, tag::TagName".to_string(),
+                                                placeholder: "team, match winner/loser, or tag".to_string(),
                                             }
-                                            div { class: "form-text", "Team, match winner/loser (MatchName::winner), or tag (tag::TagName)" }
+                                            div { class: "form-text", "team, match winner/loser, or tag" }
                                         }
                                     }
                                     div { class: "col-md-6",
@@ -1357,9 +1357,9 @@ fn CreateMatchModal(
                                                 value: team2(),
                                                 on_change: move |s| team2.set(s),
                                                 multiple: false,
-                                                placeholder: "Pseudonym, MatchName::winner, tag::TagName".to_string(),
+                                                placeholder: "team, match winner/loser, or tag".to_string(),
                                             }
-                                            div { class: "form-text", "Team, match winner/loser (MatchName::winner), or tag (tag::TagName)" }
+                                            div { class: "form-text", "team, match winner/loser, or tag" }
                                         }
                                     }
                                 }
@@ -1372,9 +1372,9 @@ fn CreateMatchModal(
                                         value: refs(),
                                         on_change: move |s| refs.set(s),
                                         multiple: true,
-                                        placeholder: "Comma-separated: pseudonym, MatchName::winner, tag::TagName".to_string(),
+                                        placeholder: "(optional) teams, match winners/losers, or tags".to_string(),
                                     }
-                                    div { class: "form-text", "Comma-separated list of teams, match winner/loser, or tags" }
+                                    div { class: "form-text", "(optional) teams, match winners/losers, or tags" }
                                 }
                                 div { class: "row",
                                     div { class: "col-md-4",
@@ -3867,7 +3867,7 @@ fn EditMatchModal(
                                                 value: team1(),
                                                 on_change: move |s| team1.set(s),
                                                 multiple: false,
-                                                placeholder: "Pseudonym, MatchName::winner, tag::TagName".to_string(),
+                                                placeholder: "team 1".to_string(),
                                             }
                                             div { class: "form-text", "Team, match winner/loser, or tag" }
                                         }
@@ -3882,9 +3882,9 @@ fn EditMatchModal(
                                                 value: team2(),
                                                 on_change: move |s| team2.set(s),
                                                 multiple: false,
-                                                placeholder: "Pseudonym, MatchName::winner, tag::TagName".to_string(),
+                                                placeholder: "team 2".to_string(),
                                             }
-                                            div { class: "form-text", "Team pseudonym, match winner/loser, or tag" }
+                                            div { class: "form-text", "Team, match winner/loser, or tag" }
                                         }
                                     }
                                 }
@@ -3897,9 +3897,9 @@ fn EditMatchModal(
                                         value: refs(),
                                         on_change: move |s| refs.set(s),
                                         multiple: true,
-                                        placeholder: "Comma-separated: pseudonym, MatchName::winner, tag::TagName".to_string(),
+                                        placeholder: "(optional) teams, match winners/losers, or tags".to_string(),
                                     }
-                                    div { class: "form-text", "Comma-separated list of team pseudonyms, match references, or tags" }
+                                    div { class: "form-text", "(optional) teams, match winners/losers, or tags" }
                                 }
                                 div { class: "row",
                                     div { class: "col-md-4",

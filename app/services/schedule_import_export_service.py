@@ -351,6 +351,7 @@ class ScheduleImportExportService:
                     ).first()
                     if tag:
                         tag.name = tag_dict["name"]
+                        tag.team = tag_dict.get("team")
                         tags_updated += 1
                     else:
                         # ID doesn't exist, create new (don't include id in creation)

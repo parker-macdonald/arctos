@@ -25,6 +25,8 @@ class MatchScheduleSerializer:
             result["id"] = tag.id
         if tag.name:
             result["name"] = tag.name
+        if getattr(tag, "team", None):
+            result["team"] = tag.team
         return result
 
     @staticmethod
@@ -128,6 +130,7 @@ class MatchScheduleSerializer:
         result = {
             "event": tournament_url,
             "name": name,
+            "team": str(data.get("team", "")).strip() or None,
         }
 
         # Include id if present (for same-tournament updates)
