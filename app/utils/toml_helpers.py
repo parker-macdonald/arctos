@@ -71,7 +71,7 @@ def write_toml_schedule(
 
     Args:
         event: Tournament URL
-        tags: List of tag dicts with 'id' and 'name'
+        tags: List of tag dicts with 'id', 'name', and optional 'team' (team id)
         fields: List of field dicts with 'id', 'name', 'camera'
         matches: List of match dicts with match attributes
         metadata: Optional metadata dict (e.g., export_date, version)
@@ -101,6 +101,8 @@ def write_toml_schedule(
                 lines.append(f'id = {tag["id"]}')
             if "name" in tag and tag["name"]:
                 lines.append(f'name = "{_escape_toml_string(tag["name"])}"')
+            if "team" in tag and tag["team"]:
+                lines.append(f'team = "{_escape_toml_string(tag["team"])}"')
             lines.append("")
 
     # Fields
