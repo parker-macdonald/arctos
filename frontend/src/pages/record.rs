@@ -12,6 +12,8 @@ use std::rc::Rc;
 #[cfg(target_arch = "wasm32")]
 use crate::api::RecordChunkMeta;
 #[cfg(target_arch = "wasm32")]
+use crate::record_idb;
+#[cfg(target_arch = "wasm32")]
 use wasm_bindgen::JsCast;
 
 #[cfg(target_arch = "wasm32")]
@@ -33,12 +35,10 @@ struct StoredChunk {
     point_id: Option<String>,
 }
 
+/// In-memory queue item: key references chunk or finalize in IndexedDB.
 #[cfg(target_arch = "wasm32")]
-enum UploadQueueItem {
-    Chunk {
-        meta: RecordChunkMeta,
-        blob: web_sys::Blob,
-    },
+enum QueueItem {
+    Chunk,
     FinalizeMatch { match_id: String },
 }
 
@@ -167,6 +167,7 @@ pub fn Record(url: String, field: ReadSignal<String>, camera_key: ReadSignal<Str
     let mut available_cameras = use_signal(|| Vec::<(String, String)>::new());
     let mut selected_camera_id = use_signal(|| None::<String>);
     let mut preview_stream = use_signal(|| None::<web_sys::MediaStream>);
+    let mut storage_warning = use_signal(|| None::<String>);
 
     #[cfg(target_arch = "wasm32")]
     {
@@ -223,6 +224,7 @@ pub fn Record(url: String, field: ReadSignal<String>, camera_key: ReadSignal<Str
         let is_uploading_sig = is_uploading.to_owned();
         let upload_count_sig = upload_count.to_owned();
         let upload_total_sig = upload_total.to_owned();
+        let storage_warning_sig = storage_warning.to_owned();
         let preview_stream_sig = preview_stream.to_owned();
         use_effect(move || {
             let stream_opt = preview_stream_sig();
@@ -250,6 +252,7 @@ pub fn Record(url: String, field: ReadSignal<String>, camera_key: ReadSignal<Str
                     is_uploading_sig,
                     upload_count_sig,
                     upload_total_sig,
+                    storage_warning_sig,
                 )
                 .await;
             });
@@ -378,6 +381,9 @@ pub fn Record(url: String, field: ReadSignal<String>, camera_key: ReadSignal<Str
                                             }
                                         }
                                     }
+                                }
+                                if let Some(ref msg) = storage_warning() {
+                                    div { class: "alert alert-warning", "{msg}" }
                                 }
                                 div {
                                     id: "record-video-container",
@@ -777,6 +783,7 @@ async fn run_recording_loop(
     mut is_uploading_sig: Signal<bool>,
     mut upload_count_sig: Signal<u32>,
     mut upload_total_sig: Signal<u32>,
+    mut storage_warning_sig: Signal<Option<String>>,
 ) {
     use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
     use std::sync::Arc;
@@ -906,24 +913,63 @@ async fn run_recording_loop(
         state2.borrow_mut().recorder = Some(r);
     }
 
-    let upload_queue: Rc<RefCell<VecDeque<UploadQueueItem>>> = Rc::new(RefCell::new(VecDeque::new()));
-    let upload_queue_worker = upload_queue.clone();
-    let tournament_url_upload = tournament_url.clone();
-    let field_upload = field.clone();
-    let camera_name_upload = camera_name.clone();
-    let key_upload = key_ref.clone();
-    spawn(async move {
-        run_upload_worker(
-            upload_queue_worker,
-            tournament_url_upload,
-            field_upload,
-            camera_name_upload,
-            key_upload,
-            is_uploading_sig,
-            upload_count_sig,
-        )
-        .await;
-    });
+    let db_holder: Rc<RefCell<Option<idb::Database>>> = Rc::new(RefCell::new(None));
+    if db_holder.borrow().is_none() {
+        if let Ok(db) = record_idb::open_db().await {
+            *db_holder.borrow_mut() = Some(db);
+        }
+    }
+    let upload_queue: Rc<RefCell<VecDeque<(String, QueueItem)>>> = Rc::new(RefCell::new(VecDeque::new()));
+    if let Some(ref db) = *db_holder.borrow() {
+        if let Ok(entries) = record_idb::cursor_entries_ordered(db).await {
+            for (key, value) in entries {
+                if let Some(match_id) = record_idb::parse_finalize_value(&value) {
+                    upload_queue.borrow_mut().push_back((key, QueueItem::FinalizeMatch { match_id }));
+                } else {
+                    upload_queue.borrow_mut().push_back((key, QueueItem::Chunk));
+                }
+            }
+            let n = upload_queue.borrow().len() as u32;
+            if n > 0 {
+                upload_total_sig.set(upload_total_sig() + n);
+            }
+        }
+        // Check storage quota; warn if low (e.g. < 100 MB free).
+        if let Some(window) = web_sys::window() {
+            let storage = window.navigator().storage();
+            if let Ok(promise) = storage.estimate() {
+                    if let Ok(estimate_js) = wasm_bindgen_futures::JsFuture::from(promise).await {
+                        let quota = js_sys::Reflect::get(&estimate_js, &"quota".into())
+                            .ok().and_then(|v| v.as_f64()).unwrap_or(0.0);
+                        let usage = js_sys::Reflect::get(&estimate_js, &"usage".into())
+                            .ok().and_then(|v| v.as_f64()).unwrap_or(0.0);
+                        const LOW_STORAGE_BYTES: f64 = 100_000_000.0; // 100 MB
+                        if quota > 0.0 && (quota - usage) < LOW_STORAGE_BYTES {
+                            storage_warning_sig.set(Some(
+                                "Low device storage for recording buffer; uploads may fail if connection is slow.".to_string(),
+                            ));
+                        }
+                    }
+                }
+        }
+    }
+    const NUM_UPLOAD_WORKERS: u32 = 3;
+    for _ in 0..NUM_UPLOAD_WORKERS {
+        let q = upload_queue.clone();
+        let tour = tournament_url.clone();
+        let f = field.clone();
+        let cam = camera_name.clone();
+        let k = key_ref.clone();
+        let is_up = is_uploading_sig.to_owned();
+        let up_cnt = upload_count_sig.to_owned();
+        spawn(async move {
+            let db = match record_idb::open_db().await {
+                Ok(d) => d,
+                Err(_) => return,
+            };
+            run_upload_worker(q, db, tour, f, cam, k, is_up, up_cnt).await;
+        });
+    }
 
     let mut current_match: Option<String> = None; // match_id
     let mut last_poll_data: Option<RecordMatchStatusResponse> = None;
@@ -1008,7 +1054,24 @@ async fn run_recording_loop(
                 state2.borrow_mut().status = RecorderStatus::Idle;
                 state1.borrow_mut().started_at = None;
                 state2.borrow_mut().started_at = None;
-                upload_queue.borrow_mut().push_back(UploadQueueItem::FinalizeMatch { match_id });
+                if let Some(ref db) = *db_holder.borrow() {
+                    if let Ok(key) = record_idb::get_next_sequence(db).await {
+                        match record_idb::put_finalize(db, &key, &match_id).await {
+                            Ok(()) => {
+                                upload_queue.borrow_mut().push_back((key, QueueItem::FinalizeMatch { match_id }));
+                            }
+                            Err(ref e) => {
+                                if let idb::Error::DomException(ref dom) = e {
+                                    if dom.name() == "QuotaExceededError" {
+                                        storage_warning_sig.set(Some(
+                                            "Recording buffer full. Free device storage or wait for uploads to catch up.".to_string(),
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 is_recording_sig.set(false);
             }
             if data.hasActiveMatch {
@@ -1090,21 +1153,36 @@ async fn run_recording_loop(
             if _state.borrow().status == RecorderStatus::Recording {
                 let drained: Vec<StoredChunk> = storage_rc.borrow_mut().drain(..).collect();
                 let n = drained.len();
-                for st in drained {
-                    let _idx = chunk_index_global.fetch_add(1, Ordering::Relaxed);
-                    let meta = RecordChunkMeta {
-                        session_id: st.session_id.clone(),
-                        chunk_start_timestamp: st.chunk_start_timestamp,
-                        recording_session_start_time: st.recording_session_start_time,
-                        chunk_length_ms: st.chunk_duration_ms,
-                        point_id: st.point_id.clone(),
-                        ..base_meta.clone()
-                    };
-                    upload_queue
-                        .borrow_mut()
-                        .push_back(UploadQueueItem::Chunk { meta, blob: st.blob });
-                }
                 if n > 0 {
+                    if let Some(ref db) = *db_holder.borrow() {
+                        for st in drained {
+                            let _idx = chunk_index_global.fetch_add(1, Ordering::Relaxed);
+                            let meta = RecordChunkMeta {
+                                session_id: st.session_id.clone(),
+                                chunk_start_timestamp: st.chunk_start_timestamp,
+                                recording_session_start_time: st.recording_session_start_time,
+                                chunk_length_ms: st.chunk_duration_ms,
+                                point_id: st.point_id.clone(),
+                                ..base_meta.clone()
+                            };
+                            if let Ok(key) = record_idb::get_next_sequence(db).await {
+                                match record_idb::put_chunk(db, &key, &meta, &st.blob).await {
+                                    Ok(()) => {
+                                        upload_queue.borrow_mut().push_back((key, QueueItem::Chunk));
+                                    }
+                                    Err(ref e) => {
+                                        if let idb::Error::DomException(ref dom) = e {
+                                            if dom.name() == "QuotaExceededError" {
+                                                storage_warning_sig.set(Some(
+                                                    "Recording buffer full. Free device storage or wait for uploads to catch up.".to_string(),
+                                                ));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                     upload_total_sig.set(upload_total_sig() + n as u32);
                 }
             }
@@ -1279,7 +1357,8 @@ async fn run_recording_loop(
 
 #[cfg(target_arch = "wasm32")]
 async fn run_upload_worker(
-    queue: Rc<RefCell<VecDeque<UploadQueueItem>>>,
+    queue: Rc<RefCell<VecDeque<(String, QueueItem)>>>,
+    db: idb::Database,
     tournament_url: String,
     field: String,
     camera_name: String,
@@ -1290,14 +1369,19 @@ async fn run_upload_worker(
     loop {
         gloo_timers::future::TimeoutFuture::new(200).await;
         let item = queue.borrow_mut().pop_front();
-        if let Some(item) = item {
+        if let Some((key_str, queue_item)) = item {
             is_uploading_sig.set(true);
-            match item {
-                UploadQueueItem::Chunk { meta, blob } => {
-                    let _ = api::record_upload_chunk(&meta, &blob).await;
-                    upload_count_sig.set(upload_count_sig() + 1);
+            match queue_item {
+                QueueItem::Chunk => {
+                    if let Ok(Some(value)) = record_idb::get_entry(&db, &key_str).await {
+                        if let Some((meta, blob)) = record_idb::parse_chunk_value(&value) {
+                            let _ = api::record_upload_chunk(&meta, &blob).await;
+                            upload_count_sig.set(upload_count_sig() + 1);
+                        }
+                        let _ = record_idb::delete_entry(&db, &key_str).await;
+                    }
                 }
-                UploadQueueItem::FinalizeMatch { match_id } => {
+                QueueItem::FinalizeMatch { match_id } => {
                     let _ = api::record_finalize(
                         &tournament_url,
                         &field,
@@ -1306,6 +1390,7 @@ async fn run_upload_worker(
                         key.as_deref(),
                     )
                     .await;
+                    let _ = record_idb::delete_entry(&db, &key_str).await;
                 }
             }
             is_uploading_sig.set(false);
