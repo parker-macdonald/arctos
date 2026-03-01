@@ -1366,32 +1366,47 @@ async fn run_upload_worker(
     mut is_uploading_sig: Signal<bool>,
     mut upload_count_sig: Signal<u32>,
 ) {
+    /// Delay before retrying a failed upload (connection lost, etc.).
+    const RETRY_DELAY_MS: u32 = 3000;
     loop {
         gloo_timers::future::TimeoutFuture::new(200).await;
         let item = queue.borrow_mut().pop_front();
         if let Some((key_str, queue_item)) = item {
             is_uploading_sig.set(true);
-            match queue_item {
+            let mut success = false;
+            match &queue_item {
                 QueueItem::Chunk => {
                     if let Ok(Some(value)) = record_idb::get_entry(&db, &key_str).await {
                         if let Some((meta, blob)) = record_idb::parse_chunk_value(&value) {
-                            let _ = api::record_upload_chunk(&meta, &blob).await;
-                            upload_count_sig.set(upload_count_sig() + 1);
+                            if api::record_upload_chunk(&meta, &blob).await.is_ok() {
+                                if record_idb::delete_entry(&db, &key_str).await.is_ok() {
+                                    upload_count_sig.set(upload_count_sig() + 1);
+                                    success = true;
+                                }
+                            }
                         }
-                        let _ = record_idb::delete_entry(&db, &key_str).await;
                     }
                 }
                 QueueItem::FinalizeMatch { match_id } => {
-                    let _ = api::record_finalize(
+                    if api::record_finalize(
                         &tournament_url,
                         &field,
-                        &match_id,
+                        match_id,
                         &camera_name,
                         key.as_deref(),
                     )
-                    .await;
-                    let _ = record_idb::delete_entry(&db, &key_str).await;
+                    .await
+                    .is_ok()
+                    {
+                        if record_idb::delete_entry(&db, &key_str).await.is_ok() {
+                            success = true;
+                        }
+                    }
                 }
+            }
+            if !success {
+                queue.borrow_mut().push_front((key_str, queue_item));
+                gloo_timers::future::TimeoutFuture::new(RETRY_DELAY_MS).await;
             }
             is_uploading_sig.set(false);
         }
