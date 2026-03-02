@@ -915,9 +915,14 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                     let stream_start_prev = stream_start_time.clone();
                     let stream_start_next = stream_start_time.clone();
                     let video_src = current.and_then(|c| c.video_path.as_ref()).map(|p| {
-                        let base = base_url_footage.trim_end_matches('/');
-                        let path = p.trim_start_matches('/');
-                        format!("{}/{}", base, path)
+                        let p = p.as_str();
+                        if p.starts_with("http://") || p.starts_with("https://") {
+                            p.to_string()
+                        } else {
+                            let base = base_url_footage.trim_end_matches('/');
+                            let path = p.trim_start_matches('/');
+                            format!("{}/{}", base, path)
+                        }
                     });
                     rsx! {
                         div { class: "card mt-3",
