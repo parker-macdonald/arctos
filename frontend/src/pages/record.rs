@@ -6,7 +6,7 @@ use crate::Route;
 use dioxus::core::use_drop;
 use dioxus::prelude::*;
 use std::cell::RefCell;
-use std::collections::VecDeque;
+use std::collections::{VecDeque, HashSet};
 use std::rc::Rc;
 
 #[cfg(target_arch = "wasm32")]
@@ -1161,6 +1161,60 @@ async fn run_recording_loop(
                 upload_total_sig.set(upload_total_sig() + n);
             }
             update_upload_bar_from_queue(&q_ref, upload_bar_items_sig.to_owned());
+        }
+        // Reconcile: add FinalizeMatch for matches that have chunks but no finalize in queue and are no longer active
+        let chunk_match_ids: HashSet<String> = upload_queue
+            .borrow()
+            .iter()
+            .filter_map(|(_, item)| {
+                if let QueueItem::Chunk { match_id: Some(id) } = item {
+                    Some(id.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        let finalized_in_queue: HashSet<String> = upload_queue
+            .borrow()
+            .iter()
+            .filter_map(|(_, item)| {
+                if let QueueItem::FinalizeMatch { match_id } = item {
+                    Some(match_id.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        let mut need_finalize: Vec<String> = chunk_match_ids
+            .difference(&finalized_in_queue)
+            .cloned()
+            .collect();
+        if !need_finalize.is_empty() {
+            if let Ok(status) = api::record_match_status(&tournament_url, &field, None).await {
+                let current_match_id = status.match_id.as_deref();
+                need_finalize.retain(|id| {
+                    current_match_id.map(|cur| cur != id.as_str()).unwrap_or(true)
+                });
+                let mut added = 0u32;
+                for match_id in need_finalize {
+                    if let Ok(key) = record_idb::get_next_sequence(db).await {
+                        if record_idb::put_finalize(db, &key, &match_id).await.is_ok() {
+                            upload_queue.borrow_mut().push_back((
+                                key,
+                                QueueItem::FinalizeMatch {
+                                    match_id: match_id.clone(),
+                                },
+                            ));
+                            added += 1;
+                        }
+                    }
+                }
+                if added > 0 {
+                    upload_total_sig.set(upload_total_sig() + added);
+                    let q_ref = upload_queue.borrow();
+                    update_upload_bar_from_queue(&q_ref, upload_bar_items_sig.to_owned());
+                }
+            }
         }
         // Check storage quota; warn if low (e.g. < 100 MB free).
         if let Some(window) = web_sys::window() {
