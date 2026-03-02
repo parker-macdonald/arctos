@@ -1728,30 +1728,62 @@ def tournament_match_detail(tournament_url):
                     if isinstance(recording, dict) and "video_path" in recording:
                         video_path = recording.get("video_path", "")
                         if video_path:
-                            if video_path.startswith("static/"):
-                                video_full_path = os.path.join(
-                                    current_app.root_path, "..", video_path
-                                )
+                            # S3: video_path is the object key; resolve to presigned URL
+                            if recording.get("storage") == "s3":
+                                bucket = current_app.config.get("S3_VIDEO_BUCKET")
+                                if bucket:
+                                    from app.utils.s3_video import get_presigned_url
+                                    region = current_app.config.get("AWS_REGION") or "us-east-1"
+                                    expiry = current_app.config.get(
+                                        "S3_PRESIGNED_EXPIRY_SECONDS", 3600
+                                    )
+                                    endpoint_url = current_app.config.get("S3_ENDPOINT_URL")
+                                    playable_url = get_presigned_url(
+                                        bucket, video_path, region=region,
+                                        expiry_seconds=expiry, endpoint_url=endpoint_url
+                                    )
+                                    if playable_url:
+                                        recorded_videos.append(
+                                            {
+                                                "camera_id": camera_id,
+                                                "video_path": playable_url,
+                                                "point_timestamps": recording.get(
+                                                    "point_timestamps"
+                                                ),
+                                                "type": "recorded",
+                                                "start_time": recording.get("start_time"),
+                                                "start_timestamp": recording.get(
+                                                    "start_timestamp"
+                                                ),
+                                                "session_id": recording.get("session_id"),
+                                            }
+                                        )
                             else:
-                                video_full_path = os.path.join(
-                                    current_app.root_path, "../static", video_path
-                                )
-                            if os.path.exists(video_full_path):
-                                recorded_videos.append(
-                                    {
-                                        "camera_id": camera_id,
-                                        "video_path": video_path,
-                                        "point_timestamps": recording.get(
-                                            "point_timestamps"
-                                        ),
-                                        "type": "recorded",
-                                        "start_time": recording.get("start_time"),
-                                        "start_timestamp": recording.get(
-                                            "start_timestamp"
-                                        ),
-                                        "session_id": recording.get("session_id"),
-                                    }
-                                )
+                                # Local: resolve to full path and check file exists
+                                if video_path.startswith("static/"):
+                                    video_full_path = os.path.join(
+                                        current_app.root_path, "..", video_path
+                                    )
+                                else:
+                                    video_full_path = os.path.join(
+                                        current_app.root_path, "../static", video_path
+                                    )
+                                if os.path.exists(video_full_path):
+                                    recorded_videos.append(
+                                        {
+                                            "camera_id": camera_id,
+                                            "video_path": video_path,
+                                            "point_timestamps": recording.get(
+                                                "point_timestamps"
+                                            ),
+                                            "type": "recorded",
+                                            "start_time": recording.get("start_time"),
+                                            "start_timestamp": recording.get(
+                                                "start_timestamp"
+                                            ),
+                                            "session_id": recording.get("session_id"),
+                                        }
+                                    )
         except (json.JSONDecodeError, TypeError):
             pass
 
@@ -4061,6 +4093,8 @@ def update_tags_api(tournament_url):
     tag_ref = f"tag::{tag.name}"
 
     for m in matches:
+        if m.status in (MatchStatus.COMPLETED, MatchStatus.SKIPPED, MatchStatus.IN_PROGRESS):
+            continue
         if m.team1_initial == tag_ref:
             m.team1 = team_id
         if m.team2_initial == tag_ref:

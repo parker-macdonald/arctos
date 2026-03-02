@@ -220,6 +220,32 @@ def _build_joined_with_init_first(ordered_chunks, chunk_dir, joined_raw, ext, _l
             return False
 
 
+def _get_video_codec(file_path, cwd):
+    """Return video codec name (hevc, h264, avc1) or None if unavailable."""
+    if cwd:
+        input_arg = path.basename(file_path)
+        run_cwd = cwd
+    else:
+        input_arg = file_path
+        run_cwd = path.dirname(path.abspath(file_path))
+    args = [
+        "ffprobe",
+        "-i", input_arg,
+        "-select_streams", "v:0",
+        "-show_entries", "stream=codec_name",
+        "-v", "quiet", "-of", "csv=p=0",
+    ]
+    result = subprocess.run(
+        args,
+        cwd=run_cwd,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0 or not result.stdout:
+        return None
+    return result.stdout.strip().lower() or None
+
+
 def _get_media_duration_sec(file_path, cwd=None):
     """Return duration in seconds of a media file via ffprobe, or None if unavailable."""
     if cwd:
@@ -256,7 +282,7 @@ def finalize_recording_worker(
 ):
     """
     1. Concatenate all chunks with the same session_id in order of chunk_start_timestamp using cat.
-    2. Fix each joined raw file with ffmpeg (-c copy -map 0 -tag:v hvc1 -movflags +faststart for MP4).
+    2. Fix each joined raw file with ffmpeg (-c copy -map 0 -tag:v matching codec -movflags +faststart for MP4).
     3. Concatenate all session outputs with the concat demuxer.
     4. Compute point_timestamps and stream_start_time (UTC) for the frontend to scrub to points.
     """
@@ -344,10 +370,19 @@ def finalize_recording_worker(
         session_basename = f"session_{session_id}.{ext}"
         session_output_path = path.join(chunk_dir, session_basename)
         if is_mp4:
+            # Probe for video codec; use matching tag for Safari compatibility.
+            # hvc1 = HEVC, avc1 = H.264. Omit tag if unknown so ffmpeg chooses.
+            video_codec = _get_video_codec(joined_raw, chunk_dir)
+            tag_args = []
+            if video_codec == "hevc":
+                tag_args = ["-tag:v", "hvc1"]
+            elif video_codec in ("h264", "avc1"):
+                tag_args = ["-tag:v", "avc1"]
             fix_cmd = [
                 "ffmpeg", "-i", path.basename(joined_raw),
                 "-c", "copy", "-map", "0",
-                "-tag:v", "hvc1", "-movflags", "+faststart",
+                *tag_args,
+                "-movflags", "+faststart",
                 "-loglevel", "error", "-y", session_basename,
             ]
         else:
@@ -463,10 +498,39 @@ def finalize_recording_worker(
         print(f"finalize_recording: point_timestamps (count={len(point_timestamps)})", flush=True)
         _log.info("finalize_recording: point_timestamps=%s", point_timestamps)
 
-        video_path = path.join(
-            "static", "uploads", "videos",
-            tournament_url, field_name, match_id, camera_name, final_basename,
-        ).replace("\\", "/")
+        from flask import current_app
+        from app.utils.s3_video import upload_video
+
+        bucket = current_app.config.get("S3_VIDEO_BUCKET") if current_app else None
+        region = (current_app.config.get("AWS_REGION") or "us-east-1") if current_app else "us-east-1"
+        prefix = (current_app.config.get("S3_VIDEO_PREFIX") or "").strip() or None
+        endpoint_url = current_app.config.get("S3_ENDPOINT_URL") if current_app else None
+
+        video_path = None
+        storage = None
+        delete_final_file = False
+
+        if bucket:
+            # S3: key is {prefix/}{match_id}/{camera_name}.{ext}
+            key_part = f"{match_id}/{camera_name}.{ext}"
+            s3_key = f"{prefix}/{key_part}" if prefix else key_part
+            content_type = "video/mp4" if ext == "mp4" else "video/webm"
+            if upload_video(final_path, bucket, s3_key, content_type, region=region, endpoint_url=endpoint_url):
+                video_path = s3_key
+                storage = "s3"
+                delete_final_file = True
+                _log.info("finalize_recording: uploaded to S3 key=%s", s3_key)
+            else:
+                _log.warning("finalize_recording: S3 upload failed, keeping local file")
+                video_path = path.join(
+                    "static", "uploads", "videos",
+                    tournament_url, field_name, match_id, camera_name, final_basename,
+                ).replace("\\", "/")
+        else:
+            video_path = path.join(
+                "static", "uploads", "videos",
+                tournament_url, field_name, match_id, camera_name, final_basename,
+            ).replace("\\", "/")
 
         match = Match.query.filter_by(uuid=match_id).first()
         if not match:
@@ -484,6 +548,8 @@ def finalize_recording_worker(
                 "type": "recorded",
                 "stream_start_time": stream_start_iso,
             }
+            if storage:
+                stream_starts[camera_name]["storage"] = storage
             match.camera_stream_starts = json.dumps(stream_starts)
             db.session.commit()
             print(f"finalize_recording: committed camera_stream_starts for match {match_id}", flush=True)
@@ -501,6 +567,8 @@ def finalize_recording_worker(
             for _sid, basename, _start, _pids in session_outputs:
                 to_remove.append(path.join(chunk_dir, basename))
             to_remove.append(path.join(chunk_dir, "concat_sessions.txt"))
+            if delete_final_file:
+                to_remove.append(final_path)
             for fp in to_remove:
                 try:
                     if path.exists(fp):

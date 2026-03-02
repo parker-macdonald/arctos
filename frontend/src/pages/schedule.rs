@@ -782,6 +782,22 @@ fn CreateMatchModal(
 
     #[cfg(target_arch = "wasm32")]
     use_effect(move || {
+        spawn(async move {
+            gloo_timers::future::TimeoutFuture::new(50).await;
+            if let Some(window) = web_sys::window() {
+                if let Some(doc) = window.document() {
+                    if let Ok(Some(el)) = doc.query_selector("#new-match-name-input") {
+                        if let Ok(input) = el.dyn_into::<web_sys::HtmlInputElement>() {
+                            let _ = input.focus();
+                        }
+                    }
+                }
+            }
+        });
+    });
+
+    #[cfg(target_arch = "wasm32")]
+    use_effect(move || {
         let pos = skip_condition_cursor();
         if let Some(p) = pos {
             skip_condition_cursor.set(None);
@@ -1271,7 +1287,14 @@ fn CreateMatchModal(
                                 div { class: "col-md-6",
                                     div { class: "mb-3",
                                         label { class: "form-label", "Match Name" }
-                                        input { class: "form-control", "type": "text", value: "{name}", oninput: move |e| { let mut name = name; name.set(e.value()); }, required: true }
+                                        input {
+                                            id: "new-match-name-input",
+                                            class: "form-control",
+                                            "type": "text",
+                                            value: "{name}",
+                                            oninput: move |e| { let mut name = name; name.set(e.value()); },
+                                            required: true,
+                                        }
                                     }
                                 }
                                 div { class: "col-md-6",
@@ -1670,6 +1693,10 @@ fn FieldsModal(
     let mut preview_cameras = use_signal(|| vec![] as Vec<String>);
     let mut preview_selected_camera = use_signal(|| String::new());
     let preview_cache_bust = use_signal(|| "0".to_string());
+    #[cfg(target_arch = "wasm32")]
+    let mut preview_image_object_url = use_signal(|| None::<String>);
+    #[cfg(target_arch = "wasm32")]
+    let mut preview_metadata = use_signal(|| None::<api::PreviewMetadata>);
     let mut editing_field_id = use_signal(|| None::<u32>);
     let mut editing_name = use_signal(|| "".to_string());
     let mut editing_camera_urls = use_signal(|| vec!["".to_string()]);
@@ -1681,7 +1708,10 @@ fn FieldsModal(
         let preview_modal_closed_eff = preview_modal_closed.clone();
         let preview_modal_field_name_eff = preview_modal_field_name.clone();
         let preview_cameras_eff = preview_cameras.clone();
-        let preview_cache_bust_eff = preview_cache_bust.clone();
+        let preview_selected_camera_eff = preview_selected_camera.clone();
+        let preview_image_object_url_eff = preview_image_object_url.clone();
+        #[cfg(target_arch = "wasm32")]
+        let preview_metadata_eff = preview_metadata.clone();
         use_effect(move || {
             let fid_opt = preview_modal_field_eff();
             let closed_opt = preview_modal_closed_eff();
@@ -1691,8 +1721,9 @@ fn FieldsModal(
                 _ => return,
             };
             let mut cameras_sig = preview_cameras_eff.clone();
-            let mut cache_sig = preview_cache_bust_eff.clone();
             let closed2 = closed.clone();
+            let u2 = u.clone();
+            let field_name2 = field_name.clone();
             spawn(async move {
             use std::sync::atomic::Ordering;
             while !closed.load(Ordering::SeqCst) {
@@ -1707,18 +1738,60 @@ fn FieldsModal(
                 }
             }
         });
-        spawn(async move {
-            use std::sync::atomic::Ordering;
-            while !closed2.load(Ordering::SeqCst) {
-                cache_sig.set(format!("{}", js_sys::Date::now()));
-                for _ in 0..2 {
-                    if closed2.load(Ordering::SeqCst) {
-                        return;
+            // Fetch preview frame with credentials and set img via object URL (Safari compatibility).
+            let mut image_url_sig = preview_image_object_url_eff.clone();
+            let cam_sig = preview_selected_camera_eff.clone();
+            #[cfg(target_arch = "wasm32")]
+            let mut meta_sig = preview_metadata_eff.clone();
+            spawn(async move {
+                use std::sync::atomic::Ordering;
+                while !closed2.load(Ordering::SeqCst) {
+                    let camera = cam_sig();
+                    if !camera.is_empty() {
+                        let cache_bust = format!("{}", js_sys::Date::now());
+                        match api::fetch_preview_frame(&u2, &field_name2, &camera, &cache_bust).await {
+                            Ok(Some(bytes)) => {
+                                let arr = js_sys::Uint8Array::from(&bytes[..]);
+                                let blob = web_sys::Blob::new_with_u8_array_sequence_and_options(
+                                    &js_sys::Array::of1(&arr),
+                                    web_sys::BlobPropertyBag::new().type_("image/jpeg"),
+                                )
+                                .expect("Blob");
+                                let new_url = web_sys::Url::create_object_url_with_blob(&blob)
+                                    .expect("object URL");
+                                if let Some(old) = image_url_sig() {
+                                    web_sys::Url::revoke_object_url(&old).ok();
+                                }
+                                image_url_sig.set(Some(new_url));
+                            }
+                            Ok(None) => {}
+                            Err(_) => {}
+                        }
+                        #[cfg(target_arch = "wasm32")]
+                        if let Ok(Some(meta)) = api::fetch_preview_metadata(&u2, &field_name2, &camera).await {
+                            meta_sig.set(Some(meta));
+                        }
                     }
-                    gloo_timers::future::TimeoutFuture::new(1000).await;
+                    for _ in 0..2 {
+                        if closed2.load(Ordering::SeqCst) {
+                            if let Some(url) = image_url_sig() {
+                                web_sys::Url::revoke_object_url(&url).ok();
+                                image_url_sig.set(None);
+                            }
+                            #[cfg(target_arch = "wasm32")]
+                            meta_sig.set(None);
+                            return;
+                        }
+                        gloo_timers::future::TimeoutFuture::new(1000).await;
+                    }
                 }
-            }
-        });
+                if let Some(url) = image_url_sig() {
+                    web_sys::Url::revoke_object_url(&url).ok();
+                    image_url_sig.set(None);
+                }
+                #[cfg(target_arch = "wasm32")]
+                meta_sig.set(None);
+            });
         });
     }
 
@@ -2072,6 +2145,42 @@ fn FieldsModal(
                     let u = url_sig().clone();
                     let u_release = url_sig().clone();
                     let name_for_release = preview_field_name.to_string();
+                    #[cfg(target_arch = "wasm32")]
+                    let preview_img_src = preview_image_object_url()
+                        .unwrap_or_else(|| "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1' height='1'%3E%3C/svg%3E".to_string());
+                    #[cfg(not(target_arch = "wasm32"))]
+                    let preview_img_src = api::preview_frame_url(&u, preview_field_name, &effective_camera, &preview_cache_bust());
+                    #[cfg(target_arch = "wasm32")]
+                    let preview_metadata_block = match preview_metadata() {
+                        Some(meta) => {
+                            let storage_str = match (meta.storage_usage, meta.storage_quota) {
+                                (Some(usage), Some(quota)) if quota > 0.0 => {
+                                    let u_mb = usage / 1_048_576.0;
+                                    let q_mb = quota / 1_048_576.0;
+                                    format!("{:.1} MB / {:.1} MB", u_mb, q_mb)
+                                }
+                                _ => String::new(),
+                            };
+                            let battery_str = meta
+                                .battery_level
+                                .map(|l| format!("{:.0}%", l * 100.0))
+                                .unwrap_or_default();
+                            if !storage_str.is_empty() || !battery_str.is_empty() {
+                                rsx! {
+                                    div { class: "mt-2 small text-muted d-flex gap-3 flex-wrap",
+                                        if !storage_str.is_empty() { span { "Storage: {storage_str}" } }
+                                        if !battery_str.is_empty() { span { "Battery: {battery_str}" } }
+                                    }
+                                }
+                                .unwrap_or_default()
+                            } else {
+                                rsx! { div {} }.unwrap_or_default()
+                            }
+                        }
+                        None => rsx! { div {} }.unwrap_or_default(),
+                    };
+                    #[cfg(not(target_arch = "wasm32"))]
+                    let preview_metadata_block = rsx! { div {} }.unwrap_or_default();
                     rsx! {
                         div { class: "modal d-block", tabindex: "-1", style: "background: rgba(0,0,0,0.5); z-index: 1060;",
                             div { class: "modal-dialog modal-dialog-centered modal-lg",
@@ -2084,6 +2193,14 @@ fn FieldsModal(
                                             spawn(async move {
                                                 let _ = api::release_preview(&u_rel, &name_rel).await;
                                             });
+                                            #[cfg(target_arch = "wasm32")]
+                                            {
+                                                if let Some(url) = preview_image_object_url() {
+                                                    web_sys::Url::revoke_object_url(&url).ok();
+                                                    preview_image_object_url.set(None);
+                                                }
+                                                preview_metadata.set(None);
+                                            }
                                             if let Some(closed) = preview_modal_closed() {
                                                 closed.store(true, std::sync::atomic::Ordering::SeqCst);
                                             }
@@ -2111,11 +2228,12 @@ fn FieldsModal(
                                                 p { class: "text-muted small", "Select a camera..." }
                                             } else {
                                                 img {
-                                                    src: "{api::preview_frame_url(&u, preview_field_name, &effective_camera, &cache_bust)}",
+                                                    src: "{preview_img_src}",
                                                     alt: "Preview",
                                                     class: "img-fluid w-100",
                                                     style: "max-height: 70vh; object-fit: contain;"
                                                 }
+                                                {preview_metadata_block}
                                             }
                                         }
                                     }

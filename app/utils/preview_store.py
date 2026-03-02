@@ -3,6 +3,7 @@ Filesystem-backed store for camera preview state (requested, pending frames, ser
 Works with multiple gunicorn workers when they share the same filesystem.
 """
 
+import json
 import os
 import time
 import shutil
@@ -47,6 +48,14 @@ def serving_path(tournament: str, field: str, camera_name: str) -> str:
     f = "".join(c for c in field if c.isalnum() or c in "_-")
     cam = "".join(c for c in camera_name if c.isalnum() or c in "_-") or "camera"
     return os.path.join(root, "serving", t, f, f"{cam}.jpg")
+
+
+def metadata_path(tournament: str, field: str, camera_name: str) -> str:
+    root = _preview_root()
+    t = "".join(c for c in tournament if c.isalnum() or c in "_-")
+    f = "".join(c for c in field if c.isalnum() or c in "_-")
+    cam = "".join(c for c in camera_name if c.isalnum() or c in "_-") or "camera"
+    return os.path.join(root, "meta", t, f, f"{cam}.json")
 
 
 def ensure_dir(path: str) -> None:
@@ -149,3 +158,36 @@ def serving_mtime(tournament: str, field: str, camera_name: str):
         return os.path.getmtime(p)
     except OSError:
         return 0
+
+
+def write_metadata(
+    tournament: str,
+    field: str,
+    camera_name: str,
+    storage_usage: float | None,
+    storage_quota: float | None,
+    battery_level: float | None,
+) -> None:
+    """Write device metadata (storage, battery) for this camera. Values in bytes or 0–1 for battery."""
+    p = metadata_path(tournament, field, camera_name)
+    ensure_dir(p)
+    data = {
+        "storage_usage": storage_usage,
+        "storage_quota": storage_quota,
+        "battery_level": battery_level,
+        "updated": time.time(),
+    }
+    with open(p, "w") as f:
+        json.dump(data, f)
+
+
+def read_metadata(tournament: str, field: str, camera_name: str) -> dict | None:
+    """Return metadata dict (storage_usage, storage_quota, battery_level, updated) or None."""
+    p = metadata_path(tournament, field, camera_name)
+    if not os.path.isfile(p):
+        return None
+    try:
+        with open(p) as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
