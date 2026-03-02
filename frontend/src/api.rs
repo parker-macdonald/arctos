@@ -855,6 +855,31 @@ pub fn preview_frame_url(
     )
 }
 
+/// TO: Fetch preview frame with credentials (for Safari compatibility). Returns Some(jpeg_bytes) on 200, None on 204, Err on failure.
+pub async fn fetch_preview_frame(
+    tournament_url: &str,
+    field_name: &str,
+    camera_name: &str,
+    cache_bust: &str,
+) -> Result<Option<Vec<u8>>, String> {
+    let url = preview_frame_url(tournament_url, field_name, camera_name, cache_bust);
+    let c = client();
+    let r = with_credentials(c.get(&url))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    let status = r.status();
+    if status.as_u16() == 204 {
+        return Ok(None);
+    }
+    if !status.is_success() {
+        let text = r.text().await.unwrap_or_default();
+        return Err(format!("Preview frame: {} {}", status, text));
+    }
+    let bytes = r.bytes().await.map_err(|e| e.to_string())?.to_vec();
+    Ok(Some(bytes))
+}
+
 /// Metadata for a single chunk upload (record page).
 #[cfg(target_arch = "wasm32")]
 #[derive(Clone)]

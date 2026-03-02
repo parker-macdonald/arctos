@@ -577,7 +577,7 @@ def record_preview_cameras():
 @login_required
 def record_preview_frame_get():
     """TO: get latest preview frame for a camera. Moves A→B then serves B, or serves stale B or 204."""
-    from flask import send_file
+    from flask import send_file, make_response
     import io
 
     tournament_url = request.args.get("tournament", "").strip()
@@ -587,19 +587,30 @@ def record_preview_frame_get():
         return jsonify({"error": "tournament and field required"}), 400
     if is_not_TO(tournament_url):
         return jsonify({"error": "Only tournament organizers can get preview frame"}), 403
+    # Prevent Safari (and others) from caching; Safari may not send cookies with img requests.
+    no_cache_headers = {
+        "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+        "Pragma": "no-cache",
+    }
     # Move pending to serving if we have a new frame
     preview_store.move_pending_to_serving(tournament_url, field_name, camera_name)
     data, mtime = preview_store.read_serving(tournament_url, field_name, camera_name)
     if not data:
-        return "", 204
+        resp = make_response("", 204)
+        resp.headers.update(no_cache_headers)
+        return resp
     # Optional: treat stale B as "camera offline" after RECENT_MTIME_SEC
     if mtime and (time.time() - mtime) > preview_store.RECENT_MTIME_SEC:
-        return "", 204
-    return send_file(
+        resp = make_response("", 204)
+        resp.headers.update(no_cache_headers)
+        return resp
+    resp = send_file(
         io.BytesIO(data),
         mimetype="image/jpeg",
         as_attachment=False,
     )
+    resp.headers.update(no_cache_headers)
+    return resp
 
 
 @bp.route("/record/upload-chunk", methods=["POST"])

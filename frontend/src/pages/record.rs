@@ -188,6 +188,53 @@ pub fn Record(url: String, field: ReadSignal<String>, camera_key: ReadSignal<Str
         });
     }
 
+    // Screen wake lock: keep the device awake while the record page is open (wasm only).
+    #[cfg(target_arch = "wasm32")]
+    {
+        let wake_lock_sentinel = use_signal(|| None::<wasm_bindgen::JsValue>);
+        use_effect(move || {
+            let mut sentinel_sig = wake_lock_sentinel.to_owned();
+            wasm_bindgen_futures::spawn_local(async move {
+                let window = match web_sys::window() {
+                    Some(w) => w,
+                    None => return,
+                };
+                let navigator = window.navigator();
+                let wake_lock_js = match js_sys::Reflect::get(&navigator, &wasm_bindgen::JsValue::from_str("wakeLock")) {
+                    Ok(v) if !v.is_undefined() && !v.is_null() => v,
+                    _ => return,
+                };
+                let request_js = match js_sys::Reflect::get(&wake_lock_js, &wasm_bindgen::JsValue::from_str("request")) {
+                    Ok(v) if v.is_function() => v,
+                    _ => return,
+                };
+                let request_fn = match request_js.dyn_ref::<js_sys::Function>() {
+                    Some(f) => f,
+                    None => return,
+                };
+                let type_arg = wasm_bindgen::JsValue::from_str("screen");
+                let promise = request_fn.call1(&wake_lock_js, &type_arg).ok().and_then(|v| v.dyn_into::<js_sys::Promise>().ok());
+                let promise = match promise {
+                    Some(p) => p,
+                    None => return,
+                };
+                let result = wasm_bindgen_futures::JsFuture::from(promise).await;
+                if let Ok(sentinel) = result {
+                    sentinel_sig.set(Some(sentinel));
+                }
+            });
+        });
+        let wake_lock_for_drop = wake_lock_sentinel.to_owned();
+        use_drop(move || {
+            if let Some(sentinel) = wake_lock_for_drop() {
+                let release_js = js_sys::Reflect::get(&sentinel, &wasm_bindgen::JsValue::from_str("release")).ok();
+                if let Some(release_fn) = release_js.and_then(|f| f.dyn_ref::<js_sys::Function>().map(|f| f.clone())) {
+                    let _ = release_fn.call0(&sentinel);
+                }
+            }
+        });
+    }
+
     // Stop camera and clear video when leaving the record page (wasm only).
     #[cfg(target_arch = "wasm32")]
     {
@@ -467,13 +514,14 @@ async fn initialize_camera_and_enumerate(
         }
     };
 
+    // Use Safari-friendly constraints: start with 1280x720 ideal; Safari/iOS often fails on 1080p+.
     let mut constraints = MediaStreamConstraints::new();
     let mut video_ideal = js_sys::Object::new();
     let w = js_sys::Object::new();
-    js_sys::Reflect::set(&w, &"ideal".into(), &1920.into()).ok();
+    js_sys::Reflect::set(&w, &"ideal".into(), &3840.into()).ok();
     js_sys::Reflect::set(&video_ideal, &"width".into(), &w.into()).ok();
     let h = js_sys::Object::new();
-    js_sys::Reflect::set(&h, &"ideal".into(), &1080.into()).ok();
+    js_sys::Reflect::set(&h, &"ideal".into(), &2160.into()).ok();
     js_sys::Reflect::set(&video_ideal, &"height".into(), &h.into()).ok();
     constraints.video(&video_ideal.into());
     constraints.audio(&true.into());
@@ -495,8 +543,30 @@ async fn initialize_camera_and_enumerate(
             }
         },
         Err(_) => {
-            status.set(RecordStatus::Error("Camera permission denied".to_string()));
-            return;
+            // Safari/iOS may reject with resolution; retry with no video constraints.
+            let mut fallback = MediaStreamConstraints::new();
+            fallback.video(&true.into());
+            fallback.audio(&true.into());
+            let fallback_p = match media_devices.get_user_media_with_constraints(&fallback) {
+                Ok(p) => p,
+                Err(_) => {
+                    status.set(RecordStatus::Error("Camera permission denied".to_string()));
+                    return;
+                }
+            };
+            match JsFuture::from(fallback_p).await {
+                Ok(stream) => match stream.dyn_into::<web_sys::MediaStream>() {
+                    Ok(s) => s,
+                    Err(_) => {
+                        status.set(RecordStatus::Error("Failed to get camera stream".to_string()));
+                        return;
+                    }
+                },
+                Err(_) => {
+                    status.set(RecordStatus::Error("Camera permission denied".to_string()));
+                    return;
+                }
+            }
         }
     };
 
@@ -547,43 +617,44 @@ async fn initialize_camera_and_enumerate(
     let stream = if let Some(device_id) = chosen_id {
         selected_camera_id.set(Some(device_id.clone()));
         set_stored_camera_device_id(&device_id);
-        let mut specific_constraints = MediaStreamConstraints::new();
-        let video_constraint = js_sys::Object::new();
-        let device_id_obj = js_sys::Object::new();
-        js_sys::Reflect::set(&device_id_obj, &"exact".into(), &device_id.into()).ok();
-        js_sys::Reflect::set(&video_constraint, &"deviceId".into(), &device_id_obj.into()).ok();
-        let w = js_sys::Object::new();
-        js_sys::Reflect::set(&w, &"ideal".into(), &3840.into()).ok();
-        js_sys::Reflect::set(&video_constraint, &"width".into(), &w.into()).ok();
-        let h = js_sys::Object::new();
-        js_sys::Reflect::set(&h, &"ideal".into(), &2160.into()).ok();
-        js_sys::Reflect::set(&video_constraint, &"height".into(), &h.into()).ok();
-        specific_constraints.video(&video_constraint.into());
-        specific_constraints.audio(&true.into());
-
-        let promise = match media_devices.get_user_media_with_constraints(&specific_constraints) {
-            Ok(p) => p,
-            Err(_) => {
-                preview_stream.set(Some(initial_stream));
-                return;
+        // Safari/iOS often rejects 4K; try 1080p then 720p then deviceId-only.
+        let resolutions: [(u32, u32); 4] = [(3840, 2160), (1920, 1080), (1280, 720), (0, 0)];
+        let mut stream_opt: Option<web_sys::MediaStream> = None;
+        for (width, height) in resolutions.iter() {
+            let mut specific_constraints = MediaStreamConstraints::new();
+            let video_constraint = js_sys::Object::new();
+            let device_id_obj = js_sys::Object::new();
+            js_sys::Reflect::set(&device_id_obj, &"exact".into(), &device_id.clone().into()).ok();
+            js_sys::Reflect::set(&video_constraint, &"deviceId".into(), &device_id_obj.into()).ok();
+            if *width > 0 && *height > 0 {
+                let w = js_sys::Object::new();
+                js_sys::Reflect::set(&w, &"ideal".into(), &(*width as i32).into()).ok();
+                js_sys::Reflect::set(&video_constraint, &"width".into(), &w.into()).ok();
+                let h = js_sys::Object::new();
+                js_sys::Reflect::set(&h, &"ideal".into(), &(*height as i32).into()).ok();
+                js_sys::Reflect::set(&video_constraint, &"height".into(), &h.into()).ok();
             }
-        };
+            specific_constraints.video(&video_constraint.into());
+            specific_constraints.audio(&true.into());
 
-        if let Ok(stream_result) = JsFuture::from(promise).await {
-            if let Ok(s) = stream_result.dyn_into::<web_sys::MediaStream>() {
-                let tracks = initial_stream.get_tracks();
-                for i in 0..tracks.length() {
-                    if let Some(track) = tracks.get(i).dyn_ref::<web_sys::MediaStreamTrack>() {
-                        track.stop();
+            let promise = match media_devices.get_user_media_with_constraints(&specific_constraints) {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+            if let Ok(stream_result) = JsFuture::from(promise).await {
+                if let Ok(s) = stream_result.dyn_into::<web_sys::MediaStream>() {
+                    let tracks = initial_stream.get_tracks();
+                    for i in 0..tracks.length() {
+                        if let Some(track) = tracks.get(i).dyn_ref::<web_sys::MediaStreamTrack>() {
+                            track.stop();
+                        }
                     }
+                    stream_opt = Some(s);
+                    break;
                 }
-                s
-            } else {
-                initial_stream
             }
-        } else {
-            initial_stream
         }
+        stream_opt.unwrap_or_else(|| initial_stream)
     } else {
         initial_stream
     };
@@ -594,6 +665,11 @@ async fn initialize_camera_and_enumerate(
         if let Some(video_el) = doc.get_element_by_id("record-preview") {
             if let Ok(media_el) = video_el.dyn_into::<web_sys::HtmlMediaElement>() {
                 media_el.set_src_object(Some(&stream));
+                // Safari (especially iOS) often won't show the preview until play() is called.
+                let play_promise = media_el.play();
+                if let Ok(p) = play_promise {
+                    let _ = wasm_bindgen_futures::JsFuture::from(p).await;
+                }
             }
         }
     }
