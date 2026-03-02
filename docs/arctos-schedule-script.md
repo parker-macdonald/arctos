@@ -1,5 +1,23 @@
 # Arctos Schedule Script Documentation
 
+## Introduction {#introduction}
+
+Arctos Schedule Script, or *ASS*, is a lisp-style language meant for
+expression skip conditions.
+
+It was designed with three goals in mind:
+
+- express any arbitrary skip condition
+- keep the grammar as simple as possible
+- don't give people remote code execution
+
+Enter as the skip condition an expression that reduces to a boolean
+(`true` or `false`). The moment all of a match's dependencies are
+completed, this expression will be evaluated. If it evaluates to
+`true`, the match will be skipped! If it evaluates to *anything else*
+nothing will happen (asterisk; see [When are things
+evaluated?](#evaluation-time)).
+
 ## Syntax Introduction {#syntax-intro}
 
 An ASS expression is either an *atom* (a literal value or a function)
@@ -33,24 +51,6 @@ reduced to the atom `3`.
 ```
 
 This simplifies to `(- 6 5)` which is of course `1`.
-
-## Introduction {#introduction}
-
-Arctos Schedule Script, or *ASS*, is a lisp-style language meant for
-expression skip conditions.
-
-It was designed with three goals in mind:
-
-- express any arbitrary skip condition
-- keep the grammar as simple as possible
-- don't give people remote code execution
-
-Enter as the skip condition an expression that reduces to a boolean
-(`true` or `false`). The moment all of a match's dependencies are
-completed, this expression will be evaluated. If it evaluates to
-`true`, the match will be skipped! If it evaluates to *anything else*
-nothing will happen (asterisk; see [When are things
-evaluated?](#evaluation-time)).
 
 ## Team and Match Literals {#team-and-match-literals}
 
