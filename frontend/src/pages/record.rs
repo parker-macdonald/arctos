@@ -38,8 +38,15 @@ struct StoredChunk {
 /// In-memory queue item: key references chunk or finalize in IndexedDB.
 #[cfg(target_arch = "wasm32")]
 enum QueueItem {
-    Chunk,
+    Chunk { match_id: Option<String> },
     FinalizeMatch { match_id: String },
+}
+
+#[cfg(target_arch = "wasm32")]
+#[derive(Clone)]
+struct UploadBarItem {
+    match_id: Option<String>,
+    is_finalize: bool,
 }
 
 /// LocalStorage key for the selected camera device ID (wasm only).
@@ -168,6 +175,8 @@ pub fn Record(url: String, field: ReadSignal<String>, camera_key: ReadSignal<Str
     let mut selected_camera_id = use_signal(|| None::<String>);
     let mut preview_stream = use_signal(|| None::<web_sys::MediaStream>);
     let mut storage_warning = use_signal(|| None::<String>);
+    #[cfg(target_arch = "wasm32")]
+    let mut upload_bar_items = use_signal(|| Vec::<UploadBarItem>::new());
 
     #[cfg(target_arch = "wasm32")]
     {
@@ -272,6 +281,7 @@ pub fn Record(url: String, field: ReadSignal<String>, camera_key: ReadSignal<Str
         let upload_count_sig = upload_count.to_owned();
         let upload_total_sig = upload_total.to_owned();
         let storage_warning_sig = storage_warning.to_owned();
+        let upload_bar_items_sig = upload_bar_items.to_owned();
         let preview_stream_sig = preview_stream.to_owned();
         use_effect(move || {
             let stream_opt = preview_stream_sig();
@@ -300,6 +310,7 @@ pub fn Record(url: String, field: ReadSignal<String>, camera_key: ReadSignal<Str
                     upload_count_sig,
                     upload_total_sig,
                     storage_warning_sig,
+                    upload_bar_items_sig,
                 )
                 .await;
             });
@@ -388,6 +399,14 @@ pub fn Record(url: String, field: ReadSignal<String>, camera_key: ReadSignal<Str
                                         }
                                     }
                                 }
+                                div { class: "mb-3 d-flex align-items-center gap-2",
+                                    span { class: "fw-semibold",
+                                        "Current match: {match_status_data().and_then(|d| d.match_name).unwrap_or_else(|| \"None\".to_string())}"
+                                    }
+                                    if is_recording() {
+                                        span { class: "badge bg-danger", "● REC" }
+                                    }
+                                }
                                 div { class: "mb-3",
                                     label { r#for: "camera-select", class: "form-label", "Select Camera:" }
                                     select {
@@ -416,18 +435,11 @@ pub fn Record(url: String, field: ReadSignal<String>, camera_key: ReadSignal<Str
                                 div { class: "alert alert-info", id: "record-status",
                                     status_line { status }
                                 }
-                                if is_uploading() {
-                                    div { class: "alert alert-info",
-                                        {
-                                            let n = upload_count();
-                                            let total = upload_total();
-                                            if total > 0 {
-                                                format!("↑ Uploading video chunks... ({n}/{total})")
-                                            } else {
-                                                format!("↑ Uploading video chunks... ({n})")
-                                            }
-                                        }
-                                    }
+                                upload_progress_section {
+                                    is_uploading,
+                                    upload_count,
+                                    upload_total,
+                                    upload_bar_items,
                                 }
                                 if let Some(ref msg) = storage_warning() {
                                     div { class: "alert alert-warning", "{msg}" }
@@ -444,13 +456,7 @@ pub fn Record(url: String, field: ReadSignal<String>, camera_key: ReadSignal<Str
                                             style: "width: 100%; max-width: 640px; border: 2px solid #333; background: #000;",
                                         }
                                     }
-                                    div { class: "mt-2",
-                                        if is_recording() {
-                                            div { class: "alert alert-danger",
-                                                "● Recording... "
-                                            }
-                                        }
-                                    }
+                                    // Recording indicator is now part of the match header above.
                                 }
                                 if matches!(status(), RecordStatus::NoMatch) && !is_recording() {
                                     div { class: "alert alert-secondary", id: "record-no-match",
@@ -464,6 +470,89 @@ pub fn Record(url: String, field: ReadSignal<String>, camera_key: ReadSignal<Str
             }
         }
     }
+}
+
+#[component]
+fn upload_progress_section(
+    is_uploading: Signal<bool>,
+    upload_count: Signal<u32>,
+    upload_total: Signal<u32>,
+    upload_bar_items: Signal<Vec<UploadBarItem>>,
+) -> Element {
+    let remaining = {
+        let total = upload_total();
+        let done = upload_count();
+        total.saturating_sub(done)
+    };
+    let status_text = if remaining == 0 {
+        "All data uploaded".to_string()
+    } else {
+        format!("{remaining} chunks remaining to be uploaded")
+    };
+
+    let items = upload_bar_items();
+
+    rsx! {
+        div { class: "mt-3",
+            h6 { "Upload progress" }
+            p {
+                class: "mb-1 small text-muted",
+                "{status_text}"
+            }
+            if !items.is_empty() {
+                div {
+                    class: "d-flex",
+                    style: "height: 10px; border-radius: 4px; overflow: hidden; background: #e9ecef;",
+                    for (idx, item) in items.iter().enumerate() {
+                        div {
+                            key: "{idx}",
+                            style: format!(
+                                "flex: 0 0 {}; background: {}; position: relative;{}",
+                                upload_bar_width(items.len()),
+                                upload_bar_color(item.match_id.as_deref()),
+                                if idx < items.len().saturating_sub(1) {
+                                    " border-right: 1px solid rgba(0,0,0,0.25);"
+                                } else {
+                                    ""
+                                }
+                            ),
+                            if item.is_finalize {
+                                span {
+                                    style: "position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 9px; color: #fff;",
+                                    "F"
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                div {
+                    class: "progress",
+                    style: "height: 6px;",
+                    div {
+                        class: "progress-bar bg-success",
+                        style: "width: 100%;",
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn upload_bar_width(count: usize) -> String {
+    format!("{:.4}%", 100.0 / (count.max(1) as f32))
+}
+
+fn upload_bar_color(match_id: Option<&str>) -> String {
+    if let Some(id) = match_id {
+        if id.len() >= 6 {
+            if let Ok(val) = u32::from_str_radix(&id[..6].replace('-', ""), 16) {
+                let h = (val % 360) as i32;
+                return format!("hsl({h}, 70%, 55%)");
+            }
+        }
+    }
+    "#0d6efd".to_string()
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -803,6 +892,46 @@ async fn capture_preview_frame() -> Result<bytes::Bytes, String> {
     Ok(bytes::Bytes::from(vec))
 }
 
+/// Collect device storage (usage/quota in bytes) and battery level (0–1) for preview metadata. Best-effort.
+#[cfg(target_arch = "wasm32")]
+async fn collect_preview_metadata() -> api::PreviewMetadata {
+    let mut storage_usage: Option<f64> = None;
+    let mut storage_quota: Option<f64> = None;
+    let mut battery_level: Option<f64> = None;
+    if let Some(window) = web_sys::window() {
+        let nav = window.navigator();
+        let storage = nav.storage();
+        if let Ok(promise) = storage.estimate() {
+            if let Ok(estimate_js) = wasm_bindgen_futures::JsFuture::from(promise).await {
+                storage_usage = js_sys::Reflect::get(&estimate_js, &"usage".into())
+                    .ok()
+                    .and_then(|v| v.as_f64());
+                storage_quota = js_sys::Reflect::get(&estimate_js, &"quota".into())
+                    .ok()
+                    .and_then(|v| v.as_f64());
+            }
+        }
+        if let Ok(get_battery) = js_sys::Reflect::get(&nav, &"getBattery".into()) {
+            if let Some(get_battery_fn) = get_battery.dyn_ref::<js_sys::Function>() {
+                if let Ok(promise_val) = get_battery_fn.call0(&nav) {
+                    if let Ok(promise) = promise_val.dyn_into::<js_sys::Promise>() {
+                        if let Ok(battery) = wasm_bindgen_futures::JsFuture::from(promise).await {
+                            battery_level = js_sys::Reflect::get(&battery, &"level".into())
+                                .ok()
+                                .and_then(|v| v.as_f64());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    api::PreviewMetadata {
+        storage_usage,
+        storage_quota,
+        battery_level,
+    }
+}
+
 /// Preview sender loop: capture frame, POST, poll consumed until true, repeat. Stops when stop_flag is set.
 #[cfg(target_arch = "wasm32")]
 async fn run_preview_sender_loop(
@@ -834,6 +963,15 @@ async fn run_preview_sender_loop(
             gloo_timers::future::TimeoutFuture::new(500).await;
             continue;
         }
+        let meta = collect_preview_metadata().await;
+        let _ = api::upload_preview_metadata(
+            &tournament_url,
+            &field,
+            &camera_key,
+            &camera_name,
+            &meta,
+        )
+        .await;
         while !stop_flag.load(Ordering::SeqCst) {
             match api::is_preview_frame_consumed(&tournament_url, &field, &camera_name, &camera_key).await {
                 Ok(true) => break,
@@ -860,6 +998,7 @@ async fn run_recording_loop(
     mut upload_count_sig: Signal<u32>,
     mut upload_total_sig: Signal<u32>,
     mut storage_warning_sig: Signal<Option<String>>,
+    mut upload_bar_items_sig: Signal<Vec<UploadBarItem>>,
 ) {
     use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
     use std::sync::Arc;
@@ -1000,15 +1139,28 @@ async fn run_recording_loop(
         if let Ok(entries) = record_idb::cursor_entries_ordered(db).await {
             for (key, value) in entries {
                 if let Some(match_id) = record_idb::parse_finalize_value(&value) {
-                    upload_queue.borrow_mut().push_back((key, QueueItem::FinalizeMatch { match_id }));
+                    upload_queue
+                        .borrow_mut()
+                        .push_back((key, QueueItem::FinalizeMatch { match_id }));
+                } else if let Some((meta, _blob)) = record_idb::parse_chunk_value(&value) {
+                    upload_queue.borrow_mut().push_back((
+                        key,
+                        QueueItem::Chunk {
+                            match_id: Some(meta.match_id.clone()),
+                        },
+                    ));
                 } else {
-                    upload_queue.borrow_mut().push_back((key, QueueItem::Chunk));
+                    upload_queue
+                        .borrow_mut()
+                        .push_back((key, QueueItem::Chunk { match_id: None }));
                 }
             }
-            let n = upload_queue.borrow().len() as u32;
+            let q_ref = upload_queue.borrow();
+            let n = q_ref.len() as u32;
             if n > 0 {
                 upload_total_sig.set(upload_total_sig() + n);
             }
+            update_upload_bar_from_queue(&q_ref, upload_bar_items_sig.to_owned());
         }
         // Check storage quota; warn if low (e.g. < 100 MB free).
         if let Some(window) = web_sys::window() {
@@ -1038,12 +1190,13 @@ async fn run_recording_loop(
         let k = key_ref.clone();
         let is_up = is_uploading_sig.to_owned();
         let up_cnt = upload_count_sig.to_owned();
+        let bar_items = upload_bar_items_sig.to_owned();
         spawn(async move {
             let db = match record_idb::open_db().await {
                 Ok(d) => d,
                 Err(_) => return,
             };
-            run_upload_worker(q, db, tour, f, cam, k, is_up, up_cnt).await;
+            run_upload_worker(q, db, tour, f, cam, k, is_up, up_cnt, bar_items).await;
         });
     }
 
@@ -1132,9 +1285,11 @@ async fn run_recording_loop(
                 state2.borrow_mut().started_at = None;
                 if let Some(ref db) = *db_holder.borrow() {
                     if let Ok(key) = record_idb::get_next_sequence(db).await {
-                        match record_idb::put_finalize(db, &key, &match_id).await {
+                                match record_idb::put_finalize(db, &key, &match_id).await {
                             Ok(()) => {
-                                upload_queue.borrow_mut().push_back((key, QueueItem::FinalizeMatch { match_id }));
+                                let mut q = upload_queue.borrow_mut();
+                                q.push_back((key, QueueItem::FinalizeMatch { match_id: match_id.clone() }));
+                                update_upload_bar_from_queue(&q, upload_bar_items_sig.to_owned());
                             }
                             Err(ref e) => {
                                 if let idb::Error::DomException(ref dom) = e {
@@ -1231,7 +1386,7 @@ async fn run_recording_loop(
                 let n = drained.len();
                 if n > 0 {
                     if let Some(ref db) = *db_holder.borrow() {
-                        for st in drained {
+                                for st in drained {
                             let _idx = chunk_index_global.fetch_add(1, Ordering::Relaxed);
                             let meta = RecordChunkMeta {
                                 session_id: st.session_id.clone(),
@@ -1244,7 +1399,14 @@ async fn run_recording_loop(
                             if let Ok(key) = record_idb::get_next_sequence(db).await {
                                 match record_idb::put_chunk(db, &key, &meta, &st.blob).await {
                                     Ok(()) => {
-                                        upload_queue.borrow_mut().push_back((key, QueueItem::Chunk));
+                                        let mut q = upload_queue.borrow_mut();
+                                        q.push_back((
+                                            key,
+                                            QueueItem::Chunk {
+                                                match_id: Some(match_id.clone()),
+                                            },
+                                        ));
+                                        update_upload_bar_from_queue(&q, upload_bar_items_sig.to_owned());
                                     }
                                     Err(ref e) => {
                                         if let idb::Error::DomException(ref dom) = e {
@@ -1426,7 +1588,11 @@ async fn run_recording_loop(
 
         point_was_in_progress = point_in_progress_now;
 
-        match_status_data_sig.set(Some(data));
+        if data.hasActiveMatch {
+            match_status_data_sig.set(Some(data));
+        } else {
+            match_status_data_sig.set(None);
+        }
         gloo_timers::future::TimeoutFuture::new(500).await;
     }
 }
@@ -1441,9 +1607,15 @@ async fn run_upload_worker(
     key: Option<String>,
     mut is_uploading_sig: Signal<bool>,
     mut upload_count_sig: Signal<u32>,
+    mut upload_bar_items_sig: Signal<Vec<UploadBarItem>>,
 ) {
     /// Delay before retrying a failed upload (connection lost, etc.).
     const RETRY_DELAY_MS: u32 = 3000;
+    /// Number of immediate retries for each upload attempt (any error).
+    const API_RETRY_ATTEMPTS: u32 = 5;
+    /// Delay between API retries (ms).
+    const API_RETRY_DELAY_MS: u32 = 1500;
+
     loop {
         gloo_timers::future::TimeoutFuture::new(200).await;
         let item = queue.borrow_mut().pop_front();
@@ -1451,42 +1623,74 @@ async fn run_upload_worker(
             is_uploading_sig.set(true);
             let mut success = false;
             match &queue_item {
-                QueueItem::Chunk => {
+                QueueItem::Chunk { .. } => {
                     if let Ok(Some(value)) = record_idb::get_entry(&db, &key_str).await {
                         if let Some((meta, blob)) = record_idb::parse_chunk_value(&value) {
-                            if api::record_upload_chunk(&meta, &blob).await.is_ok() {
-                                if record_idb::delete_entry(&db, &key_str).await.is_ok() {
-                                    upload_count_sig.set(upload_count_sig() + 1);
-                                    success = true;
+                            for _ in 0..API_RETRY_ATTEMPTS {
+                                if api::record_upload_chunk(&meta, &blob).await.is_ok() {
+                                    if record_idb::delete_entry(&db, &key_str).await.is_ok() {
+                                        upload_count_sig.set(upload_count_sig() + 1);
+                                        success = true;
+                                    }
+                                    break;
                                 }
+                                gloo_timers::future::TimeoutFuture::new(API_RETRY_DELAY_MS).await;
                             }
                         }
                     }
                 }
                 QueueItem::FinalizeMatch { match_id } => {
-                    if api::record_finalize(
-                        &tournament_url,
-                        &field,
-                        match_id,
-                        &camera_name,
-                        key.as_deref(),
-                    )
-                    .await
-                    .is_ok()
-                    {
-                        if record_idb::delete_entry(&db, &key_str).await.is_ok() {
+                    for _ in 0..API_RETRY_ATTEMPTS {
+                        if api::record_finalize(
+                            &tournament_url,
+                            &field,
+                            match_id,
+                            &camera_name,
+                            key.as_deref(),
+                        )
+                        .await
+                        .is_ok()
+                        {
+                            let _ = record_idb::delete_entry(&db, &key_str).await;
                             success = true;
+                            break;
                         }
+                        gloo_timers::future::TimeoutFuture::new(API_RETRY_DELAY_MS).await;
                     }
                 }
             }
             if !success {
-                queue.borrow_mut().push_front((key_str, queue_item));
+                let mut q = queue.borrow_mut();
+                q.push_front((key_str, queue_item));
+                update_upload_bar_from_queue(&q, upload_bar_items_sig.to_owned());
                 gloo_timers::future::TimeoutFuture::new(RETRY_DELAY_MS).await;
+            } else {
+                let q = queue.borrow();
+                update_upload_bar_from_queue(&q, upload_bar_items_sig.to_owned());
             }
             is_uploading_sig.set(false);
         }
     }
+}
+
+fn update_upload_bar_from_queue(
+    queue: &VecDeque<(String, QueueItem)>,
+    mut items_sig: Signal<Vec<UploadBarItem>>,
+) {
+    let mut items = Vec::with_capacity(queue.len());
+    for (_key, qitem) in queue.iter() {
+        match qitem {
+            QueueItem::Chunk { match_id } => items.push(UploadBarItem {
+                match_id: match_id.clone(),
+                is_finalize: false,
+            }),
+            QueueItem::FinalizeMatch { match_id } => items.push(UploadBarItem {
+                match_id: Some(match_id.clone()),
+                is_finalize: true,
+            }),
+        }
+    }
+    items_sig.set(items);
 }
 
 fn uuid_style_id() -> String {

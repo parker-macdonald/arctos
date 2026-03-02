@@ -16,11 +16,14 @@ run
 *~
 *\#*
 
-# --- App data & uploads ---
+# app stuff
 instance/*
 static/uploads/*
+preview/*
+dioxus/
 
-# --- TLS key material ---
+
+# certs
 *.csr
 *.key
 *.crt

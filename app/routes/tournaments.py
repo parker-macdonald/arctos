@@ -556,6 +556,57 @@ def record_preview_frame_consumed():
     return jsonify({"consumed": consumed})
 
 
+@bp.route("/record/preview-metadata", methods=["POST"])
+def record_preview_metadata_post():
+    """Record page sends device metadata (storage, battery) with camera_key. Optional fields."""
+    tournament_url = (request.args.get("tournament") or (request.json or {}).get("tournament") or "").strip()
+    field_name = (request.args.get("field") or (request.json or {}).get("field") or "").strip()
+    camera_name = (
+        (request.args.get("camera_name") or (request.json or {}).get("camera_name") or "camera")
+    ).strip() or "camera"
+    if not tournament_url or not field_name:
+        return jsonify({"error": "tournament and field required"}), 400
+    is_valid, error_response = require_camera_key(tournament_url, field_name)
+    if not is_valid:
+        return error_response[0], error_response[1]
+    data = request.get_json(silent=True) or {}
+    storage_usage = data.get("storage_usage")
+    storage_quota = data.get("storage_quota")
+    battery_level = data.get("battery_level")
+    if storage_usage is not None:
+        storage_usage = float(storage_usage)
+    if storage_quota is not None:
+        storage_quota = float(storage_quota)
+    if battery_level is not None:
+        battery_level = float(battery_level)
+    preview_store.write_metadata(
+        tournament_url,
+        field_name,
+        camera_name,
+        storage_usage,
+        storage_quota,
+        battery_level,
+    )
+    return jsonify({"success": True})
+
+
+@bp.route("/record/preview-metadata", methods=["GET"])
+@login_required
+def record_preview_metadata_get():
+    """TO: get device metadata for a camera (storage, battery). Returns JSON or 204."""
+    tournament_url = request.args.get("tournament", "").strip()
+    field_name = request.args.get("field", "").strip()
+    camera_name = (request.args.get("camera_name") or "camera").strip() or "camera"
+    if not tournament_url or not field_name:
+        return jsonify({"error": "tournament and field required"}), 400
+    if is_not_TO(tournament_url):
+        return jsonify({"error": "Only tournament organizers can get preview metadata"}), 403
+    meta = preview_store.read_metadata(tournament_url, field_name, camera_name)
+    if not meta:
+        return "", 204
+    return jsonify(meta)
+
+
 @bp.route("/record/preview-cameras", methods=["GET"])
 @login_required
 def record_preview_cameras():
@@ -1342,27 +1393,6 @@ def add_tag(tournament_url):
 
     return jsonify({"success": True, "message": "Tag added successfully!"}), 200
 
-
-
-
-@bp.route("/<tournament_url>/update-tag", methods=["POST"])
-@login_required
-def update_tag(tournament_url):
-    """Update tag."""
-    if is_not_TO(tournament_url):
-        return jsonify({"success": False, "error": "Only tournament organizers can access this page"}), 403
-
-    tag_id = request.form.get("tag_id")
-    if not tag_id:
-        return jsonify({"success": False, "error": "Tag ID is required"}), 400
-
-    tag = Tag.query.get_or_404(tag_id)
-    tag.name = request.form["tag_name"]
-
-    db.session.commit()
-    return jsonify({"success": True, "message": "Tag updated successfully!"}), 200
-
-
 @bp.route("/<tournament_url>/delete-tag", methods=["POST"])
 @login_required
 def delete_tag(tournament_url):
@@ -1666,38 +1696,6 @@ def update_match(tournament_url):
     db.session.commit()
     return jsonify({"success": True, "message": "Match updated successfully!"}), 200
 
-
-@bp.route("/<tournament_url>/update-tags", methods=["POST"])
-@login_required
-def update_tags(tournament_url):
-    """Update tag team assignments. This updates the team column in the Tag table.
-    All tag resolution will query the Tag table directly.
-    """
-    if is_not_TO(tournament_url):
-        return jsonify({"success": False, "error": "Only tournament organizers can access this page"}), 403
-
-    from models import Tag
-
-    # Get all tags for this tournament
-    tags = Tag.query.filter_by(event=tournament_url).all()
-
-    # Update team column for each tag
-    updated_count = 0
-    for tag in tags:
-        form_key = f"tag_{tag.id}"
-        team_id = request.form.get(form_key, "").strip()
-        if team_id:
-            tag.team = team_id
-            updated_count += 1
-        else:
-            # Clear team if no selection
-            tag.team = None
-
-    if updated_count == 0:
-        return jsonify({"success": False, "error": "No tag conversions selected"}), 400
-
-    db.session.commit()
-    return jsonify({"success": True, "message": f"Successfully updated {updated_count} tag(s)"}), 200
 
 
 @bp.route("/<tournament_url>/update-all-references", methods=["POST"])

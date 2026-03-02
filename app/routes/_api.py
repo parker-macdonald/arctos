@@ -4093,6 +4093,8 @@ def update_tags_api(tournament_url):
     tag_ref = f"tag::{tag.name}"
 
     for m in matches:
+        if m.status in (MatchStatus.COMPLETED, MatchStatus.SKIPPED, MatchStatus.IN_PROGRESS):
+            continue
         if m.team1_initial == tag_ref:
             m.team1 = team_id
         if m.team2_initial == tag_ref:
