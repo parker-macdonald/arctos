@@ -1033,7 +1033,7 @@ async fn run_recording_loop(
     }
 
     // Use a persistent chunk_count for chunk_start_timestamp (storage is drained often so queue length is not a valid index).
-    // point_id is read at chunk capture time so chunks get the point that was in progress when recorded, not when drained.
+    // Tag each chunk with the point_id that was current at the *start* of the 1s slice so the beginning of points isn't cut off.
     let container_for_recorder = container_ref.clone();
     let make_recorder = |stream: &web_sys::MediaStream,
                         storage_queue: Rc<RefCell<Vec<StoredChunk>>>,
@@ -1060,6 +1060,9 @@ async fn run_recording_loop(
         let cc = chunk_count.clone();
         let cpid = current_point_id.clone();
         let sid_ref = session_id_ref.clone();
+        // Point at start of the chunk we're about to push (set when previous blob fired; first chunk uses current at recorder start).
+        let point_id_at_chunk_start: Rc<RefCell<Option<String>>> =
+            Rc::new(RefCell::new(cpid.borrow().clone()));
         let closure = Closure::wrap(Box::new(move |ev: web_sys::BlobEvent| {
             let blob = match ev.data() {
                 Some(b) => b,
@@ -1068,7 +1071,8 @@ async fn run_recording_loop(
             let start = *ss.borrow();
             let chunk_start = start + (*cc.borrow() as f64) * 1000.0;
             *cc.borrow_mut() += 1;
-            let point_id = cpid.borrow().clone();
+            let point_id = point_id_at_chunk_start.borrow().clone();
+            *point_id_at_chunk_start.borrow_mut() = cpid.borrow().clone();
             let session_id = sid_ref.borrow().clone();
             sq.borrow_mut().push(StoredChunk {
                 blob,
