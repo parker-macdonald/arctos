@@ -1410,8 +1410,6 @@ def delete_tag(tournament_url):
     return jsonify({"success": True, "message": "Tag deleted successfully!"}), 200
 
 
-
-
 @bp.route("/<tournament_url>/update-match", methods=["POST"])
 @login_required
 def update_match(tournament_url):
