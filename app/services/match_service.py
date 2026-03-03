@@ -13,10 +13,8 @@ from app.error_values import Err, Ok, Result, allow_Q
 from app.exceptions import (
     ArctosError,
     NotFoundError,
-    UnauthorizedError,
     ValidationError,
 )
-from app.services.permission_service import PermissionService
 
 if TYPE_CHECKING:  # pragma: no cover
     from models import Match
@@ -57,19 +55,14 @@ class MatchService:
         if not match or match.event != tournament_url:
             return Err(NotFoundError("Match not found"))
 
-        if not PermissionService.can_head_ref_match(tournament_url, user, match=match):
-            return Err(
-                UnauthorizedError(
-                    "You are not authorized to start matches for this tournament"
-                )
-            )
+        from app.services.match_start_eligibility import get_can_start_and_reasons
 
-        if match.status != MatchStatus.READY_TO_START:
-            return Err(
-                ValidationError(
-                    f"This match has non-READY_TO_START status {match.status}"
-                )
-            )
+        can_start, block_reasons = get_can_start_and_reasons(
+            tournament_url, match, user
+        )
+        if not can_start:
+            msg = block_reasons[0] if block_reasons else "Cannot start this match."
+            return Err(ValidationError(msg))
 
         raw_team1 = (team1_players_csv or "").strip()
         raw_team2 = (team2_players_csv or "").strip()

@@ -494,6 +494,10 @@ pub struct MatchDetailResponse {
     pub point_notes_map: std::collections::HashMap<String, Vec<MatchNoteData>>,
     pub is_head_ref: bool,
     #[serde(default)]
+    pub can_start: bool,
+    #[serde(default)]
+    pub block_reasons: Vec<String>,
+    #[serde(default)]
     pub match_players: Vec<MatchPlayerForNotes>,
     #[serde(default)]
     pub penalty_types: Vec<PenaltyType>,

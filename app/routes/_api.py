@@ -999,8 +999,14 @@ def start_match_data_api(tournament_url):
     if not match or match.event != tournament_url:
         return jsonify({"error": "Match not found"}), 404
 
-    if not can_head_ref_match(tournament_url, current_user.id, match=match):
-        return jsonify({"error": "Forbidden"}), 403
+    from app.services.match_start_eligibility import get_can_start_and_reasons
+
+    can_start, block_reasons = get_can_start_and_reasons(
+        tournament_url, match, current_user
+    )
+    if not can_start:
+        error_msg = block_reasons[0] if block_reasons else "Cannot start this match."
+        return jsonify({"error": error_msg, "reasons": block_reasons}), 400
 
     tournament = Tournament.query.get(tournament_url)
 
@@ -1850,6 +1856,14 @@ def tournament_match_detail(tournament_url):
                 tournament_url, current_user.id, match=match
             )
 
+    # Can start and blocking reasons (for "why?" UX)
+    from app.services.match_start_eligibility import get_can_start_and_reasons
+
+    _user = current_user if current_user.is_authenticated else None
+    can_start, block_reasons = get_can_start_and_reasons(
+        tournament_url, match, _user
+    )
+
     # Get match-level notes (point_id is None) - only for head refs
     if is_head_ref:
         notes = (
@@ -2129,6 +2143,8 @@ def tournament_match_detail(tournament_url):
             "match_notes": match_notes,
             "point_notes_map": point_notes_map,
             "is_head_ref": is_head_ref,
+            "can_start": can_start,
+            "block_reasons": block_reasons,
             "match_players": match_players,
             "penalty_types": penalty_types_data,
         }
@@ -4116,6 +4132,7 @@ def update_tags_api(tournament_url):
                 m.refs = ",".join(current_refs)
 
     db.session.commit()
+    recompute_all_match_times(tournament_url)
     return jsonify({"success": True})
 
 

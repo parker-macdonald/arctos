@@ -511,6 +511,7 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
     // Match UUID we have already triggered stream-start fetches for (so we only query once per load).
     let stream_starts_fetched_for_match = use_signal(|| None::<String>);
     let mut penalty_desc_modal = use_signal(|| None::<String>);
+    let mut why_modal_show = use_signal(|| false);
 
     use_effect(move || {
         let _ = (val.read().as_ref(), selected_camera_idx(), live_points_signal());
@@ -1372,11 +1373,11 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                                 }
                             }
 
-                            // Action buttons: only for head refs, and only when status matches
-                            if d.is_head_ref && d.match_data.status == "READY_TO_START" {
+                            // Action buttons: use can_start from API (includes field-busy and deps)
+                            if d.is_head_ref && d.can_start {
                                 div { class: "row mt-3",
                                     div { class: "col-12",
-                                        div { class: "d-flex gap-2",
+                                        div { class: "d-flex gap-2 align-items-center",
                                             Link {
                                                 to: Route::StartMatch {
                                                     url: url.clone(),
@@ -1391,7 +1392,7 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                             } else if d.is_head_ref && d.match_data.status == "IN_PROGRESS" {
                                 div { class: "row mt-3",
                                     div { class: "col-12",
-                                        div { class: "d-flex gap-2",
+                                        div { class: "d-flex gap-2 align-items-center",
                                             Link {
                                                 to: Route::RunMatch {
                                                     url: url.clone(),
@@ -1399,6 +1400,19 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                                                 },
                                                 class: "btn btn-warning",
                                                 "Run Match"
+                                            }
+                                        }
+                                    }
+                                }
+                            } else if d.match_data.status != "COMPLETED" && d.match_data.status != "SKIPPED" && !d.block_reasons.is_empty() {
+                                div { class: "row mt-3",
+                                    div { class: "col-12",
+                                        div { class: "d-flex gap-2 align-items-center",
+                                            button {
+                                                r#type: "button",
+                                                class: "btn btn-outline-secondary btn-sm",
+                                                onclick: move |_| why_modal_show.set(true),
+                                                "Why can't I start?"
                                             }
                                         }
                                     }
@@ -1878,6 +1892,29 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                             div { class: "modal-body", "{penalty_desc_modal().as_ref().unwrap_or(&String::new())}" }
                             div { class: "modal-footer",
                                 button { r#type: "button", class: "btn btn-secondary", onclick: move |_| penalty_desc_modal.set(None), "Close" }
+                            }
+                        }
+                    }
+                }
+                div { class: "modal-backdrop show" }
+            }
+            if why_modal_show() {
+                div { class: "modal show", style: "display: block;",
+                    div { class: "modal-dialog modal-dialog-centered",
+                        div { class: "modal-content",
+                            div { class: "modal-header",
+                                h5 { class: "modal-title", "Why can't I start this match?" }
+                                button { r#type: "button", class: "btn-close", onclick: move |_| why_modal_show.set(false) }
+                            }
+                            div { class: "modal-body",
+                                ul { class: "mb-0",
+                                    for reason in &d.block_reasons {
+                                        li { class: "mb-1", "{reason}" }
+                                    }
+                                }
+                            }
+                            div { class: "modal-footer",
+                                button { r#type: "button", class: "btn btn-secondary", onclick: move |_| why_modal_show.set(false), "Close" }
                             }
                         }
                     }
