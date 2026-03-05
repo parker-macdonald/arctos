@@ -54,7 +54,6 @@ fn StonesPlayerWasm(stones_val: ReadSignal<Option<Result<StonesResponse, String>
     let mut selected_index = use_signal(|| 0usize);
     let mut filter = use_signal(|| BayesianOffsetFilter::default());
     let rtt_ms = use_signal(|| Option::<f64>::None);
-    let mut last_scheduled_beat = use_signal(|| Option::<f64>::None);
     let mut custom_status = use_signal(|| Option::<String>::None);
 
     let mut audio_ctx = use_signal(|| Option::<web_sys::AudioContext>::None);
@@ -95,7 +94,6 @@ fn StonesPlayerWasm(stones_val: ReadSignal<Option<Result<StonesResponse, String>
         }
         let is_playing_sig = is_playing.clone();
         let filter_sig = filter.clone();
-        let mut last_scheduled_beat_sig = last_scheduled_beat.clone();
         let audio_ctx_sig = audio_ctx.clone();
         let audio_buffer_sig = audio_buffer.clone();
         let ctx_start_time_sig = ctx_start_time.clone();
@@ -111,14 +109,13 @@ fn StonesPlayerWasm(stones_val: ReadSignal<Option<Result<StonesResponse, String>
                     let now = js_sys::Date::now() / 1000.0;
                     let audio_now = ctx.current_time();
                     let mean = filter_sig.read().get_mean();
-                    let mut beat_time = last_scheduled_beat_sig
-                        .read()
-                        .filter(|&t| t > now - BEAT_INTERVAL)
-                        .map(|t| t + BEAT_INTERVAL)
-                        .unwrap_or_else(|| next_beat_time(now, mean));
+                    let mut beat_time = next_beat_time(now, mean);
                     let max_wall = now + SCHEDULE_AHEAD_SEC;
                     let mut scheduled = 0u32;
                     while beat_time <= max_wall && scheduled < 5 {
+                        if !is_playing_sig() {
+                            break;
+                        }
                         let delay = beat_time - now;
                         if delay > 0.05 && delay < 60.0 {
                             let audio_time = audio_now + delay;
@@ -129,7 +126,6 @@ fn StonesPlayerWasm(stones_val: ReadSignal<Option<Result<StonesResponse, String>
                                 schedule_rc.clone(),
                             ) {
                                 scheduled += 1;
-                                last_scheduled_beat_sig.set(Some(beat_time));
                             }
                         }
                         beat_time += BEAT_INTERVAL;
@@ -143,7 +139,7 @@ fn StonesPlayerWasm(stones_val: ReadSignal<Option<Result<StonesResponse, String>
     let on_play_pause = move |_| {
         if is_playing() {
             is_playing.set(false);
-            clear_scheduled(schedule_state.read().clone(), &audio_ctx);
+            clear_scheduled(schedule_state.read().clone());
         } else {
             custom_status.set(None);
             // Create/resume AudioContext synchronously while we're still in the user gesture (required by browsers)
@@ -208,7 +204,6 @@ fn StonesPlayerWasm(stones_val: ReadSignal<Option<Result<StonesResponse, String>
 
     let on_reset = move |_| {
         filter.write().reset();
-        last_scheduled_beat.set(None);
     };
 
     let stones_ok = stones_val.read().as_ref().and_then(|r| r.as_ref().ok()).cloned();
@@ -328,8 +323,7 @@ fn StonesPlayerWasm(stones_val: ReadSignal<Option<Result<StonesResponse, String>
                                                     key: "{key_name}",
                                                     class: if is_selected { "btn btn-primary" } else { "btn btn-outline-primary" },
                                                     onclick: move |_| {
-                                                        clear_scheduled(schedule_state.read().clone(), &audio_ctx);
-                                                        last_scheduled_beat.set(None);
+                                                        clear_scheduled(schedule_state.read().clone());
                                                         selected_index.set(idx);
                                                         audio_buffer.set(None);
                                                         let base = base_url.clone();
@@ -353,8 +347,7 @@ fn StonesPlayerWasm(stones_val: ReadSignal<Option<Result<StonesResponse, String>
                                     button {
                                         class: if selected_index() >= stones_len { "btn btn-primary" } else { "btn btn-outline-primary" },
                                         onclick: move |_| {
-                                            clear_scheduled(schedule_state.read().clone(), &audio_ctx);
-                                            last_scheduled_beat.set(None);
+                                            clear_scheduled(schedule_state.read().clone());
                                             selected_index.set(stones_len);
                                             audio_buffer.set(custom_buffer.read().clone());
                                         },
@@ -506,22 +499,19 @@ fn schedule_sound_at(
 }
 
 #[cfg(target_arch = "wasm32")]
-fn clear_scheduled(
-    state_rc: Rc<RefCell<ScheduleState>>,
-    audio_ctx: &Signal<Option<web_sys::AudioContext>>,
-) {
-    let mut state = state_rc.borrow_mut();
-    let _current = audio_ctx
-        .read()
-        .as_ref()
-        .map(|c| c.current_time())
-        .unwrap_or(0.0);
-    for (_, source) in state.sources.drain() {
+fn clear_scheduled(state_rc: Rc<RefCell<ScheduleState>>) {
+    // Drain sources and clear times inside the borrow, then stop/disconnect
+    // outside so that any onended callback can safely borrow the RefCell.
+    let to_stop: Vec<web_sys::AudioBufferSourceNode> = {
+        let mut state = state_rc.borrow_mut();
+        state.times.clear();
+        state.sources.drain().map(|(_, s)| s).collect()
+    };
+    for source in to_stop {
         #[allow(deprecated)]
         let _ = source.stop();
         let _ = source.disconnect();
     }
-    state.times.clear();
 }
 
 #[cfg(target_arch = "wasm32")]
