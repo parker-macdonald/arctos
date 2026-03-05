@@ -954,7 +954,6 @@ pub struct RecordChunkMeta {
     pub field: String,
     pub match_id: String,
     pub session_id: String,
-    pub point_id: Option<String>,
     pub chunk_start_timestamp: f64,
     pub recording_session_start_time: f64,
     pub chunk_length_ms: u32,
@@ -997,10 +996,6 @@ pub async fn record_upload_chunk(meta: &RecordChunkMeta, chunk_blob: &web_sys::B
         .map_err(|_| "append chunk_duration failed")?;
     form.append_with_str("camera_name", &meta.camera_name)
         .map_err(|_| "append camera_name failed")?;
-    if let Some(ref pid) = meta.point_id {
-        form.append_with_str("point_id", pid)
-            .map_err(|_| "append point_id failed")?;
-    }
     if let Some(ref k) = meta.key {
         form.append_with_str("camera_key", k).map_err(|_| "append key failed")?;
     }
@@ -1046,7 +1041,6 @@ pub struct RecordChunkMeta {
     pub field: String,
     pub match_id: String,
     pub session_id: String,
-    pub point_id: Option<String>,
     pub chunk_start_timestamp: f64,
     pub recording_session_start_time: f64,
     pub chunk_length_ms: u32,

@@ -3,7 +3,7 @@
 ## Introduction {#introduction}
 
 Arctos Schedule Script, or *ASS*, is a lisp-style language meant for
-expression skip conditions.
+expressing skip conditions.
 
 It was designed with three goals in mind:
 

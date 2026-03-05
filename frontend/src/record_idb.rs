@@ -130,9 +130,6 @@ fn meta_to_js(meta: &RecordChunkMeta) -> JsValue {
     let _ = Reflect::set(&o, &"field".into(), &JsValue::from_str(&meta.field));
     let _ = Reflect::set(&o, &"match_id".into(), &JsValue::from_str(&meta.match_id));
     let _ = Reflect::set(&o, &"session_id".into(), &JsValue::from_str(&meta.session_id));
-    if let Some(ref p) = meta.point_id {
-        let _ = Reflect::set(o.as_ref(), &"point_id".into(), &JsValue::from_str(p));
-    }
     let _ = Reflect::set(
         o.as_ref(),
         &"chunk_start_timestamp".into(),
@@ -186,7 +183,6 @@ fn js_to_meta(js: &JsValue) -> Option<RecordChunkMeta> {
         field: Reflect::get(js, &"field".into()).ok()?.as_string()?,
         match_id: Reflect::get(js, &"match_id".into()).ok()?.as_string()?,
         session_id: Reflect::get(js, &"session_id".into()).ok()?.as_string()?,
-        point_id: Reflect::get(js, &"point_id".into()).ok().and_then(|v| v.as_string()),
         chunk_start_timestamp: Reflect::get(js, &"chunk_start_timestamp".into())
             .ok()?
             .as_f64()?,

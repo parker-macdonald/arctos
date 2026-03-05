@@ -679,11 +679,9 @@ def record_upload_chunk():
     chunk_start_timestamp = request.form.get(
         "chunk_start_timestamp"
     )  # Absolute world time when chunk started
-    start_timestamp = request.form.get("start_timestamp")
     recording_session_start_time = request.form.get("recording_session_start_time")
     chunk_duration = request.form.get("chunk_duration")  # Duration in milliseconds
     camera_name = request.form.get("camera_name")
-    point_id = request.form.get("point_id")
 
     # Validate camera access key
     is_valid, error_response = require_camera_key(tournament_url, field_name)
@@ -770,7 +768,6 @@ def record_upload_chunk():
                 "session_id": session_id,
                 "chunk_start_timestamp": parse_timestamp(chunk_start_timestamp),
                 "chunk_duration": float(chunk_duration),
-                "point_id": point_id,
                 "camera_name": camera_name,
                 "recording_session_start_time": parse_timestamp(recording_session_start_time),
             }
@@ -1408,8 +1405,6 @@ def delete_tag(tournament_url):
     db.session.delete(tag)
     db.session.commit()
     return jsonify({"success": True, "message": "Tag deleted successfully!"}), 200
-
-
 
 
 @bp.route("/<tournament_url>/update-match", methods=["POST"])
