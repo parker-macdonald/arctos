@@ -31,8 +31,6 @@ struct StoredChunk {
     chunk_start_timestamp: f64,
     chunk_duration_ms: u32,
     recording_session_start_time: f64,
-    /// Point in progress when this chunk was recorded (set at capture time, not drain time).
-    point_id: Option<String>,
 }
 
 /// In-memory queue item: key references chunk or finalize in IndexedDB.
@@ -1033,13 +1031,11 @@ async fn run_recording_loop(
     }
 
     // Use a persistent chunk_count for chunk_start_timestamp (storage is drained often so queue length is not a valid index).
-    // Tag each chunk with the point_id that was current at the *start* of the 1s slice so the beginning of points isn't cut off.
     let container_for_recorder = container_ref.clone();
     let make_recorder = |stream: &web_sys::MediaStream,
                         storage_queue: Rc<RefCell<Vec<StoredChunk>>>,
                         session_start: Rc<RefCell<f64>>,
                         chunk_count: Rc<RefCell<u32>>,
-                        current_point_id: Rc<RefCell<Option<String>>>,
                         session_id_ref: Rc<RefCell<String>>| {
         let mut options = MediaRecorderOptions::new();
         options.set_video_bits_per_second(70_000_000);
@@ -1058,11 +1054,7 @@ async fn run_recording_loop(
         let sq = storage_queue.clone();
         let ss = session_start.clone();
         let cc = chunk_count.clone();
-        let cpid = current_point_id.clone();
         let sid_ref = session_id_ref.clone();
-        // Point at start of the chunk we're about to push (set when previous blob fired; first chunk uses current at recorder start).
-        let point_id_at_chunk_start: Rc<RefCell<Option<String>>> =
-            Rc::new(RefCell::new(cpid.borrow().clone()));
         let closure = Closure::wrap(Box::new(move |ev: web_sys::BlobEvent| {
             let blob = match ev.data() {
                 Some(b) => b,
@@ -1071,8 +1063,6 @@ async fn run_recording_loop(
             let start = *ss.borrow();
             let chunk_start = start + (*cc.borrow() as f64) * 1000.0;
             *cc.borrow_mut() += 1;
-            let point_id = point_id_at_chunk_start.borrow().clone();
-            *point_id_at_chunk_start.borrow_mut() = cpid.borrow().clone();
             let session_id = sid_ref.borrow().clone();
             sq.borrow_mut().push(StoredChunk {
                 blob,
@@ -1080,7 +1070,6 @@ async fn run_recording_loop(
                 chunk_start_timestamp: chunk_start,
                 chunk_duration_ms: 1000,
                 recording_session_start_time: start,
-                point_id,
             });
         }) as Box<dyn FnMut(web_sys::BlobEvent)>);
         r.set_ondataavailable(Some(closure.as_ref().unchecked_ref()));
@@ -1109,14 +1098,12 @@ async fn run_recording_loop(
     let session_start2 = Rc::new(RefCell::new(0.0f64));
     let chunk_count2 = Rc::new(RefCell::new(0u32));
     let session_id2 = Rc::new(RefCell::new(String::new()));
-    let current_point_id = Rc::new(RefCell::new(None::<String>));
 
     if let Some(r) = make_recorder(
         &stream,
         storage1.clone(),
         session_start1.clone(),
         chunk_count1.clone(),
-        current_point_id.clone(),
         session_id1.clone(),
     ) {
         state1.borrow_mut().recorder = Some(r);
@@ -1126,7 +1113,6 @@ async fn run_recording_loop(
         storage2.clone(),
         session_start2.clone(),
         chunk_count2.clone(),
-        current_point_id.clone(),
         session_id2.clone(),
     ) {
         state2.borrow_mut().recorder = Some(r);
@@ -1322,9 +1308,7 @@ async fn run_recording_loop(
         let point_in_progress_now = points
             .iter()
             .any(|p| point_in_progress(p, now_ms));
-        let latest_point = latest_point_in_progress(points, now_ms);
-        let point_id_opt = latest_point.map(|p| p.uuid.clone());
-        *current_point_id.borrow_mut() = point_id_opt.clone();
+        let _latest_point = latest_point_in_progress(points, now_ms);
         // web_sys::console::log_1(&format!("data match id: {:?}", data.match_id).into());
         // web_sys::console::log_1(&format!("current match: {:?}", current_match).into());
         if !data.hasActiveMatch || data.match_id.as_ref().map(|s| s.as_str()) != current_match.as_ref().map(|id| id.as_str()) {
@@ -1367,7 +1351,6 @@ async fn run_recording_loop(
                 if let Some(ref match_id) = data.match_id {
                     current_match = Some(match_id.clone());
                     is_recording_sig.set(true);
-                    *current_point_id.borrow_mut() = point_id_opt.clone();
                     *session_start1.borrow_mut() = now_ms;
                     *chunk_count1.borrow_mut() = 0;
                     state1.borrow_mut().started_at = Some(now_ms);
@@ -1381,7 +1364,6 @@ async fn run_recording_loop(
                             storage1.clone(),
                             session_start1.clone(),
                             chunk_count1.clone(),
-                            current_point_id.clone(),
                             session_id1.clone(),
                         ) {
                             let _ = r.start_with_time_slice(1000);
@@ -1408,7 +1390,6 @@ async fn run_recording_loop(
                             storage2.clone(),
                             session_start2.clone(),
                             chunk_count2.clone(),
-                            current_point_id.clone(),
                             session_id2.clone(),
                         ) {
                             state2.borrow_mut().recorder = Some(r);
@@ -1427,7 +1408,6 @@ async fn run_recording_loop(
             field: field.clone(),
             match_id: match_id.clone(),
             session_id: String::new(), // overridden per state below
-            point_id: None, // overridden per chunk from st.point_id
             chunk_start_timestamp: 0.0,
             recording_session_start_time: 0.0,
             chunk_length_ms: 1000,
@@ -1451,7 +1431,6 @@ async fn run_recording_loop(
                                 chunk_start_timestamp: st.chunk_start_timestamp,
                                 recording_session_start_time: st.recording_session_start_time,
                                 chunk_length_ms: st.chunk_duration_ms,
-                                point_id: st.point_id.clone(),
                                 ..base_meta.clone()
                             };
                             if let Ok(key) = record_idb::get_next_sequence(db).await {
@@ -1543,7 +1522,6 @@ async fn run_recording_loop(
                     },
                     session_start_longer,
                     chunk_count_longer,
-                    current_point_id.clone(),
                     session_id_longer,
                 ) {
                     let _ = new_r.start_with_time_slice(1000);
@@ -1606,7 +1584,6 @@ async fn run_recording_loop(
                         },
                         session_start_shorter,
                         chunk_count_shorter,
-                        current_point_id.clone(),
                         session_id_shorter,
                     ) {
                         let _ = new_r.start_with_time_slice(1000);

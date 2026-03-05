@@ -336,7 +336,7 @@ def finalize_recording_worker(
     pts = Point.query.filter_by(match=match_id).order_by(Point.stamp.asc()).all()
     point_by_uuid = {str(pt.uuid): pt for pt in pts}
 
-    session_outputs = []  # list of (session_id, output_basename, segment_start_sec, point_uuids, point_first_chunk_ms)
+    session_outputs = []  # list of (session_id, output_basename, segment_start_sec)
     stream_start_iso = None  # ISO UTC of very first chunk start
 
     for session_id, session_chunks in sessions:
@@ -406,18 +406,7 @@ def finalize_recording_worker(
                 print(result.stderr.strip(), flush=True)
             continue
 
-        point_uuids = set()
-        point_first_chunk_ms = {}  # point_uuid -> first chunk_start_timestamp (ms) for that point in this session
-        for c in ordered_chunks:
-            pid = c.get("point_id")
-            if pid and str(pid).strip():
-                pid = str(pid).strip()
-                point_uuids.add(pid)
-                chunk_ms = _chunk_timestamp_sort_key(c)
-                if pid not in point_first_chunk_ms or chunk_ms < point_first_chunk_ms[pid]:
-                    point_first_chunk_ms[pid] = chunk_ms
-
-        session_outputs.append((session_id, session_basename, segment_start_sec, point_uuids, point_first_chunk_ms))
+        session_outputs.append((session_id, session_basename, segment_start_sec))
         print(f"finalize_recording: session {session_id} -> {session_basename}", flush=True)
 
     if not session_outputs:
@@ -431,7 +420,7 @@ def finalize_recording_worker(
     final_path = path.join(chunk_dir, final_basename)
     concat_list_path = path.join(chunk_dir, "concat_sessions.txt")
     with open(concat_list_path, "w") as f:
-        for _sid, basename, _start, _pids, _ in session_outputs:
+        for _sid, basename, _start in session_outputs:
             abs_path = path.abspath(path.join(chunk_dir, basename))
             f.write(f"file {repr(abs_path)}\n")
     _log.info("finalize_recording: wrote concat_sessions.txt with %d entries", len(session_outputs))
@@ -462,7 +451,7 @@ def finalize_recording_worker(
     # 4. Compute point_timestamps and stream_start_time for frontend scrubbing
     try:
         segment_durations = []
-        for _sid, basename, _start, _pids, _ in session_outputs:
+        for _sid, basename, _start in session_outputs:
             seg_path = path.join(chunk_dir, basename)
             d = _get_media_duration_sec(seg_path, cwd=chunk_dir)
             if d is None or d <= 0:
@@ -474,35 +463,28 @@ def finalize_recording_worker(
         for d in segment_durations:
             video_offset.append(video_offset[-1] + d)
 
-        points_with_footage = set()
-        for _sid, _basename, _start, pids, _ in session_outputs:
-            points_with_footage.update(pids)
+        # Point timestamps from session start times and point.stamp only (no point_id from chunks).
+        stream_start_sec = session_outputs[0][2] if session_outputs else 0.0
+        stream_end_sec = stream_start_sec + sum(segment_durations)
 
         point_timestamps = []
         for pt in pts:
-            if str(pt.uuid) not in points_with_footage:
-                continue
             if pt.stamp is None or pt.end_stamp is None:
                 continue
+            pt_start_sec = pt.stamp.replace(tzinfo=timezone.utc).timestamp()
+            if pt_start_sec < stream_start_sec or pt_start_sec >= stream_end_sec:
+                continue
+            # Find segment j that contains pt_start_sec
             segment_index = None
-            first_chunk_sec = None
-            for j, (_sid, _basename, seg_start_sec, pids, point_first_chunk_ms) in enumerate(session_outputs):
-                if str(pt.uuid) in pids:
+            for j, (_sid, _basename, seg_start_sec) in enumerate(session_outputs):
+                seg_end_sec = seg_start_sec + (segment_durations[j] if j < len(segment_durations) else 0.0)
+                if seg_start_sec <= pt_start_sec < seg_end_sec:
                     segment_index = j
-                    first_chunk_sec = point_first_chunk_ms.get(str(pt.uuid))
-                    if first_chunk_sec is not None:
-                        first_chunk_sec = first_chunk_sec / 1000.0
                     break
             if segment_index is None:
                 continue
             seg_start_sec = session_outputs[segment_index][2]
-            # Use first chunk tagged with this point_id so playback starts at actual point start in video,
-            # not at Point.stamp (which can be seconds later when scorekeeper clicked "Start point").
-            if first_chunk_sec is not None:
-                in_video_start = video_offset[segment_index] + (first_chunk_sec - seg_start_sec)
-            else:
-                pt_start_sec = pt.stamp.replace(tzinfo=timezone.utc).timestamp()
-                in_video_start = video_offset[segment_index] + (pt_start_sec - seg_start_sec)
+            in_video_start = video_offset[segment_index] + (pt_start_sec - seg_start_sec)
             in_video_start = max(0.0, in_video_start)
             point_timestamps.append({
                 "point_uuid": str(pt.uuid),
@@ -643,9 +625,9 @@ def finalize_recording_worker(
             if fn:
                 to_remove.append(path.join(chunk_dir, fn))
         to_remove.append(path.join(chunk_dir, "chunks_meta.json"))
-        for sid, _basename, _start, _pids, _ in session_outputs:
+        for sid, _basename, _start in session_outputs:
             to_remove.append(path.join(chunk_dir, f"joined_raw_{sid}.{ext}"))
-        for _sid, basename, _start, _pids, _ in session_outputs:
+        for _sid, basename, _start in session_outputs:
             to_remove.append(path.join(chunk_dir, basename))
         to_remove.append(path.join(chunk_dir, "concat_sessions.txt"))
         for fp in to_remove:
