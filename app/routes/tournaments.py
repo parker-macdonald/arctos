@@ -679,7 +679,6 @@ def record_upload_chunk():
     chunk_start_timestamp = request.form.get(
         "chunk_start_timestamp"
     )  # Absolute world time when chunk started
-    start_timestamp = request.form.get("start_timestamp")
     recording_session_start_time = request.form.get("recording_session_start_time")
     chunk_duration = request.form.get("chunk_duration")  # Duration in milliseconds
     camera_name = request.form.get("camera_name")

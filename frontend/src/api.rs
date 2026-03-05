@@ -1041,7 +1041,6 @@ pub struct RecordChunkMeta {
     pub field: String,
     pub match_id: String,
     pub session_id: String,
-    pub point_id: Option<String>,
     pub chunk_start_timestamp: f64,
     pub recording_session_start_time: f64,
     pub chunk_length_ms: u32,
