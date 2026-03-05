@@ -140,6 +140,9 @@ fn StonesPlayerWasm(stones_val: ReadSignal<Option<Result<StonesResponse, String>
         if is_playing() {
             is_playing.set(false);
             clear_scheduled(schedule_state.read().clone());
+            // Stop the hidden audio element immediately so mobile doesn't keep playing
+            // buffered MediaStream data or loop a segment.
+            pause_audio_stream_element();
         } else {
             custom_status.set(None);
             // Create/resume AudioContext synchronously while we're still in the user gesture (required by browsers)
@@ -178,6 +181,8 @@ fn StonesPlayerWasm(stones_val: ReadSignal<Option<Result<StonesResponse, String>
             {
                 // Ensure MediaStreamDestination is present even if context already existed.
                 ensure_media_destination(&ctx, schedule_state.clone());
+                // Start (or resume) the hidden audio element so mobile plays through it.
+                play_audio_stream_element();
             }
             let stones_opt = stones_val.read().as_ref().and_then(|r| r.as_ref().ok()).cloned();
             let idx = selected_index();
@@ -263,6 +268,32 @@ fn StonesPlayerWasm(stones_val: ReadSignal<Option<Result<StonesResponse, String>
         }
 
         schedule_state.write().borrow_mut().media_dest = Some(dest);
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn pause_audio_stream_element() {
+        if let Some(window) = web_sys::window() {
+            if let Some(doc) = window.document() {
+                if let Some(el) = doc.get_element_by_id("audio-stream") {
+                    if let Ok(audio) = el.dyn_into::<web_sys::HtmlAudioElement>() {
+                        let _ = audio.pause();
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn play_audio_stream_element() {
+        if let Some(window) = web_sys::window() {
+            if let Some(doc) = window.document() {
+                if let Some(el) = doc.get_element_by_id("audio-stream") {
+                    if let Ok(audio) = el.dyn_into::<web_sys::HtmlAudioElement>() {
+                        let _ = audio.play();
+                    }
+                }
+            }
+        }
     }
 
     #[derive(Clone)]
