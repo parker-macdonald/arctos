@@ -57,7 +57,7 @@ class MatchService:
 
         from app.services.match_start_eligibility import get_can_start_and_reasons
 
-        can_start, block_reasons = get_can_start_and_reasons(
+        can_start, block_reasons, _ = get_can_start_and_reasons(
             tournament_url, match, user
         )
         if not can_start:

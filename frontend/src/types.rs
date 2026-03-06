@@ -498,9 +498,41 @@ pub struct MatchDetailResponse {
     #[serde(default)]
     pub block_reasons: Vec<String>,
     #[serde(default)]
+    pub why_sections: Option<WhySections>,
+    #[serde(default)]
     pub match_players: Vec<MatchPlayerForNotes>,
     #[serde(default)]
     pub penalty_types: Vec<PenaltyType>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct WhySections {
+    #[serde(default)]
+    pub match_ready: MatchReadySection,
+    #[serde(default)]
+    pub conflicts: Vec<String>,
+    #[serde(default)]
+    pub ref_permissions: RefPermissionsSection,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct MatchReadySection {
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub reasons: Vec<String>,
+    #[serde(default)]
+    pub blocks_start: bool,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct RefPermissionsSection {
+    #[serde(default)]
+    pub who_allowed: Vec<String>,
+    #[serde(default)]
+    pub current_user: Vec<String>,
+    #[serde(default)]
+    pub is_ok: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

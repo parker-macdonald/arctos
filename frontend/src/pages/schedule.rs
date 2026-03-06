@@ -193,6 +193,14 @@ pub fn Schedule(url: String) -> Element {
                                 key_nav.set(Some("today".to_string()));
                             }
                         }
+                        "a" | "A" => {
+                            ev.prevent_default();
+                            view_mode.set("table".to_string());
+                        }
+                        "l" | "L" => {
+                            ev.prevent_default();
+                            view_mode.set("timeline".to_string());
+                        }
                         "e" | "E" => {
                             ev.prevent_default();
                             if is_to {
@@ -3630,7 +3638,11 @@ fn EditMatchModal(
                 } else {
                     local_datetime_to_utc_iso(&start_time()).or_else(|| Some(start_time()))
                 },
-                previous_match_id: Some(previous_match_id()),
+                previous_match_id: if schedule_type() == "STATIC" {
+                    None
+                } else {
+                    Some(previous_match_id())
+                },
                 refs: Some(refs_vec),
                 team1: Some(team1()),
                 team2: Some(team2()),
@@ -3937,7 +3949,15 @@ fn EditMatchModal(
                                 div { class: "col-md-6",
                                     div { class: "mb-3",
                                         label { class: "form-label", "Match Type" }
-                                        select { class: "form-select", value: "{schedule_type}", onchange: move |e| { let mut schedule_type = schedule_type; schedule_type.set(e.value()); },
+                                        select { class: "form-select", value: "{schedule_type}", onchange: move |e| {
+                                            let mut schedule_type = schedule_type;
+                                            let mut previous_match_id = previous_match_id;
+                                            let v = e.value();
+                                            schedule_type.set(v.clone());
+                                            if v == "STATIC" {
+                                                previous_match_id.set("".to_string());
+                                            }
+                                        },
                                             option { value: "STATIC", "Static" }
                                             option { value: "SAFE", "Safe" }
                                             option { value: "FAST", "Fast" }

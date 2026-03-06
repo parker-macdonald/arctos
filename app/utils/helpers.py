@@ -8,7 +8,7 @@ import re
 from flask import current_app
 from flask_login import current_user
 from app.domain.enums import RegistrationStatus
-from models import Tournament, PlayerRegistration, Match
+from models import Tournament, PlayerRegistration, Match, TeamRegistration, Team
 
 
 
@@ -117,6 +117,22 @@ def resolve_team_name_to_id(team_name, tournament_url):
         return (reg.team, None)
 
     return (None, team_name)
+
+
+def get_team_display_name_for_event(tournament_url: str, team_id: str) -> str:
+    """Return display name for a team in an event: pseudonym if set, else team name, else team_id."""
+    if not team_id:
+        return ""
+    from app.domain.enums import TeamRegistrationStatus
+    reg = TeamRegistration.query.filter_by(
+        event=tournament_url, team=team_id, status=TeamRegistrationStatus.CONFIRMED
+    ).first()
+    if reg and getattr(reg, "pseudonym", None):
+        return reg.pseudonym
+    team = Team.query.get(team_id)
+    if team and getattr(team, "name", None):
+        return team.name
+    return team_id
 
 
 def resolve_tag_to_team(tag_ref: str, tournament_url: str) -> str | None:

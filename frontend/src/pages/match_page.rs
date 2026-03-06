@@ -1404,7 +1404,7 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                                         }
                                     }
                                 }
-                            } else if d.match_data.status != "COMPLETED" && d.match_data.status != "SKIPPED" && !d.block_reasons.is_empty() {
+                            } else if d.match_data.status != "COMPLETED" && d.match_data.status != "SKIPPED" && (d.why_sections.is_some() || !d.block_reasons.is_empty()) {
                                 div { class: "row mt-3",
                                     div { class: "col-12",
                                         div { class: "d-flex gap-2 align-items-center",
@@ -1412,7 +1412,7 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                                                 r#type: "button",
                                                 class: "btn btn-outline-secondary btn-sm",
                                                 onclick: move |_| why_modal_show.set(true),
-                                                "Why can't I start?"
+                                                "Why can't I start this match?"
                                             }
                                         }
                                     }
@@ -1900,16 +1900,86 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
             }
             if why_modal_show() {
                 div { class: "modal show", style: "display: block;",
-                    div { class: "modal-dialog modal-dialog-centered",
+                    div { class: "modal-dialog modal-dialog-centered modal-lg",
                         div { class: "modal-content",
                             div { class: "modal-header",
                                 h5 { class: "modal-title", "Why can't I start this match?" }
                                 button { r#type: "button", class: "btn-close", onclick: move |_| why_modal_show.set(false) }
                             }
                             div { class: "modal-body",
-                                ul { class: "mb-0",
-                                    for reason in &d.block_reasons {
-                                        li { class: "mb-1", "{reason}" }
+                                {
+                                    match &d.why_sections {
+                                        Some(sections) => rsx! {
+                                            div { class: "mb-4",
+                                                h6 { class: "text-muted mb-2",
+                                                    "1. Match Status & Dependencies"
+                                                    if !sections.match_ready.blocks_start {
+                                                        span { class: "text-success ms-1", "✓" }
+                                                    }
+                                                }
+                                                p { class: "small mb-1", "What is the match status? Does this prevent it from being started?" }
+                                                if !sections.match_ready.blocks_start {
+                                                    p { class: "text-success small mb-0", "Ready to start." }
+                                                } else {
+                                                    ul { class: "mb-0 small",
+                                                        for reason in sections.match_ready.reasons.iter().filter(|r| !r.starts_with("Match status is")) {
+                                                            li { class: "mb-1", "{reason}" }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            div { class: "mb-4",
+                                                h6 { class: "text-muted mb-2",
+                                                    "2. Conflicts"
+                                                    if sections.conflicts.is_empty() {
+                                                        span { class: "text-success ms-1", "✓" }
+                                                    }
+                                                }
+                                                p { class: "small mb-2", "Is there another match currently happening on this field?" }
+                                                if sections.conflicts.is_empty() {
+                                                    p { class: "text-success small mb-0", "No conflicts." }
+                                                } else {
+                                                    ul { class: "mb-0 small",
+                                                        for c in &sections.conflicts {
+                                                            li { class: "mb-1", "{c}" }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            div { class: "mb-0",
+                                                h6 { class: "text-muted mb-2",
+                                                    "3. Ref permissions"
+                                                    if sections.ref_permissions.is_ok {
+                                                        span { class: "text-success ms-1", "✓" }
+                                                    }
+                                                }
+                                                div { class: "ms-3 mb-3",
+                                                    h6 { class: "small mb-1", "a. Who is allowed" }
+                                                    p { class: "small text-muted mb-1", "Based on tournament settings, who should be allowed to head ref?" }
+                                                    ul { class: "mb-0 small",
+                                                        for s in &sections.ref_permissions.who_allowed {
+                                                            li { class: "mb-1", "{s}" }
+                                                        }
+                                                    }
+                                                }
+                                                div { class: "ms-3 mb-0",
+                                                    h6 { class: "small mb-1", "b. Current user" }
+                                                    p { class: "small text-muted mb-1", "Your current sign-in and registration." }
+                                                    ul { class: "mb-0 small",
+                                                        for s in &sections.ref_permissions.current_user {
+                                                            li { class: "mb-1", "{s}" }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        },
+                                        None => rsx! {
+                                            ul { class: "mb-0",
+                                                for reason in &d.block_reasons {
+                                                    li { class: "mb-1", "{reason}" }
+                                                }
+                                            }
+                                        },
                                     }
                                 }
                             }

@@ -29,7 +29,7 @@ def test_can_start_true_when_ref_ready_no_conflict(app, test_db, tournament, hea
         db.session.add(m)
         db.session.commit()
 
-        can_start, reasons = get_can_start_and_reasons(t.url, m, ref)
+        can_start, reasons, _ = get_can_start_and_reasons(t.url, m, ref)
         assert can_start is True
         assert reasons == []
 
@@ -69,7 +69,7 @@ def test_can_start_false_field_busy(app, test_db, tournament, head_ref_player):
         db.session.add(m)
         db.session.commit()
 
-        can_start, reasons = get_can_start_and_reasons(t.url, m, ref)
+        can_start, reasons, _ = get_can_start_and_reasons(t.url, m, ref)
         assert can_start is False
         assert any("in progress" in r.lower() and "field" in r.lower() for r in reasons)
 
@@ -96,9 +96,12 @@ def test_can_start_false_user_not_ref(app, test_db, tournament, player):
         db.session.add(m)
         db.session.commit()
 
-        can_start, reasons = get_can_start_and_reasons(t.url, m, p)
+        can_start, reasons, _ = get_can_start_and_reasons(t.url, m, p)
         assert can_start is False
-        assert any("not a ref" in r.lower() or "allowed refs" in r.lower() for r in reasons)
+        assert any(
+            "not allowed" in r.lower() or "not registered" in r.lower() or "logged in" in r.lower()
+            for r in reasons
+        )
 
 
 @pytest.mark.unit
@@ -123,7 +126,7 @@ def test_can_start_false_status_not_ready(app, test_db, tournament, head_ref_pla
         db.session.add(m)
         db.session.commit()
 
-        can_start, reasons = get_can_start_and_reasons(t.url, m, ref)
+        can_start, reasons, _ = get_can_start_and_reasons(t.url, m, ref)
         assert can_start is False
         assert len(reasons) >= 1
 
@@ -148,6 +151,7 @@ def test_can_start_completed_returns_false_no_reasons(app, test_db, tournament, 
         db.session.add(m)
         db.session.commit()
 
-        can_start, reasons = get_can_start_and_reasons(t.url, m, ref)
+        can_start, reasons, why_sections = get_can_start_and_reasons(t.url, m, ref)
         assert can_start is False
         assert reasons == []
+        assert why_sections.match_ready["status"] == str(MatchStatus.COMPLETED)

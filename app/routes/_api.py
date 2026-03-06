@@ -10,6 +10,7 @@ import os
 from flask_login import current_user, login_user, logout_user, login_required
 from sqlalchemy import or_, func
 from sqlalchemy.orm import joinedload
+from sqlalchemy.orm.attributes import flag_modified
 from app.services.tournament_service import TournamentService
 from app.utils.helpers import (
     is_valid_url_username,
@@ -1001,7 +1002,7 @@ def start_match_data_api(tournament_url):
 
     from app.services.match_start_eligibility import get_can_start_and_reasons
 
-    can_start, block_reasons = get_can_start_and_reasons(
+    can_start, block_reasons, _ = get_can_start_and_reasons(
         tournament_url, match, current_user
     )
     if not can_start:
@@ -1857,10 +1858,13 @@ def tournament_match_detail(tournament_url):
             )
 
     # Can start and blocking reasons (for "why?" UX)
-    from app.services.match_start_eligibility import get_can_start_and_reasons
+    from app.services.match_start_eligibility import (
+        get_can_start_and_reasons,
+        why_sections_to_dict,
+    )
 
     _user = current_user if current_user.is_authenticated else None
-    can_start, block_reasons = get_can_start_and_reasons(
+    can_start, block_reasons, why_sections = get_can_start_and_reasons(
         tournament_url, match, _user
     )
 
@@ -2145,6 +2149,7 @@ def tournament_match_detail(tournament_url):
             "is_head_ref": is_head_ref,
             "can_start": can_start,
             "block_reasons": block_reasons,
+            "why_sections": why_sections_to_dict(why_sections),
             "match_players": match_players,
             "penalty_types": penalty_types_data,
         }
@@ -3014,44 +3019,27 @@ def update_match_api(tournament_url, match_id):
             except ValueError:
                 pass
 
-        # Previous match link
-        if previous_match_id is not None:
-            # If empty string or null, clear it
-            if not previous_match_id:
-                # If we had a previous match, we need to unlink it properly?
-                # update_match_previous_link handles linking.
-                # If we want to clear it, we might need manual handling or update_match_previous_link handles it?
-                # The helper assumes we are setting a *new* previous match.
-                # If previous_match_id is empty, we act as if we are clearing it.
-                # The helper doesn't seem to support clearing explicitly easily without a valid ID.
-                # But looking at the helper: "prev_match = Match.query.filter_by(uuid=prev_match_id...)"
-                # If prev_match_id is None/empty, it returns.
-                # But we need to clear match.previous_match.
-
-                # Manual clear if it was set
-                if match.previous_match:
-                    old_prev = Match.query.filter_by(
-                        uuid=match.previous_match, event=tournament_url
+        # STATIC matches have no previous_match: always clear and unlink (ignore previous_match_id)
+        if match.previous_match:
+            old_prev = Match.query.filter_by(
+                uuid=match.previous_match, event=tournament_url
+            ).first()
+            if old_prev and old_prev.next_match == match.uuid:
+                old_prev.next_match = match.next_match
+                if match.next_match:
+                    old_next = Match.query.filter_by(
+                        uuid=match.next_match, event=tournament_url
                     ).first()
-                    if old_prev and old_prev.next_match == match.uuid:
-                        old_prev.next_match = match.next_match
-                        if match.next_match:
-                            old_next = Match.query.filter_by(
-                                uuid=match.next_match, event=tournament_url
-                            ).first()
-                            if old_next:
-                                old_next.previous_match = old_prev.uuid
-                    elif match.next_match:
-                        # Just unlinking from chain
-                        old_next = Match.query.filter_by(
-                            uuid=match.next_match, event=tournament_url
-                        ).first()
-                        if old_next:
-                            old_next.previous_match = None
-
-                    match.previous_match = None
-            else:
-                update_match_previous_link(match, previous_match_id, tournament_url)
+                    if old_next:
+                        old_next.previous_match = old_prev.uuid
+            elif match.next_match:
+                old_next = Match.query.filter_by(
+                    uuid=match.next_match, event=tournament_url
+                ).first()
+                if old_next:
+                    old_next.previous_match = None
+        match.previous_match = None  # Always set for STATIC so it persists
+        flag_modified(match, "previous_match")
     else:
         # Dynamic (BREAK, JOIN, FAST, SAFE)
         match.nominal_start_time = compute_dynamic_match_nominal_start_time(
@@ -3068,6 +3056,7 @@ def update_match_api(tournament_url, match_id):
         else:
             match.previous_match = None
 
+    db.session.flush()  # Emit UPDATE for previous_match etc. before commit
     db.session.commit()
 
     # Recompute all times

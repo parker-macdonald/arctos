@@ -2,30 +2,54 @@
 Match start eligibility: single source of truth for "can start" and blocking reasons.
 
 Used by match detail API, start-match GET/POST, and MatchService.start_match.
+
+Why modal has three sections:
+1. Match is ready: What is the match status? Does this prevent it from being started?
+2. Conflicts: Is there another match on the field? Are all dependency matches complete?
+3. Ref permissions:
+   a. Who is allowed: Based on tournament settings, who should be allowed to head ref?
+   b. Current user: If team -> "only player accounts can be refs. you are signed in as a team (team name)."
+      If not logged in -> "you must be logged in as a player to start matches."
+      If explicitly listed refs exist -> "[list] are allowed"
+      If reffing teams allowed -> "players registered for assigned ref teams [list of teams] are allowed."
+      If user is player not registered -> "you are not registered for this tournament."
+      If user is player registered but unattached -> "you are registered as unattached"
+      If user is player registered for a team -> "you are currently registered for [team name]"
+      If allow anyone -> "anyone registered for this tournament can head ref."
 """
 
 from __future__ import annotations
 
-from typing import List, Tuple
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Tuple
 
 from app.domain.enums import MatchStatus, RegistrationStatus, ScheduleType
-from app.utils.helpers import can_head_ref_match
+from app.utils.helpers import can_head_ref_match, get_team_display_name_for_event
 
 
-def get_allowed_refs_display(tournament_url: str, match=None) -> Tuple[str, List[str]]:
+@dataclass
+class WhySections:
+    """Structured reasons for the 'Why can't I start?' modal."""
+
+    match_ready: Dict[str, Any] = field(default_factory=dict)  # status, reasons[], blocks_start
+    conflicts: List[str] = field(default_factory=list)
+    ref_permissions: Dict[str, List[str]] = field(default_factory=dict)  # who_allowed[], current_user[]
+
+
+def get_who_allowed_explanation(tournament_url: str, match=None) -> List[str]:
     """
-    Return (label, list of ref identifiers or descriptions) for display in block reasons.
-
-    Returns:
-        (label, items) e.g. ("Explicit list", ["player1", "player2"]) or
-        ("Reffing teams for this match", ["team-a", "team-b"]) or
-        ("All registered players", []) when allow_anyone (list can be long, so empty or summary).
+    Based on tournament settings, who should be allowed to head ref?
+    - If explicitly listed refs exist: "[list] are allowed"
+    - If reffing teams allowed: "players registered for assigned ref teams [list of teams] are allowed."
+    - If allow anyone: "anyone registered for this tournament can head ref."
     """
-    from models import Tournament, PlayerRegistration
+    from models import Tournament
 
     tournament = Tournament.query.get(tournament_url)
     if not tournament:
-        return "Unknown", []
+        return ["Tournament not found."]
+
+    lines: List[str] = []
 
     if tournament.head_refs_allowed_list:
         allowed_list = [
@@ -33,31 +57,56 @@ def get_allowed_refs_display(tournament_url: str, match=None) -> Tuple[str, List
             for ref in tournament.head_refs_allowed_list.split(",")
             if ref.strip()
         ]
-        return "Explicit list", allowed_list
+        if allowed_list:
+            lines.append(f"{', '.join(allowed_list)} are allowed.")
 
-    if tournament.head_refs_allow_reffing_teams and match and match.refs:
+    if tournament.head_refs_allow_reffing_teams and match and getattr(match, "refs", None):
         ref_teams = [t.strip() for t in match.refs.split(",") if t.strip()]
-        return "Reffing teams for this match", ref_teams
+        if ref_teams:
+            names = [get_team_display_name_for_event(tournament_url, tid) or tid for tid in ref_teams]
+            lines.append(f"Players registered for assigned ref teams ({', '.join(names)}) are allowed.")
 
     if tournament.head_refs_allow_anyone:
-        return "All registered players", []
+        lines.append("Anyone registered for this tournament can head ref.")
 
-    return "None configured", []
+    if not lines:
+        lines.append("No head ref policy is configured for this tournament.")
+
+    return lines
 
 
-def _get_user_display(tournament_url: str, user) -> Tuple[str, str]:
-    """Return (username, team_id or empty string) for the user."""
-    if user is None:
-        return "Unknown", ""
-    user_id = getattr(user, "id", None) or getattr(user, "player", None)
+def get_current_user_explanation(tournament_url: str, user) -> List[str]:
+    """
+    Explanation of the current user in the context of ref permissions:
+    - If user is a team: "only player accounts can be refs. you are signed in as a team (team name)."
+    - If user is not logged in: "you must be logged in as a player to start matches."
+    - If player not registered for tournament: "you are not registered for this tournament."
+    - If player registered but unattached: "you are registered as unattached"
+    - If player registered for a team: "you are currently registered for [team name]"
+    """
+    from app.utils.user_helpers import is_player, is_team
+    from models import PlayerRegistration
+
+    lines: List[str] = []
+
+    if not user:
+        lines.append("You must be logged in as a player to start matches.")
+        return lines
+
+    if is_team(user):
+        team_name = getattr(user, "name", None) or getattr(user, "id", "")
+        lines.append(f"Only player accounts can be refs. You are signed in as a team ({team_name}).")
+        return lines
+
+    if not is_player(user):
+        lines.append("You must be logged in as a player to start matches.")
+        return lines
+
+    user_id = getattr(user, "id", None)
     if not user_id:
-        return "Unknown", ""
-    from models import Player, PlayerRegistration
+        lines.append("Could not determine your user.")
+        return lines
 
-    player = Player.query.get(user_id) if hasattr(Player, "query") else None
-    if not player:
-        return str(user_id), ""
-    name = getattr(player, "name", None) or user_id
     reg = (
         PlayerRegistration.query.filter_by(
             event=tournament_url,
@@ -67,13 +116,24 @@ def _get_user_display(tournament_url: str, user) -> Tuple[str, str]:
         if tournament_url
         else None
     )
-    team_id = getattr(reg, "team", None) or ""
-    return name, team_id or ""
+
+    if not reg:
+        lines.append("You are not registered for this tournament.")
+        return lines
+
+    team_id = getattr(reg, "team", None)
+    if not team_id:
+        lines.append("You are registered as unattached.")
+        return lines
+
+    team_name = get_team_display_name_for_event(tournament_url, team_id)
+    lines.append(f"You are currently registered for {team_name}.")
+    return lines
 
 
 def _reason_field_busy(tournament_url: str, match) -> str | None:
     """If another match is IN_PROGRESS on same field, return reason string; else None."""
-    from models import Match, Tag
+    from models import Match
 
     field = getattr(match, "field", None)
     if not field or not str(field).strip():
@@ -92,17 +152,43 @@ def _reason_field_busy(tournament_url: str, match) -> str | None:
     return f"Another match is in progress on this field: {getattr(other, 'name', other.uuid)}."
 
 
-def _reasons_teams_refs(match) -> List[str]:
-    """Reasons for teams or refs not resolved."""
+def _reasons_teams_refs(match, tournament_url: str) -> List[str]:
+    """Reasons for teams or refs not resolved. For refs, list which slots are unresolved (tag, match ref, or explicit)."""
+    from models import Match, Tag
+
     reasons = []
     if not getattr(match, "team1", None) or not getattr(match, "team2", None):
         reasons.append("Teams not yet determined.")
     refs_initial = (getattr(match, "refs_initial", None) or "").strip()
     if refs_initial:
-        refs = (getattr(match, "refs", None) or "").split(",")
-        refs_initial_list = [r.strip() for r in refs_initial.split(",")]
-        if len(refs) != len(refs_initial_list) or any(not r.strip() for r in refs):
-            reasons.append("Ref teams not yet available.")
+        refs_list = [r.strip() for r in refs_initial.split(",")]
+        refs_current = (getattr(match, "refs", None) or "").split(",")
+        if len(refs_current) < len(refs_list):
+            refs_current = list(refs_current) + [""] * (len(refs_list) - len(refs_current))
+        elif len(refs_current) > len(refs_list):
+            refs_current = refs_current[: len(refs_list)]
+        for i, initial in enumerate(refs_list):
+            if not initial:
+                continue
+            current = refs_current[i].strip() if i < len(refs_current) else ""
+            if current:
+                continue
+            if initial.lower().startswith("tag::"):
+                tag_name = initial[5:].strip()
+                tag = Tag.query.filter_by(event=tournament_url, name=tag_name).first()
+                if not tag or not getattr(tag, "team", None):
+                    reasons.append(
+                        f"Ref slot {i + 1} is set by tag '{tag_name}', which is not yet assigned."
+                    )
+            elif "::winner" in initial or "::loser" in initial:
+                base = initial.split("::")[0].strip()
+                dep = Match.query.filter_by(name=base, event=tournament_url).first()
+                if not dep or getattr(dep, "match_winner", None) is None:
+                    reasons.append(
+                        f"Ref slot {i + 1} depends on match '{base}', which is not yet completed."
+                    )
+            else:
+                reasons.append(f"Ref slot {i + 1} is not yet set.")
     return reasons
 
 
@@ -116,7 +202,6 @@ def _reasons_status_and_deps(tournament_url: str, match) -> List[str]:
     if status not in (MatchStatus.NOT_STARTED, MatchStatus.TIME_FINALIZED):
         return reasons
 
-    # Previous match not completed
     prev_uuid = getattr(match, "previous_match", None)
     if prev_uuid:
         prev = Match.query.filter_by(uuid=prev_uuid, event=tournament_url).first()
@@ -125,7 +210,6 @@ def _reasons_status_and_deps(tournament_url: str, match) -> List[str]:
                 f"Previous match '{getattr(prev, 'name', prev_uuid)}' is not completed."
             )
 
-    # Schedule dependencies not completed
     if getattr(match, "schedule_type", None) != ScheduleType.STATIC:
         try:
             deps = get_match_dependencies(match, tournament_url)
@@ -141,7 +225,6 @@ def _reasons_status_and_deps(tournament_url: str, match) -> List[str]:
                     f"Dependency match(es) not completed: {', '.join(names)}."
                 )
 
-    # Tags/refs not set (unresolved team1_initial, team2_initial, refs_initial)
     for attr, label in [
         ("team1_initial", "Team 1"),
         ("team2_initial", "Team 2"),
@@ -161,101 +244,122 @@ def _reasons_status_and_deps(tournament_url: str, match) -> List[str]:
             if not dep or getattr(dep, "match_winner", None) is None:
                 reasons.append(f"{label} depends on match '{base}', which is not yet completed.")
 
-    refs_initial = (getattr(match, "refs_initial", None) or "").strip()
-    if refs_initial:
-        refs_list = [r.strip() for r in refs_initial.split(",")]
-        refs_current = (getattr(match, "refs", None) or "").split(",")
-        if len(refs_current) != len(refs_list):
-            reasons.append("Ref slots not yet resolved.")
-        else:
-            for i, initial in enumerate(refs_list):
-                if not initial:
-                    continue
-                current = refs_current[i].strip() if i < len(refs_current) else ""
-                if current:
-                    continue
-                if initial.lower().startswith("tag::"):
-                    tag_name = initial[5:].strip()
-                    tag = Tag.query.filter_by(event=tournament_url, name=tag_name).first()
-                    if not tag or not getattr(tag, "team", None):
-                        reasons.append(
-                            f"Ref slot {i + 1} is set by tag '{tag_name}', which is not yet assigned."
-                        )
-                elif "::winner" in initial or "::loser" in initial:
-                    base = initial.split("::")[0].strip()
-                    dep = Match.query.filter_by(name=base, event=tournament_url).first()
-                    if not dep or getattr(dep, "match_winner", None) is None:
-                        reasons.append(
-                            f"Ref slot {i + 1} depends on match '{base}', which is not yet completed."
-                        )
-
+    # Ref-slot reasons are added by _reasons_teams_refs so we don't duplicate here.
     return reasons
+
+
+def _build_why_sections(
+    tournament_url: str, match, user
+) -> WhySections:
+    """Build the three-section structure for the why modal."""
+    from app.utils.user_helpers import is_player
+
+    status = getattr(match, "status", None)
+    status_str = str(status) if status is not None else "unknown"
+
+    sections = WhySections()
+
+    # 1. Match is ready
+    match_ready_reasons: List[str] = []
+    blocks_start = False
+    if status in (MatchStatus.COMPLETED, MatchStatus.SKIPPED):
+        match_ready_reasons.append(f"Match status is {status_str}. The match is already over.")
+    elif status == MatchStatus.READY_TO_START:
+        match_ready_reasons.append("Match status is READY_TO_START. The match can be started once ref permissions and conflicts are satisfied.")
+    elif status in (MatchStatus.NOT_STARTED, MatchStatus.TIME_FINALIZED):
+        match_ready_reasons.append(f"Match status is {status_str}. The match is not yet ready to start.")
+        match_ready_reasons.extend(_reasons_status_and_deps(tournament_url, match))
+        if len(match_ready_reasons) == 1:
+            match_ready_reasons.append("Schedule or dependencies not yet finalized.")
+        blocks_start = True
+    else:
+        match_ready_reasons.append(f"Match status is {status_str}, not READY_TO_START.")
+        blocks_start = True
+
+    team_ref_reasons = _reasons_teams_refs(match, tournament_url)
+    if team_ref_reasons:
+        match_ready_reasons.extend(team_ref_reasons)
+        blocks_start = True
+
+    sections.match_ready = {
+        "status": status_str,
+        "reasons": match_ready_reasons,
+        "blocks_start": blocks_start or bool(team_ref_reasons),
+    }
+
+    # 2. Conflicts: only "another match on the field" (field busy)
+    field_reason = _reason_field_busy(tournament_url, match)
+    if field_reason:
+        sections.conflicts.append(field_reason)
+
+    # 3. Ref permissions
+    sections.ref_permissions["who_allowed"] = get_who_allowed_explanation(tournament_url, match)
+    sections.ref_permissions["current_user"] = get_current_user_explanation(tournament_url, user)
+    # Section is "ok" (not blocking) when user is allowed to head ref
+    user_id = getattr(user, "id", None) if user else None
+    sections.ref_permissions["is_ok"] = bool(
+        user_id and is_player(user) and can_head_ref_match(tournament_url, user_id, match=match)
+    )
+
+    return sections
 
 
 def get_can_start_and_reasons(
     tournament_url: str, match, user
-) -> Tuple[bool, List[str]]:
+) -> Tuple[bool, List[str], WhySections]:
     """
     Single source of truth: can the given user start this match, and why not if not?
 
     Returns:
-        (can_start, block_reasons). block_reasons is empty when can_start is True.
+        (can_start, block_reasons, why_sections).
+        block_reasons is a flat list for backward compatibility.
+        why_sections is always populated when match is not COMPLETED/SKIPPED (for the modal).
     """
-    reasons: List[str] = []
-
-    # Match already done: no need to "start"
-    status = getattr(match, "status", None)
-    if status in (MatchStatus.COMPLETED, MatchStatus.SKIPPED):
-        return False, []  # No reasons to show; match is over
-
-    # User must be a player (we only support player as ref)
     from app.utils.user_helpers import is_player
 
+    status = getattr(match, "status", None)
+    why_sections = _build_why_sections(tournament_url, match, user)
+
+    if status in (MatchStatus.COMPLETED, MatchStatus.SKIPPED):
+        return False, [], why_sections
+
+    reasons: List[str] = []
+
     if not user or not is_player(user):
-        reasons.append("You must be logged in as a player to start matches.")
-        return False, reasons
+        reasons.extend(why_sections.ref_permissions["current_user"])
+        return False, reasons, why_sections
 
     user_id = getattr(user, "id", None)
     if not user_id:
         reasons.append("Could not determine your user.")
-        return False, reasons
+        return False, reasons, why_sections
 
-    # 1) User perms: must be allowed to head ref
     if not can_head_ref_match(tournament_url, user_id, match=match):
-        username, team_id = _get_user_display(tournament_url, user)
-        team_part = f" (registered with team {team_id})" if team_id else ""
-        label, allowed = get_allowed_refs_display(tournament_url, match)
-        if allowed:
-            allowed_str = ", ".join(allowed[:10])
-            if len(allowed) > 10:
-                allowed_str += f", ... ({len(allowed)} total)"
-        else:
-            allowed_str = label
-        reasons.append(
-            f"User {username}{team_part} is not a ref. Allowed refs: {label} — {allowed_str}."
-        )
-        return False, reasons
+        reasons.append("You are not allowed to head ref this match.")
+        reasons.extend(why_sections.ref_permissions["current_user"])
+        return False, reasons, why_sections
 
-    # 2) Field busy: no other match IN_PROGRESS on same field
     field_reason = _reason_field_busy(tournament_url, match)
     if field_reason:
         reasons.append(field_reason)
-        return False, reasons
+        return False, reasons, why_sections
 
-    # 3) Status must be READY_TO_START
     if status != MatchStatus.READY_TO_START:
-        if status in (MatchStatus.NOT_STARTED, MatchStatus.TIME_FINALIZED):
-            reasons.extend(_reasons_status_and_deps(tournament_url, match))
-            if not reasons:
-                reasons.append("Schedule or dependencies not yet finalized.")
-        else:
-            reasons.append(f"Match status is {status}, not READY_TO_START.")
-        return False, reasons
+        reasons.extend(why_sections.match_ready["reasons"])
+        return False, reasons, why_sections
 
-    # 4) Teams and refs must be resolved
-    team_ref_reasons = _reasons_teams_refs(match)
+    team_ref_reasons = _reasons_teams_refs(match, tournament_url)
     if team_ref_reasons:
         reasons.extend(team_ref_reasons)
-        return False, reasons
+        return False, reasons, why_sections
 
-    return True, []
+    return True, [], why_sections
+
+
+def why_sections_to_dict(sections: WhySections) -> Dict[str, Any]:
+    """Serialize WhySections for JSON API response."""
+    return {
+        "match_ready": sections.match_ready,
+        "conflicts": sections.conflicts,
+        "ref_permissions": sections.ref_permissions,
+    }
