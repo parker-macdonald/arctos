@@ -220,6 +220,32 @@ def _build_joined_with_init_first(ordered_chunks, chunk_dir, joined_raw, ext, _l
             return False
 
 
+def _get_video_codec(file_path, cwd):
+    """Return video codec name (hevc, h264, avc1) or None if unavailable."""
+    if cwd:
+        input_arg = path.basename(file_path)
+        run_cwd = cwd
+    else:
+        input_arg = file_path
+        run_cwd = path.dirname(path.abspath(file_path))
+    args = [
+        "ffprobe",
+        "-i", input_arg,
+        "-select_streams", "v:0",
+        "-show_entries", "stream=codec_name",
+        "-v", "quiet", "-of", "csv=p=0",
+    ]
+    result = subprocess.run(
+        args,
+        cwd=run_cwd,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0 or not result.stdout:
+        return None
+    return result.stdout.strip().lower() or None
+
+
 def _get_media_duration_sec(file_path, cwd=None):
     """Return duration in seconds of a media file via ffprobe, or None if unavailable."""
     if cwd:
@@ -256,7 +282,7 @@ def finalize_recording_worker(
 ):
     """
     1. Concatenate all chunks with the same session_id in order of chunk_start_timestamp using cat.
-    2. Fix each joined raw file with ffmpeg (-c copy -map 0 -tag:v hvc1 -movflags +faststart for MP4).
+    2. Fix each joined raw file with ffmpeg (-c copy -map 0 -tag:v matching codec -movflags +faststart for MP4).
     3. Concatenate all session outputs with the concat demuxer.
     4. Compute point_timestamps and stream_start_time (UTC) for the frontend to scrub to points.
     """
@@ -310,7 +336,7 @@ def finalize_recording_worker(
     pts = Point.query.filter_by(match=match_id).order_by(Point.stamp.asc()).all()
     point_by_uuid = {str(pt.uuid): pt for pt in pts}
 
-    session_outputs = []  # list of (session_id, output_basename, segment_start_sec, point_uuids_in_session)
+    session_outputs = []  # list of (session_id, output_basename, segment_start_sec)
     stream_start_iso = None  # ISO UTC of very first chunk start
 
     for session_id, session_chunks in sessions:
@@ -344,10 +370,19 @@ def finalize_recording_worker(
         session_basename = f"session_{session_id}.{ext}"
         session_output_path = path.join(chunk_dir, session_basename)
         if is_mp4:
+            # Probe for video codec; use matching tag for Safari compatibility.
+            # hvc1 = HEVC, avc1 = H.264. Omit tag if unknown so ffmpeg chooses.
+            video_codec = _get_video_codec(joined_raw, chunk_dir)
+            tag_args = []
+            if video_codec == "hevc":
+                tag_args = ["-tag:v", "hvc1"]
+            elif video_codec in ("h264", "avc1"):
+                tag_args = ["-tag:v", "avc1"]
             fix_cmd = [
                 "ffmpeg", "-i", path.basename(joined_raw),
                 "-c", "copy", "-map", "0",
-                "-tag:v", "hvc1", "-movflags", "+faststart",
+                *tag_args,
+                "-movflags", "+faststart",
                 "-loglevel", "error", "-y", session_basename,
             ]
         else:
@@ -371,13 +406,7 @@ def finalize_recording_worker(
                 print(result.stderr.strip(), flush=True)
             continue
 
-        point_uuids = set()
-        for c in ordered_chunks:
-            pid = c.get("point_id")
-            if pid and str(pid).strip():
-                point_uuids.add(str(pid).strip())
-
-        session_outputs.append((session_id, session_basename, segment_start_sec, point_uuids))
+        session_outputs.append((session_id, session_basename, segment_start_sec))
         print(f"finalize_recording: session {session_id} -> {session_basename}", flush=True)
 
     if not session_outputs:
@@ -391,7 +420,7 @@ def finalize_recording_worker(
     final_path = path.join(chunk_dir, final_basename)
     concat_list_path = path.join(chunk_dir, "concat_sessions.txt")
     with open(concat_list_path, "w") as f:
-        for _sid, basename, _start, _pids in session_outputs:
+        for _sid, basename, _start in session_outputs:
             abs_path = path.abspath(path.join(chunk_dir, basename))
             f.write(f"file {repr(abs_path)}\n")
     _log.info("finalize_recording: wrote concat_sessions.txt with %d entries", len(session_outputs))
@@ -422,7 +451,7 @@ def finalize_recording_worker(
     # 4. Compute point_timestamps and stream_start_time for frontend scrubbing
     try:
         segment_durations = []
-        for _sid, basename, _start, _pids in session_outputs:
+        for _sid, basename, _start in session_outputs:
             seg_path = path.join(chunk_dir, basename)
             d = _get_media_duration_sec(seg_path, cwd=chunk_dir)
             if d is None or d <= 0:
@@ -434,20 +463,22 @@ def finalize_recording_worker(
         for d in segment_durations:
             video_offset.append(video_offset[-1] + d)
 
-        points_with_footage = set()
-        for _sid, _basename, _start, pids in session_outputs:
-            points_with_footage.update(pids)
+        # Point timestamps from session start times and point.stamp only (no point_id from chunks).
+        stream_start_sec = session_outputs[0][2] if session_outputs else 0.0
+        stream_end_sec = stream_start_sec + sum(segment_durations)
 
         point_timestamps = []
         for pt in pts:
-            if str(pt.uuid) not in points_with_footage:
-                continue
             if pt.stamp is None or pt.end_stamp is None:
                 continue
             pt_start_sec = pt.stamp.replace(tzinfo=timezone.utc).timestamp()
+            if pt_start_sec < stream_start_sec or pt_start_sec >= stream_end_sec:
+                continue
+            # Find segment j that contains pt_start_sec
             segment_index = None
-            for j, (_sid, _basename, seg_start_sec, pids) in enumerate(session_outputs):
-                if str(pt.uuid) in pids:
+            for j, (_sid, _basename, seg_start_sec) in enumerate(session_outputs):
+                seg_end_sec = seg_start_sec + (segment_durations[j] if j < len(segment_durations) else 0.0)
+                if seg_start_sec <= pt_start_sec < seg_end_sec:
                     segment_index = j
                     break
             if segment_index is None:
@@ -463,52 +494,150 @@ def finalize_recording_worker(
         print(f"finalize_recording: point_timestamps (count={len(point_timestamps)})", flush=True)
         _log.info("finalize_recording: point_timestamps=%s", point_timestamps)
 
-        video_path = path.join(
+        from flask import current_app
+        from app.utils.s3_video import upload_video
+
+        bucket = current_app.config.get("S3_VIDEO_BUCKET") if current_app else None
+        region = (current_app.config.get("AWS_REGION") or "us-east-1") if current_app else "us-east-1"
+        prefix = (current_app.config.get("S3_VIDEO_PREFIX") or "").strip() or None
+        endpoint_url = current_app.config.get("S3_ENDPOINT_URL") if current_app else None
+
+        video_path = None
+        storage = None
+        delete_final_file = False
+
+        # 1. Write camera_stream_starts pointing to local final_video.{ext} (no S3 upload yet)
+        local_final_rel = path.join(
             "static", "uploads", "videos",
             tournament_url, field_name, match_id, camera_name, final_basename,
         ).replace("\\", "/")
-
+        stream_starts = {}
         match = Match.query.filter_by(uuid=match_id).first()
         if not match:
             _log.error("finalize_recording: match not found uuid=%s", match_id)
         else:
-            stream_starts = {}
             if match.camera_stream_starts:
                 try:
                     stream_starts = json.loads(match.camera_stream_starts)
                 except (TypeError, ValueError):
                     stream_starts = {}
             stream_starts[camera_name] = {
-                "video_path": video_path,
+                "video_path": local_final_rel,
                 "point_timestamps": point_timestamps,
                 "type": "recorded",
                 "stream_start_time": stream_start_iso,
             }
             match.camera_stream_starts = json.dumps(stream_starts)
             db.session.commit()
-            print(f"finalize_recording: committed camera_stream_starts for match {match_id}", flush=True)
+            print(f"finalize_recording: committed camera_stream_starts (local) for match {match_id}", flush=True)
             _log.info("finalize_recording: committed camera_stream_starts for match %s", match_id)
 
-            # Delete all chunks and intermediate files; keep only final_video.{ext}
-            to_remove = []
-            for c in all_meta:
-                fn = c.get("filename")
-                if fn:
-                    to_remove.append(path.join(chunk_dir, fn))
-            to_remove.append(path.join(chunk_dir, "chunks_meta.json"))
-            for sid, _basename, _start, _pids in session_outputs:
-                to_remove.append(path.join(chunk_dir, f"joined_raw_{sid}.{ext}"))
-            for _sid, basename, _start, _pids in session_outputs:
-                to_remove.append(path.join(chunk_dir, basename))
-            to_remove.append(path.join(chunk_dir, "concat_sessions.txt"))
-            for fp in to_remove:
+        # 2. Convert final_video.{ext} to webm (vp9, crf=30)
+        reencoded_basename = "final_video_reencoded.webm"
+        reencoded_path = path.join(chunk_dir, reencoded_basename)
+        reencode_cmd = [
+            "ffmpeg", "-i", path.basename(final_path),
+            "-c:v", "libvpx-vp9", "-crf", "30", "-b:v", "0", "-row-mt", "1",
+            "-c:a", "libopus", "-b:a", "128k",
+            "-loglevel", "error", "-y", reencoded_basename,
+        ]
+        result = subprocess.run(
+            reencode_cmd,
+            cwd=chunk_dir,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0 or not path.exists(reencoded_path) or path.getsize(reencoded_path) == 0:
+            _log.warning(
+                "finalize_recording: reencode to webm failed returncode=%s stderr=%s",
+                result.returncode, (result.stderr or "").strip(),
+            )
+            if result.stderr:
+                print(result.stderr.strip(), flush=True)
+            # Leave camera_stream_starts pointing at original; skip upload and old-file delete
+        else:
+            print(f"finalize_recording: reencoded to {reencoded_basename}", flush=True)
+
+            # 3. Upload webm to S3 if bucket configured; otherwise path is local reencoded file
+            video_path = None
+            storage = None
+            delete_reencoded_after_upload = False
+            if bucket:
+                key_part = f"{match_id}/{camera_name}.webm"
+                s3_key = f"{prefix}/{key_part}" if prefix else key_part
+                if upload_video(reencoded_path, bucket, s3_key, "video/webm", region=region, endpoint_url=endpoint_url):
+                    video_path = s3_key
+                    storage = "s3"
+                    delete_reencoded_after_upload = True
+                    _log.info("finalize_recording: uploaded webm to S3 key=%s", s3_key)
+                else:
+                    _log.warning("finalize_recording: S3 upload failed, keeping local reencoded file")
+                    video_path = path.join(
+                        "static", "uploads", "videos",
+                        tournament_url, field_name, match_id, camera_name, reencoded_basename,
+                    ).replace("\\", "/")
+            else:
+                video_path = path.join(
+                    "static", "uploads", "videos",
+                    tournament_url, field_name, match_id, camera_name, reencoded_basename,
+                ).replace("\\", "/")
+
+            # 4. Update camera_stream_starts to point to the new video
+            if match and video_path:
+                if match.camera_stream_starts:
+                    try:
+                        stream_starts = json.loads(match.camera_stream_starts)
+                    except (TypeError, ValueError):
+                        stream_starts = {}
+                stream_starts[camera_name] = {
+                    "video_path": video_path,
+                    "point_timestamps": point_timestamps,
+                    "type": "recorded",
+                    "stream_start_time": stream_start_iso,
+                }
+                if storage:
+                    stream_starts[camera_name]["storage"] = storage
+                match.camera_stream_starts = json.dumps(stream_starts)
+                db.session.commit()
+                print(f"finalize_recording: committed camera_stream_starts (final) for match {match_id}", flush=True)
+                _log.info("finalize_recording: committed camera_stream_starts (final) for match %s", match_id)
+
+            # 5. Delete the old final_video.{ext}
+            try:
+                if path.exists(final_path):
+                    os.remove(final_path)
+                    _log.info("finalize_recording: removed old %s", final_path)
+            except OSError as e:
+                _log.warning("finalize_recording: could not remove old video %s: %s", final_path, e)
+
+            if delete_reencoded_after_upload:
                 try:
-                    if path.exists(fp):
-                        os.remove(fp)
-                        _log.debug("finalize_recording: removed %s", fp)
+                    if path.exists(reencoded_path):
+                        os.remove(reencoded_path)
+                        _log.debug("finalize_recording: removed local reencoded after S3 upload")
                 except OSError as e:
-                    _log.warning("finalize_recording: could not remove %s: %s", fp, e)
-            print(f"finalize_recording: deleted {len(to_remove)} chunk/intermediate file(s)", flush=True)
+                    _log.warning("finalize_recording: could not remove reencoded %s: %s", reencoded_path, e)
+
+        # Delete all chunks and intermediate files
+        to_remove = []
+        for c in all_meta:
+            fn = c.get("filename")
+            if fn:
+                to_remove.append(path.join(chunk_dir, fn))
+        to_remove.append(path.join(chunk_dir, "chunks_meta.json"))
+        for sid, _basename, _start in session_outputs:
+            to_remove.append(path.join(chunk_dir, f"joined_raw_{sid}.{ext}"))
+        for _sid, basename, _start in session_outputs:
+            to_remove.append(path.join(chunk_dir, basename))
+        to_remove.append(path.join(chunk_dir, "concat_sessions.txt"))
+        for fp in to_remove:
+            try:
+                if path.exists(fp):
+                    os.remove(fp)
+                    _log.debug("finalize_recording: removed %s", fp)
+            except OSError as e:
+                _log.warning("finalize_recording: could not remove %s: %s", fp, e)
+        print(f"finalize_recording: deleted {len(to_remove)} chunk/intermediate file(s)", flush=True)
     except Exception as e:
         print(f"finalize_recording: ERROR after concat: {e}", flush=True)
         _log.exception("finalize_recording: failed after concat")

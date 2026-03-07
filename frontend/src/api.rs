@@ -789,6 +789,72 @@ pub async fn upload_preview_frame(
     }
 }
 
+/// Device metadata sent with preview (storage in bytes, battery 0–1). Used when uploading and when TO fetches.
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+pub struct PreviewMetadata {
+    pub storage_usage: Option<f64>,
+    pub storage_quota: Option<f64>,
+    pub battery_level: Option<f64>,
+}
+
+/// Record page: upload device metadata (storage, battery) for the current camera. Requires camera_key.
+pub async fn upload_preview_metadata(
+    tournament_url: &str,
+    field_name: &str,
+    camera_key: &str,
+    camera_name: &str,
+    meta: &PreviewMetadata,
+) -> Result<(), String> {
+    let c = client();
+    let url = format!(
+        "{}/_api/record/preview-metadata?tournament={}&field={}&camera_name={}&camera_key={}",
+        base(),
+        urlencoding::encode(tournament_url),
+        urlencoding::encode(field_name),
+        urlencoding::encode(camera_name),
+        urlencoding::encode(camera_key),
+    );
+    let r = with_credentials(c.post(&url).json(meta))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    let data: Value = response_json(r).await?;
+    if data.get("success").and_then(|v| v.as_bool()) == Some(true) {
+        Ok(())
+    } else {
+        Err(data
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Failed to upload preview metadata")
+            .to_string())
+    }
+}
+
+/// TO: fetch device metadata for a camera. Returns None on 204 or when no metadata.
+pub async fn fetch_preview_metadata(
+    tournament_url: &str,
+    field_name: &str,
+    camera_name: &str,
+) -> Result<Option<PreviewMetadata>, String> {
+    let c = client();
+    let url = format!(
+        "{}/_api/record/preview-metadata?tournament={}&field={}&camera_name={}",
+        base(),
+        urlencoding::encode(tournament_url),
+        urlencoding::encode(field_name),
+        urlencoding::encode(camera_name),
+    );
+    let r = with_credentials(c.get(&url))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if r.status().as_u16() == 204 {
+        return Ok(None);
+    }
+    let meta: PreviewMetadata = response_json(r).await?;
+    Ok(Some(meta))
+}
+
 /// Record page: poll whether the pending frame was consumed (so we can send the next one).
 pub async fn is_preview_frame_consumed(
     tournament_url: &str,
@@ -855,6 +921,31 @@ pub fn preview_frame_url(
     )
 }
 
+/// TO: Fetch preview frame with credentials (for Safari compatibility). Returns Some(jpeg_bytes) on 200, None on 204, Err on failure.
+pub async fn fetch_preview_frame(
+    tournament_url: &str,
+    field_name: &str,
+    camera_name: &str,
+    cache_bust: &str,
+) -> Result<Option<Vec<u8>>, String> {
+    let url = preview_frame_url(tournament_url, field_name, camera_name, cache_bust);
+    let c = client();
+    let r = with_credentials(c.get(&url))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    let status = r.status();
+    if status.as_u16() == 204 {
+        return Ok(None);
+    }
+    if !status.is_success() {
+        let text = r.text().await.unwrap_or_default();
+        return Err(format!("Preview frame: {} {}", status, text));
+    }
+    let bytes = r.bytes().await.map_err(|e| e.to_string())?.to_vec();
+    Ok(Some(bytes))
+}
+
 /// Metadata for a single chunk upload (record page).
 #[cfg(target_arch = "wasm32")]
 #[derive(Clone)]
@@ -863,7 +954,6 @@ pub struct RecordChunkMeta {
     pub field: String,
     pub match_id: String,
     pub session_id: String,
-    pub point_id: Option<String>,
     pub chunk_start_timestamp: f64,
     pub recording_session_start_time: f64,
     pub chunk_length_ms: u32,
@@ -906,10 +996,6 @@ pub async fn record_upload_chunk(meta: &RecordChunkMeta, chunk_blob: &web_sys::B
         .map_err(|_| "append chunk_duration failed")?;
     form.append_with_str("camera_name", &meta.camera_name)
         .map_err(|_| "append camera_name failed")?;
-    if let Some(ref pid) = meta.point_id {
-        form.append_with_str("point_id", pid)
-            .map_err(|_| "append point_id failed")?;
-    }
     if let Some(ref k) = meta.key {
         form.append_with_str("camera_key", k).map_err(|_| "append key failed")?;
     }
@@ -955,7 +1041,6 @@ pub struct RecordChunkMeta {
     pub field: String,
     pub match_id: String,
     pub session_id: String,
-    pub point_id: Option<String>,
     pub chunk_start_timestamp: f64,
     pub recording_session_start_time: f64,
     pub chunk_length_ms: u32,

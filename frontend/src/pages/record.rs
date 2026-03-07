@@ -6,11 +6,13 @@ use crate::Route;
 use dioxus::core::use_drop;
 use dioxus::prelude::*;
 use std::cell::RefCell;
-use std::collections::VecDeque;
+use std::collections::{VecDeque, HashSet};
 use std::rc::Rc;
 
 #[cfg(target_arch = "wasm32")]
 use crate::api::RecordChunkMeta;
+#[cfg(target_arch = "wasm32")]
+use crate::record_idb;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::JsCast;
 
@@ -29,17 +31,20 @@ struct StoredChunk {
     chunk_start_timestamp: f64,
     chunk_duration_ms: u32,
     recording_session_start_time: f64,
-    /// Point in progress when this chunk was recorded (set at capture time, not drain time).
-    point_id: Option<String>,
+}
+
+/// In-memory queue item: key references chunk or finalize in IndexedDB.
+#[cfg(target_arch = "wasm32")]
+enum QueueItem {
+    Chunk { match_id: Option<String> },
+    FinalizeMatch { match_id: String },
 }
 
 #[cfg(target_arch = "wasm32")]
-enum UploadQueueItem {
-    Chunk {
-        meta: RecordChunkMeta,
-        blob: web_sys::Blob,
-    },
-    FinalizeMatch { match_id: String },
+#[derive(Clone)]
+struct UploadBarItem {
+    match_id: Option<String>,
+    is_finalize: bool,
 }
 
 /// LocalStorage key for the selected camera device ID (wasm only).
@@ -167,6 +172,9 @@ pub fn Record(url: String, field: ReadSignal<String>, camera_key: ReadSignal<Str
     let mut available_cameras = use_signal(|| Vec::<(String, String)>::new());
     let mut selected_camera_id = use_signal(|| None::<String>);
     let mut preview_stream = use_signal(|| None::<web_sys::MediaStream>);
+    let mut storage_warning = use_signal(|| None::<String>);
+    #[cfg(target_arch = "wasm32")]
+    let mut upload_bar_items = use_signal(|| Vec::<UploadBarItem>::new());
 
     #[cfg(target_arch = "wasm32")]
     {
@@ -184,6 +192,53 @@ pub fn Record(url: String, field: ReadSignal<String>, camera_key: ReadSignal<Str
                 )
                 .await;
             });
+        });
+    }
+
+    // Screen wake lock: keep the device awake while the record page is open (wasm only).
+    #[cfg(target_arch = "wasm32")]
+    {
+        let wake_lock_sentinel = use_signal(|| None::<wasm_bindgen::JsValue>);
+        use_effect(move || {
+            let mut sentinel_sig = wake_lock_sentinel.to_owned();
+            wasm_bindgen_futures::spawn_local(async move {
+                let window = match web_sys::window() {
+                    Some(w) => w,
+                    None => return,
+                };
+                let navigator = window.navigator();
+                let wake_lock_js = match js_sys::Reflect::get(&navigator, &wasm_bindgen::JsValue::from_str("wakeLock")) {
+                    Ok(v) if !v.is_undefined() && !v.is_null() => v,
+                    _ => return,
+                };
+                let request_js = match js_sys::Reflect::get(&wake_lock_js, &wasm_bindgen::JsValue::from_str("request")) {
+                    Ok(v) if v.is_function() => v,
+                    _ => return,
+                };
+                let request_fn = match request_js.dyn_ref::<js_sys::Function>() {
+                    Some(f) => f,
+                    None => return,
+                };
+                let type_arg = wasm_bindgen::JsValue::from_str("screen");
+                let promise = request_fn.call1(&wake_lock_js, &type_arg).ok().and_then(|v| v.dyn_into::<js_sys::Promise>().ok());
+                let promise = match promise {
+                    Some(p) => p,
+                    None => return,
+                };
+                let result = wasm_bindgen_futures::JsFuture::from(promise).await;
+                if let Ok(sentinel) = result {
+                    sentinel_sig.set(Some(sentinel));
+                }
+            });
+        });
+        let wake_lock_for_drop = wake_lock_sentinel.to_owned();
+        use_drop(move || {
+            if let Some(sentinel) = wake_lock_for_drop() {
+                let release_js = js_sys::Reflect::get(&sentinel, &wasm_bindgen::JsValue::from_str("release")).ok();
+                if let Some(release_fn) = release_js.and_then(|f| f.dyn_ref::<js_sys::Function>().map(|f| f.clone())) {
+                    let _ = release_fn.call0(&sentinel);
+                }
+            }
         });
     }
 
@@ -223,6 +278,8 @@ pub fn Record(url: String, field: ReadSignal<String>, camera_key: ReadSignal<Str
         let is_uploading_sig = is_uploading.to_owned();
         let upload_count_sig = upload_count.to_owned();
         let upload_total_sig = upload_total.to_owned();
+        let storage_warning_sig = storage_warning.to_owned();
+        let upload_bar_items_sig = upload_bar_items.to_owned();
         let preview_stream_sig = preview_stream.to_owned();
         use_effect(move || {
             let stream_opt = preview_stream_sig();
@@ -250,6 +307,8 @@ pub fn Record(url: String, field: ReadSignal<String>, camera_key: ReadSignal<Str
                     is_uploading_sig,
                     upload_count_sig,
                     upload_total_sig,
+                    storage_warning_sig,
+                    upload_bar_items_sig,
                 )
                 .await;
             });
@@ -338,6 +397,14 @@ pub fn Record(url: String, field: ReadSignal<String>, camera_key: ReadSignal<Str
                                         }
                                     }
                                 }
+                                div { class: "mb-3 d-flex align-items-center gap-2",
+                                    span { class: "fw-semibold",
+                                        "Current match: {match_status_data().and_then(|d| d.match_name).unwrap_or_else(|| \"None\".to_string())}"
+                                    }
+                                    if is_recording() {
+                                        span { class: "badge bg-danger", "● REC" }
+                                    }
+                                }
                                 div { class: "mb-3",
                                     label { r#for: "camera-select", class: "form-label", "Select Camera:" }
                                     select {
@@ -366,18 +433,14 @@ pub fn Record(url: String, field: ReadSignal<String>, camera_key: ReadSignal<Str
                                 div { class: "alert alert-info", id: "record-status",
                                     status_line { status }
                                 }
-                                if is_uploading() {
-                                    div { class: "alert alert-info",
-                                        {
-                                            let n = upload_count();
-                                            let total = upload_total();
-                                            if total > 0 {
-                                                format!("↑ Uploading video chunks... ({n}/{total})")
-                                            } else {
-                                                format!("↑ Uploading video chunks... ({n})")
-                                            }
-                                        }
-                                    }
+                                upload_progress_section {
+                                    is_uploading,
+                                    upload_count,
+                                    upload_total,
+                                    upload_bar_items,
+                                }
+                                if let Some(ref msg) = storage_warning() {
+                                    div { class: "alert alert-warning", "{msg}" }
                                 }
                                 div {
                                     id: "record-video-container",
@@ -391,13 +454,7 @@ pub fn Record(url: String, field: ReadSignal<String>, camera_key: ReadSignal<Str
                                             style: "width: 100%; max-width: 640px; border: 2px solid #333; background: #000;",
                                         }
                                     }
-                                    div { class: "mt-2",
-                                        if is_recording() {
-                                            div { class: "alert alert-danger",
-                                                "● Recording... "
-                                            }
-                                        }
-                                    }
+                                    // Recording indicator is now part of the match header above.
                                 }
                                 if matches!(status(), RecordStatus::NoMatch) && !is_recording() {
                                     div { class: "alert alert-secondary", id: "record-no-match",
@@ -411,6 +468,89 @@ pub fn Record(url: String, field: ReadSignal<String>, camera_key: ReadSignal<Str
             }
         }
     }
+}
+
+#[component]
+fn upload_progress_section(
+    is_uploading: Signal<bool>,
+    upload_count: Signal<u32>,
+    upload_total: Signal<u32>,
+    upload_bar_items: Signal<Vec<UploadBarItem>>,
+) -> Element {
+    let remaining = {
+        let total = upload_total();
+        let done = upload_count();
+        total.saturating_sub(done)
+    };
+    let status_text = if remaining == 0 {
+        "All data uploaded".to_string()
+    } else {
+        format!("{remaining} chunks remaining to be uploaded")
+    };
+
+    let items = upload_bar_items();
+
+    rsx! {
+        div { class: "mt-3",
+            h6 { "Upload progress" }
+            p {
+                class: "mb-1 small text-muted",
+                "{status_text}"
+            }
+            if !items.is_empty() {
+                div {
+                    class: "d-flex",
+                    style: "height: 10px; border-radius: 4px; overflow: hidden; background: #e9ecef;",
+                    for (idx, item) in items.iter().enumerate() {
+                        div {
+                            key: "{idx}",
+                            style: format!(
+                                "flex: 0 0 {}; background: {}; position: relative;{}",
+                                upload_bar_width(items.len()),
+                                upload_bar_color(item.match_id.as_deref()),
+                                if idx < items.len().saturating_sub(1) {
+                                    " border-right: 1px solid rgba(0,0,0,0.25);"
+                                } else {
+                                    ""
+                                }
+                            ),
+                            if item.is_finalize {
+                                span {
+                                    style: "position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 9px; color: #fff;",
+                                    "F"
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                div {
+                    class: "progress",
+                    style: "height: 6px;",
+                    div {
+                        class: "progress-bar bg-success",
+                        style: "width: 100%;",
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn upload_bar_width(count: usize) -> String {
+    format!("{:.4}%", 100.0 / (count.max(1) as f32))
+}
+
+fn upload_bar_color(match_id: Option<&str>) -> String {
+    if let Some(id) = match_id {
+        if id.len() >= 6 {
+            if let Ok(val) = u32::from_str_radix(&id[..6].replace('-', ""), 16) {
+                let h = (val % 360) as i32;
+                return format!("hsl({h}, 70%, 55%)");
+            }
+        }
+    }
+    "#0d6efd".to_string()
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -461,13 +601,14 @@ async fn initialize_camera_and_enumerate(
         }
     };
 
+    // Use Safari-friendly constraints: start with 1280x720 ideal; Safari/iOS often fails on 1080p+.
     let mut constraints = MediaStreamConstraints::new();
     let mut video_ideal = js_sys::Object::new();
     let w = js_sys::Object::new();
-    js_sys::Reflect::set(&w, &"ideal".into(), &1920.into()).ok();
+    js_sys::Reflect::set(&w, &"ideal".into(), &3840.into()).ok();
     js_sys::Reflect::set(&video_ideal, &"width".into(), &w.into()).ok();
     let h = js_sys::Object::new();
-    js_sys::Reflect::set(&h, &"ideal".into(), &1080.into()).ok();
+    js_sys::Reflect::set(&h, &"ideal".into(), &2160.into()).ok();
     js_sys::Reflect::set(&video_ideal, &"height".into(), &h.into()).ok();
     constraints.video(&video_ideal.into());
     constraints.audio(&true.into());
@@ -489,8 +630,30 @@ async fn initialize_camera_and_enumerate(
             }
         },
         Err(_) => {
-            status.set(RecordStatus::Error("Camera permission denied".to_string()));
-            return;
+            // Safari/iOS may reject with resolution; retry with no video constraints.
+            let mut fallback = MediaStreamConstraints::new();
+            fallback.video(&true.into());
+            fallback.audio(&true.into());
+            let fallback_p = match media_devices.get_user_media_with_constraints(&fallback) {
+                Ok(p) => p,
+                Err(_) => {
+                    status.set(RecordStatus::Error("Camera permission denied".to_string()));
+                    return;
+                }
+            };
+            match JsFuture::from(fallback_p).await {
+                Ok(stream) => match stream.dyn_into::<web_sys::MediaStream>() {
+                    Ok(s) => s,
+                    Err(_) => {
+                        status.set(RecordStatus::Error("Failed to get camera stream".to_string()));
+                        return;
+                    }
+                },
+                Err(_) => {
+                    status.set(RecordStatus::Error("Camera permission denied".to_string()));
+                    return;
+                }
+            }
         }
     };
 
@@ -541,43 +704,44 @@ async fn initialize_camera_and_enumerate(
     let stream = if let Some(device_id) = chosen_id {
         selected_camera_id.set(Some(device_id.clone()));
         set_stored_camera_device_id(&device_id);
-        let mut specific_constraints = MediaStreamConstraints::new();
-        let video_constraint = js_sys::Object::new();
-        let device_id_obj = js_sys::Object::new();
-        js_sys::Reflect::set(&device_id_obj, &"exact".into(), &device_id.into()).ok();
-        js_sys::Reflect::set(&video_constraint, &"deviceId".into(), &device_id_obj.into()).ok();
-        let w = js_sys::Object::new();
-        js_sys::Reflect::set(&w, &"ideal".into(), &3840.into()).ok();
-        js_sys::Reflect::set(&video_constraint, &"width".into(), &w.into()).ok();
-        let h = js_sys::Object::new();
-        js_sys::Reflect::set(&h, &"ideal".into(), &2160.into()).ok();
-        js_sys::Reflect::set(&video_constraint, &"height".into(), &h.into()).ok();
-        specific_constraints.video(&video_constraint.into());
-        specific_constraints.audio(&true.into());
-
-        let promise = match media_devices.get_user_media_with_constraints(&specific_constraints) {
-            Ok(p) => p,
-            Err(_) => {
-                preview_stream.set(Some(initial_stream));
-                return;
+        // Safari/iOS often rejects 4K; try 1080p then 720p then deviceId-only.
+        let resolutions: [(u32, u32); 4] = [(3840, 2160), (1920, 1080), (1280, 720), (0, 0)];
+        let mut stream_opt: Option<web_sys::MediaStream> = None;
+        for (width, height) in resolutions.iter() {
+            let mut specific_constraints = MediaStreamConstraints::new();
+            let video_constraint = js_sys::Object::new();
+            let device_id_obj = js_sys::Object::new();
+            js_sys::Reflect::set(&device_id_obj, &"exact".into(), &device_id.clone().into()).ok();
+            js_sys::Reflect::set(&video_constraint, &"deviceId".into(), &device_id_obj.into()).ok();
+            if *width > 0 && *height > 0 {
+                let w = js_sys::Object::new();
+                js_sys::Reflect::set(&w, &"ideal".into(), &(*width as i32).into()).ok();
+                js_sys::Reflect::set(&video_constraint, &"width".into(), &w.into()).ok();
+                let h = js_sys::Object::new();
+                js_sys::Reflect::set(&h, &"ideal".into(), &(*height as i32).into()).ok();
+                js_sys::Reflect::set(&video_constraint, &"height".into(), &h.into()).ok();
             }
-        };
+            specific_constraints.video(&video_constraint.into());
+            specific_constraints.audio(&true.into());
 
-        if let Ok(stream_result) = JsFuture::from(promise).await {
-            if let Ok(s) = stream_result.dyn_into::<web_sys::MediaStream>() {
-                let tracks = initial_stream.get_tracks();
-                for i in 0..tracks.length() {
-                    if let Some(track) = tracks.get(i).dyn_ref::<web_sys::MediaStreamTrack>() {
-                        track.stop();
+            let promise = match media_devices.get_user_media_with_constraints(&specific_constraints) {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+            if let Ok(stream_result) = JsFuture::from(promise).await {
+                if let Ok(s) = stream_result.dyn_into::<web_sys::MediaStream>() {
+                    let tracks = initial_stream.get_tracks();
+                    for i in 0..tracks.length() {
+                        if let Some(track) = tracks.get(i).dyn_ref::<web_sys::MediaStreamTrack>() {
+                            track.stop();
+                        }
                     }
+                    stream_opt = Some(s);
+                    break;
                 }
-                s
-            } else {
-                initial_stream
             }
-        } else {
-            initial_stream
         }
+        stream_opt.unwrap_or_else(|| initial_stream)
     } else {
         initial_stream
     };
@@ -588,6 +752,11 @@ async fn initialize_camera_and_enumerate(
         if let Some(video_el) = doc.get_element_by_id("record-preview") {
             if let Ok(media_el) = video_el.dyn_into::<web_sys::HtmlMediaElement>() {
                 media_el.set_src_object(Some(&stream));
+                // Safari (especially iOS) often won't show the preview until play() is called.
+                let play_promise = media_el.play();
+                if let Ok(p) = play_promise {
+                    let _ = wasm_bindgen_futures::JsFuture::from(p).await;
+                }
             }
         }
     }
@@ -721,6 +890,46 @@ async fn capture_preview_frame() -> Result<bytes::Bytes, String> {
     Ok(bytes::Bytes::from(vec))
 }
 
+/// Collect device storage (usage/quota in bytes) and battery level (0–1) for preview metadata. Best-effort.
+#[cfg(target_arch = "wasm32")]
+async fn collect_preview_metadata() -> api::PreviewMetadata {
+    let mut storage_usage: Option<f64> = None;
+    let mut storage_quota: Option<f64> = None;
+    let mut battery_level: Option<f64> = None;
+    if let Some(window) = web_sys::window() {
+        let nav = window.navigator();
+        let storage = nav.storage();
+        if let Ok(promise) = storage.estimate() {
+            if let Ok(estimate_js) = wasm_bindgen_futures::JsFuture::from(promise).await {
+                storage_usage = js_sys::Reflect::get(&estimate_js, &"usage".into())
+                    .ok()
+                    .and_then(|v| v.as_f64());
+                storage_quota = js_sys::Reflect::get(&estimate_js, &"quota".into())
+                    .ok()
+                    .and_then(|v| v.as_f64());
+            }
+        }
+        if let Ok(get_battery) = js_sys::Reflect::get(&nav, &"getBattery".into()) {
+            if let Some(get_battery_fn) = get_battery.dyn_ref::<js_sys::Function>() {
+                if let Ok(promise_val) = get_battery_fn.call0(&nav) {
+                    if let Ok(promise) = promise_val.dyn_into::<js_sys::Promise>() {
+                        if let Ok(battery) = wasm_bindgen_futures::JsFuture::from(promise).await {
+                            battery_level = js_sys::Reflect::get(&battery, &"level".into())
+                                .ok()
+                                .and_then(|v| v.as_f64());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    api::PreviewMetadata {
+        storage_usage,
+        storage_quota,
+        battery_level,
+    }
+}
+
 /// Preview sender loop: capture frame, POST, poll consumed until true, repeat. Stops when stop_flag is set.
 #[cfg(target_arch = "wasm32")]
 async fn run_preview_sender_loop(
@@ -752,6 +961,15 @@ async fn run_preview_sender_loop(
             gloo_timers::future::TimeoutFuture::new(500).await;
             continue;
         }
+        let meta = collect_preview_metadata().await;
+        let _ = api::upload_preview_metadata(
+            &tournament_url,
+            &field,
+            &camera_key,
+            &camera_name,
+            &meta,
+        )
+        .await;
         while !stop_flag.load(Ordering::SeqCst) {
             match api::is_preview_frame_consumed(&tournament_url, &field, &camera_name, &camera_key).await {
                 Ok(true) => break,
@@ -777,6 +995,8 @@ async fn run_recording_loop(
     mut is_uploading_sig: Signal<bool>,
     mut upload_count_sig: Signal<u32>,
     mut upload_total_sig: Signal<u32>,
+    mut storage_warning_sig: Signal<Option<String>>,
+    mut upload_bar_items_sig: Signal<Vec<UploadBarItem>>,
 ) {
     use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
     use std::sync::Arc;
@@ -811,13 +1031,11 @@ async fn run_recording_loop(
     }
 
     // Use a persistent chunk_count for chunk_start_timestamp (storage is drained often so queue length is not a valid index).
-    // point_id is read at chunk capture time so chunks get the point that was in progress when recorded, not when drained.
     let container_for_recorder = container_ref.clone();
     let make_recorder = |stream: &web_sys::MediaStream,
                         storage_queue: Rc<RefCell<Vec<StoredChunk>>>,
                         session_start: Rc<RefCell<f64>>,
                         chunk_count: Rc<RefCell<u32>>,
-                        current_point_id: Rc<RefCell<Option<String>>>,
                         session_id_ref: Rc<RefCell<String>>| {
         let mut options = MediaRecorderOptions::new();
         options.set_video_bits_per_second(70_000_000);
@@ -836,7 +1054,6 @@ async fn run_recording_loop(
         let sq = storage_queue.clone();
         let ss = session_start.clone();
         let cc = chunk_count.clone();
-        let cpid = current_point_id.clone();
         let sid_ref = session_id_ref.clone();
         let closure = Closure::wrap(Box::new(move |ev: web_sys::BlobEvent| {
             let blob = match ev.data() {
@@ -846,7 +1063,6 @@ async fn run_recording_loop(
             let start = *ss.borrow();
             let chunk_start = start + (*cc.borrow() as f64) * 1000.0;
             *cc.borrow_mut() += 1;
-            let point_id = cpid.borrow().clone();
             let session_id = sid_ref.borrow().clone();
             sq.borrow_mut().push(StoredChunk {
                 blob,
@@ -854,7 +1070,6 @@ async fn run_recording_loop(
                 chunk_start_timestamp: chunk_start,
                 chunk_duration_ms: 1000,
                 recording_session_start_time: start,
-                point_id,
             });
         }) as Box<dyn FnMut(web_sys::BlobEvent)>);
         r.set_ondataavailable(Some(closure.as_ref().unchecked_ref()));
@@ -883,14 +1098,12 @@ async fn run_recording_loop(
     let session_start2 = Rc::new(RefCell::new(0.0f64));
     let chunk_count2 = Rc::new(RefCell::new(0u32));
     let session_id2 = Rc::new(RefCell::new(String::new()));
-    let current_point_id = Rc::new(RefCell::new(None::<String>));
 
     if let Some(r) = make_recorder(
         &stream,
         storage1.clone(),
         session_start1.clone(),
         chunk_count1.clone(),
-        current_point_id.clone(),
         session_id1.clone(),
     ) {
         state1.borrow_mut().recorder = Some(r);
@@ -900,30 +1113,136 @@ async fn run_recording_loop(
         storage2.clone(),
         session_start2.clone(),
         chunk_count2.clone(),
-        current_point_id.clone(),
         session_id2.clone(),
     ) {
         state2.borrow_mut().recorder = Some(r);
     }
 
-    let upload_queue: Rc<RefCell<VecDeque<UploadQueueItem>>> = Rc::new(RefCell::new(VecDeque::new()));
-    let upload_queue_worker = upload_queue.clone();
-    let tournament_url_upload = tournament_url.clone();
-    let field_upload = field.clone();
-    let camera_name_upload = camera_name.clone();
-    let key_upload = key_ref.clone();
-    spawn(async move {
-        run_upload_worker(
-            upload_queue_worker,
-            tournament_url_upload,
-            field_upload,
-            camera_name_upload,
-            key_upload,
-            is_uploading_sig,
-            upload_count_sig,
-        )
-        .await;
-    });
+    let db_holder: Rc<RefCell<Option<idb::Database>>> = Rc::new(RefCell::new(None));
+    if db_holder.borrow().is_none() {
+        if let Ok(db) = record_idb::open_db().await {
+            *db_holder.borrow_mut() = Some(db);
+        }
+    }
+    let upload_queue: Rc<RefCell<VecDeque<(String, QueueItem)>>> = Rc::new(RefCell::new(VecDeque::new()));
+    if let Some(ref db) = *db_holder.borrow() {
+        if let Ok(entries) = record_idb::cursor_entries_ordered(db).await {
+            for (key, value) in entries {
+                if let Some(match_id) = record_idb::parse_finalize_value(&value) {
+                    upload_queue
+                        .borrow_mut()
+                        .push_back((key, QueueItem::FinalizeMatch { match_id }));
+                } else if let Some((meta, _blob)) = record_idb::parse_chunk_value(&value) {
+                    upload_queue.borrow_mut().push_back((
+                        key,
+                        QueueItem::Chunk {
+                            match_id: Some(meta.match_id.clone()),
+                        },
+                    ));
+                } else {
+                    upload_queue
+                        .borrow_mut()
+                        .push_back((key, QueueItem::Chunk { match_id: None }));
+                }
+            }
+            let q_ref = upload_queue.borrow();
+            let n = q_ref.len() as u32;
+            if n > 0 {
+                upload_total_sig.set(upload_total_sig() + n);
+            }
+            update_upload_bar_from_queue(&q_ref, upload_bar_items_sig.to_owned());
+        }
+        // Reconcile: add FinalizeMatch for matches that have chunks but no finalize in queue and are no longer active
+        let chunk_match_ids: HashSet<String> = upload_queue
+            .borrow()
+            .iter()
+            .filter_map(|(_, item)| {
+                if let QueueItem::Chunk { match_id: Some(id) } = item {
+                    Some(id.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        let finalized_in_queue: HashSet<String> = upload_queue
+            .borrow()
+            .iter()
+            .filter_map(|(_, item)| {
+                if let QueueItem::FinalizeMatch { match_id } = item {
+                    Some(match_id.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        let mut need_finalize: Vec<String> = chunk_match_ids
+            .difference(&finalized_in_queue)
+            .cloned()
+            .collect();
+        if !need_finalize.is_empty() {
+            if let Ok(status) = api::record_match_status(&tournament_url, &field, None).await {
+                let current_match_id = status.match_id.as_deref();
+                need_finalize.retain(|id| {
+                    current_match_id.map(|cur| cur != id.as_str()).unwrap_or(true)
+                });
+                let mut added = 0u32;
+                for match_id in need_finalize {
+                    if let Ok(key) = record_idb::get_next_sequence(db).await {
+                        if record_idb::put_finalize(db, &key, &match_id).await.is_ok() {
+                            upload_queue.borrow_mut().push_back((
+                                key,
+                                QueueItem::FinalizeMatch {
+                                    match_id: match_id.clone(),
+                                },
+                            ));
+                            added += 1;
+                        }
+                    }
+                }
+                if added > 0 {
+                    upload_total_sig.set(upload_total_sig() + added);
+                    let q_ref = upload_queue.borrow();
+                    update_upload_bar_from_queue(&q_ref, upload_bar_items_sig.to_owned());
+                }
+            }
+        }
+        // Check storage quota; warn if low (e.g. < 100 MB free).
+        if let Some(window) = web_sys::window() {
+            let storage = window.navigator().storage();
+            if let Ok(promise) = storage.estimate() {
+                    if let Ok(estimate_js) = wasm_bindgen_futures::JsFuture::from(promise).await {
+                        let quota = js_sys::Reflect::get(&estimate_js, &"quota".into())
+                            .ok().and_then(|v| v.as_f64()).unwrap_or(0.0);
+                        let usage = js_sys::Reflect::get(&estimate_js, &"usage".into())
+                            .ok().and_then(|v| v.as_f64()).unwrap_or(0.0);
+                        const LOW_STORAGE_BYTES: f64 = 100_000_000.0; // 100 MB
+                        if quota > 0.0 && (quota - usage) < LOW_STORAGE_BYTES {
+                            storage_warning_sig.set(Some(
+                                "Low device storage for recording buffer; uploads may fail if connection is slow.".to_string(),
+                            ));
+                        }
+                    }
+                }
+        }
+    }
+    const NUM_UPLOAD_WORKERS: u32 = 3;
+    for _ in 0..NUM_UPLOAD_WORKERS {
+        let q = upload_queue.clone();
+        let tour = tournament_url.clone();
+        let f = field.clone();
+        let cam = camera_name.clone();
+        let k = key_ref.clone();
+        let is_up = is_uploading_sig.to_owned();
+        let up_cnt = upload_count_sig.to_owned();
+        let bar_items = upload_bar_items_sig.to_owned();
+        spawn(async move {
+            let db = match record_idb::open_db().await {
+                Ok(d) => d,
+                Err(_) => return,
+            };
+            run_upload_worker(q, db, tour, f, cam, k, is_up, up_cnt, bar_items).await;
+        });
+    }
 
     let mut current_match: Option<String> = None; // match_id
     let mut last_poll_data: Option<RecordMatchStatusResponse> = None;
@@ -989,9 +1308,7 @@ async fn run_recording_loop(
         let point_in_progress_now = points
             .iter()
             .any(|p| point_in_progress(p, now_ms));
-        let latest_point = latest_point_in_progress(points, now_ms);
-        let point_id_opt = latest_point.map(|p| p.uuid.clone());
-        *current_point_id.borrow_mut() = point_id_opt.clone();
+        let _latest_point = latest_point_in_progress(points, now_ms);
         // web_sys::console::log_1(&format!("data match id: {:?}", data.match_id).into());
         // web_sys::console::log_1(&format!("current match: {:?}", current_match).into());
         if !data.hasActiveMatch || data.match_id.as_ref().map(|s| s.as_str()) != current_match.as_ref().map(|id| id.as_str()) {
@@ -1008,14 +1325,32 @@ async fn run_recording_loop(
                 state2.borrow_mut().status = RecorderStatus::Idle;
                 state1.borrow_mut().started_at = None;
                 state2.borrow_mut().started_at = None;
-                upload_queue.borrow_mut().push_back(UploadQueueItem::FinalizeMatch { match_id });
+                if let Some(ref db) = *db_holder.borrow() {
+                    if let Ok(key) = record_idb::get_next_sequence(db).await {
+                                match record_idb::put_finalize(db, &key, &match_id).await {
+                            Ok(()) => {
+                                let mut q = upload_queue.borrow_mut();
+                                q.push_back((key, QueueItem::FinalizeMatch { match_id: match_id.clone() }));
+                                update_upload_bar_from_queue(&q, upload_bar_items_sig.to_owned());
+                            }
+                            Err(ref e) => {
+                                if let idb::Error::DomException(ref dom) = e {
+                                    if dom.name() == "QuotaExceededError" {
+                                        storage_warning_sig.set(Some(
+                                            "Recording buffer full. Free device storage or wait for uploads to catch up.".to_string(),
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 is_recording_sig.set(false);
             }
             if data.hasActiveMatch {
                 if let Some(ref match_id) = data.match_id {
                     current_match = Some(match_id.clone());
                     is_recording_sig.set(true);
-                    *current_point_id.borrow_mut() = point_id_opt.clone();
                     *session_start1.borrow_mut() = now_ms;
                     *chunk_count1.borrow_mut() = 0;
                     state1.borrow_mut().started_at = Some(now_ms);
@@ -1029,7 +1364,6 @@ async fn run_recording_loop(
                             storage1.clone(),
                             session_start1.clone(),
                             chunk_count1.clone(),
-                            current_point_id.clone(),
                             session_id1.clone(),
                         ) {
                             let _ = r.start_with_time_slice(1000);
@@ -1056,7 +1390,6 @@ async fn run_recording_loop(
                             storage2.clone(),
                             session_start2.clone(),
                             chunk_count2.clone(),
-                            current_point_id.clone(),
                             session_id2.clone(),
                         ) {
                             state2.borrow_mut().recorder = Some(r);
@@ -1075,7 +1408,6 @@ async fn run_recording_loop(
             field: field.clone(),
             match_id: match_id.clone(),
             session_id: String::new(), // overridden per state below
-            point_id: None, // overridden per chunk from st.point_id
             chunk_start_timestamp: 0.0,
             recording_session_start_time: 0.0,
             chunk_length_ms: 1000,
@@ -1090,21 +1422,42 @@ async fn run_recording_loop(
             if _state.borrow().status == RecorderStatus::Recording {
                 let drained: Vec<StoredChunk> = storage_rc.borrow_mut().drain(..).collect();
                 let n = drained.len();
-                for st in drained {
-                    let _idx = chunk_index_global.fetch_add(1, Ordering::Relaxed);
-                    let meta = RecordChunkMeta {
-                        session_id: st.session_id.clone(),
-                        chunk_start_timestamp: st.chunk_start_timestamp,
-                        recording_session_start_time: st.recording_session_start_time,
-                        chunk_length_ms: st.chunk_duration_ms,
-                        point_id: st.point_id.clone(),
-                        ..base_meta.clone()
-                    };
-                    upload_queue
-                        .borrow_mut()
-                        .push_back(UploadQueueItem::Chunk { meta, blob: st.blob });
-                }
                 if n > 0 {
+                    if let Some(ref db) = *db_holder.borrow() {
+                                for st in drained {
+                            let _idx = chunk_index_global.fetch_add(1, Ordering::Relaxed);
+                            let meta = RecordChunkMeta {
+                                session_id: st.session_id.clone(),
+                                chunk_start_timestamp: st.chunk_start_timestamp,
+                                recording_session_start_time: st.recording_session_start_time,
+                                chunk_length_ms: st.chunk_duration_ms,
+                                ..base_meta.clone()
+                            };
+                            if let Ok(key) = record_idb::get_next_sequence(db).await {
+                                match record_idb::put_chunk(db, &key, &meta, &st.blob).await {
+                                    Ok(()) => {
+                                        let mut q = upload_queue.borrow_mut();
+                                        q.push_back((
+                                            key,
+                                            QueueItem::Chunk {
+                                                match_id: Some(match_id.clone()),
+                                            },
+                                        ));
+                                        update_upload_bar_from_queue(&q, upload_bar_items_sig.to_owned());
+                                    }
+                                    Err(ref e) => {
+                                        if let idb::Error::DomException(ref dom) = e {
+                                            if dom.name() == "QuotaExceededError" {
+                                                storage_warning_sig.set(Some(
+                                                    "Recording buffer full. Free device storage or wait for uploads to catch up.".to_string(),
+                                                ));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                     upload_total_sig.set(upload_total_sig() + n as u32);
                 }
             }
@@ -1169,7 +1522,6 @@ async fn run_recording_loop(
                     },
                     session_start_longer,
                     chunk_count_longer,
-                    current_point_id.clone(),
                     session_id_longer,
                 ) {
                     let _ = new_r.start_with_time_slice(1000);
@@ -1232,7 +1584,6 @@ async fn run_recording_loop(
                         },
                         session_start_shorter,
                         chunk_count_shorter,
-                        current_point_id.clone(),
                         session_id_shorter,
                     ) {
                         let _ = new_r.start_with_time_slice(1000);
@@ -1272,45 +1623,109 @@ async fn run_recording_loop(
 
         point_was_in_progress = point_in_progress_now;
 
-        match_status_data_sig.set(Some(data));
+        if data.hasActiveMatch {
+            match_status_data_sig.set(Some(data));
+        } else {
+            match_status_data_sig.set(None);
+        }
         gloo_timers::future::TimeoutFuture::new(500).await;
     }
 }
 
 #[cfg(target_arch = "wasm32")]
 async fn run_upload_worker(
-    queue: Rc<RefCell<VecDeque<UploadQueueItem>>>,
+    queue: Rc<RefCell<VecDeque<(String, QueueItem)>>>,
+    db: idb::Database,
     tournament_url: String,
     field: String,
     camera_name: String,
     key: Option<String>,
     mut is_uploading_sig: Signal<bool>,
     mut upload_count_sig: Signal<u32>,
+    mut upload_bar_items_sig: Signal<Vec<UploadBarItem>>,
 ) {
+    /// Delay before retrying a failed upload (connection lost, etc.).
+    const RETRY_DELAY_MS: u32 = 3000;
+    /// Number of immediate retries for each upload attempt (any error).
+    const API_RETRY_ATTEMPTS: u32 = 5;
+    /// Delay between API retries (ms).
+    const API_RETRY_DELAY_MS: u32 = 1500;
+
     loop {
         gloo_timers::future::TimeoutFuture::new(200).await;
         let item = queue.borrow_mut().pop_front();
-        if let Some(item) = item {
+        if let Some((key_str, queue_item)) = item {
             is_uploading_sig.set(true);
-            match item {
-                UploadQueueItem::Chunk { meta, blob } => {
-                    let _ = api::record_upload_chunk(&meta, &blob).await;
-                    upload_count_sig.set(upload_count_sig() + 1);
+            let mut success = false;
+            match &queue_item {
+                QueueItem::Chunk { .. } => {
+                    if let Ok(Some(value)) = record_idb::get_entry(&db, &key_str).await {
+                        if let Some((meta, blob)) = record_idb::parse_chunk_value(&value) {
+                            for _ in 0..API_RETRY_ATTEMPTS {
+                                if api::record_upload_chunk(&meta, &blob).await.is_ok() {
+                                    if record_idb::delete_entry(&db, &key_str).await.is_ok() {
+                                        upload_count_sig.set(upload_count_sig() + 1);
+                                        success = true;
+                                    }
+                                    break;
+                                }
+                                gloo_timers::future::TimeoutFuture::new(API_RETRY_DELAY_MS).await;
+                            }
+                        }
+                    }
                 }
-                UploadQueueItem::FinalizeMatch { match_id } => {
-                    let _ = api::record_finalize(
-                        &tournament_url,
-                        &field,
-                        &match_id,
-                        &camera_name,
-                        key.as_deref(),
-                    )
-                    .await;
+                QueueItem::FinalizeMatch { match_id } => {
+                    for _ in 0..API_RETRY_ATTEMPTS {
+                        if api::record_finalize(
+                            &tournament_url,
+                            &field,
+                            match_id,
+                            &camera_name,
+                            key.as_deref(),
+                        )
+                        .await
+                        .is_ok()
+                        {
+                            let _ = record_idb::delete_entry(&db, &key_str).await;
+                            success = true;
+                            break;
+                        }
+                        gloo_timers::future::TimeoutFuture::new(API_RETRY_DELAY_MS).await;
+                    }
                 }
+            }
+            if !success {
+                let mut q = queue.borrow_mut();
+                q.push_front((key_str, queue_item));
+                update_upload_bar_from_queue(&q, upload_bar_items_sig.to_owned());
+                gloo_timers::future::TimeoutFuture::new(RETRY_DELAY_MS).await;
+            } else {
+                let q = queue.borrow();
+                update_upload_bar_from_queue(&q, upload_bar_items_sig.to_owned());
             }
             is_uploading_sig.set(false);
         }
     }
+}
+
+fn update_upload_bar_from_queue(
+    queue: &VecDeque<(String, QueueItem)>,
+    mut items_sig: Signal<Vec<UploadBarItem>>,
+) {
+    let mut items = Vec::with_capacity(queue.len());
+    for (_key, qitem) in queue.iter() {
+        match qitem {
+            QueueItem::Chunk { match_id } => items.push(UploadBarItem {
+                match_id: match_id.clone(),
+                is_finalize: false,
+            }),
+            QueueItem::FinalizeMatch { match_id } => items.push(UploadBarItem {
+                match_id: Some(match_id.clone()),
+                is_finalize: true,
+            }),
+        }
+    }
+    items_sig.set(items);
 }
 
 fn uuid_style_id() -> String {

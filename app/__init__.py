@@ -54,6 +54,15 @@ def create_app(config=None):
     # the authorized redirect URI in Google Cloud Console. No trailing slash.
     app.config["EXTERNAL_BASE_URL"] = os.environ.get("EXTERNAL_BASE_URL", "").rstrip("/")
 
+    # S3 video storage: when S3_VIDEO_BUCKET is set, finalization uploads finished videos to S3.
+    app.config["S3_VIDEO_BUCKET"] = os.environ.get("S3_VIDEO_BUCKET", "").strip() or None
+    app.config["S3_ENDPOINT_URL"] = os.environ.get("S3_ENDPOINT_URL", "").strip() or None
+    app.config["AWS_REGION"] = os.environ.get("AWS_REGION", "us-east-1").strip()
+    app.config["S3_VIDEO_PREFIX"] = os.environ.get("S3_VIDEO_PREFIX", "").strip() or None
+    app.config["S3_PRESIGNED_EXPIRY_SECONDS"] = int(
+        os.environ.get("S3_PRESIGNED_EXPIRY_SECONDS", "3600")
+    )
+
     # Handle subpath deployment
     if "SCRIPT_NAME" in os.environ:
         app.config["APPLICATION_ROOT"] = os.environ["SCRIPT_NAME"]

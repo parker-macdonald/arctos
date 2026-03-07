@@ -4,6 +4,8 @@ mod api;
 mod components;
 mod pages;
 
+#[cfg(target_arch = "wasm32")]
+mod record_idb;
 mod stones_filter;
 mod types;
 
