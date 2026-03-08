@@ -458,6 +458,9 @@
 
 .team-token-autocomplete {
     position: absolute;
+    top: 100%;
+    left: 0;
+    width: 100%;
     z-index: 1050;
     max-height: 220px;
     overflow-y: auto;

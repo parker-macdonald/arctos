@@ -96,6 +96,186 @@ fn chip_display_and_suffix(t: &Token) -> (String, &'static str) {
     (t.display.clone(), chip_class_suffix(t))
 }
 
+/// Resolved team info for tag/winner/loser tokens when they resolve to a known team.
+#[derive(Clone, Debug)]
+struct ResolvedTeam {
+    pub profile_photo: Option<String>,
+    pub display: String,
+}
+
+fn resolve_token_to_team(
+    token: &Token,
+    team_options: &[TeamOption],
+    tags: &[TagSetupData],
+    matches: &[MatchSetupData],
+) -> Option<ResolvedTeam> {
+    match &token.kind {
+        TokenKind::Tag => {
+            let name = token.value.strip_prefix("tag::")?.trim();
+            let tag = tags.iter().find(|t| t.name.eq_ignore_ascii_case(name))?;
+            let team_id = tag.team.as_ref()?;
+            let team = team_options.iter().find(|t| t.id == *team_id)?;
+            let display = team
+                .pseudonym
+                .clone()
+                .map(|p| format!("{p} ({})", team.id))
+                .unwrap_or_else(|| team.id.clone());
+            Some(ResolvedTeam {
+                profile_photo: team.profile_photo.clone(),
+                display,
+            })
+        }
+        TokenKind::Winner => {
+            let name = token.value.strip_suffix("::winner")?.trim();
+            let m = matches.iter().find(|m| m.name.eq_ignore_ascii_case(name))?;
+            if !m.status.eq_ignore_ascii_case("COMPLETED") {
+                return None;
+            }
+            let team_id = m.match_winner.as_ref().and_then(|side| {
+                if side.eq_ignore_ascii_case("TEAM1") {
+                    m.team1.clone()
+                } else if side.eq_ignore_ascii_case("TEAM2") {
+                    m.team2.clone()
+                } else {
+                    None
+                }
+            })?;
+            let team = team_options.iter().find(|t| t.id == *team_id)?;
+            let display = team
+                .pseudonym
+                .clone()
+                .map(|p| format!("{p} ({})", team.id))
+                .unwrap_or_else(|| team.id.clone());
+            Some(ResolvedTeam {
+                profile_photo: team.profile_photo.clone(),
+                display,
+            })
+        }
+        TokenKind::Loser => {
+            let name = token.value.strip_suffix("::loser")?.trim();
+            let m = matches.iter().find(|m| m.name.eq_ignore_ascii_case(name))?;
+            if !m.status.eq_ignore_ascii_case("COMPLETED") {
+                return None;
+            }
+            let loser_id = m.match_winner.as_ref().and_then(|side| {
+                if side.eq_ignore_ascii_case("TEAM1") {
+                    m.team2.clone()
+                } else if side.eq_ignore_ascii_case("TEAM2") {
+                    m.team1.clone()
+                } else {
+                    None
+                }
+            })?;
+            let team = team_options.iter().find(|t| t.id == loser_id)?;
+            let display = team
+                .pseudonym
+                .clone()
+                .map(|p| format!("{p} ({})", team.id))
+                .unwrap_or_else(|| team.id.clone());
+            Some(ResolvedTeam {
+                profile_photo: team.profile_photo.clone(),
+                display,
+            })
+        }
+        TokenKind::Team => None,
+    }
+}
+
+/// Resolves a value string (which may contain team ids, tag::Name, or Match::winner/loser) into
+/// a string of team IDs only (comma-separated when multiple is true). Returns None if any token
+/// cannot be resolved to a team ID.
+pub fn resolve_value_to_team_ids(
+    value: &str,
+    multiple: bool,
+    team_options: &[TeamOption],
+    tags: &[TagSetupData],
+    matches: &[MatchSetupData],
+) -> Option<String> {
+    let tokens = parse_value_into_tokens(value, multiple, team_options, tags, matches);
+    let mut ids = Vec::with_capacity(tokens.len());
+    for t in &tokens {
+        let id = match &t.kind {
+            TokenKind::Team => t.value.clone(),
+            TokenKind::Tag => {
+                let name = t.value.strip_prefix("tag::")?.trim();
+                let tag = tags.iter().find(|x| x.name.eq_ignore_ascii_case(name))?;
+                tag.team.clone()?
+            }
+            TokenKind::Winner => {
+                let name = t.value.strip_suffix("::winner")?.trim();
+                let m = matches.iter().find(|m| m.name.eq_ignore_ascii_case(name))?;
+                if !m.status.eq_ignore_ascii_case("COMPLETED") {
+                    return None;
+                }
+                m.match_winner.as_ref().and_then(|side| {
+                    if side.eq_ignore_ascii_case("TEAM1") {
+                        m.team1.clone()
+                    } else if side.eq_ignore_ascii_case("TEAM2") {
+                        m.team2.clone()
+                    } else {
+                        None
+                    }
+                })?
+            }
+            TokenKind::Loser => {
+                let name = t.value.strip_suffix("::loser")?.trim();
+                let m = matches.iter().find(|m| m.name.eq_ignore_ascii_case(name))?;
+                if !m.status.eq_ignore_ascii_case("COMPLETED") {
+                    return None;
+                }
+                m.match_winner.as_ref().and_then(|side| {
+                    if side.eq_ignore_ascii_case("TEAM1") {
+                        m.team2.clone()
+                    } else if side.eq_ignore_ascii_case("TEAM2") {
+                        m.team1.clone()
+                    } else {
+                        None
+                    }
+                })?
+            }
+        };
+        ids.push(id);
+    }
+    if multiple {
+        Some(ids.join(", "))
+    } else {
+        ids.into_iter().next()
+    }
+}
+
+/// Returns true if every token in `value` is a known team, tag (with team set), or completed match reference.
+/// Tags without a team and winner/loser refs for non-COMPLETED matches are considered unknown.
+pub fn all_tokens_known(
+    value: &str,
+    multiple: bool,
+    team_options: &[TeamOption],
+    tags: &[TagSetupData],
+    matches: &[MatchSetupData],
+) -> bool {
+    let tokens = parse_value_into_tokens(value, multiple, team_options, tags, matches);
+    for t in &tokens {
+        let known = match &t.kind {
+            TokenKind::Team => team_options.iter().any(|o| o.id == t.value),
+            TokenKind::Tag => tags.iter().any(|tag| {
+                format!("tag::{}", tag.name).eq_ignore_ascii_case(&t.value) && tag.team.is_some()
+            }),
+            TokenKind::Winner | TokenKind::Loser => matches.iter().any(|m| {
+                m.status.eq_ignore_ascii_case("COMPLETED")
+                    && (t.value.eq_ignore_ascii_case(&format!("{}::winner", m.name))
+                        || t.value.eq_ignore_ascii_case(&format!("{}::loser", m.name)))
+            }),
+        };
+        if !known {
+            #[cfg(target_arch = "wasm32")]
+            web_sys::console::log_1(
+                &format!("[all_tokens_known] unknown token kind={:?} value={:?}", t.kind, t.value).into(),
+            );
+            return false;
+        }
+    }
+    true
+}
+
 fn opt_parts(o: &AutocompleteOption) -> (TokenKind, String, String) {
     (o.kind.clone(), o.display.clone(), o.value.clone())
 }
@@ -113,6 +293,8 @@ pub struct AutocompleteOption {
     pub kind: TokenKind,
     pub display: String,
     pub value: String,
+    /// When present, show " → avatar Team" in the dropdown (for tags/winner/loser).
+    pub resolved: Option<ResolvedTeam>,
 }
 
 fn collect_autocomplete(
@@ -134,25 +316,48 @@ fn collect_autocomplete(
                 kind: TokenKind::Team,
                 display,
                 value: t.id.clone(),
+                resolved: None,
             });
         }
         for tag in tags.iter().take(5) {
+            let value = format!("tag::{}", tag.name);
+            let token = Token {
+                kind: TokenKind::Tag,
+                display: tag.name.clone(),
+                value: value.clone(),
+            };
+            let resolved = resolve_token_to_team(&token, team_options, tags, matches);
             out.push(AutocompleteOption {
                 kind: TokenKind::Tag,
                 display: tag.name.clone(),
-                value: format!("tag::{}", tag.name),
+                value,
+                resolved,
             });
         }
         for m in matches.iter().take(10) {
+            let winner_value = format!("{}::winner", m.name);
+            let winner_token = Token {
+                kind: TokenKind::Winner,
+                display: format!("{} winner", m.name),
+                value: winner_value.clone(),
+            };
+            let loser_value = format!("{}::loser", m.name);
+            let loser_token = Token {
+                kind: TokenKind::Loser,
+                display: format!("{} loser", m.name),
+                value: loser_value.clone(),
+            };
             out.push(AutocompleteOption {
                 kind: TokenKind::Winner,
                 display: format!("{} winner", m.name),
-                value: format!("{}::winner", m.name),
+                value: winner_value,
+                resolved: resolve_token_to_team(&winner_token, team_options, tags, matches),
             });
             out.push(AutocompleteOption {
                 kind: TokenKind::Loser,
                 display: format!("{} loser", m.name),
-                value: format!("{}::loser", m.name),
+                value: loser_value,
+                resolved: resolve_token_to_team(&loser_token, team_options, tags, matches),
             });
         }
         return out;
@@ -170,30 +375,53 @@ fn collect_autocomplete(
                 kind: TokenKind::Team,
                 display,
                 value: t.id.clone(),
+                resolved: None,
             });
         }
     }
     for tag in tags.iter() {
         if tag.name.to_lowercase().contains(&q) {
+            let value = format!("tag::{}", tag.name);
+            let token = Token {
+                kind: TokenKind::Tag,
+                display: tag.name.clone(),
+                value: value.clone(),
+            };
+            let resolved = resolve_token_to_team(&token, team_options, tags, matches);
             out.push(AutocompleteOption {
                 kind: TokenKind::Tag,
                 display: tag.name.clone(),
-                value: format!("tag::{}", tag.name),
+                value,
+                resolved,
             });
         }
     }
     for m in matches.iter() {
         let name_lower = m.name.to_lowercase();
         if name_lower.contains(&q) {
+            let winner_value = format!("{}::winner", m.name);
+            let winner_token = Token {
+                kind: TokenKind::Winner,
+                display: format!("{} winner", m.name),
+                value: winner_value.clone(),
+            };
+            let loser_value = format!("{}::loser", m.name);
+            let loser_token = Token {
+                kind: TokenKind::Loser,
+                display: format!("{} loser", m.name),
+                value: loser_value.clone(),
+            };
             out.push(AutocompleteOption {
                 kind: TokenKind::Winner,
                 display: format!("{} winner", m.name),
-                value: format!("{}::winner", m.name),
+                value: winner_value,
+                resolved: resolve_token_to_team(&winner_token, team_options, tags, matches),
             });
             out.push(AutocompleteOption {
                 kind: TokenKind::Loser,
                 display: format!("{} loser", m.name),
-                value: format!("{}::loser", m.name),
+                value: loser_value,
+                resolved: resolve_token_to_team(&loser_token, team_options, tags, matches),
             });
         }
     }
@@ -253,13 +481,15 @@ pub fn TeamTokenInput(
     let team_options_rc3 = team_options_rc.clone();
     let tags_rc2 = tags_rc.clone();
     let matches_rc2 = matches_rc.clone();
+    let tags_rc_add = tags_rc.clone();
+    let matches_rc_add = matches_rc.clone();
     let add_token_rc: Rc<RefCell<Box<dyn FnMut(Token)>>> = Rc::new(RefCell::new(Box::new(move |t: Token| {
         let mut new_tokens = parse_value_into_tokens(
             value_rc.as_ref(),
             multiple,
             team_options_rc3.as_ref(),
-            tags_rc.as_ref(),
-            matches_rc.as_ref(),
+            tags_rc_add.as_ref(),
+            matches_rc_add.as_ref(),
         );
         if multiple {
             new_tokens.push(t);
@@ -429,14 +659,62 @@ pub fn TeamTokenInput(
                         let tag_content = rsx! {
                             img { class: "team-token-icon icon-primary-svg", src: "{base_url}/static/tag.svg", alt: "Tag" }
                             span { class: "team-token-label", "{chip_label}" }
+                            if let Some(resolved) = resolve_token_to_team(entry, team_options_rc.as_ref(), tags_rc.as_ref(), matches_rc.as_ref()) {
+                                span { class: "team-token-resolved text-muted ms-1",
+                                    " → "
+                                    if let Some(photo) = &resolved.profile_photo {
+                                        img {
+                                            src: "{base_url}/static/{photo}",
+                                            alt: "",
+                                            class: "team-token-avatar small rounded-circle ms-1",
+                                            style: "width: 1em; height: 1em; object-fit: cover; vertical-align: middle;"
+                                        }
+                                    } else {
+                                        span { class: "team-token-avatar small ms-1", style: "display: inline-flex; width: 1em; height: 1em; align-items: center; justify-content: center; font-size: 0.85em;", "{resolved.display.chars().next().unwrap_or('?')}" }
+                                    }
+                                    span { "{resolved.display}" }
+                                }
+                            }
                         };
                         let winner_content = rsx! {
                             img { class: "team-token-icon icon-primary-svg", src: "{base_url}/static/reference.svg", alt: "Reference" }
                             span { class: "team-token-label", "{chip_label} winner" }
+                            if let Some(resolved) = resolve_token_to_team(entry, team_options_rc.as_ref(), tags_rc.as_ref(), matches_rc.as_ref()) {
+                                span { class: "team-token-resolved text-muted ms-1",
+                                    " → "
+                                    if let Some(photo) = &resolved.profile_photo {
+                                        img {
+                                            src: "{base_url}/static/{photo}",
+                                            alt: "",
+                                            class: "team-token-avatar small rounded-circle ms-1",
+                                            style: "width: 1em; height: 1em; object-fit: cover; vertical-align: middle;"
+                                        }
+                                    } else {
+                                        span { class: "team-token-avatar small ms-1", style: "display: inline-flex; width: 1em; height: 1em; align-items: center; justify-content: center; font-size: 0.85em;", "{resolved.display.chars().next().unwrap_or('?')}" }
+                                    }
+                                    span { "{resolved.display}" }
+                                }
+                            }
                         };
                         let loser_content = rsx! {
                             img { class: "team-token-icon icon-primary-svg", src: "{base_url}/static/reference.svg", alt: "Reference" }
                             span { class: "team-token-label", "{chip_label} loser" }
+                            if let Some(resolved) = resolve_token_to_team(entry, team_options_rc.as_ref(), tags_rc.as_ref(), matches_rc.as_ref()) {
+                                span { class: "team-token-resolved text-muted ms-1",
+                                    " → "
+                                    if let Some(photo) = &resolved.profile_photo {
+                                        img {
+                                            src: "{base_url}/static/{photo}",
+                                            alt: "",
+                                            class: "team-token-avatar small rounded-circle ms-1",
+                                            style: "width: 1em; height: 1em; object-fit: cover; vertical-align: middle;"
+                                        }
+                                    } else {
+                                        span { class: "team-token-avatar small ms-1", style: "display: inline-flex; width: 1em; height: 1em; align-items: center; justify-content: center; font-size: 0.85em;", "{resolved.display.chars().next().unwrap_or('?')}" }
+                                    }
+                                    span { "{resolved.display}" }
+                                }
+                            }
                         };
                         let chip_inner = if chip_suffix == "team" { team_content } else if chip_suffix == "tag" { tag_content } else if chip_suffix == "winner" { winner_content } else { loser_content };
                         rsx! {
@@ -445,6 +723,18 @@ pub fn TeamTokenInput(
                         key: "{idx}-{chip_label}",
                         tabindex: 0,
                         onclick: move |ev: Event<MouseData>| { ev.stop_propagation(); focused_chip.set(Some(idx)); },
+                        onblur: move |_| {
+                            #[cfg(target_arch = "wasm32")]
+                            {
+                                let mut show_ac = show_autocomplete.clone();
+                                spawn(async move {
+                                    gloo_timers::future::TimeoutFuture::new(150).await;
+                                    show_ac.set(false);
+                                });
+                            }
+                            #[cfg(not(target_arch = "wasm32"))]
+                            show_autocomplete.set(false);
+                        },
                         onkeydown: move |ev: Event<KeyboardData>| {
                             if ev.key().to_string() == "Backspace" {
                                 ev.prevent_default();
@@ -477,6 +767,18 @@ pub fn TeamTokenInput(
                     onfocus: move |_| {
                         focused_chip.set(None);
                         show_autocomplete.set(true);
+                    },
+                    onblur: move |_| {
+                        #[cfg(target_arch = "wasm32")]
+                        {
+                            let mut show_ac = show_autocomplete.clone();
+                            spawn(async move {
+                                gloo_timers::future::TimeoutFuture::new(150).await;
+                                show_ac.set(false);
+                            });
+                        }
+                        #[cfg(not(target_arch = "wasm32"))]
+                        show_autocomplete.set(false);
                     },
                 }
             }
@@ -518,17 +820,66 @@ pub fn TeamTokenInput(
                                     span { "{opt_display}" }
                                 }
                             };
+                            let opt_resolved = opt.resolved.clone();
                             let opt_tag = rsx! {
                                 img { class: "icon-primary-svg me-1", src: "{base_url}/static/tag.svg", alt: "Tag" }
                                 span { "{opt_display}" }
+                                if let Some(ref resolved) = opt_resolved {
+                                    span { class: "text-muted ms-1",
+                                        " → "
+                                        if let Some(photo) = &resolved.profile_photo {
+                                            img {
+                                                src: "{base_url}/static/{photo}",
+                                                alt: "",
+                                                class: "team-token-avatar small rounded-circle ms-1",
+                                                style: "width: 1em; height: 1em; object-fit: cover; vertical-align: middle;"
+                                            }
+                                        } else {
+                                            span { class: "team-token-avatar small ms-1", style: "display: inline-flex; width: 1em; height: 1em; align-items: center; justify-content: center; font-size: 0.85em;", "{resolved.display.chars().next().unwrap_or('?')}" }
+                                        }
+                                        span { "{resolved.display}" }
+                                    }
+                                }
                             };
                             let opt_winner = rsx! {
                                 img { class: "icon-primary-svg me-1", src: "{base_url}/static/reference.svg", alt: "Reference" }
                                 span { "{opt_display}" }
+                                if let Some(ref resolved) = opt_resolved {
+                                    span { class: "text-muted ms-1",
+                                        " → "
+                                        if let Some(photo) = &resolved.profile_photo {
+                                            img {
+                                                src: "{base_url}/static/{photo}",
+                                                alt: "",
+                                                class: "team-token-avatar small rounded-circle ms-1",
+                                                style: "width: 1em; height: 1em; object-fit: cover; vertical-align: middle;"
+                                            }
+                                        } else {
+                                            span { class: "team-token-avatar small ms-1", style: "display: inline-flex; width: 1em; height: 1em; align-items: center; justify-content: center; font-size: 0.85em;", "{resolved.display.chars().next().unwrap_or('?')}" }
+                                        }
+                                        span { "{resolved.display}" }
+                                    }
+                                }
                             };
                             let opt_loser = rsx! {
                                 img { class: "icon-primary-svg me-1", src: "{base_url}/static/reference.svg", alt: "Reference" }
                                 span { "{opt_display}" }
+                                if let Some(ref resolved) = opt_resolved {
+                                    span { class: "text-muted ms-1",
+                                        " → "
+                                        if let Some(photo) = &resolved.profile_photo {
+                                            img {
+                                                src: "{base_url}/static/{photo}",
+                                                alt: "",
+                                                class: "team-token-avatar small rounded-circle ms-1",
+                                                style: "width: 1em; height: 1em; object-fit: cover; vertical-align: middle;"
+                                            }
+                                        } else {
+                                            span { class: "team-token-avatar small ms-1", style: "display: inline-flex; width: 1em; height: 1em; align-items: center; justify-content: center; font-size: 0.85em;", "{resolved.display.chars().next().unwrap_or('?')}" }
+                                        }
+                                        span { "{resolved.display}" }
+                                    }
+                                }
                             };
                             let opt_inner = if opt_suffix == "team" { opt_team } else if opt_suffix == "tag" { opt_tag } else if opt_suffix == "winner" { opt_winner } else { opt_loser };
                             rsx! {
@@ -549,6 +900,46 @@ pub fn TeamTokenInput(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+/// Form field that wraps TeamTokenInput with label and optional help text.
+/// Use for team 1, team 2, referees, or any single/multi token selection with a consistent look.
+#[component]
+pub fn TeamSelectionField(
+    label: String,
+    team_options: Vec<TeamOption>,
+    tags: Vec<TagSetupData>,
+    matches: Vec<MatchSetupData>,
+    value: String,
+    on_change: EventHandler<String>,
+    multiple: bool,
+    placeholder: String,
+    #[props(optional)] help_text: Option<String>,
+    /// Default "mb-3". Use "mb-2" for tighter spacing (e.g. ref slots).
+    #[props(optional)] wrapper_class: Option<String>,
+    /// Default "form-label". Use "form-label small" for smaller labels.
+    #[props(optional)] label_class: Option<String>,
+) -> Element {
+    let wrapper = wrapper_class.as_deref().unwrap_or("mb-3");
+    let label_cls = label_class.as_deref().unwrap_or("form-label");
+
+    rsx! {
+        div { class: "{wrapper}",
+            label { class: "{label_cls}", "{label}" }
+            TeamTokenInput {
+                team_options,
+                tags,
+                matches,
+                value,
+                on_change,
+                multiple,
+                placeholder,
+            }
+            if let Some(help) = &help_text {
+                div { class: "form-text", "{help}" }
             }
         }
     }

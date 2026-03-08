@@ -334,7 +334,7 @@ pub struct BracketSetupResponse {
     pub brackets: Vec<BracketConfig>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct MatchDetailData {
     pub uuid: String,
     pub name: String,
@@ -500,6 +500,8 @@ pub struct MatchDetailResponse {
     #[serde(default)]
     pub why_sections: Option<WhySections>,
     #[serde(default)]
+    pub conflicting_match: Option<ConflictingMatchInfo>,
+    #[serde(default)]
     pub match_players: Vec<MatchPlayerForNotes>,
     #[serde(default)]
     pub penalty_types: Vec<PenaltyType>,
@@ -523,6 +525,25 @@ pub struct MatchReadySection {
     pub reasons: Vec<String>,
     #[serde(default)]
     pub blocks_start: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ConflictingMatchInfo {
+    pub uuid: String,
+    pub name: String,
+    pub team1_name: String,
+    pub team2_name: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ForceStartMatchRequest {
+    pub team1: String,
+    pub team2: String,
+    pub refs: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub conflicting_match_action: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub conflicting_match_winner: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]

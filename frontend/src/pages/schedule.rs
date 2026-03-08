@@ -7,7 +7,7 @@ use serde::Serialize;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
-use super::TeamTokenInput;
+use super::TeamSelectionField;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::JsCast as _;
 
@@ -1364,48 +1364,42 @@ fn CreateMatchModal(
                             if schedule_type() == "STATIC" || schedule_type() == "SAFE" || schedule_type() == "FAST" {
                                 div { class: "row",
                                     div { class: "col-md-6",
-                                        div { class: "mb-3",
-                                            label { class: "form-label", "Team 1" }
-                                            TeamTokenInput {
-                                                team_options: data.team_options.clone(),
-                                                tags: data.tags.clone(),
-                                                matches: data.matches.clone(),
-                                                value: team1(),
-                                                on_change: move |s| team1.set(s),
-                                                multiple: false,
-                                                placeholder: "team, match winner/loser, or tag".to_string(),
-                                            }
-                                            div { class: "form-text", "team, match winner/loser, or tag" }
+                                        TeamSelectionField {
+                                            label: "Team 1".to_string(),
+                                            team_options: data.team_options.clone(),
+                                            tags: data.tags.clone(),
+                                            matches: data.matches.clone(),
+                                            value: team1(),
+                                            on_change: move |s| team1.set(s),
+                                            multiple: false,
+                                            placeholder: "team, match winner/loser, or tag".to_string(),
+                                            help_text: Some("team, match winner/loser, or tag".to_string()),
                                         }
                                     }
                                     div { class: "col-md-6",
-                                        div { class: "mb-3",
-                                            label { class: "form-label", "Team 2" }
-                                            TeamTokenInput {
-                                                team_options: data.team_options.clone(),
-                                                tags: data.tags.clone(),
-                                                matches: data.matches.clone(),
-                                                value: team2(),
-                                                on_change: move |s| team2.set(s),
-                                                multiple: false,
-                                                placeholder: "team, match winner/loser, or tag".to_string(),
-                                            }
-                                            div { class: "form-text", "team, match winner/loser, or tag" }
+                                        TeamSelectionField {
+                                            label: "Team 2".to_string(),
+                                            team_options: data.team_options.clone(),
+                                            tags: data.tags.clone(),
+                                            matches: data.matches.clone(),
+                                            value: team2(),
+                                            on_change: move |s| team2.set(s),
+                                            multiple: false,
+                                            placeholder: "team, match winner/loser, or tag".to_string(),
+                                            help_text: Some("team, match winner/loser, or tag".to_string()),
                                         }
                                     }
                                 }
-                                div { class: "mb-3",
-                                    label { class: "form-label", "Referees" }
-                                    TeamTokenInput {
-                                        team_options: data.team_options.clone(),
-                                        tags: data.tags.clone(),
-                                        matches: data.matches.clone(),
-                                        value: refs(),
-                                        on_change: move |s| refs.set(s),
-                                        multiple: true,
-                                        placeholder: "(optional) teams, match winners/losers, or tags".to_string(),
-                                    }
-                                    div { class: "form-text", "(optional) teams, match winners/losers, or tags" }
+                                TeamSelectionField {
+                                    label: "Referees".to_string(),
+                                    team_options: data.team_options.clone(),
+                                    tags: data.tags.clone(),
+                                    matches: data.matches.clone(),
+                                    value: refs(),
+                                    on_change: move |s| refs.set(s),
+                                    multiple: true,
+                                    placeholder: "(optional) teams, match winners/losers, or tags".to_string(),
+                                    help_text: Some("(optional) teams, match winners/losers, or tags".to_string()),
                                 }
                                 div { class: "row",
                                     div { class: "col-md-4",
@@ -3996,48 +3990,42 @@ fn EditMatchModal(
                             if schedule_type() == "STATIC" || schedule_type() == "SAFE" || schedule_type() == "FAST" {
                                 div { class: "row",
                                     div { class: "col-md-6",
-                                        div { class: "mb-3",
-                                            label { class: "form-label", "Team 1" }
-                                            TeamTokenInput {
-                                                team_options: data.team_options.clone(),
-                                                tags: data.tags.clone(),
-                                                matches: data.matches.clone(),
-                                                value: team1(),
-                                                on_change: move |s| team1.set(s),
-                                                multiple: false,
-                                                placeholder: "team 1".to_string(),
-                                            }
-                                            div { class: "form-text", "Team, match winner/loser, or tag" }
+                                        TeamSelectionField {
+                                            label: "Team 1".to_string(),
+                                            team_options: data.team_options.clone(),
+                                            tags: data.tags.clone(),
+                                            matches: data.matches.clone(),
+                                            value: team1(),
+                                            on_change: move |s| team1.set(s),
+                                            multiple: false,
+                                            placeholder: "team 1".to_string(),
+                                            help_text: Some("Team, match winner/loser, or tag".to_string()),
                                         }
                                     }
                                     div { class: "col-md-6",
-                                        div { class: "mb-3",
-                                            label { class: "form-label", "Team 2" }
-                                            TeamTokenInput {
-                                                team_options: data.team_options.clone(),
-                                                tags: data.tags.clone(),
-                                                matches: data.matches.clone(),
-                                                value: team2(),
-                                                on_change: move |s| team2.set(s),
-                                                multiple: false,
-                                                placeholder: "team 2".to_string(),
-                                            }
-                                            div { class: "form-text", "Team, match winner/loser, or tag" }
+                                        TeamSelectionField {
+                                            label: "Team 2".to_string(),
+                                            team_options: data.team_options.clone(),
+                                            tags: data.tags.clone(),
+                                            matches: data.matches.clone(),
+                                            value: team2(),
+                                            on_change: move |s| team2.set(s),
+                                            multiple: false,
+                                            placeholder: "team 2".to_string(),
+                                            help_text: Some("Team, match winner/loser, or tag".to_string()),
                                         }
                                     }
                                 }
-                                div { class: "mb-3",
-                                    label { class: "form-label", "Referees" }
-                                    TeamTokenInput {
-                                        team_options: data.team_options.clone(),
-                                        tags: data.tags.clone(),
-                                        matches: data.matches.clone(),
-                                        value: refs(),
-                                        on_change: move |s| refs.set(s),
-                                        multiple: true,
-                                        placeholder: "(optional) teams, match winners/losers, or tags".to_string(),
-                                    }
-                                    div { class: "form-text", "(optional) teams, match winners/losers, or tags" }
+                                TeamSelectionField {
+                                    label: "Referees".to_string(),
+                                    team_options: data.team_options.clone(),
+                                    tags: data.tags.clone(),
+                                    matches: data.matches.clone(),
+                                    value: refs(),
+                                    on_change: move |s| refs.set(s),
+                                    multiple: true,
+                                    placeholder: "(optional) teams, match winners/losers, or tags".to_string(),
+                                    help_text: Some("(optional) teams, match winners/losers, or tags".to_string()),
                                 }
                                 div { class: "row",
                                     div { class: "col-md-4",

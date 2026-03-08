@@ -29,7 +29,13 @@ from app.utils.scheduling import (
     compute_dynamic_match_nominal_start_time,
 )
 from app.utils.datetime_helpers import to_iso_z
-from app.domain.enums import RegistrationStatus, MatchStatus, ScheduleType, SetType
+from app.domain.enums import (
+    RegistrationStatus,
+    MatchStatus,
+    ScheduleType,
+    SetType,
+    WinnerSide,
+)
 from models import (
     Player,
     Team,
@@ -1860,6 +1866,7 @@ def tournament_match_detail(tournament_url):
     # Can start and blocking reasons (for "why?" UX)
     from app.services.match_start_eligibility import (
         get_can_start_and_reasons,
+        get_conflicting_match_on_field,
         why_sections_to_dict,
     )
 
@@ -1867,6 +1874,17 @@ def tournament_match_detail(tournament_url):
     can_start, block_reasons, why_sections = get_can_start_and_reasons(
         tournament_url, match, _user
     )
+
+    # Conflicting match on same field (for force-start modal)
+    conflicting_match = None
+    other_match = get_conflicting_match_on_field(tournament_url, match)
+    if other_match:
+        conflicting_match = {
+            "uuid": other_match.uuid,
+            "name": getattr(other_match, "name", other_match.uuid),
+            "team1_name": _team_name_for_match(tournament_url, other_match, "team1"),
+            "team2_name": _team_name_for_match(tournament_url, other_match, "team2"),
+        }
 
     # Get match-level notes (point_id is None) - only for head refs
     if is_head_ref:
@@ -2150,6 +2168,7 @@ def tournament_match_detail(tournament_url):
             "can_start": can_start,
             "block_reasons": block_reasons,
             "why_sections": why_sections_to_dict(why_sections),
+            "conflicting_match": conflicting_match,
             "match_players": match_players,
             "penalty_types": penalty_types_data,
         }
@@ -3060,6 +3079,134 @@ def update_match_api(tournament_url, match_id):
     db.session.commit()
 
     # Recompute all times
+    recompute_all_match_times(tournament_url)
+
+    return jsonify({"success": True})
+
+
+@bp.route(
+    "/tournaments/<tournament_url>/matches/<match_id>/force-start",
+    methods=["POST"],
+)
+@login_required
+def force_start_match_api(tournament_url, match_id):
+    """Force-start a match: resolve teams/refs, handle conflicting match, convert to static."""
+    from app.services.match_start_eligibility import get_conflicting_match_on_field
+
+    match = Match.query.filter_by(uuid=match_id, event=tournament_url).first_or_404()
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "Invalid JSON"}), 400
+
+    # Auth: require head ref
+    if not current_user.is_authenticated:
+        return jsonify({"error": "Must be logged in"}), 401
+    from app.utils.user_helpers import is_player
+
+    if not is_player(current_user):
+        return jsonify({"error": "Only player accounts can force start matches"}), 403
+    if not can_head_ref_match(tournament_url, current_user.id, match=match):
+        return jsonify({"error": "You are not allowed to head ref this match"}), 403
+
+    team1_input = data.get("team1", "").strip()
+    team2_input = data.get("team2", "").strip()
+    refs_list = data.get("refs") or []
+    if not isinstance(refs_list, list):
+        refs_list = []
+    conflicting_action = (data.get("conflicting_match_action") or "").strip()
+    conflicting_winner = (data.get("conflicting_match_winner") or "").strip()
+
+    # 1. Handle conflicting match (if any)
+    other_match = get_conflicting_match_on_field(tournament_url, match)
+    if other_match:
+        if not conflicting_action:
+            return (
+                jsonify(
+                    {
+                        "error": "Another match is in progress on this field. Choose SKIP or COMPLETE."
+                    }
+                ),
+                400,
+            )
+        if conflicting_action == "COMPLETE" and conflicting_winner not in (
+            "TEAM1",
+            "TEAM2",
+        ):
+            return (
+                jsonify(
+                    {"error": "When marking as COMPLETE, choose TEAM1 or TEAM2 as winner."}
+                ),
+                400,
+            )
+
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        # Close unfinished points on the conflicting match
+        for pt in Point.query.filter_by(match=other_match.uuid).all():
+            if pt.end_stamp is None:
+                pt.end_stamp = now
+        if conflicting_action == "SKIP":
+            other_match.status = MatchStatus.SKIPPED
+            other_match.match_winner = None
+        else:
+            other_match.status = MatchStatus.COMPLETED
+            other_match.match_winner = (
+                WinnerSide.TEAM1 if conflicting_winner == "TEAM1" else WinnerSide.TEAM2
+            )
+        other_match.finalized_at = now
+
+    # 2. Update target match
+    t1_id, t1_initial = resolve_team_name_to_id(team1_input, tournament_url)
+    t2_id, t2_initial = resolve_team_name_to_id(team2_input, tournament_url)
+    if not t1_id or not t2_id:
+        return jsonify({"error": "Team 1 and Team 2 are required"}), 400
+
+    match.team1 = t1_id
+    match.team1_initial = t1_initial or team1_input
+    match.team2 = t2_id
+    match.team2_initial = t2_initial or team2_input
+
+    # Refs: preserve slot count
+    final_refs = []
+    final_refs_initial = []
+    for r in refs_list:
+        r_str = (r or "").strip() if isinstance(r, str) else ""
+        rid, rinit = resolve_team_name_to_id(r_str, tournament_url)
+        final_refs.append(rid or "")
+        final_refs_initial.append(rinit or r_str)
+    match.refs = ",".join(final_refs) if final_refs else None
+    match.refs_initial = ",".join(final_refs_initial) if final_refs_initial else None
+
+    # Convert to static
+    match.schedule_type = ScheduleType.STATIC
+    match.nominal_start_time = datetime.now(timezone.utc).replace(tzinfo=None)
+    match.status = MatchStatus.READY_TO_START
+
+    # Unlink previous/next
+    if match.previous_match:
+        old_prev = Match.query.filter_by(
+            uuid=match.previous_match, event=tournament_url
+        ).first()
+        if old_prev and old_prev.next_match == match.uuid:
+            old_prev.next_match = match.next_match
+            if match.next_match:
+                old_next = Match.query.filter_by(
+                    uuid=match.next_match, event=tournament_url
+                ).first()
+                if old_next:
+                    old_next.previous_match = old_prev.uuid
+        elif match.next_match:
+            old_next = Match.query.filter_by(
+                uuid=match.next_match, event=tournament_url
+            ).first()
+            if old_next:
+                old_next.previous_match = None
+    match.previous_match = None
+    match.next_match = None
+    flag_modified(match, "previous_match")
+    flag_modified(match, "next_match")
+
+    db.session.flush()
+    db.session.commit()
     recompute_all_match_times(tournament_url)
 
     return jsonify({"success": True})

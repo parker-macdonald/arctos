@@ -1,5 +1,5 @@
 use crate::api;
-use crate::pages::TeamTokenInput;
+use crate::pages::TeamSelectionField;
 use crate::types::{BracketConfig, BracketTeamConfig};
 use crate::Route;
 use dioxus::prelude::*;
@@ -210,39 +210,45 @@ pub fn BracketSetup(url: String) -> Element {
                                                     div { class: "card-body",
                                                         div { class: "row",
                                                             div { class: "col-md-3",
-                                                                div { class: "mb-2 bracket-setup-team-token",
-                                                                    label { class: "form-label", "Team Reference" }
+                                                                {
                                                                     if let Some(Ok(setup)) = setup_val.read().as_ref() {
-                                                                        TeamTokenInput {
-                                                                            team_options: setup.team_options.clone(),
-                                                                            tags: setup.tags.clone(),
-                                                                            matches: setup.matches.clone(),
-                                                                            value: tref.clone(),
-                                                                            on_change: move |s| {
-                                                                                let mut vec = brackets_state.write();
-                                                                                if let Some(b) = vec.get_mut(idx) {
-                                                                                    if let Some(t) = b.teams.get_mut(tidx) {
-                                                                                        t.team = s;
+                                                                        rsx! {
+                                                                            TeamSelectionField {
+                                                                                label: "Team Reference".to_string(),
+                                                                                team_options: setup.team_options.clone(),
+                                                                                tags: setup.tags.clone(),
+                                                                                matches: setup.matches.clone(),
+                                                                                value: tref.clone(),
+                                                                                on_change: move |s| {
+                                                                                    let mut vec = brackets_state.write();
+                                                                                    if let Some(b) = vec.get_mut(idx) {
+                                                                                        if let Some(t) = b.teams.get_mut(tidx) {
+                                                                                            t.team = s;
+                                                                                        }
                                                                                     }
-                                                                                }
-                                                                            },
-                                                                            multiple: false,
-                                                                            placeholder: "Pseudonym, MatchName::winner, tag::TagName".to_string(),
-                                                                        }
-                                                                        div { class: "form-text",
-                                                                            "Team, match winner/loser (MatchName::winner), or tag (tag::TagName)"
+                                                                                },
+                                                                                multiple: false,
+                                                                                placeholder: "Pseudonym, MatchName::winner, tag::TagName".to_string(),
+                                                                                help_text: Some("Team, match winner/loser (MatchName::winner), or tag (tag::TagName)".to_string()),
+                                                                                wrapper_class: Some("mb-2 bracket-setup-team-token".to_string()),
+                                                                            }
                                                                         }
                                                                     } else {
-                                                                        input {
-                                                                            class: "form-control",
-                                                                            r#type: "text",
-                                                                            value: "{tref}",
-                                                                            placeholder: "Team ID, tag::Name, Match::winner",
-                                                                            oninput: move |e| {
-                                                                                let mut vec = brackets_state.write();
-                                                                                if let Some(b) = vec.get_mut(idx) {
-                                                                                    if let Some(t) = b.teams.get_mut(tidx) {
-                                                                                        t.team = e.value();
+                                                                        rsx! {
+                                                                            div { class: "mb-2",
+                                                                                label { class: "form-label", "Team Reference" }
+                                                                                input {
+                                                                                    class: "form-control",
+                                                                                    r#type: "text",
+                                                                                    value: "{tref}",
+                                                                                    placeholder: "Team ID, tag::Name, Match::winner",
+                                                                                    oninput: move |e| {
+                                                                                        let mut vec = brackets_state.write();
+                                                                                        if let Some(b) = vec.get_mut(idx) {
+                                                                                            if let Some(t) = b.teams.get_mut(tidx) {
+                                                                                                t.team = e.value();
+                                                                                            }
+                                                                                        }
                                                                                     }
                                                                                 }
                                                                             }

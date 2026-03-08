@@ -133,12 +133,20 @@ def get_current_user_explanation(tournament_url: str, user) -> List[str]:
 
 def _reason_field_busy(tournament_url: str, match) -> str | None:
     """If another match is IN_PROGRESS on same field, return reason string; else None."""
+    other = get_conflicting_match_on_field(tournament_url, match)
+    if not other:
+        return None
+    return f"Another match is in progress on this field: {getattr(other, 'name', other.uuid)}."
+
+
+def get_conflicting_match_on_field(tournament_url: str, match):
+    """Return the match IN_PROGRESS on the same field, or None."""
     from models import Match
 
     field = getattr(match, "field", None)
     if not field or not str(field).strip():
         return None
-    other = (
+    return (
         Match.query.filter_by(
             event=tournament_url,
             field=field,
@@ -147,9 +155,6 @@ def _reason_field_busy(tournament_url: str, match) -> str | None:
         .filter(Match.uuid != match.uuid)
         .first()
     )
-    if not other:
-        return None
-    return f"Another match is in progress on this field: {getattr(other, 'name', other.uuid)}."
 
 
 def _reasons_teams_refs(match, tournament_url: str) -> List[str]:
