@@ -1752,6 +1752,37 @@ pub async fn update_match(
     }
 }
 
+pub async fn force_start_match(
+    tournament_url: &str,
+    match_id: &str,
+    req: &crate::types::ForceStartMatchRequest,
+) -> Result<(), String> {
+    let c = client();
+    let r = with_credentials(
+        c.post(format!(
+            "{}/_api/tournaments/{}/matches/{}/force-start",
+            base(),
+            tournament_url,
+            match_id
+        ))
+        .json(req),
+    )
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let data: Value = response_json(r).await?;
+    if data.get("success").and_then(|v| v.as_bool()) == Some(true) {
+        Ok(())
+    } else {
+        Err(data
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown error")
+            .to_string())
+    }
+}
+
 pub async fn update_player_profile(
     player_id: &str,
     req: &UpdatePlayerProfileRequest,

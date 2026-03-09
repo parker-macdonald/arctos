@@ -334,7 +334,7 @@ pub struct BracketSetupResponse {
     pub brackets: Vec<BracketConfig>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct MatchDetailData {
     pub uuid: String,
     pub name: String,
@@ -494,9 +494,66 @@ pub struct MatchDetailResponse {
     pub point_notes_map: std::collections::HashMap<String, Vec<MatchNoteData>>,
     pub is_head_ref: bool,
     #[serde(default)]
+    pub can_start: bool,
+    #[serde(default)]
+    pub block_reasons: Vec<String>,
+    #[serde(default)]
+    pub why_sections: Option<WhySections>,
+    #[serde(default)]
+    pub conflicting_match: Option<ConflictingMatchInfo>,
+    #[serde(default)]
     pub match_players: Vec<MatchPlayerForNotes>,
     #[serde(default)]
     pub penalty_types: Vec<PenaltyType>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct WhySections {
+    #[serde(default)]
+    pub match_ready: MatchReadySection,
+    #[serde(default)]
+    pub conflicts: Vec<String>,
+    #[serde(default)]
+    pub ref_permissions: RefPermissionsSection,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct MatchReadySection {
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub reasons: Vec<String>,
+    #[serde(default)]
+    pub blocks_start: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ConflictingMatchInfo {
+    pub uuid: String,
+    pub name: String,
+    pub team1_name: String,
+    pub team2_name: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ForceStartMatchRequest {
+    pub team1: String,
+    pub team2: String,
+    pub refs: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub conflicting_match_action: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub conflicting_match_winner: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct RefPermissionsSection {
+    #[serde(default)]
+    pub who_allowed: Vec<String>,
+    #[serde(default)]
+    pub current_user: Vec<String>,
+    #[serde(default)]
+    pub is_ok: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
