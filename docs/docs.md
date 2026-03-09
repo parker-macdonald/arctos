@@ -26,6 +26,12 @@ For Players
  - [Phone Number](#phone-number)
  - [Logging Injuries](#logging-injuries)
 
+For Head Refs
+
+ - [Running Games](#running-games)
+ - [Force Start Games](#force-start)
+
+
 For TOs
 
  - [Tournament Settings](#tournament-settings)
@@ -44,9 +50,6 @@ For TOs
  - [OBS Scoreboard Integration](#obs-scoreboard-integration)
  - [Recording Matches](#recording-matches)
 
-For Head Refs
-
- - [Running Games](#running-games)
 
 ---
 
@@ -367,6 +370,57 @@ to *everyone*; private notes are shown only to you and head refs.
 
 ---
 
+
+## Running Games {#running-games}
+
+Running games is mostly self explanatory. If there's no option for you
+to start a match that you think you should be able to start, check
+that:
+
+  - you're logged in
+  - the teams are all ready (even refs), not involved in other games
+    or still references to other games' winners and losers
+  - everything before this match on the schedule on this field has
+    been marked completed
+
+For the actual workflow to run games, a textual description is even
+more unhelpful than it is dry. Instead, i've made this [nice big
+diagram showing how to do it](/static/run_match_pipeline.png). it's a
+bit large to display here well, but if you click the link, you can
+zoom in however much you want.
+
+![](/static/run_match_pipeline.png)
+
+[^2]: static matches may not be skipped because if it is skipped, it's impossible to know when the next match should be, since the static match doesn't care what came before it.
+
+
+## Force Start Games {#force-start}
+
+If Arctos thinks a match cannot be started, it will not let you start
+that match. However, there are some cases when you want to override
+this. For example, say Match C two ref teams are listed: winner of
+Match A and winner of Match B. If Match B has finished but Match A has
+not, Arctos will say Match C must wait until Match A is complete
+before starting. But if everyone is ready to start playing Match C and
+the winner of Match B has supplied enough refs, it's totally fine to
+start early.
+
+To provide an escape hatch of sorts for these kinds of situations, a
+"force start" option is provided to refs. When a match is force started:
+
+1. it asks you to assign playing and reffing teams
+2. if there is another match currently happening on the same field, it
+   lets you mark that match as either `SKIPPED` or `COMPLETED`, and if
+   the latter, it lets you set the winning team.
+3. the match is converted to a STATIC type match, if that is not
+   already the case, and is set to start at the current time.
+4. the match gets started!
+
+Note that once the ref completes this procedure, they can no longer
+change the teams involved. Only TOs may make further edits.
+
+---
+
 ## Tournament Settings {#tournament-settings}
 
 ### Basic Information {#basic-information}
@@ -474,7 +528,7 @@ idle time before every match starts (see: Fog of War 2025). To fix
 this, we introduce the *dynamic scheduling*, implemented by the
 `fast` and `safe` match types.
 
-### Dynamic Matches {#dynamic-scheduling}
+### Dynamic Matches {#dynamic-matches}
 
 Dynamic matches do not have a nominal start time (that you, the TO,
 can set, at least). Instead, their nominal start time is computed
@@ -665,26 +719,3 @@ If you want to add overlays like the scoreboard, you'll still need to
 run OBS and use a virtual camera setup to pass the feed to the
 recording page.
 
----
-
-## Running Games {#running-games}
-
-Running games is mostly self explanatory. If there's no option for you
-to start a match that you think you should be able to start, check
-that:
-
-  - you're logged in
-  - the teams are all ready (even refs), not involved in other games
-    or still references to other games' winners and losers
-  - everything before this match on the schedule on this field has
-    been marked completed
-
-For the actual workflow to run games, a textual description is even
-more unhelpful than it is dry. Instead, i've made this [nice big
-diagram showing how to do it](/static/run_match_pipeline.png). it's a
-bit large to display here well, but if you click the link, you can
-zoom in however much you want.
-
-![](/static/run_match_pipeline.png)
-
-[^2]: static matches may not be skipped because if it is skipped, it's impossible to know when the next match should be, since the static match doesn't care what came before it.
