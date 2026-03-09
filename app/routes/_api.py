@@ -75,7 +75,13 @@ def _user_json():
     if not current_user.is_authenticated:
         return None
     t = "player" if current_user.__class__.__name__ == "Player" else "team"
-    return {"id": current_user.id, "name": current_user.name, "type": t}
+    has_password = bool(getattr(current_user, "pw_hash", None))
+    return {
+        "id": current_user.id,
+        "name": current_user.name,
+        "type": t,
+        "has_password": has_password,
+    }
 
 
 @bp.route("/me", methods=["GET"])

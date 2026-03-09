@@ -20,6 +20,8 @@ pub fn EditTeamProfile(team_id: String) -> Element {
     let mut photo_uploading = use_signal(|| false);
     let mut photo_removing = use_signal(|| false);
 
+    let me = use_resource(move || async move { api::me().await });
+
     let _fetch = use_resource(use_reactive(&team_id, move |id| async move {
         loading.set(true);
         match api::team_profile(&id).await {
@@ -254,7 +256,9 @@ pub fn EditTeamProfile(team_id: String) -> Element {
                         }
                     }
 
-                    ChangePasswordCard {}
+                    if me.read().as_ref().and_then(|r| r.as_ref().ok()).map(|u| u.has_password).unwrap_or(false) {
+                        ChangePasswordCard {}
+                    }
 
                 }
             }
