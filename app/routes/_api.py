@@ -75,7 +75,13 @@ def _user_json():
     if not current_user.is_authenticated:
         return None
     t = "player" if current_user.__class__.__name__ == "Player" else "team"
-    return {"id": current_user.id, "name": current_user.name, "type": t}
+    has_password = bool(getattr(current_user, "pw_hash", None))
+    return {
+        "id": current_user.id,
+        "name": current_user.name,
+        "type": t,
+        "has_password": has_password,
+    }
 
 
 @bp.route("/me", methods=["GET"])
@@ -126,6 +132,36 @@ def login():
 def logout():
     """Clear session."""
     logout_user()
+    return jsonify({"ok": True})
+
+
+@bp.route("/change-password", methods=["POST"])
+@login_required
+def change_password():
+    """JSON body: { current_password, new_password }. Change authenticated user's password."""
+    if not request.is_json:
+        return jsonify({"error": "Content-Type must be application/json"}), 415
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "Invalid JSON"}), 400
+    current_password = data.get("current_password")
+    new_password = data.get("new_password")
+    if not current_password or not new_password:
+        return jsonify({"error": "current_password and new_password required"}), 400
+    user = current_user
+    if not user.pw_hash:
+        return (
+            jsonify(
+                {
+                    "error": "This account uses Google sign-in. Password cannot be changed here.",
+                }
+            ),
+            400,
+        )
+    if not user.check_password(current_password):
+        return jsonify({"error": "Current password is incorrect"}), 401
+    user.set_password(new_password)
+    db.session.commit()
     return jsonify({"ok": True})
 
 
