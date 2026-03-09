@@ -1,8 +1,9 @@
 use crate::api;
-use crate::components::PenaltyDisplay;
+use crate::components::{all_tokens_known, resolve_value_to_team_ids, PenaltyDisplay};
+use crate::pages::TeamSelectionField;
 use crate::Route;
 use crate::stones_filter::BayesianOffsetFilter;
-use crate::types::{PointData, PointTimestamp};
+use crate::types::{ConflictingMatchInfo, ForceStartMatchRequest, MatchDetailData, PointData, PointTimestamp};
 use dioxus::prelude::*;
 use serde_json::Value;
 #[cfg(target_arch = "wasm32")]
@@ -334,6 +335,357 @@ fn parse_team_reference(display: &str) -> Option<(String, String)> {
     None
 }
 
+// CSS for TeamTokenInput in Force Start modal (same as schedule page)
+const TEAM_TOKEN_MODAL_CSS: &str = include_str!("schedule_timeline.css");
+
+#[component]
+fn ForceStartModal(
+    tournament_url: String,
+    match_id: String,
+    match_data: MatchDetailData,
+    conflicting_match: Option<ConflictingMatchInfo>,
+    on_close: EventHandler<()>,
+    on_success: EventHandler<()>,
+) -> Element {
+    let schedule_data = use_resource({
+        let tournament_url_for_resource = tournament_url.clone();
+        move || {
+            let u = tournament_url_for_resource.clone();
+            async move { api::schedule_setup(&u).await.map_err(|e| e.to_string()) }
+        }
+    });
+    let val = schedule_data.value();
+
+    let mut team1 = use_signal(|| {
+        match_data
+            .team1
+            .clone()
+            .or(match_data.team1_initial.clone())
+            .unwrap_or_default()
+    });
+    let mut team2 = use_signal(|| {
+        match_data
+            .team2
+            .clone()
+            .or(match_data.team2_initial.clone())
+            .unwrap_or_default()
+    });
+
+    let refs_initial_str = match_data
+        .r#refs_initial
+        .as_deref()
+        .or(match_data.r#refs.as_deref())
+        .unwrap_or("");
+    let refs_initial_owned = match_data
+        .r#refs
+        .clone()
+        .unwrap_or_else(|| refs_initial_str.to_string());
+    let mut refs = use_signal(move || refs_initial_owned.clone());
+
+    let mut conflicting_action = use_signal(|| None::<String>);
+    let mut conflicting_winner = use_signal(|| None::<String>);
+
+    let mut error = use_signal(|| None::<String>);
+    let mut saving = use_signal(|| false);
+    let mut submit_trigger = use_signal(|| 0u32);
+
+    let tournament_url_submit = tournament_url.clone();
+    let match_id_submit = match_id.clone();
+    let team1_submit = team1.clone();
+    let team2_submit = team2.clone();
+    let refs_submit = refs.clone();
+    let conflicting_action_submit = conflicting_action.clone();
+    let conflicting_winner_submit = conflicting_winner.clone();
+    let on_success_cb = on_success.clone();
+    let has_conflict = conflicting_match.is_some();
+    let val_for_submit = val.clone();
+
+    let validation = use_memo(move || {
+        let data = match val.read().as_ref() {
+            Some(Ok(d)) => d.clone(),
+            _ => return (true, None),
+        };
+        let t1 = team1().trim().to_string();
+        let t2 = team2().trim().to_string();
+        let r = refs().trim().to_string();
+
+        #[cfg(target_arch = "wasm32")]
+        web_sys::console::log_1(&format!("[ForceStart] validation memo run t1={:?} t2={:?} refs={:?}", t1, t2, r).into());
+
+        if t1.is_empty() || t2.is_empty() {
+            return (false, Some("Team 1 and Team 2 are required.".to_string()));
+        }
+        let all_known = all_tokens_known(&t1, false, &data.team_options, &data.tags, &data.matches)
+            && all_tokens_known(&t2, false, &data.team_options, &data.tags, &data.matches)
+            && (r.is_empty() || all_tokens_known(&r, true, &data.team_options, &data.tags, &data.matches));
+
+        #[cfg(target_arch = "wasm32")]
+        web_sys::console::log_1(&format!("[ForceStart] all_known={} (t1={:?} t2={:?} refs={:?})", all_known, t1, t2, r).into());
+
+        if !all_known {
+            return (false, Some("All participating teams must be known.".to_string()));
+        }
+        if has_conflict {
+            let act = conflicting_action();
+            if act.is_none() {
+                return (
+                    false,
+                    Some("Another match is in progress on this field. Choose SKIP or COMPLETE.".to_string()),
+                );
+            }
+            if act.as_deref() == Some("COMPLETE") && conflicting_winner().is_none() {
+                return (
+                    false,
+                    Some("When marking as COMPLETE, choose TEAM1 or TEAM2 as winner.".to_string()),
+                );
+            }
+        }
+        (true, None)
+    });
+    let (can_submit, validation_message) = validation();
+
+    #[cfg(target_arch = "wasm32")]
+    web_sys::console::log_1(&format!("[ForceStart] render can_submit={} msg={:?}", can_submit, validation_message).into());
+
+    use_effect(move || {
+        let trigger = submit_trigger();
+        if trigger == 0 {
+            return;
+        }
+        let t1 = team1_submit().trim().to_string();
+        let t2 = team2_submit().trim().to_string();
+        if t1.is_empty() || t2.is_empty() {
+            submit_trigger.set(0);
+            return;
+        }
+        if has_conflict {
+            let act = conflicting_action_submit();
+            if act.is_none() {
+                submit_trigger.set(0);
+                return;
+            }
+            if act.as_deref() == Some("COMPLETE") {
+                let win = conflicting_winner_submit();
+                if win.is_none() {
+                    submit_trigger.set(0);
+                    return;
+                }
+            }
+        }
+        let data = match val_for_submit.read().as_ref() {
+            Some(Ok(d)) => d.clone(),
+            _ => {
+                submit_trigger.set(0);
+                return;
+            }
+        };
+        let r = refs_submit().trim().to_string();
+        let team1_ids = match resolve_value_to_team_ids(&t1, false, &data.team_options, &data.tags, &data.matches) {
+            Some(ids) => ids,
+            None => {
+                error.set(Some("Could not resolve Team 1 to a team ID.".to_string()));
+                submit_trigger.set(0);
+                return;
+            }
+        };
+        let team2_ids = match resolve_value_to_team_ids(&t2, false, &data.team_options, &data.tags, &data.matches) {
+            Some(ids) => ids,
+            None => {
+                error.set(Some("Could not resolve Team 2 to a team ID.".to_string()));
+                submit_trigger.set(0);
+                return;
+            }
+        };
+        let refs_ids = if r.is_empty() {
+            Vec::new()
+        } else {
+            match resolve_value_to_team_ids(&r, true, &data.team_options, &data.tags, &data.matches) {
+                Some(ids_str) => ids_str
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect::<Vec<_>>(),
+                None => {
+                    error.set(Some("Could not resolve Referees to team IDs.".to_string()));
+                    submit_trigger.set(0);
+                    return;
+                }
+            }
+        };
+        error.set(None);
+        saving.set(true);
+        let req = ForceStartMatchRequest {
+            team1: team1_ids,
+            team2: team2_ids,
+            refs: refs_ids,
+            conflicting_match_action: conflicting_action_submit(),
+            conflicting_match_winner: conflicting_winner_submit(),
+        };
+        let u = tournament_url_submit.clone();
+        let m = match_id_submit.clone();
+        spawn(async move {
+            match api::force_start_match(&u, &m, &req).await {
+                Ok(()) => {
+                    saving.set(false);
+                    on_success_cb.call(());
+                }
+                Err(e) => {
+                    error.set(Some(e));
+                    saving.set(false);
+                }
+            }
+        });
+        submit_trigger.set(0);
+    });
+
+    let mut on_submit_click = move |_| {
+        submit_trigger.set(submit_trigger() + 1);
+    };
+
+    rsx! {
+        style { {TEAM_TOKEN_MODAL_CSS} }
+        div { class: "modal show", style: "display: block;",
+            div { class: "modal-dialog modal-dialog-centered modal-lg",
+                div { class: "modal-content",
+                    div { class: "modal-header",
+                        h5 { class: "modal-title", "Force Start Match" }
+                        button { r#type: "button", class: "btn-close", onclick: move |_| on_close.call(()) }
+                    }
+                    div { class: "modal-body",
+                        if let Some(Ok(data)) = val.read().as_ref() {
+                            form {
+                                onsubmit: move |ev| { ev.prevent_default(); on_submit_click(()); },
+                                div { class: "mb-3",
+                                    TeamSelectionField {
+                                        label: "Team 1".to_string(),
+                                        team_options: data.team_options.clone(),
+                                        tags: data.tags.clone(),
+                                        matches: data.matches.clone(),
+                                        value: team1(),
+                                        on_change: move |s| team1.set(s),
+                                        multiple: false,
+                                        placeholder: "Team 1".to_string(),
+                                    }
+                                }
+                                div { class: "mb-3",
+                                    TeamSelectionField {
+                                        label: "Team 2".to_string(),
+                                        team_options: data.team_options.clone(),
+                                        tags: data.tags.clone(),
+                                        matches: data.matches.clone(),
+                                        value: team2(),
+                                        on_change: move |s| team2.set(s),
+                                        multiple: false,
+                                        placeholder: "Team 2".to_string(),
+                                    }
+                                }
+                                div { class: "mb-3",
+                                    TeamSelectionField {
+                                        label: "Referees".to_string(),
+                                        team_options: data.team_options.clone(),
+                                        tags: data.tags.clone(),
+                                        matches: data.matches.clone(),
+                                        value: refs(),
+                                        on_change: move |s| refs.set(s),
+                                        multiple: true,
+                                        placeholder: "(optional) teams, match winners/losers, or tags".to_string(),
+                                        help_text: Some("(optional) teams, match winners/losers, or tags".to_string()),
+                                    }
+                                }
+                                if let Some(ref cm) = conflicting_match {
+                                    div { class: "mb-3 p-3 border rounded",
+                                        p { class: "mb-2", "Another match is in progress on this field: {cm.name}." }
+                                        div { class: "mb-2",
+                                            label { class: "form-label small", "What should happen to that match?" }
+                                            div { class: "form-check",
+                                                input {
+                                                    class: "form-check-input",
+                                                    r#type: "radio",
+                                                    name: "conflict_action",
+                                                    id: "conflict_skip",
+                                                    checked: conflicting_action().as_deref() == Some("SKIP"),
+                                                    onchange: move |_| {
+                                                        conflicting_action.set(Some("SKIP".to_string()));
+                                                        conflicting_winner.set(None);
+                                                    }
+                                                }
+                                                label { class: "form-check-label", r#for: "conflict_skip", "Mark as SKIPPED (discard results)" }
+                                            }
+                                            div { class: "form-check",
+                                                input {
+                                                    class: "form-check-input",
+                                                    r#type: "radio",
+                                                    name: "conflict_action",
+                                                    id: "conflict_complete",
+                                                    checked: conflicting_action().as_deref() == Some("COMPLETE"),
+                                                    onchange: move |_| conflicting_action.set(Some("COMPLETE".to_string()))
+                                                }
+                                                label { class: "form-check-label", r#for: "conflict_complete", "Mark as COMPLETED (choose winner)" }
+                                            }
+                                        }
+                                        if conflicting_action().as_deref() == Some("COMPLETE") {
+                                            div { class: "ms-3",
+                                                label { class: "form-label small", "Winner" }
+                                                div { class: "form-check",
+                                                    input {
+                                                        class: "form-check-input",
+                                                        r#type: "radio",
+                                                        name: "conflict_winner",
+                                                        id: "winner_team1",
+                                                        checked: conflicting_winner().as_deref() == Some("TEAM1"),
+                                                        onchange: move |_| conflicting_winner.set(Some("TEAM1".to_string()))
+                                                    }
+                                                    label { class: "form-check-label", r#for: "winner_team1", "{cm.team1_name}" }
+                                                }
+                                                div { class: "form-check",
+                                                    input {
+                                                        class: "form-check-input",
+                                                        r#type: "radio",
+                                                        name: "conflict_winner",
+                                                        id: "winner_team2",
+                                                        checked: conflicting_winner().as_deref() == Some("TEAM2"),
+                                                        onchange: move |_| conflicting_winner.set(Some("TEAM2".to_string()))
+                                                    }
+                                                    label { class: "form-check-label", r#for: "winner_team2", "{cm.team2_name}" }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                if let Some(msg) = validation_message {
+                                    div { class: "alert alert-danger mb-0 mt-3", "{msg}" }
+                                }
+                                if let Some(err) = error() {
+                                    div { class: "alert alert-danger mb-0 mt-2", "{err}" }
+                                }
+                                div { class: "modal-footer mt-3",
+                                    button {
+                                        r#type: "button",
+                                        class: "btn btn-secondary",
+                                        onclick: move |_| on_close.call(()),
+                                        "Cancel"
+                                    }
+                                    button {
+                                        r#type: "submit",
+                                        class: "btn btn-warning",
+                                        disabled: saving() || !can_submit,
+                                        "Force Start"
+                                    }
+                                }
+                            }
+                        } else if let Some(Err(e)) = val.read().as_ref() {
+                            p { class: "text-danger", "{e}" }
+                        } else {
+                            p { "Loading…" }
+                        }
+                    }
+                }
+            }
+        }
+        div { class: "modal-backdrop show" }
+    }
+}
+
 #[component]
 pub fn MatchPage(url: String) -> Element {
     let match_id = get_query_param("id");
@@ -511,6 +863,8 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
     // Match UUID we have already triggered stream-start fetches for (so we only query once per load).
     let stream_starts_fetched_for_match = use_signal(|| None::<String>);
     let mut penalty_desc_modal = use_signal(|| None::<String>);
+    let mut why_modal_show = use_signal(|| false);
+    let mut force_start_modal_show = use_signal(|| false);
 
     use_effect(move || {
         let _ = (val.read().as_ref(), selected_camera_idx(), live_points_signal());
@@ -645,22 +999,27 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
     return m ? m[1] : null;
   }}
   var videoId = extractVideoId(url);
-  if (!videoId) {{ console.warn('Arctos: no YouTube video ID in', url); return; }}
-  function createNew() {{
-    var el = document.getElementById('youtube-player');
-    if (!el) return;
-    if (window.__arctosYtPlayer) {{
-      try {{ window.__arctosYtPlayer.loadVideoById(videoId); return; }} catch (e) {{ window.__arctosYtPlayer = null; }}
+  if (videoId) {{
+    function createNew() {{
+      var el = document.getElementById('youtube-player');
+      if (!el) return;
+      if (window.__arctosYtPlayer) {{
+        try {{ window.__arctosYtPlayer.loadVideoById(videoId); return; }} catch (e) {{ window.__arctosYtPlayer = null; }}
+      }}
+      if (!window.__arctosYtPlayer) {{
+        window.__arctosYtPlayer = new YT.Player('youtube-player', {{
+          videoId: videoId,
+          host: 'https://www.youtube-nocookie.com',
+          playerVars: {{ autoplay: 1, controls: 1, rel: 0, modestbranding: 1, enablejsapi: 1, origin: window.location.origin, iv_load_policy: 1, playsinline: 1 }},
+          events: {{ onReady: function() {{}}, onError: function(e) {{ console.error('YouTube player error', e.data); }} }}
+        }});
+      }}
     }}
-    window.__arctosYtPlayer = new YT.Player('youtube-player', {{
-      videoId: videoId,
-      host: 'https://www.youtube-nocookie.com',
-      playerVars: {{ autoplay: 1, controls: 1, rel: 0, modestbranding: 1, enablejsapi: 1, origin: window.location.origin, iv_load_policy: 1, playsinline: 1 }},
-      events: {{ onReady: function() {{}}, onError: function(e) {{ console.error('YouTube player error', e.data); }} }}
-    }});
+    window.onYouTubeIframeAPIReady = function() {{ createNew(); }};
+    if (window.YT && window.YT.Player) createNew();
+  }} else {{
+    console.warn('Arctos: no YouTube video ID in', url);
   }}
-  window.onYouTubeIframeAPIReady = function() {{ createNew(); }};
-  if (window.YT && window.YT.Player) createNew();
 }})();
 "#,
                     url_escaped
@@ -896,6 +1255,8 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
             },
         if let Some(Ok(d)) = val.read().as_ref() {
             {
+                let modal_url = url.clone();
+                let modal_match_id = d.match_data.uuid.clone();
                 let has_cameras = d.available_cameras.len() > 0 || d.camera_url.is_some();
                 let cameras = d.available_cameras.clone();
                 let points_for_footage: Vec<PointData> = live_points_signal().clone().unwrap_or_else(|| d.points.clone());
@@ -1372,11 +1733,11 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                                 }
                             }
 
-                            // Action buttons: only for head refs, and only when status matches
-                            if d.is_head_ref && d.match_data.status == "READY_TO_START" {
+                            // Action buttons: use can_start from API (includes field-busy and deps)
+                            if d.is_head_ref && d.can_start {
                                 div { class: "row mt-3",
                                     div { class: "col-12",
-                                        div { class: "d-flex gap-2",
+                                        div { class: "d-flex gap-2 align-items-center",
                                             Link {
                                                 to: Route::StartMatch {
                                                     url: url.clone(),
@@ -1391,7 +1752,7 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                             } else if d.is_head_ref && d.match_data.status == "IN_PROGRESS" {
                                 div { class: "row mt-3",
                                     div { class: "col-12",
-                                        div { class: "d-flex gap-2",
+                                        div { class: "d-flex gap-2 align-items-center",
                                             Link {
                                                 to: Route::RunMatch {
                                                     url: url.clone(),
@@ -1399,6 +1760,19 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                                                 },
                                                 class: "btn btn-warning",
                                                 "Run Match"
+                                            }
+                                        }
+                                    }
+                                }
+                            } else if d.match_data.status != "COMPLETED" && d.match_data.status != "SKIPPED" && (d.why_sections.is_some() || !d.block_reasons.is_empty()) {
+                                div { class: "row mt-3",
+                                    div { class: "col-12",
+                                        div { class: "d-flex gap-2 align-items-center flex-wrap",
+                                            a {
+                                                href: "#",
+                                                class: "text-muted small text-decoration-none",
+                                                onclick: move |ev: Event<MouseData>| { ev.prevent_default(); why_modal_show.set(true); },
+                                                "Why can't I start this match?"
                                             }
                                         }
                                     }
@@ -1883,6 +2257,131 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                     }
                 }
                 div { class: "modal-backdrop show" }
+            }
+            if why_modal_show() {
+                div { class: "modal show", style: "display: block;",
+                    div { class: "modal-dialog modal-dialog-centered modal-lg",
+                        div { class: "modal-content",
+                            div { class: "modal-header",
+                                h5 { class: "modal-title", "Why can't I start this match?" }
+                                button { r#type: "button", class: "btn-close", onclick: move |_| why_modal_show.set(false) }
+                            }
+                            div { class: "modal-body",
+                                {
+                                    match &d.why_sections {
+                                        Some(sections) => rsx! {
+                                            div { class: "mb-4",
+                                                h6 { class: "text-muted mb-2",
+                                                    "1. Match Status & Dependencies"
+                                                    if !sections.match_ready.blocks_start {
+                                                        span { class: "text-success ms-1", "✓" }
+                                                    }
+                                                }
+                                                p { class: "small mb-1", "What is the match status? Does this prevent it from being started?" }
+                                                if !sections.match_ready.blocks_start {
+                                                    p { class: "text-success small mb-0", "Ready to start." }
+                                                } else {
+                                                    ul { class: "mb-0 small",
+                                                        for reason in sections.match_ready.reasons.iter().filter(|r| !r.starts_with("Match status is")) {
+                                                            li { class: "mb-1", "{reason}" }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            div { class: "mb-4",
+                                                h6 { class: "text-muted mb-2",
+                                                    "2. Conflicts"
+                                                    if sections.conflicts.is_empty() {
+                                                        span { class: "text-success ms-1", "✓" }
+                                                    }
+                                                }
+                                                p { class: "small mb-2", "Is there another match currently happening on this field?" }
+                                                if sections.conflicts.is_empty() {
+                                                    p { class: "text-success small mb-0", "No conflicts." }
+                                                } else {
+                                                    ul { class: "mb-0 small",
+                                                        for c in &sections.conflicts {
+                                                            li { class: "mb-1", "{c}" }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            div { class: "mb-0",
+                                                h6 { class: "text-muted mb-2",
+                                                    "3. Ref permissions"
+                                                    if sections.ref_permissions.is_ok {
+                                                        span { class: "text-success ms-1", "✓" }
+                                                    }
+                                                }
+                                                div { class: "ms-3 mb-3",
+                                                    h6 { class: "small mb-1", "a. Who is allowed" }
+                                                    p { class: "small text-muted mb-1", "Based on tournament settings, who should be allowed to head ref?" }
+                                                    ul { class: "mb-0 small",
+                                                        for s in &sections.ref_permissions.who_allowed {
+                                                            li { class: "mb-1", "{s}" }
+                                                        }
+                                                    }
+                                                }
+                                                div { class: "ms-3 mb-0",
+                                                    h6 { class: "small mb-1", "b. Current user" }
+                                                    p { class: "small text-muted mb-1", "Your current sign-in and registration." }
+                                                    ul { class: "mb-0 small",
+                                                        for s in &sections.ref_permissions.current_user {
+                                                            li { class: "mb-1", "{s}" }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        },
+                                        None => rsx! {
+                                            ul { class: "mb-0",
+                                                for reason in &d.block_reasons {
+                                                    li { class: "mb-1", "{reason}" }
+                                                }
+                                            }
+                                        },
+                                    }
+                                }
+                                if d.is_head_ref && !d.can_start {
+                                    div { class: "mt-4 pt-3 border-top",
+                                        p { class: "small text-muted mb-2",
+                                            "If you need to start this match anyway (e.g. to resolve a conflict or bypass a blocking condition), you can force start it. You will set the teams and referees, and any conflicting match on the same field can be skipped or marked complete."
+                                        }
+                                        button {
+                                            r#type: "button",
+                                            class: "btn btn-warning",
+                                            onclick: move |_| {
+                                                why_modal_show.set(false);
+                                                force_start_modal_show.set(true);
+                                            },
+                                            "Force Start Match"
+                                        }
+                                    }
+                                }
+                            }
+                            div { class: "modal-footer",
+                                button { r#type: "button", class: "btn btn-secondary", onclick: move |_| why_modal_show.set(false), "Close" }
+                            }
+                        }
+                    }
+                }
+                div { class: "modal-backdrop show" }
+            }
+            if force_start_modal_show() {
+                ForceStartModal {
+                    tournament_url: url.clone(),
+                    match_id: d.match_data.uuid.clone(),
+                    match_data: d.match_data.clone(),
+                    conflicting_match: d.conflicting_match.clone(),
+                    on_close: move |_| force_start_modal_show.set(false),
+                    on_success: move |_| {
+                        force_start_modal_show.set(false);
+                        navigator.push(Route::StartMatch {
+                            url: modal_url.clone(),
+                            match_id: modal_match_id.clone(),
+                        });
+                    },
+                }
             }
                 }
             }

@@ -127,6 +127,31 @@ pub async fn logout() -> Result<(), String> {
     Ok(())
 }
 
+pub async fn change_password(current_password: &str, new_password: &str) -> Result<(), String> {
+    let c = client();
+    let body = serde_json::json!({
+        "current_password": current_password,
+        "new_password": new_password
+    });
+    let r = with_credentials(
+        c.post(format!("{}/_api/change-password", base())).json(&body)
+    )
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    if !r.status().is_success() {
+        let status = r.status();
+        let text = r.text().await.unwrap_or_default();
+        if let Ok(v) = serde_json::from_str::<Value>(&text) {
+            if let Some(msg) = v.get("error").and_then(|e| e.as_str()) {
+                return Err(msg.to_string());
+            }
+        }
+        return Err(format!("Server returned error {}: {}", status, text));
+    }
+    Ok(())
+}
+
 pub async fn register(
     username: &str,
     password: &str,
@@ -1749,6 +1774,37 @@ pub async fn update_match(
         Ok(())
     } else {
         Err(data.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown error").to_string())
+    }
+}
+
+pub async fn force_start_match(
+    tournament_url: &str,
+    match_id: &str,
+    req: &crate::types::ForceStartMatchRequest,
+) -> Result<(), String> {
+    let c = client();
+    let r = with_credentials(
+        c.post(format!(
+            "{}/_api/tournaments/{}/matches/{}/force-start",
+            base(),
+            tournament_url,
+            match_id
+        ))
+        .json(req),
+    )
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let data: Value = response_json(r).await?;
+    if data.get("success").and_then(|v| v.as_bool()) == Some(true) {
+        Ok(())
+    } else {
+        Err(data
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown error")
+            .to_string())
     }
 }
 

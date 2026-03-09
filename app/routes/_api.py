@@ -10,6 +10,7 @@ import os
 from flask_login import current_user, login_user, logout_user, login_required
 from sqlalchemy import or_, func
 from sqlalchemy.orm import joinedload
+from sqlalchemy.orm.attributes import flag_modified
 from app.services.tournament_service import TournamentService
 from app.utils.helpers import (
     is_valid_url_username,
@@ -28,7 +29,13 @@ from app.utils.scheduling import (
     compute_dynamic_match_nominal_start_time,
 )
 from app.utils.datetime_helpers import to_iso_z
-from app.domain.enums import RegistrationStatus, MatchStatus, ScheduleType, SetType
+from app.domain.enums import (
+    RegistrationStatus,
+    MatchStatus,
+    ScheduleType,
+    SetType,
+    WinnerSide,
+)
 from models import (
     Player,
     Team,
@@ -68,7 +75,13 @@ def _user_json():
     if not current_user.is_authenticated:
         return None
     t = "player" if current_user.__class__.__name__ == "Player" else "team"
-    return {"id": current_user.id, "name": current_user.name, "type": t}
+    has_password = bool(getattr(current_user, "pw_hash", None))
+    return {
+        "id": current_user.id,
+        "name": current_user.name,
+        "type": t,
+        "has_password": has_password,
+    }
 
 
 @bp.route("/me", methods=["GET"])
@@ -119,6 +132,36 @@ def login():
 def logout():
     """Clear session."""
     logout_user()
+    return jsonify({"ok": True})
+
+
+@bp.route("/change-password", methods=["POST"])
+@login_required
+def change_password():
+    """JSON body: { current_password, new_password }. Change authenticated user's password."""
+    if not request.is_json:
+        return jsonify({"error": "Content-Type must be application/json"}), 415
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "Invalid JSON"}), 400
+    current_password = data.get("current_password")
+    new_password = data.get("new_password")
+    if not current_password or not new_password:
+        return jsonify({"error": "current_password and new_password required"}), 400
+    user = current_user
+    if not user.pw_hash:
+        return (
+            jsonify(
+                {
+                    "error": "This account uses Google sign-in. Password cannot be changed here.",
+                }
+            ),
+            400,
+        )
+    if not user.check_password(current_password):
+        return jsonify({"error": "Current password is incorrect"}), 401
+    user.set_password(new_password)
+    db.session.commit()
     return jsonify({"ok": True})
 
 
@@ -999,8 +1042,14 @@ def start_match_data_api(tournament_url):
     if not match or match.event != tournament_url:
         return jsonify({"error": "Match not found"}), 404
 
-    if not can_head_ref_match(tournament_url, current_user.id, match=match):
-        return jsonify({"error": "Forbidden"}), 403
+    from app.services.match_start_eligibility import get_can_start_and_reasons
+
+    can_start, block_reasons, _ = get_can_start_and_reasons(
+        tournament_url, match, current_user
+    )
+    if not can_start:
+        error_msg = block_reasons[0] if block_reasons else "Cannot start this match."
+        return jsonify({"error": error_msg, "reasons": block_reasons}), 400
 
     tournament = Tournament.query.get(tournament_url)
 
@@ -1850,6 +1899,29 @@ def tournament_match_detail(tournament_url):
                 tournament_url, current_user.id, match=match
             )
 
+    # Can start and blocking reasons (for "why?" UX)
+    from app.services.match_start_eligibility import (
+        get_can_start_and_reasons,
+        get_conflicting_match_on_field,
+        why_sections_to_dict,
+    )
+
+    _user = current_user if current_user.is_authenticated else None
+    can_start, block_reasons, why_sections = get_can_start_and_reasons(
+        tournament_url, match, _user
+    )
+
+    # Conflicting match on same field (for force-start modal)
+    conflicting_match = None
+    other_match = get_conflicting_match_on_field(tournament_url, match)
+    if other_match:
+        conflicting_match = {
+            "uuid": other_match.uuid,
+            "name": getattr(other_match, "name", other_match.uuid),
+            "team1_name": _team_name_for_match(tournament_url, other_match, "team1"),
+            "team2_name": _team_name_for_match(tournament_url, other_match, "team2"),
+        }
+
     # Get match-level notes (point_id is None) - only for head refs
     if is_head_ref:
         notes = (
@@ -2129,6 +2201,10 @@ def tournament_match_detail(tournament_url):
             "match_notes": match_notes,
             "point_notes_map": point_notes_map,
             "is_head_ref": is_head_ref,
+            "can_start": can_start,
+            "block_reasons": block_reasons,
+            "why_sections": why_sections_to_dict(why_sections),
+            "conflicting_match": conflicting_match,
             "match_players": match_players,
             "penalty_types": penalty_types_data,
         }
@@ -2998,44 +3074,27 @@ def update_match_api(tournament_url, match_id):
             except ValueError:
                 pass
 
-        # Previous match link
-        if previous_match_id is not None:
-            # If empty string or null, clear it
-            if not previous_match_id:
-                # If we had a previous match, we need to unlink it properly?
-                # update_match_previous_link handles linking.
-                # If we want to clear it, we might need manual handling or update_match_previous_link handles it?
-                # The helper assumes we are setting a *new* previous match.
-                # If previous_match_id is empty, we act as if we are clearing it.
-                # The helper doesn't seem to support clearing explicitly easily without a valid ID.
-                # But looking at the helper: "prev_match = Match.query.filter_by(uuid=prev_match_id...)"
-                # If prev_match_id is None/empty, it returns.
-                # But we need to clear match.previous_match.
-
-                # Manual clear if it was set
-                if match.previous_match:
-                    old_prev = Match.query.filter_by(
-                        uuid=match.previous_match, event=tournament_url
+        # STATIC matches have no previous_match: always clear and unlink (ignore previous_match_id)
+        if match.previous_match:
+            old_prev = Match.query.filter_by(
+                uuid=match.previous_match, event=tournament_url
+            ).first()
+            if old_prev and old_prev.next_match == match.uuid:
+                old_prev.next_match = match.next_match
+                if match.next_match:
+                    old_next = Match.query.filter_by(
+                        uuid=match.next_match, event=tournament_url
                     ).first()
-                    if old_prev and old_prev.next_match == match.uuid:
-                        old_prev.next_match = match.next_match
-                        if match.next_match:
-                            old_next = Match.query.filter_by(
-                                uuid=match.next_match, event=tournament_url
-                            ).first()
-                            if old_next:
-                                old_next.previous_match = old_prev.uuid
-                    elif match.next_match:
-                        # Just unlinking from chain
-                        old_next = Match.query.filter_by(
-                            uuid=match.next_match, event=tournament_url
-                        ).first()
-                        if old_next:
-                            old_next.previous_match = None
-
-                    match.previous_match = None
-            else:
-                update_match_previous_link(match, previous_match_id, tournament_url)
+                    if old_next:
+                        old_next.previous_match = old_prev.uuid
+            elif match.next_match:
+                old_next = Match.query.filter_by(
+                    uuid=match.next_match, event=tournament_url
+                ).first()
+                if old_next:
+                    old_next.previous_match = None
+        match.previous_match = None  # Always set for STATIC so it persists
+        flag_modified(match, "previous_match")
     else:
         # Dynamic (BREAK, JOIN, FAST, SAFE)
         match.nominal_start_time = compute_dynamic_match_nominal_start_time(
@@ -3052,9 +3111,138 @@ def update_match_api(tournament_url, match_id):
         else:
             match.previous_match = None
 
+    db.session.flush()  # Emit UPDATE for previous_match etc. before commit
     db.session.commit()
 
     # Recompute all times
+    recompute_all_match_times(tournament_url)
+
+    return jsonify({"success": True})
+
+
+@bp.route(
+    "/tournaments/<tournament_url>/matches/<match_id>/force-start",
+    methods=["POST"],
+)
+@login_required
+def force_start_match_api(tournament_url, match_id):
+    """Force-start a match: resolve teams/refs, handle conflicting match, convert to static."""
+    from app.services.match_start_eligibility import get_conflicting_match_on_field
+
+    match = Match.query.filter_by(uuid=match_id, event=tournament_url).first_or_404()
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "Invalid JSON"}), 400
+
+    # Auth: require head ref
+    if not current_user.is_authenticated:
+        return jsonify({"error": "Must be logged in"}), 401
+    from app.utils.user_helpers import is_player
+
+    if not is_player(current_user):
+        return jsonify({"error": "Only player accounts can force start matches"}), 403
+    if not can_head_ref_match(tournament_url, current_user.id, match=match):
+        return jsonify({"error": "You are not allowed to head ref this match"}), 403
+
+    team1_input = data.get("team1", "").strip()
+    team2_input = data.get("team2", "").strip()
+    refs_list = data.get("refs") or []
+    if not isinstance(refs_list, list):
+        refs_list = []
+    conflicting_action = (data.get("conflicting_match_action") or "").strip()
+    conflicting_winner = (data.get("conflicting_match_winner") or "").strip()
+
+    # 1. Handle conflicting match (if any)
+    other_match = get_conflicting_match_on_field(tournament_url, match)
+    if other_match:
+        if not conflicting_action:
+            return (
+                jsonify(
+                    {
+                        "error": "Another match is in progress on this field. Choose SKIP or COMPLETE."
+                    }
+                ),
+                400,
+            )
+        if conflicting_action == "COMPLETE" and conflicting_winner not in (
+            "TEAM1",
+            "TEAM2",
+        ):
+            return (
+                jsonify(
+                    {"error": "When marking as COMPLETE, choose TEAM1 or TEAM2 as winner."}
+                ),
+                400,
+            )
+
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        # Close unfinished points on the conflicting match
+        for pt in Point.query.filter_by(match=other_match.uuid).all():
+            if pt.end_stamp is None:
+                pt.end_stamp = now
+        if conflicting_action == "SKIP":
+            other_match.status = MatchStatus.SKIPPED
+            other_match.match_winner = None
+        else:
+            other_match.status = MatchStatus.COMPLETED
+            other_match.match_winner = (
+                WinnerSide.TEAM1 if conflicting_winner == "TEAM1" else WinnerSide.TEAM2
+            )
+        other_match.finalized_at = now
+
+    # 2. Update target match
+    t1_id, t1_initial = resolve_team_name_to_id(team1_input, tournament_url)
+    t2_id, t2_initial = resolve_team_name_to_id(team2_input, tournament_url)
+    if not t1_id or not t2_id:
+        return jsonify({"error": "Team 1 and Team 2 are required"}), 400
+
+    match.team1 = t1_id
+    match.team1_initial = t1_initial or team1_input
+    match.team2 = t2_id
+    match.team2_initial = t2_initial or team2_input
+
+    # Refs: preserve slot count
+    final_refs = []
+    final_refs_initial = []
+    for r in refs_list:
+        r_str = (r or "").strip() if isinstance(r, str) else ""
+        rid, rinit = resolve_team_name_to_id(r_str, tournament_url)
+        final_refs.append(rid or "")
+        final_refs_initial.append(rinit or r_str)
+    match.refs = ",".join(final_refs) if final_refs else None
+    match.refs_initial = ",".join(final_refs_initial) if final_refs_initial else None
+
+    # Convert to static
+    match.schedule_type = ScheduleType.STATIC
+    match.nominal_start_time = datetime.now(timezone.utc).replace(tzinfo=None)
+    match.status = MatchStatus.READY_TO_START
+
+    # Unlink previous/next
+    if match.previous_match:
+        old_prev = Match.query.filter_by(
+            uuid=match.previous_match, event=tournament_url
+        ).first()
+        if old_prev and old_prev.next_match == match.uuid:
+            old_prev.next_match = match.next_match
+            if match.next_match:
+                old_next = Match.query.filter_by(
+                    uuid=match.next_match, event=tournament_url
+                ).first()
+                if old_next:
+                    old_next.previous_match = old_prev.uuid
+        elif match.next_match:
+            old_next = Match.query.filter_by(
+                uuid=match.next_match, event=tournament_url
+            ).first()
+            if old_next:
+                old_next.previous_match = None
+    match.previous_match = None
+    match.next_match = None
+    flag_modified(match, "previous_match")
+    flag_modified(match, "next_match")
+
+    db.session.flush()
+    db.session.commit()
     recompute_all_match_times(tournament_url)
 
     return jsonify({"success": True})
@@ -4116,6 +4304,7 @@ def update_tags_api(tournament_url):
                 m.refs = ",".join(current_refs)
 
     db.session.commit()
+    recompute_all_match_times(tournament_url)
     return jsonify({"success": True})
 
 

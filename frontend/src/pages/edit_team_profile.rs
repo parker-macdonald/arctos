@@ -1,4 +1,5 @@
 use crate::api;
+use crate::components::ChangePasswordCard;
 use crate::types::{UpdateTeamProfileRequest};
 use dioxus::prelude::*;
 use dioxus::prelude::use_navigator;
@@ -18,6 +19,8 @@ pub fn EditTeamProfile(team_id: String) -> Element {
     let mut photo_upload_error = use_signal(|| None::<String>);
     let mut photo_uploading = use_signal(|| false);
     let mut photo_removing = use_signal(|| false);
+
+    let me = use_resource(move || async move { api::me().await });
 
     let _fetch = use_resource(use_reactive(&team_id, move |id| async move {
         loading.set(true);
@@ -252,6 +255,11 @@ pub fn EditTeamProfile(team_id: String) -> Element {
                             }
                         }
                     }
+
+                    if me.read().as_ref().and_then(|r| r.as_ref().ok()).map(|u| u.has_password).unwrap_or(false) {
+                        ChangePasswordCard {}
+                    }
+
                 }
             }
         }

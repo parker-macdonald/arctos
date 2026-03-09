@@ -780,42 +780,14 @@ def start_match(tournament_url):
     if not match or match.event != tournament_url:
         return jsonify({"success": False, "error": "Match not found"}), 404
 
-    if not can_head_ref_match(tournament_url, current_user.id, match=match):
-        return jsonify({"success": False, "error": "You are not authorized to start matches for this tournament"}), 403
+    from app.services.match_start_eligibility import get_can_start_and_reasons
 
-    if match.status != MatchStatus.READY_TO_START:
-        return jsonify({"success": False, "error": f"This match has non-READY status {match.status}"}), 400
-
-    if not match.team1 or not match.team2:
-        return jsonify({"success": False, "error": "Cannot start match - teams not yet determined"}), 400
-
-    # If refs_initial is specified, all refs must be resolved (available)
-    # Check if refs exists and all positions are resolved (no empty string placeholders)
-    if match.refs_initial:
-        if not match.refs:
-            return jsonify({"success": False, "error": "Cannot start match - ref teams not yet available"}), 400
-        # Check if all positions are resolved (no empty strings)
-        refs_list = [r.strip() for r in match.refs.split(",")]
-        refs_initial_list = [r.strip() for r in match.refs_initial.split(",")]
-        # Ensure lengths match and all positions are resolved
-        if len(refs_list) != len(refs_initial_list) or any(not r for r in refs_list):
-            return jsonify({"success": False, "error": "Cannot start match - ref teams not yet available"}), 400
-
-    # For dynamic matches, require dependencies to be completed (or marked ready)
-    if match.schedule_type != ScheduleType.STATIC:
-        try:
-            from app.utils.scheduling import get_match_dependencies
-
-            deps = get_match_dependencies(match, tournament_url)
-        except Exception:
-            deps = []
-        all_deps_finished = (len(deps) == 0) or all(
-            d.status in (MatchStatus.COMPLETED, MatchStatus.SKIPPED) for d in deps
-        )
-        # Also allow if ready_to_start flag is set
-        is_ready_flag = match.ready_to_start or False
-        if not (all_deps_finished or is_ready_flag):
-            return jsonify({"success": False, "error": "This match cannot be started yet. Dependencies are not completed."}), 400
+    can_start, block_reasons, _ = get_can_start_and_reasons(
+        tournament_url, match, current_user
+    )
+    if not can_start:
+        error_msg = block_reasons[0] if block_reasons else "Cannot start this match."
+        return jsonify({"success": False, "error": error_msg, "reasons": block_reasons}), 400
 
     tournament = Tournament.query.get(tournament_url)
 
