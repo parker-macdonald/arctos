@@ -129,6 +129,36 @@ def logout():
     return jsonify({"ok": True})
 
 
+@bp.route("/change-password", methods=["POST"])
+@login_required
+def change_password():
+    """JSON body: { current_password, new_password }. Change authenticated user's password."""
+    if not request.is_json:
+        return jsonify({"error": "Content-Type must be application/json"}), 415
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "Invalid JSON"}), 400
+    current_password = data.get("current_password")
+    new_password = data.get("new_password")
+    if not current_password or not new_password:
+        return jsonify({"error": "current_password and new_password required"}), 400
+    user = current_user
+    if not user.pw_hash:
+        return (
+            jsonify(
+                {
+                    "error": "This account uses Google sign-in. Password cannot be changed here.",
+                }
+            ),
+            400,
+        )
+    if not user.check_password(current_password):
+        return jsonify({"error": "Current password is incorrect"}), 401
+    user.set_password(new_password)
+    db.session.commit()
+    return jsonify({"ok": True})
+
+
 @bp.route("/register", methods=["POST"])
 def register():
     """JSON body: { username, password, name, user_type?: "player"|"team" }. Creates user and logs in."""

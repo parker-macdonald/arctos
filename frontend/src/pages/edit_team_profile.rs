@@ -1,4 +1,5 @@
 use crate::api;
+use crate::components::ChangePasswordCard;
 use crate::types::{UpdateTeamProfileRequest};
 use dioxus::prelude::*;
 use dioxus::prelude::use_navigator;
@@ -252,6 +253,9 @@ pub fn EditTeamProfile(team_id: String) -> Element {
                             }
                         }
                     }
+
+                    ChangePasswordCard {}
+
                 }
             }
         }

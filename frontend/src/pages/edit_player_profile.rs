@@ -1,4 +1,5 @@
 use crate::api;
+use crate::components::ChangePasswordCard;
 use crate::types::{UpdatePlayerProfileRequest};
 use dioxus::prelude::*;
 use dioxus::prelude::use_navigator;
@@ -233,6 +234,9 @@ pub fn EditPlayerProfile(player_id: String) -> Element {
                             }
                         }
                     }
+
+                    ChangePasswordCard {}
+
                 }
             }
         }
