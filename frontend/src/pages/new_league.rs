@@ -12,7 +12,7 @@ fn get_form_value(id: &str) -> String {
 }
 
 #[component]
-pub fn NewTournament() -> Element {
+pub fn NewLeague() -> Element {
     let navigator = use_navigator();
     let mut error = use_signal(|| None::<String>);
 
@@ -21,7 +21,7 @@ pub fn NewTournament() -> Element {
             div { class: "col-md-8",
                 div { class: "card",
                     div { class: "card-header",
-                        h3 { class: "mb-0", "Create New Tournament" }
+                        h3 { class: "mb-0", "Create New League" }
                     }
                     div { class: "card-body",
                         if let Some(ref err) = error() {
@@ -31,20 +31,20 @@ pub fn NewTournament() -> Element {
                             onsubmit: move |ev| {
                                 ev.prevent_default();
                                 error.set(None);
-                                let name = get_form_value("name");
-                                let url_slug = get_form_value("url");
-                                if name.is_empty() || url_slug.is_empty() {
-                                    error.set(Some("Name and URL slug are required.".to_string()));
+                                let league_name = get_form_value("league_name");
+                                let league_url = get_form_value("league_url");
+                                if league_name.is_empty() || league_url.is_empty() {
+                                    error.set(Some("League name and URL slug are required.".to_string()));
                                     return;
                                 }
                                 let nav = navigator.clone();
                                 spawn(async move {
-                                    match api::create_tournament(&name, &url_slug, None).await {
+                                    match api::create_league(&league_name, &league_url).await {
                                         Ok(res) if res.success => {
-                                            if let Some(url) = res.url {
-                                                nav.push(Route::TournamentHome { url });
+                                            if let Some(lu) = res.league_url {
+                                                nav.push(Route::LeagueHome { league_url: lu });
                                             } else {
-                                                error.set(Some("Tournament created but no URL returned.".to_string()));
+                                                error.set(Some("League created but no URL returned.".to_string()));
                                             }
                                         }
                                         Ok(res) => {
@@ -57,16 +57,17 @@ pub fn NewTournament() -> Element {
                                 });
                             },
                             div { class: "mb-3",
-                                label { r#for: "name", class: "form-label", "Tournament Name" }
-                                input { r#type: "text", class: "form-control", id: "name", name: "name", required: true }
+                                label { r#for: "league_name", class: "form-label", "League Name" }
+                                input { r#type: "text", class: "form-control", id: "league_name", name: "league_name", required: true }
+                                div { class: "form-text", "e.g. CAJA NorCal 2025" }
                             }
                             div { class: "mb-3",
-                                label { r#for: "url", class: "form-label", "URL Slug" }
-                                input { r#type: "text", class: "form-control", id: "url", name: "url", required: true }
-                                div { class: "form-text", "This will be used in the URL (e.g., /my-tournament)" }
+                                label { r#for: "league_url", class: "form-label", "League URL Slug" }
+                                input { r#type: "text", class: "form-control", id: "league_url", name: "league_url", required: true }
+                                div { class: "form-text", "Used in the URL, e.g. /leagues/norcal-2025" }
                             }
                             div { class: "d-grid",
-                                button { r#type: "submit", class: "btn btn-primary", "Create Tournament" }
+                                button { r#type: "submit", class: "btn btn-primary", "Create League" }
                             }
                         }
                     }

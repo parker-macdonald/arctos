@@ -127,8 +127,16 @@ fn TournamentCard(
         div { key: "{tournament.url}", class: "col-md-6 col-lg-4 mb-3",
             Link {
                 to: Route::TournamentHome { url: tournament.url.clone() },
-                class: "card tournament-card text-decoration-none",
+                class: "card tournament-card text-decoration-none position-relative",
                 style: "display: block; transition: box-shadow 0.2s ease, transform 0.2s ease;",
+                if let Some(ref league) = tournament.league {
+                    Link {
+                        to: Route::LeagueHome { league_url: league.league_url.clone() },
+                        class: "position-absolute top-0 end-0 m-2 badge bg-secondary text-decoration-none",
+                        style: "z-index: 1;",
+                        "{league.name}"
+                    }
+                }
                 div { class: "card-body",
                     h5 { class: "card-title", "{tournament.name}" }
                     p { class: "card-text",

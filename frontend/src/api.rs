@@ -427,13 +427,15 @@ pub async fn deregister_team(tournament_url: &str) -> Result<StatusResponse, Str
 pub async fn create_tournament(
     name: &str,
     url_slug: &str,
-    permission_key: &str,
+    league_id: Option<&str>,
 ) -> Result<CreateTournamentResponse, String> {
-    let params: Vec<(String, String)> = vec![
+    let mut params: Vec<(String, String)> = vec![
         ("name".into(), name.to_string()),
         ("url".into(), url_slug.to_string()),
-        ("permission_key".into(), permission_key.to_string()),
     ];
+    if let Some(id) = league_id {
+        params.push(("league_id".into(), id.to_string()));
+    }
     let url = format!("{}/_api/create-tournament", base());
     let c = client();
     let r = with_credentials(c.post(&url).form(&params))
@@ -443,12 +445,506 @@ pub async fn create_tournament(
     response_json(r).await
 }
 
+#[derive(serde::Deserialize)]
+pub struct CreateLeagueResponse {
+    pub success: bool,
+    pub message: Option<String>,
+    pub error: Option<String>,
+    pub league_url: Option<String>,
+}
+
+pub async fn create_league(
+    league_name: &str,
+    league_url: &str,
+) -> Result<CreateLeagueResponse, String> {
+    let params: Vec<(String, String)> = vec![
+        ("league_name".into(), league_name.to_string()),
+        ("league_url".into(), league_url.to_string()),
+    ];
+    let url = format!("{}/_api/create-league", base());
+    let c = client();
+    let r = with_credentials(c.post(&url).form(&params))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    response_json(r).await
+}
+
+pub async fn leagues_list() -> Result<crate::types::LeaguesListResponse, String> {
+    let c = client();
+    let r = with_credentials(c.get(format!("{}/_api/leagues", base())))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    response_json(r).await
+}
+
+/// League seasons that the current user organizes (for tournament create/edit league selector).
+pub async fn leagues_organized() -> Result<crate::types::LeaguesListResponse, String> {
+    let c = client();
+    let r = with_credentials(c.get(format!("{}/_api/leagues/organized", base())))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    response_json(r).await
+}
+
+pub async fn league_detail(
+    league_url: &str,
+) -> Result<crate::types::LeagueDetailResponse, String> {
+    let c = client();
+    let r = with_credentials(c.get(format!(
+        "{}/_api/leagues/{}",
+        base(),
+        league_url
+    )))
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    if r.status().as_u16() == 404 {
+        return Err("Not found".to_string());
+    }
+    response_json(r).await
+}
+
+pub async fn league_results(
+    league_url: &str,
+    include_ribbon: bool,
+) -> Result<crate::types::LeagueResultsResponse, String> {
+    let c = client();
+    let inc = if include_ribbon { "true" } else { "false" };
+    let r = with_credentials(c.get(format!(
+        "{}/_api/leagues/{}/results?include_ribbon={}",
+        base(),
+        league_url,
+        inc
+    )))
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    response_json(r).await
+}
+
+pub async fn league_results_team_matches(
+    league_url: &str,
+    team_id: &str,
+) -> Result<crate::types::TeamMatchesResponse, String> {
+    let c = client();
+    let r = with_credentials(c.get(format!(
+        "{}/_api/leagues/{}/results/team/{}",
+        base(),
+        league_url,
+        team_id
+    )))
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    response_json(r).await
+}
+
+pub async fn league_register_team(
+    league_url: &str,
+    pseudonym: &str,
+) -> Result<StatusResponse, String> {
+    let params: Vec<(String, String)> = vec![("pseudonym".into(), pseudonym.to_string())];
+    let url = format!("{}/_api/leagues/{}/register-team", base(), league_url);
+    post_form_status(&url, &params).await
+}
+
+pub async fn league_register_player(
+    league_url: &str,
+    team: Option<&str>,
+    jersey_number: &str,
+    jersey_name: &str,
+) -> Result<StatusResponse, String> {
+    let mut params: Vec<(String, String)> = vec![
+        ("jersey_number".into(), jersey_number.to_string()),
+        ("jersey_name".into(), jersey_name.to_string()),
+    ];
+    if let Some(t) = team {
+        params.push(("team".into(), t.to_string()));
+    }
+    let url = format!("{}/_api/leagues/{}/register-player", base(), league_url);
+    post_form_status(&url, &params).await
+}
+
+pub async fn league_deregister_team(
+    league_url: &str,
+) -> Result<StatusResponse, String> {
+    let url = format!("{}/_api/leagues/{}/deregister-team", base(), league_url);
+    post_form_status(&url, &[]).await
+}
+
+pub async fn league_deregister_player(
+    league_url: &str,
+) -> Result<StatusResponse, String> {
+    let url = format!("{}/_api/leagues/{}/deregister-player", base(), league_url);
+    post_form_status(&url, &[]).await
+}
+
+pub async fn get_my_player_registration_league(
+    league_url: &str,
+) -> Result<MyPlayerRegistrationResponse, String> {
+    let c = client();
+    let r = with_credentials(c.get(format!(
+        "{}/_api/leagues/{}/registrations/player/me",
+        base(),
+        league_url
+    )))
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    response_json(r).await
+}
+
+pub async fn update_my_player_registration_league(
+    league_url: &str,
+    req: &UpdatePlayerRegistrationRequest,
+) -> Result<(), String> {
+    let c = client();
+    let r = with_credentials(
+        c.put(format!(
+            "{}/_api/leagues/{}/registrations/player/me",
+            base(),
+            league_url
+        ))
+        .json(req),
+    )
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let data: Value = response_json(r).await?;
+    if data.get("success").and_then(|v| v.as_bool()) == Some(true) {
+        Ok(())
+    } else {
+        Err(data.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown error").to_string())
+    }
+}
+
+pub async fn get_my_team_registration_league(
+    league_url: &str,
+) -> Result<MyTeamRegistrationResponse, String> {
+    let c = client();
+    let r = with_credentials(c.get(format!(
+        "{}/_api/leagues/{}/registrations/team/me",
+        base(),
+        league_url
+    )))
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    response_json(r).await
+}
+
+pub async fn update_my_team_registration_league(
+    league_url: &str,
+    req: &UpdateTeamRegistrationRequest,
+) -> Result<(), String> {
+    let c = client();
+    let r = with_credentials(
+        c.put(format!(
+            "{}/_api/leagues/{}/registrations/team/me",
+            base(),
+            league_url
+        ))
+        .json(req),
+    )
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let data: Value = response_json(r).await?;
+    if data.get("success").and_then(|v| v.as_bool()) == Some(true) {
+        Ok(())
+    } else {
+        Err(data.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown error").to_string())
+    }
+}
+
+pub async fn add_league_to(
+    league_url: &str,
+    user_type: &str,
+    user_id: &str,
+) -> Result<StatusResponse, String> {
+    let params = vec![
+        ("user_type".into(), user_type.to_string()),
+        ("user_id".into(), user_id.to_string()),
+    ];
+    let url = format!("{}/_api/leagues/{}/add-to", base(), league_url);
+    post_form_status(&url, &params).await
+}
+
+pub async fn remove_league_to(
+    league_url: &str,
+    to_id: i32,
+) -> Result<StatusResponse, String> {
+    let params = vec![("to_id".into(), to_id.to_string())];
+    let url = format!("{}/_api/leagues/{}/remove-to", base(), league_url);
+    post_form_status(&url, &params).await
+}
+
+pub async fn league_manage(
+    league_url: &str,
+    search: &str,
+    search_type: &str,
+) -> Result<crate::types::TournamentManageResponse, String> {
+    let c = client();
+    let mut url = format!("{}/_api/leagues/{}/manage", base(), league_url);
+    if !search.is_empty() || !search_type.is_empty() {
+        let st = if search_type.is_empty() { "both" } else { search_type };
+        url = format!("{}?search={}&type={}", url, urlencoding::encode(search), st);
+    }
+    let r = with_credentials(c.get(url))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    response_json(r).await
+}
+
+pub async fn league_invitations(
+    league_url: &str,
+) -> Result<crate::types::TournamentInvitationsResponse, String> {
+    let c = client();
+    let r = with_credentials(c.get(format!(
+        "{}/_api/leagues/{}/invitations",
+        base(),
+        league_url
+    )))
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    response_json(r).await
+}
+
+pub async fn league_mark_team_paid(
+    league_url: &str,
+    registration_id: u32,
+    amount: f64,
+    paid: bool,
+    payment_method: &str,
+    payment_reference: &str,
+    payment_notes: &str,
+) -> Result<StatusResponse, String> {
+    let mut params: Vec<(String, String)> = vec![
+        ("registration_id".into(), registration_id.to_string()),
+        ("amount_paid".into(), amount.to_string()),
+        ("payment_method".into(), payment_method.to_string()),
+        ("payment_reference".into(), payment_reference.to_string()),
+        ("payment_notes".into(), payment_notes.to_string()),
+    ];
+    if paid {
+        params.push(("paid".into(), "on".to_string()));
+    }
+    let url = format!("{}/_api/leagues/{}/mark-team-paid", base(), league_url);
+    post_form_status(&url, &params).await
+}
+
+pub async fn league_mark_player_paid(
+    league_url: &str,
+    registration_id: u32,
+    amount: f64,
+    paid: bool,
+    payment_method: &str,
+    payment_reference: &str,
+    payment_notes: &str,
+) -> Result<StatusResponse, String> {
+    let mut params: Vec<(String, String)> = vec![
+        ("registration_id".into(), registration_id.to_string()),
+        ("amount_paid".into(), amount.to_string()),
+        ("payment_method".into(), payment_method.to_string()),
+        ("payment_reference".into(), payment_reference.to_string()),
+        ("payment_notes".into(), payment_notes.to_string()),
+    ];
+    if paid {
+        params.push(("paid".into(), "on".to_string()));
+    }
+    let url = format!("{}/_api/leagues/{}/mark-player-paid", base(), league_url);
+    post_form_status(&url, &params).await
+}
+
+pub async fn league_deregister_any_team(
+    league_url: &str,
+    team_id: &str,
+) -> Result<StatusResponse, String> {
+    let params = vec![("team_id".into(), team_id.to_string())];
+    let url = format!("{}/_api/leagues/{}/deregister-any-team", base(), league_url);
+    post_form_status(&url, &params).await
+}
+
+pub async fn league_deregister_any_player(
+    league_url: &str,
+    player_id: &str,
+) -> Result<StatusResponse, String> {
+    let params = vec![("player_id".into(), player_id.to_string())];
+    let url = format!("{}/_api/leagues/{}/deregister-any-player", base(), league_url);
+    post_form_status(&url, &params).await
+}
+
+pub async fn league_accept_invitation(
+    league_url: &str,
+    invitation_id: u32,
+) -> Result<(), String> {
+    let c = client();
+    let url = format!(
+        "{}/_api/leagues/{}/invitation/{}/accept",
+        base(),
+        league_url,
+        invitation_id
+    );
+    let r = with_credentials(c.post(&url))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if r.status().as_u16() == 403 {
+        let err: serde_json::Value = response_json(r).await.unwrap_or_default();
+        return Err(err
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Forbidden")
+            .to_string());
+    }
+    if r.status().as_u16() == 404 {
+        return Err("Not found".to_string());
+    }
+    if !r.status().is_success() {
+        return Err(format!("Request failed: {}", r.status()));
+    }
+    Ok(())
+}
+
+pub async fn league_decline_invitation(
+    league_url: &str,
+    invitation_id: u32,
+) -> Result<(), String> {
+    let c = client();
+    let url = format!(
+        "{}/_api/leagues/{}/invitation/{}/decline",
+        base(),
+        league_url,
+        invitation_id
+    );
+    let r = with_credentials(c.post(&url))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if r.status().as_u16() == 403 {
+        let err: serde_json::Value = response_json(r).await.unwrap_or_default();
+        return Err(err
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Forbidden")
+            .to_string());
+    }
+    if r.status().as_u16() == 404 {
+        return Err("Not found".to_string());
+    }
+    if !r.status().is_success() {
+        return Err(format!("Request failed: {}", r.status()));
+    }
+    Ok(())
+}
+
+pub async fn league_update_settings(
+    league_url: &str,
+    params: &std::collections::HashMap<String, serde_json::Value>,
+) -> Result<StatusResponse, String> {
+    let c = client();
+    let url = format!(
+        "{}/_api/leagues/{}/settings",
+        base(),
+        league_url
+    );
+    let r = with_credentials(c.post(&url).json(params))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    response_json(r).await
+}
+
+pub async fn create_league_penalty_type(
+    league_url: &str,
+    name: &str,
+    color: Option<&str>,
+    desc: Option<&str>,
+) -> Result<CreatePenaltyTypeResponse, String> {
+    let c = client();
+    let body = serde_json::json!({
+        "name": name,
+        "color": color,
+        "desc": desc
+    });
+    let r = with_credentials(
+        c.post(format!("{}/_api/leagues/{}/penalty-types", base(), league_url)).json(&body)
+    )
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    response_json(r).await
+}
+
+pub async fn update_league_penalty_type(
+    league_url: &str,
+    pt_id: i32,
+    name: Option<&str>,
+    color: Option<&str>,
+    desc: Option<&str>,
+) -> Result<Value, String> {
+    let c = client();
+    let mut body = serde_json::Map::new();
+    if let Some(n) = name {
+        body.insert("name".to_string(), serde_json::json!(n));
+    }
+    if let Some(c_val) = color {
+        body.insert("color".to_string(), serde_json::json!(c_val));
+    }
+    if let Some(d) = desc {
+        body.insert("desc".to_string(), serde_json::json!(d));
+    }
+    let r = with_credentials(
+        c.patch(format!("{}/_api/leagues/{}/penalty-types/{}", base(), league_url, pt_id))
+            .json(&body)
+    )
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    response_json(r).await
+}
+
+pub async fn delete_league_penalty_type(
+    league_url: &str,
+    pt_id: i32,
+) -> Result<Value, String> {
+    let c = client();
+    let r = with_credentials(
+        c.delete(format!("{}/_api/leagues/{}/penalty-types/{}", base(), league_url, pt_id))
+    )
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    response_json(r).await
+}
+
 pub async fn delete_tournament(
     tournament_url: &str,
     confirm_url: &str,
 ) -> Result<StatusResponse, String> {
     let params: Vec<(String, String)> = vec![("confirm_url".into(), confirm_url.to_string())];
     let url = format!("{}/_api/{}/delete", base(), tournament_url);
+    let c = client();
+    let r = with_credentials(c.post(&url).form(&params))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    response_json(r).await
+}
+
+pub async fn delete_league(
+    league_url: &str,
+    confirm_url: &str,
+) -> Result<StatusResponse, String> {
+    let params: Vec<(String, String)> = vec![("confirm_url".into(), confirm_url.to_string())];
+    let url = format!("{}/_api/leagues/{}/delete", base(), league_url);
     let c = client();
     let r = with_credentials(c.post(&url).form(&params))
         .send()

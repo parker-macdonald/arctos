@@ -10,7 +10,10 @@ class TeamRegistration(db.Model):
     __tablename__ = "team_registrations"
 
     id = db.Column(db.Integer, primary_key=True)
-    event = db.Column(db.String(100), db.ForeignKey("tournaments.url"), nullable=False)
+    event = db.Column(db.String(100), db.ForeignKey("tournaments.url"), nullable=True)
+    league_id = db.Column(
+        db.String(100), db.ForeignKey("leagues.url"), nullable=True
+    )
     team = db.Column(db.String(50), db.ForeignKey("teams.id"), nullable=False)
     pseudonym = db.Column(
         db.String(100), nullable=False
@@ -34,7 +37,10 @@ class PlayerRegistration(db.Model):
     __tablename__ = "player_registrations"
 
     id = db.Column(db.Integer, primary_key=True)
-    event = db.Column(db.String(100), db.ForeignKey("tournaments.url"), nullable=False)
+    event = db.Column(db.String(100), db.ForeignKey("tournaments.url"), nullable=True)
+    league_id = db.Column(
+        db.String(100), db.ForeignKey("leagues.url"), nullable=True
+    )
     player = db.Column(db.String(50), db.ForeignKey("players.id"), nullable=False)
     team = db.Column(
         db.String(50), db.ForeignKey("teams.id"), nullable=True

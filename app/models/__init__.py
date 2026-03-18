@@ -8,6 +8,8 @@ compatibility layer that re-exports from here.
 
 from app.models.base import db, init_db
 from app.models.user import Player, Team
+from app.models.registrable_config import RegistrableConfig
+from app.models.league import League
 from app.models.tournament import Tournament, TO, Field, Tag
 from app.models.registration import TeamRegistration, PlayerRegistration
 from app.models.match import Match, Point, MatchNote
@@ -20,6 +22,8 @@ __all__ = [
     "init_db",
     "Player",
     "Team",
+    "RegistrableConfig",
+    "League",
     "Tournament",
     "TO",
     "Field",

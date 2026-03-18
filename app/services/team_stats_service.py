@@ -1,0 +1,95 @@
+"""
+Shared logic for computing team stats from matches (tournament or league results).
+"""
+
+from __future__ import annotations
+
+from app.domain.enums import ScheduleType
+from app.services.registration_resolver import team_registration_for_tournament
+
+
+def _pseudonym_and_photo(tournament, team_id):
+    """Return (pseudonym, profile_photo) for a team in tournament/league."""
+    from models import Team
+
+    if not team_id:
+        return None, None
+    reg = team_registration_for_tournament(tournament, team_id)
+    pseudonym = reg.pseudonym if reg and reg.pseudonym else None
+    team = Team.query.get(team_id)
+    profile_photo = team.profile_photo if team else None
+    if not pseudonym and team:
+        pseudonym = team.name
+    if not pseudonym:
+        pseudonym = team_id
+    return pseudonym, profile_photo
+
+
+def compute_team_stats(matches, tournament, include_ribbon=False):
+    """
+    Compute aggregate team stats from matches.
+    Returns list of dicts: {id, pseudonym, profile_photo, matches_won, matches_lost, points_won, points_lost}.
+    tournament is used for pseudonym lookup (any tournament in the league works for league results).
+    """
+    from models import Point
+
+    count_matches = [
+        m
+        for m in matches
+        if getattr(m, "schedule_type", None) not in (ScheduleType.BREAK, ScheduleType.JOIN)
+        and (include_ribbon or not getattr(m, "ribbon", False))
+    ]
+    points_by_match = {}
+    if count_matches:
+        match_ids = [m.uuid for m in count_matches]
+        for p in Point.query.filter(Point.match.in_(match_ids)).all():
+            points_by_match.setdefault(p.match, []).append(p)
+    team_stats = {}
+    for m in count_matches:
+        t1 = m.team1 or m.team1_initial
+        t2 = m.team2 or m.team2_initial
+        for tid, _ in [(t1, True), (t2, False)]:
+            if not tid or tid == "TBA" or "::" in str(tid):
+                continue
+            if tid not in team_stats:
+                if str(tid).startswith("tag::") or "::" in str(tid):
+                    pseudonym, profile_photo = tid, None
+                else:
+                    pseudonym, profile_photo = _pseudonym_and_photo(tournament, tid)
+                team_stats[tid] = {
+                    "id": tid,
+                    "pseudonym": pseudonym or tid,
+                    "profile_photo": profile_photo,
+                    "matches_won": 0,
+                    "matches_lost": 0,
+                    "points_won": 0,
+                    "points_lost": 0,
+                }
+        winner = m.match_winner.value if m.match_winner else None
+        if winner and t1 and t2 and t1 != "TBA" and t2 != "TBA":
+            if winner == "TEAM1":
+                team_stats[t1]["matches_won"] += 1
+                team_stats[t2]["matches_lost"] += 1
+            elif winner == "TEAM2":
+                team_stats[t2]["matches_won"] += 1
+                team_stats[t1]["matches_lost"] += 1
+        points_list = points_by_match.get(m.uuid, [])
+        t1p = sum(
+            1
+            for p in points_list
+            if getattr(p, "winner", None) == "TEAM1"
+            and not getattr(p, "rerolled", False)
+        )
+        t2p = sum(
+            1
+            for p in points_list
+            if getattr(p, "winner", None) == "TEAM2"
+            and not getattr(p, "rerolled", False)
+        )
+        if t1 and t1 != "TBA":
+            team_stats[t1]["points_won"] += t1p
+            team_stats[t1]["points_lost"] += t2p
+        if t2 and t2 != "TBA":
+            team_stats[t2]["points_won"] += t2p
+            team_stats[t2]["points_lost"] += t1p
+    return list(team_stats.values())

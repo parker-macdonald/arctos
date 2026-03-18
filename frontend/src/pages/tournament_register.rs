@@ -1,4 +1,5 @@
 use crate::api;
+use crate::components::TeamRegistrationHelpModal;
 use crate::Route;
 use dioxus::prelude::*;
 use wasm_bindgen::JsCast;
@@ -237,50 +238,11 @@ pub fn TournamentRegister(url: String) -> Element {
             }
 
             if show_help_modal() {
-                div {
-                        class: "modal show d-block",
-                        style: "background: rgba(0,0,0,0.5);",
-                        tabindex: "-1",
-                        role: "dialog",
-                        aria_modal: "true",
-                        onclick: move |_| show_help_modal.set(false),
-                        div {
-                            class: "modal-dialog modal-dialog-centered",
-                            onclick: move |ev: Event<MouseData>| { ev.stop_propagation(); },
-                            div { class: "modal-content",
-                                div { class: "modal-header",
-                                    h5 { class: "modal-title", id: "teamRegistrationHelpModalLabel", "Registration Help" }
-                                    button {
-                                        r#type: "button",
-                                        class: "btn-close",
-                                        aria_label: "Close",
-                                        onclick: move |_| show_help_modal.set(false),
-                                    }
-                                }
-                                div { class: "modal-body",
-                                    p { "The registration process works in three steps:" }
-                                    ol {
-                                        li { strong { "Teams register first:" } " A team account must register for the tournament before players can join that team." }
-                                        li { strong { "Players register under the team:" } " Once a team is registered, players can select that team from the dropdown and register to join them." }
-                                        li { strong { "Team accepts the player:" } " After a player requests to join a team, the team must approve the player's request before they are officially on the roster." }
-                                    }
-                                    p { class: "mb-0",
-                                        strong { "Don't see your team in the dropdown?" }
-                                        " They may not have registered yet. Check the tournament homepage to see all registered teams. Ask your team to register the team first, then come back to complete your player registration."
-                                    }
-                                }
-                                div { class: "modal-footer",
-                                    button {
-                                        r#type: "button",
-                                        class: "btn btn-secondary",
-                                        onclick: move |_| show_help_modal.set(false),
-                                        "Close"
-                                    }
-                                }
-                            }
-                        }
-                    }
+                TeamRegistrationHelpModal {
+                    context: String::from("tournament"),
+                    on_close: move |_| show_help_modal.set(false),
                 }
+            }
         } else if let Some(Err(e)) = val.read().as_ref() {
             p { class: "text-danger", "{e}" }
         } else {

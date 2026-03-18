@@ -275,8 +275,19 @@ pub fn PlayerProfile(id: Signal<String>) -> Element {
                                         }
                                         tbody {
                                             for r in d.registrations.iter() {
-                                                tr { key: "{r.event}-{r.team.as_deref().unwrap_or(\"\")}",
-                                                    td { a { href: "/{r.event}", "{r.event}" } }
+                                                {
+                                                    let ev = r.event.clone();
+                                                    let is_league = ev.starts_with("league:");
+                                                    let league_url = ev.strip_prefix("league:").unwrap_or(&ev).to_string();
+                                                    rsx! {
+                                                tr { key: "{ev}-{r.team.as_deref().unwrap_or(\"\")}",
+                                                    td {
+                                                        if is_league {
+                                                            Link { to: Route::LeagueHome { league_url: league_url.clone() }, "League: {league_url}" }
+                                                        } else {
+                                                            Link { to: Route::TournamentHome { url: ev.clone() }, "{ev}" }
+                                                        }
+                                                    }
                                                     td {
                                                         if let Some(team) = &r.team {
                                                             Link { to: Route::TeamProfilePage { id: team.clone() }, "{team}" }
@@ -302,6 +313,8 @@ pub fn PlayerProfile(id: Signal<String>) -> Element {
                                                         span { class: if r.status == "CONFIRMED" { "badge bg-success" } else { "badge bg-warning" },
                                                             "{r.status}"
                                                         }
+                                                    }
+                                                }
                                                     }
                                                 }
                                             }

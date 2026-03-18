@@ -44,6 +44,16 @@ fn page_title_for_route(route: &Route) -> String {
         Route::Stones { .. } => "Stones".into(),
         Route::About { .. } => "About".into(),
         Route::NewTournament { .. } => "Create Tournament".into(),
+        Route::LeaguesIndex { .. } => "Leagues".into(),
+        Route::CreateEvent { .. } => "Create event".into(),
+        Route::NewLeague { .. } => "Create League".into(),
+        Route::LeagueHome { league_url } => league_url.clone(),
+        Route::LeagueRegister { .. } => "Register".into(),
+        Route::LeagueResults { .. } => "Results".into(),
+        Route::LeagueSettings { .. } => "Settings".into(),
+        Route::LeagueNewTournament { league_url } => format!("Add Event | {league_url}"),
+        Route::LeagueManage { league_url } => format!("{league_url} Manage"),
+        Route::LeagueInvitations { league_url } => format!("{league_url} Roster"),
         Route::Docs { .. } => "User Docs".into(),
         Route::Privacy { .. } => "Privacy Policy".into(),
         Route::Terms { .. } => "Terms".into(),
@@ -155,9 +165,12 @@ pub fn Layout() -> Element {
                         li { class: "nav-item",
                             Link { to: Route::Stones {}, class: "nav-link", "Stones" }
                         }
+                        li { class: "nav-item",
+                            Link { to: Route::LeaguesIndex {}, class: "nav-link", "Leagues" }
+                        }
                         if let Some(Ok(_u)) = user.read().as_ref() {
                             li { class: "nav-item",
-                                Link { to: Route::NewTournament {}, class: "nav-link", "Create Tournament" }
+                                Link { to: Route::CreateEvent {}, class: "nav-link", "Create event" }
                             }
                         }
                         li { class: "nav-item",

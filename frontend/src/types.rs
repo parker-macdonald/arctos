@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct User {
     pub id: String,
     pub name: String,
@@ -25,11 +25,14 @@ pub struct Tournament {
     #[serde(default)]
     pub registration_open: bool,
     #[serde(default)]
+    pub team_registration_open: bool,
+    #[serde(default)]
+    pub player_registration_open: bool,
+    #[serde(default)]
     pub bracket: bool,
     pub about: Option<String>,
     pub team_reg_fee: Option<f64>,
     pub player_reg_fee: Option<f64>,
-    pub num_fields: Option<u32>,
     pub max_team_size_roster: Option<u32>,
     pub max_team_size_field: Option<u32>,
     pub terms_link: Option<String>,
@@ -38,6 +41,22 @@ pub struct Tournament {
     pub head_refs_allow_reffing_teams: bool,
     #[serde(default)]
     pub head_refs_allow_anyone: bool,
+    /// When set, this tournament is part of a league; registration is via the league.
+    pub league: Option<LeagueRef>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct LeagueRef {
+    pub league_url: String,
+    pub name: String,
+    #[serde(default)]
+    pub registration_open: bool,
+    #[serde(default)]
+    pub team_registration_open: bool,
+    #[serde(default)]
+    pub player_registration_open: bool,
+    pub team_reg_fee: Option<f64>,
+    pub player_reg_fee: Option<f64>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -62,7 +81,7 @@ pub struct CheckUsernameResponse {
     pub message: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct TeamWithCount {
     pub team_id: String,
     pub team_name: String,
@@ -80,6 +99,53 @@ pub struct UnattachedPlayer {
     pub jersey_name: Option<String>,
     pub registered_at: Option<String>,
     pub profile_photo: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct LeagueInfo {
+    pub league_url: String,
+    pub name: String,
+    pub about: Option<String>,
+    pub team_reg_fee: Option<f64>,
+    pub player_reg_fee: Option<f64>,
+    #[serde(default)]
+    pub registration_open: bool,
+    #[serde(default)]
+    pub team_registration_open: bool,
+    #[serde(default)]
+    pub player_registration_open: bool,
+    #[serde(default)]
+    pub published: bool,
+    pub terms_link: Option<String>,
+    pub n_max_teams: Option<u32>,
+    pub max_team_size_roster: Option<u32>,
+    pub max_team_size_field: Option<u32>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LeaguesListResponse {
+    pub leagues: Vec<LeagueInfo>,
+    pub team_counts: std::collections::HashMap<String, u32>,
+    pub user_reg_status: std::collections::HashMap<String, UserRegStatus>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LeagueDetailResponse {
+    pub league: LeagueInfo,
+    pub events: Vec<Tournament>,
+    pub teams_with_counts: Vec<TeamWithCount>,
+    pub unattached_players: Vec<UnattachedPlayer>,
+    pub to_entries: Vec<ToEntry>,
+    pub is_current_team_registered: bool,
+    pub is_current_player_registered: bool,
+    #[serde(default)]
+    pub penalty_types: Vec<PenaltyType>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LeagueResultsResponse {
+    pub league: LeagueInfo,
+    pub teams: Vec<TeamResultRow>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -305,6 +371,9 @@ pub struct TeamMatchDetail {
     pub sets: Vec<SetScore>,
     #[serde(default)]
     pub ribbon: bool,
+    /// Tournament URL (event) for this match; present when matches span multiple events (e.g. league).
+    #[serde(default)]
+    pub event: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -346,6 +415,10 @@ pub struct MatchDetailData {
     pub team2: Option<String>,
     pub team1_name: String,
     pub team2_name: String,
+    #[serde(default)]
+    pub team1_photo: Option<String>,
+    #[serde(default)]
+    pub team2_photo: Option<String>,
     pub team1_initial: Option<String>,
     pub team2_initial: Option<String>,
     pub status: String,

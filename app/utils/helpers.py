@@ -11,6 +11,46 @@ from app.domain.enums import RegistrationStatus
 from models import Tournament, PlayerRegistration, Match, TeamRegistration, Team
 
 
+def get_registrable_config(tournament):
+    """
+    Get RegistrableConfig for a tournament.
+
+    When tournament.league_id is set, returns the league's config.
+    When league_id is null (standalone tournament), returns the tournament's config.
+    """
+    if getattr(tournament, "league_id", None):
+        from models import League
+        league = League.query.get(tournament.league_id)
+        return league.registrable_config if league else None
+    return getattr(tournament, "registrable_config", None)
+
+
+def get_penalty_types_for_tournament(tournament):
+    """
+    Get penalty types for a tournament.
+
+    When tournament.league_id is set, returns the league's penalty types.
+    When league_id is null (standalone tournament), returns the tournament's penalty types.
+    """
+    from models import PenaltyType
+
+    if getattr(tournament, "league_id", None):
+        return PenaltyType.query.filter_by(league_id=tournament.league_id).all()
+    return PenaltyType.query.filter_by(event=tournament.url).all()
+
+
+def match_event_urls_for_penalties(tournament):
+    """
+    Return list of event URLs to use when querying Match for penalties/notes.
+
+    For league events, returns all event URLs in the league so penalty counts and
+    penalty lists include matches from every event in the league. For standalone
+    tournaments, returns just this event's URL.
+    """
+    if getattr(tournament, "league_id", None):
+        return [t.url for t in Tournament.query.filter_by(league_id=tournament.league_id).all()]
+    return [tournament.url]
+
 
 DEFAULT_PENALTY_COLORS = [
     "FF0000",  # Red
@@ -176,11 +216,19 @@ def check_tournament_access(tournament_url):
     if not current_user.is_authenticated:
         return False, tournament
 
-    is_to = TO.query.filter_by(
-        user_id=current_user.id,
-        user_type=current_user.__class__.__name__.lower(),
-        event=tournament_url,
-    ).first()
+    is_to = None
+    if tournament.league_id:
+        is_to = TO.query.filter_by(
+            user_id=current_user.id,
+            user_type=current_user.__class__.__name__.lower(),
+            league_id=tournament.league_id,
+        ).first()
+    if not is_to:
+        is_to = TO.query.filter_by(
+            user_id=current_user.id,
+            user_type=current_user.__class__.__name__.lower(),
+            event=tournament_url,
+        ).first()
 
     if not is_to:
         return False, tournament
