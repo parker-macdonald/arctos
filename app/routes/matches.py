@@ -855,7 +855,7 @@ def start_match(tournament_url):
 @bp.route("/<tournament_url>/get-selection-notes")
 @login_required
 def get_selection_notes(tournament_url):
-    """Get notes relevant to team and selected players."""
+    """Get notes relevant to team and selected players. For league events, includes notes from all matches in the league."""
     match_id = request.args.get("match_id")
     team_side = request.args.get("team")
     player_ids_csv = request.args.get("player_ids", "")
@@ -863,8 +863,15 @@ def get_selection_notes(tournament_url):
     if not match_id or team_side not in ("team1", "team2"):
         return json_error("match_id and team required")
 
+    tournament = Tournament.query.filter_by(url=tournament_url).first()
+    if not tournament:
+        return json_error("Tournament not found")
+    from app.utils.helpers import match_event_urls_for_penalties
+
+    event_urls = match_event_urls_for_penalties(tournament)
+
     match = Match.query.get(match_id)
-    if not match or match.event != tournament_url:
+    if not match or match.event not in event_urls:
         return json_error("Match not found")
 
     if not can_head_ref_match(tournament_url, current_user.id, match=match):
@@ -878,8 +885,8 @@ def get_selection_notes(tournament_url):
         pid.strip() for pid in player_ids_csv.split(",") if pid.strip()
     ]
 
-    team1_matches = Match.query.filter_by(event=tournament_url, team1=team_id).all()
-    team2_matches = Match.query.filter_by(event=tournament_url, team2=team_id).all()
+    team1_matches = Match.query.filter(Match.event.in_(event_urls), Match.team1 == team_id).all()
+    team2_matches = Match.query.filter(Match.event.in_(event_urls), Match.team2 == team_id).all()
     team1_match_ids = {m.uuid for m in team1_matches}
     team2_match_ids = {m.uuid for m in team2_matches}
 
@@ -887,12 +894,12 @@ def get_selection_notes(tournament_url):
 
     player_notes = []
     if selected_player_ids:
-        # Only include notes from matches in this tournament
+        # Include notes from matches in this event (or all league events)
         player_notes = (
             db.session.query(MatchNote)
             .join(Match, Match.uuid == MatchNote.match)
             .filter(
-                Match.event == tournament_url,
+                Match.event.in_(event_urls),
                 MatchNote.player_id.in_(selected_player_ids),
             )
             .all()
@@ -920,10 +927,7 @@ def get_selection_notes(tournament_url):
     penalty_type_ids = {getattr(n, "penalty_type_id", None) for n in all_notes.values() if getattr(n, "penalty_type_id", None)}
     pt_map = {}
     if penalty_type_ids:
-        for pt in PenaltyType.query.filter(
-            PenaltyType.event == tournament_url,
-            PenaltyType.id.in_(penalty_type_ids),
-        ).all():
+        for pt in PenaltyType.query.filter(PenaltyType.id.in_(penalty_type_ids)).all():
             pt_map[pt.id] = {"name": pt.name, "color": pt.color, "desc": pt.desc.strip() if pt.desc and pt.desc.strip() else None}
 
     notes_data = []

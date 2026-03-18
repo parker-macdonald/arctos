@@ -17,6 +17,8 @@ fn RegistrationRow(
     players_cache: Signal<PlayersCache>,
 ) -> Element {
     let event_key = registration.event.clone();
+    let is_league = event_key.starts_with("league:");
+    let league_url = event_key.strip_prefix("league:").unwrap_or(&event_key).to_string();
     rsx! {
         tr {
             class: if is_expanded { "table-active" } else { "" },
@@ -28,7 +30,13 @@ fn RegistrationRow(
                     style: "font-size: 0.7rem;"
                 }
             }
-            td { Link { to: Route::TournamentHome { url: event_key.clone() }, "{event_key}" } }
+            td {
+                if is_league {
+                    Link { to: Route::LeagueHome { league_url: league_url.clone() }, "League: {league_url}" }
+                } else {
+                    Link { to: Route::TournamentHome { url: event_key.clone() }, "{event_key}" }
+                }
+            }
             td { strong { "{registration.pseudonym.as_deref().unwrap_or(\"-\")}" } }
             td {
                 if let Some(date) = &registration.start_date {
@@ -59,10 +67,18 @@ fn RegistrationRow(
             td {
                 onclick: move |e: Event<MouseData>| e.stop_propagation(),
                 if is_own_team {
-                    Link {
-                        to: Route::Invitations { url: event_key.clone() },
-                        class: "btn btn-sm btn-outline-primary",
-                        "Manage Roster"
+                    if is_league {
+                        Link {
+                            to: Route::LeagueInvitations { league_url: league_url.clone() },
+                            class: "btn btn-sm btn-outline-primary",
+                            "Manage Roster"
+                        }
+                    } else {
+                        Link {
+                            to: Route::Invitations { url: event_key.clone() },
+                            class: "btn btn-sm btn-outline-primary",
+                            "Manage Roster"
+                        }
                     }
                 }
             }

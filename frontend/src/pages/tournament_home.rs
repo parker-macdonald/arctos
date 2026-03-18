@@ -1,4 +1,7 @@
 use crate::api;
+use crate::components::{
+    EditRegistrationContext, EditRegistrationModal, EventHeader, LeagueRegistrationButtons,
+};
 use crate::types::{ToEntry, UpdatePlayerRegistrationRequest, UpdateTeamRegistrationRequest, User};
 use crate::Route;
 use dioxus::prelude::*;
@@ -45,16 +48,20 @@ pub fn TournamentHome(url: String) -> Element {
     let mut show_edit_team_modal = use_signal(|| false);
     let mut show_deregister_player_confirm = use_signal(|| false);
     let mut show_deregister_team_confirm = use_signal(|| false);
+    let mut show_league_edit_modal = use_signal(|| false);
     let url_for_deregister_player = url.clone();
     let url_for_deregister_team = url.clone();
     let url_for_delete_confirm = url.clone();
     let mut about_markdown = use_signal(|| Option::<String>::None);
+    let mut delete_redirect_league = use_signal(|| None as Option<String>);
     use_effect(move || {
         let v = val.read();
         if let Some(Ok(d)) = v.as_ref() {
             about_markdown.set(d.tournament.about.clone());
+            delete_redirect_league.set(d.tournament.league.as_ref().map(|l| l.league_url.clone()));
         } else {
             about_markdown.set(None);
+            delete_redirect_league.set(None);
         }
     });
     let about_html = use_resource(use_reactive(&about_markdown, move |md| {
@@ -70,20 +77,15 @@ pub fn TournamentHome(url: String) -> Element {
     rsx! {
         if let Some(Ok(d)) = val.read().as_ref() {
             {{
-                let team_fee = d.tournament.team_reg_fee.unwrap_or(0.0);
-                let player_fee = d.tournament.player_reg_fee.unwrap_or(0.0);
-                let team_fee_str = format!("${:.2}", team_fee);
-                let player_fee_str = format!("${:.2}", player_fee);
                 let teams_count = d.teams_with_counts.len();
                 let unattached_count = d.unattached_players.len();
                 rsx! {
-            div { class: "row",
-                div { class: "col-12",
-                    h1 { "{d.tournament.name}" }
-                    p { class: "lead",
-                        "{d.tournament.location.as_deref().unwrap_or(\"Location TBA\")} • {format_date_display(&d.tournament.start_date, d.tournament.end_date.as_ref())}"
-                    }
-                }
+            EventHeader {
+                title: d.tournament.name.clone(),
+                subtitle: format!("{} • {}", d.tournament.location.as_deref().unwrap_or("Location TBA"), format_date_display(&d.tournament.start_date, d.tournament.end_date.as_ref())),
+                badge_league_url: d.tournament.league.as_ref().map(|l| l.league_url.clone()),
+                badge_season: None,
+                badge_name: d.tournament.league.as_ref().map(|l| l.name.clone()),
             }
 
             div { class: "row mb-3",
@@ -97,8 +99,21 @@ pub fn TournamentHome(url: String) -> Element {
                     if d.tournament.bracket && (d.tournament.schedule_published || is_current_user_to(me_res.read().as_ref(), &d.to_entries)) {
                         Link { to: Route::Bracket { url: url.clone() }, class: "btn btn-outline-primary", "Bracket" }
                     }
-                    if d.tournament.registration_open {
-                        if let Some(Ok(current_user)) = me_res.read().as_ref() {
+                    if let Some(ref l) = d.tournament.league {
+                        LeagueRegistrationButtons {
+                            league_url: l.league_url.clone(),
+                            registration_open: l.registration_open,
+                            team_registration_open: Some(l.team_registration_open),
+                            player_registration_open: Some(l.player_registration_open),
+                            current_user: me_res.read().as_ref().cloned(),
+                            is_team_registered: d.is_current_team_registered,
+                            is_player_registered: d.is_current_player_registered,
+                            use_edit_modal: true,
+                            on_edit_registration: move |_| show_league_edit_modal.set(true),
+                            register_label: String::from("Register (league)"),
+                        }
+                    } else {
+                        if let Some(current_user) = me_res.read().as_ref().and_then(|r| r.as_ref().ok()) {
                             if current_user.user_type == "team" {
                                 if d.is_current_team_registered {
                                     a { href: "{backend}/{url}/invitations", class: "btn btn-outline-secondary", "Manage Roster" }
@@ -107,8 +122,15 @@ pub fn TournamentHome(url: String) -> Element {
                                         onclick: move |_| show_edit_team_modal.set(true),
                                         "Edit Registration"
                                     }
-                                } else {
+                                } else if d.tournament.team_registration_open {
                                     Link { to: Route::TournamentRegister { url: url.clone() }, class: "btn btn-success", "Register" }
+                                } else {
+                                    button {
+                                        r#type: "button",
+                                        class: "btn btn-secondary disabled",
+                                        disabled: true,
+                                        "Team registration closed"
+                                    }
                                 }
                             } else if current_user.user_type == "player" {
                                 if d.is_current_player_registered {
@@ -117,22 +139,36 @@ pub fn TournamentHome(url: String) -> Element {
                                         onclick: move |_| show_edit_player_modal.set(true),
                                         "Edit Registration"
                                     }
-                                } else {
+                                } else if d.tournament.player_registration_open {
                                     Link { to: Route::TournamentRegister { url: url.clone() }, class: "btn btn-success", "Register" }
+                                } else {
+                                    button {
+                                        r#type: "button",
+                                        class: "btn btn-secondary disabled",
+                                        disabled: true,
+                                        "Player registration closed"
+                                    }
                                 }
                             } else {
-                                Link { to: Route::TournamentRegister { url: url.clone() }, class: "btn btn-success", "Register" }
+                                if d.tournament.team_registration_open || d.tournament.player_registration_open {
+                                    Link { to: Route::TournamentRegister { url: url.clone() }, class: "btn btn-success", "Register" }
+                                } else {
+                                    button {
+                                        r#type: "button",
+                                        class: "btn btn-secondary disabled",
+                                        disabled: true,
+                                        "Registration closed"
+                                    }
+                                }
                             }
                         } else {
-                            Link { to: Route::TournamentRegister { url: url.clone() }, class: "btn btn-success", "Register" }
-                        }
-                    } else {
-                        if let Some(Ok(current_user)) = me_res.read().as_ref() {
-                            if current_user.user_type == "team" && d.is_current_team_registered {
-                                a { href: "{backend}/{url}/invitations", class: "btn btn-outline-primary", "View Invitations" }
+                            button {
+                                r#type: "button",
+                                class: "btn btn-secondary disabled",
+                                disabled: true,
+                                "Sign in to register"
                             }
                         }
-                        Link { to: Route::TournamentRegister { url: url.clone() }, class: "btn btn-outline-secondary", "Register" }
                     }
                 }
             }
@@ -146,7 +182,6 @@ pub fn TournamentHome(url: String) -> Element {
                                 div { class: "col-md-6",
                                     p { strong { "Start Date: " } "{format_date(&d.tournament.start_date)}" }
                                     p { strong { "End Date: " } "{d.tournament.end_date.as_ref().map(|e| format_date(e)).unwrap_or_else(|| \"TBA\".into())}" }
-                                    p { strong { "Number of Fields: " } "{d.tournament.num_fields.unwrap_or(1)}" }
                                 }
                                 div { class: "col-md-6",
                                     if let Some(max) = d.tournament.n_max_teams {
@@ -160,14 +195,27 @@ pub fn TournamentHome(url: String) -> Element {
                                     }
                                 }
                             }
-                            if d.tournament.registration_open && (d.tournament.team_reg_fee.map(|f| f > 0.0).unwrap_or(false) || d.tournament.player_reg_fee.map(|f| f > 0.0).unwrap_or(false)) {
+                            if d.tournament.league.is_none() && {
+                                let ro = d.tournament.team_registration_open || d.tournament.player_registration_open;
+                                let tf = d.tournament.team_reg_fee.unwrap_or(0.0);
+                                let pf = d.tournament.player_reg_fee.unwrap_or(0.0);
+                                ro && (tf > 0.0 || pf > 0.0)
+                            } {
                                 div { class: "alert alert-info mb-3",
                                     h6 { class: "mb-2", "Registration Fees" }
-                                    if d.tournament.team_reg_fee.map(|f| f > 0.0).unwrap_or(false) {
-                                        p { class: "mb-1", strong { "Team Registration: " } "{team_fee_str}" }
-                                    }
-                                    if d.tournament.player_reg_fee.map(|f| f > 0.0).unwrap_or(false) {
-                                        p { class: "mb-0", strong { "Player Registration: " } "{player_fee_str}" }
+                                    {
+                                        let tf = d.tournament.team_reg_fee.unwrap_or(0.0);
+                                        let pf = d.tournament.player_reg_fee.unwrap_or(0.0);
+                                        let tf_str = format!("${:.2}", tf);
+                                        let pf_str = format!("${:.2}", pf);
+                                        rsx! {
+                                            if tf > 0.0 {
+                                                p { class: "mb-1", strong { "Team Registration: " } "{tf_str}" }
+                                            }
+                                            if pf > 0.0 {
+                                                p { class: "mb-0", strong { "Player Registration: " } "{pf_str}" }
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -190,15 +238,19 @@ pub fn TournamentHome(url: String) -> Element {
                         }
                     }
                 }
-                if is_current_user_to(me_res.read().as_ref(), &d.to_entries) {
-                    div { class: "col-md-4",
-                        div { class: "card",
-                            div { class: "card-header", h5 { class: "mb-0", "Admin" } }
-                            div { class: "card-body",
-                                div { class: "d-grid gap-2",
-                                    Link { to: Route::TournamentSettings { url: url.clone() }, class: "btn btn-outline-secondary", "Settings" }
-                                    Link { to: Route::BracketSetup { url: url.clone() }, class: "btn btn-outline-secondary", "Bracket Setup" }
-                                    Link { to: Route::Manage { url: url.clone() }, class: "btn btn-outline-warning", "Registration Management" }
+                                if is_current_user_to(me_res.read().as_ref(), &d.to_entries) {
+                                    div { class: "col-md-4",
+                                        div { class: "card",
+                                            div { class: "card-header", h5 { class: "mb-0", "Admin" } }
+                                            div { class: "card-body",
+                                                div { class: "d-grid gap-2",
+                                                    Link { to: Route::TournamentSettings { url: url.clone() }, class: "btn btn-outline-secondary", "Settings" }
+                                                    Link { to: Route::BracketSetup { url: url.clone() }, class: "btn btn-outline-secondary", "Bracket Setup" }
+                                                    if let Some(ref l) = d.tournament.league {
+                                                        Link { to: Route::LeagueManage { league_url: l.league_url.clone() }, class: "btn btn-outline-warning", "Registration Management" }
+                                                    } else {
+                                                        Link { to: Route::Manage { url: url.clone() }, class: "btn btn-outline-warning", "Registration Management" }
+                                                    }
                                     button {
                                         class: "btn btn-outline-danger",
                                         onclick: move |_| {
@@ -504,6 +556,22 @@ pub fn TournamentHome(url: String) -> Element {
                 }
             }
 
+            if show_league_edit_modal() {
+                if let Some(ref l) = d.tournament.league {
+                    if let Some(Ok(me)) = me_res.read().as_ref() {
+                        EditRegistrationModal {
+                            context: EditRegistrationContext::League { league_url: l.league_url.clone() },
+                            user_type: me.user_type.clone(),
+                            on_close: move |_| show_league_edit_modal.set(false),
+                            on_success: move |_| {
+                                show_league_edit_modal.set(false);
+                                refresh.set(refresh() + 1);
+                            },
+                        }
+                    }
+                }
+            }
+
             if is_current_user_to(me_res.read().as_ref(), &d.to_entries) && delete_modal_open() {
                 div { class: "modal d-block", tabindex: -1, style: "background: rgba(0,0,0,0.5)",
                     div { class: "modal-dialog modal-dialog-centered",
@@ -533,10 +601,15 @@ pub fn TournamentHome(url: String) -> Element {
                                         let nav = navigator.clone();
                                         let url_submit = url_for_delete_confirm.clone();
                                         let confirm = delete_confirm_url();
+                                        let redirect_league = delete_redirect_league();
                                         spawn(async move {
                                             match api::delete_tournament(&url_submit, &confirm).await {
                                                 Ok(res) if res.success => {
-                                                    nav.push(Route::Index {});
+                                                    if let Some(lu) = redirect_league {
+                                                        let _ = nav.push(Route::LeagueHome { league_url: lu });
+                                                    } else {
+                                                        let _ = nav.push(Route::Index {});
+                                                    }
                                                 }
                                                 Ok(res) => {
                                                     delete_error.set(Some(res.error.unwrap_or_else(|| "Delete failed.".to_string())));

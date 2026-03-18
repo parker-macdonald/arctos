@@ -3485,6 +3485,9 @@ fn EditMatchModal(
     
     let m = match_data.unwrap();
     
+    // Original schedule type for edit: only allow transitions STATIC→SAFE/FAST, SAFE→FAST
+    let original_schedule_type = m.schedule_type.as_deref().unwrap_or("STATIC");
+    
     let name = use_signal(|| m.name.clone());
     let mut field = use_signal(|| m.field.clone().unwrap_or_default());
     let schedule_type = use_signal(|| m.schedule_type.clone().unwrap_or("STATIC".to_string()));
@@ -3952,11 +3955,12 @@ fn EditMatchModal(
                                                 previous_match_id.set("".to_string());
                                             }
                                         },
-                                            option { value: "STATIC", "Static" }
-                                            option { value: "SAFE", "Safe" }
-                                            option { value: "FAST", "Fast" }
-                                            option { value: "BREAK", "Break" }
-                                            option { value: "JOIN", "Join" }
+                                            // Allowed transitions: STATIC→SAFE/FAST, SAFE→FAST; others cannot change type
+                                            option { value: "STATIC", disabled: original_schedule_type != "STATIC", "Static" }
+                                            option { value: "SAFE", disabled: original_schedule_type != "STATIC" && original_schedule_type != "SAFE", "Safe" }
+                                            option { value: "FAST", disabled: original_schedule_type != "STATIC" && original_schedule_type != "SAFE" && original_schedule_type != "FAST", "Fast" }
+                                            option { value: "BREAK", disabled: original_schedule_type != "BREAK", "Break" }
+                                            option { value: "JOIN", disabled: original_schedule_type != "JOIN", "Join" }
                                         }
                                     }
                                 }

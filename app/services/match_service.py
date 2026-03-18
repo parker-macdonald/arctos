@@ -78,7 +78,9 @@ class MatchService:
             return Err(ValidationError("A player cannot be selected for both teams"))
 
         tournament_obj = Tournament.query.get(tournament_url)
-        max_roster = getattr(tournament_obj, "max_team_size_field", None)
+        from app.utils.helpers import get_registrable_config
+        cfg = get_registrable_config(tournament_obj)
+        max_roster = getattr(cfg, "max_team_size_field", None) if cfg else None
         try:
             max_roster = int(max_roster) if max_roster is not None else None
         except Exception:

@@ -25,6 +25,7 @@ web-sys = { version = "0.3", features = [
     "HtmlElement", "KeyboardEvent", "Navigator", "Clipboard",
     "AudioContext", "AudioContextState", "AudioBuffer", "AudioBufferSourceNode", "AudioDestinationNode",
     "BaseAudioContext", "AudioContextOptions", "MediaStreamAudioDestinationNode",
+    "OscillatorNode", "GainNode", "OscillatorType", "AudioParam",
     "HtmlAudioElement", "HtmlInputElement", "HtmlCanvasElement", "CanvasRenderingContext2d",
     "DomException", "Blob", "Response", "Request", "RequestInit", "RequestMode",
     "Headers", "ResponseType", "MouseEvent", "DomRect", "TouchEvent", "Touch", "TouchList", "CustomEvent",

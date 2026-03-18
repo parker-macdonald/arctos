@@ -48,6 +48,41 @@ fn now_epoch_secs() -> f64 {
     chrono::Utc::now().timestamp() as f64
 }
 
+/// Play sound and trigger vibration for start/end point button. Different sound and pattern for start vs end.
+#[cfg(target_arch = "wasm32")]
+fn point_button_feedback(is_end_point: bool) {
+    use wasm_bindgen::JsCast;
+    if let Some(window) = web_sys::window() {
+        // Vibration (optional: not supported on many desktop browsers)
+        let nav = window.navigator();
+        if let Ok(vibrate_fn) = js_sys::Reflect::get(&nav, &"vibrate".into()) {
+            if let Some(f) = vibrate_fn.dyn_ref::<js_sys::Function>() {
+                let args = if is_end_point {
+                    js_sys::Array::of3(&120.into(), &70.into(), &120.into())
+                } else {
+                    js_sys::Array::of1(&200.into())
+                };
+                let _ = f.apply(&nav, &args);
+            }
+        }
+        // Sound via Web Audio
+        if let Ok(ctx) = web_sys::AudioContext::new() {
+            let _ = ctx.resume();
+            if let (Ok(osc), Ok(gain)) = (ctx.create_oscillator(), ctx.create_gain()) {
+                gain.gain().set_value(0.4);
+                let (freq, duration) = if is_end_point { (440.0, 0.2) } else { (880.0, 0.25) };
+                osc.set_type(web_sys::OscillatorType::Sine);
+                osc.frequency().set_value(freq);
+                let _ = osc.connect_with_audio_node(&gain);
+                let _ = gain.connect_with_audio_node(&ctx.destination());
+                let _ = osc.start();
+                let _ = osc.stop_with_when(ctx.current_time() + duration);
+                // Context will be garbage-collected after the beep; no need to close explicitly.
+            }
+        }
+    }
+}
+
 /// Compute scores_by_set from points array (client-authoritative; same logic as server).
 fn scores_by_set_from_points(points: &[&Value]) -> Vec<(String, u64, u64)> {
     let mut by_set: std::collections::BTreeMap<u64, (u64, u64)> = std::collections::BTreeMap::new();
@@ -307,6 +342,9 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                 }
                 let team1 = m.team1_name.as_str();
                 let team2 = m.team2_name.as_str();
+                let team1_photo = m.team1_photo.clone();
+                let team2_photo = m.team2_photo.clone();
+                let base_url = api::base_url();
                 // Refs by pseudonym (refs_display), same as team1_name/team2_name
                 let refs_display = m
                     .refs_display
@@ -423,6 +461,15 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                     let u = url_start.clone();
                     let id = id_start.clone();
                     let point_opt = current_point();
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        let is_end = point_opt.is_some();
+                        spawn(async move {
+                            // Defer feedback to next tick so we don't trigger re-entrant Dioxus updates (RefCell borrow) from Web Audio/vibration callbacks.
+                            gloo_timers::future::TimeoutFuture::new(0).await;
+                            point_button_feedback(is_end);
+                        });
+                    }
                     let mut err_out = action_error;
                     let mut current_point = current_point;
                     let mut stones_remaining = stones_remaining;
@@ -431,35 +478,36 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                     let default_set = default_set;
                     let stones_val = stones_remaining();
                     if let Some(point_id) = point_opt {
-                        // End current point — optimistic: set end_stamp and clear current_point
+                        // End current point — defer optimistic update and API to next tick to avoid RefCell re-entrancy in Dioxus.
                         let end_iso = chrono::Utc::now().to_rfc3339();
                         let prev = state_signal().clone();
-                        let mut final_stones_for_api: Option<u32> = None;
-                        if let Some(Ok(ref state)) = prev.clone() {
-                            let mut state = state.clone();
-                            if let Some(points) = state.get_mut("points").and_then(|p| p.as_array_mut()) {
-                                for p in points.iter_mut() {
-                                    if p.get("uuid").and_then(|v| v.as_str()) == Some(point_id.as_str()) {
-                                        p["end_stamp"] = serde_json::json!(end_iso);
-                                        if set_type_stones {
-                                            let at_start = p.get("stones_at_start").and_then(|s| s.as_u64()).unwrap_or(0);
-                                            let stamp = p.get("stamp").and_then(|s| s.as_str());
-                                            let elapsed = stones_elapsed_beats_ms(stamp, Some(end_iso.as_str())) as u64;
-                                            let remaining = (at_start.saturating_sub(elapsed)) as u32;
-                                            stones_remaining.set(remaining);
-                                            final_stones_for_api = Some(remaining);
-                                        }
-                                        break;
-                                    }
-                                }
-                            }
-                            state_signal.set(Some(Ok(state)));
-                        }
-                        current_point.set(None);
                         let point_id = point_id.clone();
                         let id_for_stones = id.clone();
                         let u_for_stones = u.clone();
                         spawn(async move {
+                            gloo_timers::future::TimeoutFuture::new(0).await;
+                            let mut final_stones_for_api: Option<u32> = None;
+                            if let Some(Ok(ref state)) = prev.clone() {
+                                let mut state = state.clone();
+                                if let Some(points) = state.get_mut("points").and_then(|p| p.as_array_mut()) {
+                                    for p in points.iter_mut() {
+                                        if p.get("uuid").and_then(|v| v.as_str()) == Some(point_id.as_str()) {
+                                            p["end_stamp"] = serde_json::json!(end_iso);
+                                            if set_type_stones {
+                                                let at_start = p.get("stones_at_start").and_then(|s| s.as_u64()).unwrap_or(0);
+                                                let stamp = p.get("stamp").and_then(|s| s.as_str());
+                                                let elapsed = stones_elapsed_beats_ms(stamp, Some(end_iso.as_str())) as u64;
+                                                let remaining = (at_start.saturating_sub(elapsed)) as u32;
+                                                stones_remaining.set(remaining);
+                                                final_stones_for_api = Some(remaining);
+                                            }
+                                            break;
+                                        }
+                                    }
+                                }
+                                state_signal.set(Some(Ok(state)));
+                            }
+                            current_point.set(None);
                             err_out.set(None);
                             let body = serde_json::json!({ "point_id": point_id, "end_stamp": end_iso });
                             match api::update_point(&u_for_stones, &point_id, &body).await {
@@ -540,6 +588,14 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                     let u = url_mobile.clone();
                     let id = id_mobile.clone();
                     let point_opt = current_point_mobile();
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        let is_end = point_opt.is_some();
+                        spawn(async move {
+                            gloo_timers::future::TimeoutFuture::new(0).await;
+                            point_button_feedback(is_end);
+                        });
+                    }
                     let mut err_out = action_error;
                     let mut current_point = current_point_mobile;
                     let mut stones_remaining = stones_remaining_mobile;
@@ -550,32 +606,33 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                     if let Some(point_id) = point_opt {
                         let end_iso = chrono::Utc::now().to_rfc3339();
                         let prev = state_signal().clone();
-                        let mut final_stones_for_api: Option<u32> = None;
-                        if let Some(Ok(ref state)) = prev.clone() {
-                            let mut state = state.clone();
-                            if let Some(points) = state.get_mut("points").and_then(|p| p.as_array_mut()) {
-                                for p in points.iter_mut() {
-                                    if p.get("uuid").and_then(|v| v.as_str()) == Some(point_id.as_str()) {
-                                        p["end_stamp"] = serde_json::json!(end_iso);
-                                        if set_type_stones {
-                                            let at_start = p.get("stones_at_start").and_then(|s| s.as_u64()).unwrap_or(0);
-                                            let stamp = p.get("stamp").and_then(|s| s.as_str());
-                                            let elapsed = stones_elapsed_beats_ms(stamp, Some(end_iso.as_str())) as u64;
-                                            let remaining = (at_start.saturating_sub(elapsed)) as u32;
-                                            stones_remaining.set(remaining);
-                                            final_stones_for_api = Some(remaining);
-                                        }
-                                        break;
-                                    }
-                                }
-                            }
-                            state_signal.set(Some(Ok(state)));
-                        }
-                        current_point.set(None);
                         let point_id = point_id.clone();
                         let id_for_stones = id.clone();
                         let u_for_stones = u.clone();
                         spawn(async move {
+                            gloo_timers::future::TimeoutFuture::new(0).await;
+                            let mut final_stones_for_api: Option<u32> = None;
+                            if let Some(Ok(ref state)) = prev.clone() {
+                                let mut state = state.clone();
+                                if let Some(points) = state.get_mut("points").and_then(|p| p.as_array_mut()) {
+                                    for p in points.iter_mut() {
+                                        if p.get("uuid").and_then(|v| v.as_str()) == Some(point_id.as_str()) {
+                                            p["end_stamp"] = serde_json::json!(end_iso);
+                                            if set_type_stones {
+                                                let at_start = p.get("stones_at_start").and_then(|s| s.as_u64()).unwrap_or(0);
+                                                let stamp = p.get("stamp").and_then(|s| s.as_str());
+                                                let elapsed = stones_elapsed_beats_ms(stamp, Some(end_iso.as_str())) as u64;
+                                                let remaining = (at_start.saturating_sub(elapsed)) as u32;
+                                                stones_remaining.set(remaining);
+                                                final_stones_for_api = Some(remaining);
+                                            }
+                                            break;
+                                        }
+                                    }
+                                }
+                                state_signal.set(Some(Ok(state)));
+                            }
+                            current_point.set(None);
                             err_out.set(None);
                             let body = serde_json::json!({ "point_id": point_id, "end_stamp": end_iso });
                             match api::update_point(&u_for_stones, &point_id, &body).await {
@@ -668,6 +725,13 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                     .set-number-controls button{width:28px;height:24px;padding:0;font-size:14px}\
                     .delete-point-btn{background:#dc3545;color:white;border:none;width:28px;height:28px;padding:0;border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:16px;line-height:1;cursor:pointer}\
                     .delete-point-btn:hover{background:#c82333}\
+                    .winner-cell{display:flex;flex-wrap:wrap;align-items:center;min-width:0}\
+                    .winner-options-group{display:flex;flex-wrap:wrap;align-items:center;gap:6px}\
+                    .winner-option{display:inline-flex;align-items:center;gap:5px;padding:5px 10px;border-radius:4px;border:1px solid #dee2e6;background:#fff;cursor:pointer;font-size:0.95rem;line-height:1.3;min-width:0}\
+                    .winner-option:hover{background:#e9ecef}\
+                    .winner-option.active{background:#0d6efd;color:#fff;border-color:#0d6efd}\
+                    .winner-option .winner-avatar{width:26px;height:26px;border-radius:50%;object-fit:cover;flex-shrink:0}\
+                    .winner-option .winner-name{min-width:3ch;max-width:12em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}\
                     @media (max-width:768px){.mobile-button-wrapper{position:fixed;bottom:0;left:0;right:0;z-index:1000;background:white;padding:0;margin:0;box-shadow:0 -2px 10px rgba(0,0,0,0.1);display:flex;flex-direction:row}\
                     .mobile-button-wrapper .btn{border-radius:0;margin:0;flex:1}\
                     .container .mobile-sticky-button,.container #finalize-match-btn{display:none}}";
@@ -700,6 +764,15 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                         let pid_list = pid.clone();
                         let team1 = team1.to_string();
                         let team2 = team2.to_string();
+                        let team1_photo = team1_photo.clone();
+                        let team2_photo = team2_photo.clone();
+                        let base_url_winner = base_url.clone();
+                        let pid_none = pid_winner.clone();
+                        let u_none = u_winner.clone();
+                        let pid_t1 = pid_winner.clone();
+                        let u_t1 = u_winner.clone();
+                        let pid_t2 = pid_winner.clone();
+                        let u_t2 = u_winner.clone();
                         rsx! {
                             tr { key: "{pt_id}", id: "point-row-{pt_id}",
                                 td {
@@ -773,39 +846,111 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                                 }
                                 td { id: "stones-{pt_id}", "{elapsed}" }
                                 td {
-                                    select {
-                                        class: "form-select form-select-sm",
-                                        value: "{winner_val}",
-                                        onchange: move |ev| {
-                                            let val = ev.value();
-                                            let prev = state_signal().clone();
-                                            if let Some(Ok(ref state)) = prev.clone() {
-                                                let mut state = state.clone();
-                                                if let Some(points) = state.get_mut("points").and_then(|p| p.as_array_mut()) {
-                                                    for p in points.iter_mut() {
-                                                        if p.get("uuid").and_then(|v| v.as_str()) == Some(pid_winner.as_str()) {
-                                                            p["winner"] = serde_json::json!(val);
-                                                            break;
+                                    div { class: "winner-cell",
+                                        div { class: "winner-options-group",
+                                        button {
+                                            class: format!("winner-option{}", if winner_val == "none" { " active" } else { "" }),
+                                            r#type: "button",
+                                            onclick: move |_| {
+                                                let val = "none";
+                                                let prev = state_signal().clone();
+                                                if let Some(Ok(ref state)) = prev.clone() {
+                                                    let mut state = state.clone();
+                                                    if let Some(points) = state.get_mut("points").and_then(|p| p.as_array_mut()) {
+                                                        for p in points.iter_mut() {
+                                                            if p.get("uuid").and_then(|v| v.as_str()) == Some(pid_none.as_str()) {
+                                                                p["winner"] = serde_json::json!(val);
+                                                                break;
+                                                            }
                                                         }
                                                     }
+                                                    state_signal.set(Some(Ok(state)));
                                                 }
-                                                state_signal.set(Some(Ok(state)));
+                                                let u = u_none.clone();
+                                                let p = pid_none.clone();
+                                                let mut state_signal = state_signal;
+                                                let mut action_error = action_error;
+                                                spawn(async move {
+                                                    let body = serde_json::json!({ "point_id": p, "winner": val });
+                                                    match api::update_point(&u, &p, &body).await {
+                                                        Ok(_) => { action_error.set(None); }
+                                                        Err(e) => { action_error.set(Some(e)); state_signal.set(prev); }
+                                                    }
+                                                });
+                                            },
+                                            "None"
+                                        }
+                                        button {
+                                            class: format!("winner-option{}", if winner_val == "TEAM1" { " active" } else { "" }),
+                                            r#type: "button",
+                                            onclick: move |_| {
+                                                let val = "TEAM1";
+                                                let prev = state_signal().clone();
+                                                if let Some(Ok(ref state)) = prev.clone() {
+                                                    let mut state = state.clone();
+                                                    if let Some(points) = state.get_mut("points").and_then(|p| p.as_array_mut()) {
+                                                        for p in points.iter_mut() {
+                                                            if p.get("uuid").and_then(|v| v.as_str()) == Some(pid_t1.as_str()) {
+                                                                p["winner"] = serde_json::json!(val);
+                                                                break;
+                                                            }
+                                                        }
+                                                    }
+                                                    state_signal.set(Some(Ok(state)));
+                                                }
+                                                let u = u_t1.clone();
+                                                let p = pid_t1.clone();
+                                                let mut state_signal = state_signal;
+                                                let mut action_error = action_error;
+                                                spawn(async move {
+                                                    let body = serde_json::json!({ "point_id": p, "winner": val });
+                                                    match api::update_point(&u, &p, &body).await {
+                                                        Ok(_) => { action_error.set(None); }
+                                                        Err(e) => { action_error.set(Some(e)); state_signal.set(prev); }
+                                                    }
+                                                });
+                                            },
+                                            if let Some(ref ph) = team1_photo {
+                                                img { class: "winner-avatar", src: "{base_url_winner}/static/{ph}", alt: "" }
                                             }
-                                            let u = u_winner.clone();
-                                            let p = pid_winner.clone();
-                                            let mut state_signal = state_signal;
-                                            let mut action_error = action_error;
-                                            spawn(async move {
-                                                let body = serde_json::json!({ "point_id": p, "winner": val });
-                                                match api::update_point(&u, &p, &body).await {
-                                                    Ok(_) => { action_error.set(None); }
-                                                    Err(e) => { action_error.set(Some(e)); state_signal.set(prev); }
+                                            span { class: "winner-name", "{team1}" }
+                                        }
+                                        button {
+                                            class: format!("winner-option{}", if winner_val == "TEAM2" { " active" } else { "" }),
+                                            r#type: "button",
+                                            onclick: move |_| {
+                                                let val = "TEAM2";
+                                                let prev = state_signal().clone();
+                                                if let Some(Ok(ref state)) = prev.clone() {
+                                                    let mut state = state.clone();
+                                                    if let Some(points) = state.get_mut("points").and_then(|p| p.as_array_mut()) {
+                                                        for p in points.iter_mut() {
+                                                            if p.get("uuid").and_then(|v| v.as_str()) == Some(pid_t2.as_str()) {
+                                                                p["winner"] = serde_json::json!(val);
+                                                                break;
+                                                            }
+                                                        }
+                                                    }
+                                                    state_signal.set(Some(Ok(state)));
                                                 }
-                                            });
-                                        },
-                                        option { value: "none", selected: winner_val == "none", "None" }
-                                        option { value: "TEAM1", selected: winner_val == "TEAM1", "{team1}" }
-                                        option { value: "TEAM2", selected: winner_val == "TEAM2", "{team2}" }
+                                                let u = u_t2.clone();
+                                                let p = pid_t2.clone();
+                                                let mut state_signal = state_signal;
+                                                let mut action_error = action_error;
+                                                spawn(async move {
+                                                    let body = serde_json::json!({ "point_id": p, "winner": val });
+                                                    match api::update_point(&u, &p, &body).await {
+                                                        Ok(_) => { action_error.set(None); }
+                                                        Err(e) => { action_error.set(Some(e)); state_signal.set(prev); }
+                                                    }
+                                                });
+                                            },
+                                            if let Some(ref ph) = team2_photo {
+                                                img { class: "winner-avatar", src: "{base_url_winner}/static/{ph}", alt: "" }
+                                            }
+                                            span { class: "winner-name", "{team2}" }
+                                        }
+                                        }
                                     }
                                 }
                                 td {

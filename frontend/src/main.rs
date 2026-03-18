@@ -37,6 +37,36 @@ enum Route {
     #[route("/auth/google/complete-profile")]
     GoogleCompleteProfile {},
 
+    #[route("/leagues")]
+    LeaguesIndex {},
+
+    #[route("/create-event")]
+    CreateEvent {},
+
+    #[route("/leagues/new")]
+    NewLeague {},
+
+    #[route("/leagues/:league_url")]
+    LeagueHome { league_url: String },
+
+    #[route("/leagues/:league_url/register")]
+    LeagueRegister { league_url: String },
+
+    #[route("/leagues/:league_url/results")]
+    LeagueResults { league_url: String },
+
+    #[route("/leagues/:league_url/settings")]
+    LeagueSettings { league_url: String },
+
+    #[route("/leagues/:league_url/new-tournament")]
+    LeagueNewTournament { league_url: String },
+
+    #[route("/leagues/:league_url/manage")]
+    LeagueManage { league_url: String },
+
+    #[route("/leagues/:league_url/invitations")]
+    LeagueInvitations { league_url: String },
+
     #[route("/:url")]
     TournamentHome { url: String },
 

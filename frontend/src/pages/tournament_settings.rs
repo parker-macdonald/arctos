@@ -478,7 +478,7 @@ pub fn TournamentSettings(url: String) -> Element {
     rsx! {
         if let Some(Ok(d)) = val.read().as_ref() {
             div { class: "penalty-settings-wrap",
-            div { class: "row",
+                div { class: "row",
                 div { class: "col-12",
                     h1 { "{d.tournament.name} - Settings" }
                     nav { aria_label: "breadcrumb",
@@ -501,22 +501,20 @@ pub fn TournamentSettings(url: String) -> Element {
                                 id: "tournament-settings-form",
                                 onsubmit: move |ev| {
                                     ev.prevent_default();
-                                    let params: Vec<(String, String)> = vec![
+                                    let mut params: Vec<(String, String)> = vec![
                                         ("name".into(), get_form_value("name")),
                                         ("location".into(), get_form_value("location")),
                                         ("start_date".into(), get_form_value("start_date")),
                                         ("end_date".into(), get_form_value("end_date")),
-                                        ("num_fields".into(), get_form_value("num_fields")),
                                         ("n_max_teams".into(), get_form_value("n_max_teams")),
                                         ("max_team_size_roster".into(), get_form_value("max_team_size_roster")),
                                         ("max_team_size_field".into(), get_form_value("max_team_size_field")),
+                                        ("about".into(), get_form_textarea("about")),
+                                        ("head_refs_allowed_list".into(), get_form_value("head_refs_allowed_list")),
                                         ("team_reg_fee".into(), get_form_value("team_reg_fee")),
                                         ("player_reg_fee".into(), get_form_value("player_reg_fee")),
-                                        ("about".into(), get_form_textarea("about")),
                                         ("terms_link".into(), get_form_value("terms_link")),
-                                        ("head_refs_allowed_list".into(), get_form_value("head_refs_allowed_list")),
                                     ];
-                                    let mut params = params;
                                     if get_form_check("head_refs_allow_anyone") {
                                         params.push(("head_refs_allow_anyone".into(), "on".to_string()));
                                     }
@@ -529,8 +527,11 @@ pub fn TournamentSettings(url: String) -> Element {
                                     if get_form_check("schedule_published") {
                                         params.push(("schedule_published".into(), "on".to_string()));
                                     }
-                                    if get_form_check("registration_open") {
-                                        params.push(("registration_open".into(), "on".to_string()));
+                                    if get_form_check("team_registration_open") {
+                                        params.push(("team_registration_open".into(), "on".to_string()));
+                                    }
+                                    if get_form_check("player_registration_open") {
+                                        params.push(("player_registration_open".into(), "on".to_string()));
                                     }
                                     let nav = navigator.clone();
                                     let url_submit = url_form.clone();
@@ -570,17 +571,12 @@ pub fn TournamentSettings(url: String) -> Element {
                                     div { class: "col-md-6",
                                         div { class: "mb-3",
                                             label { r#for: "end_date", class: "form-label", "End Date" }
-                                            input { r#type: "date", class: "form-control", id: "end_date", name: "end_date", value: "{d.tournament.end_date.as_deref().map(|s| s.split('T').next().unwrap_or(s)).unwrap_or(\"\")}" }
-                                        }
-                                    }
-                                    div { class: "col-md-6",
-                                        div { class: "mb-3",
-                                            label { r#for: "num_fields", class: "form-label", "Number of Fields" }
-                                            input { r#type: "number", class: "form-control", id: "num_fields", name: "num_fields", value: "{d.tournament.num_fields.unwrap_or(1)}", min: "1" }
+                                            input { r#type: "date", class: "form-control", id: "end_date", name: "end_date", value: "{d.tournament.end_date.as_deref().map(|s| s.split('T').next().unwrap_or(s)).unwrap_or(\"\")}", required: true }
                                         }
                                     }
                                 }
 
+                                if d.tournament.league.is_none() {
                                 div { class: "row",
                                     div { class: "col-md-6",
                                         div { class: "mb-3",
@@ -606,7 +602,9 @@ pub fn TournamentSettings(url: String) -> Element {
                                         }
                                     }
                                 }
+                                }
 
+                                if d.tournament.league.is_none() {
                                 div { class: "row",
                                     div { class: "col-md-6",
                                         div { class: "mb-3",
@@ -627,6 +625,7 @@ pub fn TournamentSettings(url: String) -> Element {
                                         }
                                     }
                                 }
+                                }
 
                                 div { class: "mb-3",
                                     label { r#for: "about", class: "form-label", "About" }
@@ -644,10 +643,12 @@ pub fn TournamentSettings(url: String) -> Element {
                                     }
                                 }
 
+                                if d.tournament.league.is_none() {
                                 div { class: "mb-3",
                                     label { r#for: "terms_link", class: "form-label", "Terms and Conditions Link" }
                                     input { r#type: "url", class: "form-control", id: "terms_link", name: "terms_link", value: "{d.tournament.terms_link.as_deref().unwrap_or(\"\")}", placeholder: "https://example.com/terms" }
                                     div { class: "form-text", "If given, teams and players must agree to these terms upon registration." }
+                                }
                                 }
 
                                 h3 { "Head Ref Options" }
@@ -698,10 +699,16 @@ pub fn TournamentSettings(url: String) -> Element {
                                         div { class: "form-text", "show the schedule will be visible to all users. Still visible to TOs and head refs if unchecked." }
                                     }
                                 }
-                                div { class: "mb-3",
-                                    div { class: "form-check",
-                                        input { class: "form-check-input", r#type: "checkbox", id: "registration_open", name: "registration_open", checked: d.tournament.registration_open }
-                                        label { class: "form-check-label", r#for: "registration_open", "Registration Open" }
+                                if d.tournament.league.is_none() {
+                                    div { class: "mb-3",
+                                        div { class: "form-check",
+                                            input { class: "form-check-input", r#type: "checkbox", id: "team_registration_open", name: "team_registration_open", checked: d.tournament.team_registration_open }
+                                            label { class: "form-check-label", r#for: "team_registration_open", "Team Registration Open" }
+                                        }
+                                        div { class: "form-check mt-1",
+                                            input { class: "form-check-input", r#type: "checkbox", id: "player_registration_open", name: "player_registration_open", checked: d.tournament.player_registration_open }
+                                            label { class: "form-check-label", r#for: "player_registration_open", "Player Registration Open" }
+                                        }
                                     }
                                 }
 
@@ -714,6 +721,7 @@ pub fn TournamentSettings(url: String) -> Element {
                 }
 
                 div { class: "col-md-4",
+                    if d.tournament.league.is_none() {
                     div { class: "card",
                         div { class: "card-header", h5 { class: "mb-0", "Penalty Types" } }
                         div { class: "card-body",
@@ -746,7 +754,9 @@ pub fn TournamentSettings(url: String) -> Element {
                             }
                         }
                     }
+                    }
 
+                    if d.tournament.league.is_none() {
                     div { class: "card mt-4",
                         div { class: "card-header",
                             h5 { class: "mb-0", "Tournament Organizers" }
@@ -823,6 +833,7 @@ pub fn TournamentSettings(url: String) -> Element {
                                 }
                             }
                         }
+                    }
                     }
                 }
             }
