@@ -34,7 +34,7 @@ def create_app(config=None):
         "SQLALCHEMY_DATABASE_URI", "sqlite:///tournament.db"
     )
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-    app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024  # 10MB max file size
+    # No Flask-side max upload size limit; reverse proxy limits (if any) are configured separately.
     app.config["SESSION_COOKIE_HTTPONLY"] = True
     # For cross-origin SPA (e.g. dx serve on port 8080, Flask on 5006), set ARCTOS_CORS_DEV=1
     # so the session cookie is sent with credentialed requests. SameSite=None requires Secure
@@ -264,6 +264,6 @@ def create_app(config=None):
     def too_large(e):
         from flask import jsonify
 
-        return jsonify({"success": False, "error": "File too large. Maximum size is 10MB."}), 413
+        return jsonify({"success": False, "error": "File too large."}), 413
 
     return app

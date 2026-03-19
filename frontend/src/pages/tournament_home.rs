@@ -4,17 +4,40 @@ use crate::components::{
 };
 use crate::types::{ToEntry, UpdatePlayerRegistrationRequest, UpdateTeamRegistrationRequest, User};
 use crate::Route;
+use chrono::{DateTime, SecondsFormat, Utc};
 use dioxus::prelude::*;
 
 #[derive(Clone)]
 struct PendingUpload {
     filename: String,
     file: dioxus::html::FileData,
+    camera_name: String,
     field_id: u32,
     start_world_suggested: Option<String>,
     start_world_value: String,
-    start_world_loading: bool,
     start_world_error: Option<String>,
+}
+
+fn infer_start_world_from_file(file: &dioxus::html::FileData) -> Option<String> {
+    let ms = file.last_modified() as i64;
+    if ms <= 0 {
+        return None;
+    }
+    DateTime::<Utc>::from_timestamp_millis(ms)
+        .map(|dt| dt.to_rfc3339_opts(SecondsFormat::Secs, true))
+}
+
+fn default_camera_name_from_filename(name: &str) -> String {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return "upload".to_string();
+    }
+    if let Some((stem, _)) = trimmed.rsplit_once('.') {
+        if !stem.trim().is_empty() {
+            return stem.trim().to_string();
+        }
+    }
+    trimmed.to_string()
 }
 
 fn is_current_user_to(me: Option<&Result<User, String>>, to_entries: &[ToEntry]) -> bool {
@@ -99,7 +122,7 @@ pub fn TournamentHome(url: String) -> Element {
     let mut uploading = use_signal(|| false);
     let mut upload_modal_open = use_signal(|| false);
     let mut user_uploads_refresh = use_signal(|| 0u32);
-    let mut user_upload_delete_error = use_signal(|| None::<String>);
+    let user_upload_delete_error = use_signal(|| None::<String>);
 
     let url_for_fields = url.clone();
     let fields_res = use_resource(move || {
@@ -607,8 +630,6 @@ pub fn TournamentHome(url: String) -> Element {
                                     } else {
                                         {{
                                             let default_field_id = fields[0].id;
-                                            let upload_url_onchange = url_for_user_upload.clone();
-                                            let upload_url_reset = url_for_user_upload.clone();
                                             rsx! {
                                                 p { class: "text-muted mb-2",
                                                     "Select one or more videos. We'll auto-detect the start timestamp from metadata; you can edit it if it's wrong."
@@ -622,7 +643,6 @@ pub fn TournamentHome(url: String) -> Element {
                                                     onchange: move |evt| {
                                                         #[cfg(target_arch = "wasm32")]
                                                         {
-                                                            use dioxus::html::HasFileData;
                                                             let files = evt.files();
                                                             if files.is_empty() {
                                                                 return;
@@ -630,67 +650,22 @@ pub fn TournamentHome(url: String) -> Element {
 
                                                             let mut items: Vec<PendingUpload> = Vec::new();
                                                             for f in files {
+                                                                let guessed_start = infer_start_world_from_file(&f);
+                                                                let filename = f.name();
                                                                 items.push(PendingUpload {
-                                                                    filename: f.name(),
+                                                                    camera_name: default_camera_name_from_filename(&filename),
+                                                                    filename,
                                                                     file: f,
                                                                     field_id: default_field_id,
-                                                                    start_world_suggested: None,
-                                                                    start_world_value: String::new(),
-                                                                    start_world_loading: true,
+                                                                    start_world_suggested: guessed_start.clone(),
+                                                                    start_world_value: guessed_start.unwrap_or_default(),
                                                                     start_world_error: None,
                                                                 });
                                                             }
-                                                            pending_uploads.set(items);
+                                                            let mut existing = pending_uploads();
+                                                            existing.extend(items);
+                                                            pending_uploads.set(existing);
                                                             upload_error.set(None);
-
-                                                            // Probe metadata timestamps in the background.
-                                                            let tournament_url = upload_url_onchange.clone();
-                                                            let mut pending_sig = pending_uploads.clone();
-                                                            spawn(async move {
-                                                                let snapshot = pending_sig();
-                                                                for (idx, u) in snapshot.iter().enumerate() {
-                                                                    let bytes = match u.file.read_bytes().await {
-                                                                        Ok(b) => b,
-                                                                        Err(_) => {
-                                                                            let mut list = pending_sig();
-                                                                            if let Some(t) = list.get_mut(idx) {
-                                                                                t.start_world_loading = false;
-                                                                                t.start_world_error =
-                                                                                    Some("Failed to read file".to_string());
-                                                                            }
-                                                                            pending_sig.set(list);
-                                                                            continue;
-                                                                        }
-                                                                    };
-                                                                    let ct = u.file.content_type();
-                                                                    match api::user_upload_probe_start_timestamp(
-                                                                        &tournament_url,
-                                                                        bytes,
-                                                                        ct,
-                                                                    )
-                                                                    .await
-                                                                    {
-                                                                        Ok(ts) => {
-                                                                            let mut list = pending_sig();
-                                                                            if let Some(t) = list.get_mut(idx) {
-                                                                                t.start_world_loading = false;
-                                                                                t.start_world_suggested = Some(ts.clone());
-                                                                                t.start_world_value = ts;
-                                                                                t.start_world_error = None;
-                                                                            }
-                                                                            pending_sig.set(list);
-                                                                        }
-                                                                        Err(e) => {
-                                                                            let mut list = pending_sig();
-                                                                            if let Some(t) = list.get_mut(idx) {
-                                                                                t.start_world_loading = false;
-                                                                                t.start_world_error = Some(e);
-                                                                            }
-                                                                            pending_sig.set(list);
-                                                                        }
-                                                                    }
-                                                                }
-                                                            });
                                                         }
                                                     }
                                                 }
@@ -701,6 +676,7 @@ pub fn TournamentHome(url: String) -> Element {
                                                             thead {
                                                                 tr {
                                                                     th { "File" }
+                                                                    th { "Clip/camera name" }
                                                                     th { "Field" }
                                                                     th { "Start timestamp (UTC)" }
                                                                     th { "" }
@@ -710,6 +686,22 @@ pub fn TournamentHome(url: String) -> Element {
                                                                 for (idx, item) in pending_uploads().iter().enumerate() {
                                                                     tr { key: "{item.filename}-{idx}",
                                                                         td { "{item.filename}" }
+                                                                        td {
+                                                                            input {
+                                                                                class: "form-control form-control-sm",
+                                                                                r#type: "text",
+                                                                                value: "{item.camera_name}",
+                                                                                placeholder: "Camera name",
+                                                                                disabled: uploading(),
+                                                                                oninput: move |e| {
+                                                                                    let mut list = pending_uploads();
+                                                                                    if let Some(t) = list.get_mut(idx) {
+                                                                                        t.camera_name = e.value();
+                                                                                    }
+                                                                                    pending_uploads.set(list);
+                                                                                }
+                                                                            }
+                                                                        }
                                                                         td {
                                                                             select {
                                                                                 class: "form-select form-select-sm",
@@ -736,7 +728,7 @@ pub fn TournamentHome(url: String) -> Element {
                                                                                     r#type: "text",
                                                                                     placeholder: "2026-03-18T01:23:45Z",
                                                                                     value: "{item.start_world_value}",
-                                                                                    disabled: uploading() || item.start_world_loading,
+                                                                                    disabled: uploading(),
                                                                                     oninput: move |e| {
                                                                                         let mut list = pending_uploads();
                                                                                         if let Some(t) = list.get_mut(idx) {
@@ -745,69 +737,29 @@ pub fn TournamentHome(url: String) -> Element {
                                                                                         pending_uploads.set(list);
                                                                                     }
                                                                                 }
-                                                                                {{
-                                                                                    let reset_url = upload_url_reset.clone();
-                                                                                    rsx! {
-                                                                                        button {
-                                                                                            class: "btn btn-sm btn-outline-secondary",
-                                                                                            disabled: uploading() || item.start_world_loading,
-                                                                                            onclick: move |_| {
-                                                                                                #[cfg(target_arch = "wasm32")]
-                                                                                                {
-                                                                                                    let tournament_url = reset_url.clone();
-                                                                                                    let u = pending_uploads()[idx].clone();
-                                                                                                    let mut pending_sig = pending_uploads.clone();
-                                                                                                    spawn(async move {
-                                                                                                        let bytes = match u.file.read_bytes().await {
-                                                                                                            Ok(b) => b,
-                                                                                                            Err(_) => {
-                                                                                                                let mut list = pending_sig();
-                                                                                                                if let Some(t) = list.get_mut(idx) {
-                                                                                                                    t.start_world_error = Some("Failed to read file".to_string());
-                                                                                                                }
-                                                                                                                pending_sig.set(list);
-                                                                                                                return;
-                                                                                                            }
-                                                                                                        };
-                                                                                                        let ct = u.file.content_type();
-                                                                                                        match api::user_upload_probe_start_timestamp(
-                                                                                                            &tournament_url,
-                                                                                                            bytes,
-                                                                                                            ct,
-                                                                                                        )
-                                                                                                        .await
-                                                                                                        {
-                                                                                                            Ok(ts) => {
-                                                                                                                let mut list = pending_sig();
-                                                                                                                if let Some(t) = list.get_mut(idx) {
-                                                                                                                    t.start_world_suggested = Some(ts.clone());
-                                                                                                                    t.start_world_value = ts;
-                                                                                                                    t.start_world_error = None;
-                                                                                                                }
-                                                                                                                pending_sig.set(list);
-                                                                                                            }
-                                                                                                            Err(e) => {
-                                                                                                                let mut list = pending_sig();
-                                                                                                                if let Some(t) = list.get_mut(idx) {
-                                                                                                                    t.start_world_error = Some(e);
-                                                                                                                }
-                                                                                                                pending_sig.set(list);
-                                                                                                            }
-                                                                                                        }
-                                                                                                    });
-                                                                                                }
-                                                                                            },
-                                                                                            "Reset"
+                                                                                button {
+                                                                                    class: "btn btn-sm btn-outline-secondary",
+                                                                                    disabled: uploading(),
+                                                                                    onclick: move |_| {
+                                                                                        let mut list = pending_uploads();
+                                                                                        if let Some(t) = list.get_mut(idx) {
+                                                                                            t.start_world_value = t
+                                                                                                .start_world_suggested
+                                                                                                .clone()
+                                                                                                .unwrap_or_default();
+                                                                                            t.start_world_error = None;
                                                                                         }
-                                                                                    }
-                                                                                }}
+                                                                                        pending_uploads.set(list);
+                                                                                    },
+                                                                                    "Reset"
+                                                                                }
                                                                             }
-                                                                            if item.start_world_loading {
-                                                                                div { class: "text-muted small mt-1", "Reading metadata…" }
-                                                                            } else if let Some(err) = &item.start_world_error {
+                                                                            if let Some(err) = &item.start_world_error {
                                                                                 div { class: "text-danger small mt-1", "{err}" }
                                                                             } else if let Some(s) = &item.start_world_suggested {
                                                                                 div { class: "text-muted small mt-1", "Metadata: {s}" }
+                                                                            } else {
+                                                                                div { class: "text-muted small mt-1", "No metadata timestamp found; using manual value." }
                                                                             }
                                                                         }
                                                                         td {
@@ -883,6 +835,7 @@ pub fn TournamentHome(url: String) -> Element {
                                                                 bytes,
                                                                 content_type,
                                                                 start_world,
+                                                                Some(u.camera_name.clone()),
                                                             )
                                                             .await
                                                             {

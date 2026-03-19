@@ -282,6 +282,7 @@ pub async fn user_upload_video_footage(
     video_bytes: bytes::Bytes,
     content_type: Option<String>,
     start_world_override: Option<String>,
+    camera_name: Option<String>,
 ) -> Result<String, String> {
     use wasm_bindgen::JsCast;
 
@@ -292,6 +293,12 @@ pub async fn user_upload_video_footage(
         if !sw.trim().is_empty() {
             form.append_with_str("start_world", sw.trim())
                 .map_err(|_| "append start_world failed")?;
+        }
+    }
+    if let Some(name) = camera_name {
+        if !name.trim().is_empty() {
+            form.append_with_str("camera_name", name.trim())
+                .map_err(|_| "append camera_name failed")?;
         }
     }
 
@@ -348,69 +355,6 @@ pub async fn user_upload_video_footage(
     let json_str = text.as_string().unwrap_or_default();
     let v: Value = serde_json::from_str(&json_str).map_err(|e| e.to_string())?;
     Ok(v.get("upload_group_name").and_then(|x| x.as_str()).unwrap_or("").to_string())
-}
-
-#[cfg(target_arch = "wasm32")]
-pub async fn user_upload_probe_start_timestamp(
-    tournament_url: &str,
-    video_bytes: bytes::Bytes,
-    content_type: Option<String>,
-) -> Result<String, String> {
-    use wasm_bindgen::JsCast;
-
-    let form = web_sys::FormData::new().map_err(|_| "FormData::new failed")?;
-
-    let arr = js_sys::Uint8Array::new_from_slice(video_bytes.as_ref());
-    let parts = js_sys::Array::new();
-    parts.push(&arr);
-    let blob_opts = web_sys::BlobPropertyBag::new();
-    if let Some(ct) = content_type {
-        blob_opts.set_type(&ct);
-    }
-    let blob = web_sys::Blob::new_with_u8_array_sequence_and_options(&parts.into(), &blob_opts)
-        .map_err(|e| format!("{:?}", e))?;
-    form.append_with_blob("video", &blob)
-        .map_err(|_| "append video failed")?;
-
-    let url = format!(
-        "{}/_api/tournaments/{}/user-upload/probe-start",
-        base(),
-        tournament_url
-    );
-    let opts = web_sys::RequestInit::new();
-    opts.set_method("POST");
-    let form_js = wasm_bindgen::JsValue::from(form);
-    opts.set_body(form_js.as_ref());
-    #[allow(deprecated)]
-    opts.set_credentials(web_sys::RequestCredentials::Include);
-
-    let window = web_sys::window().ok_or("no window")?;
-    let request = web_sys::Request::new_with_str_and_init(&url, &opts)
-        .map_err(|_| "Request::new failed")?;
-    let resp = wasm_bindgen_futures::JsFuture::from(window.fetch_with_request(&request))
-        .await
-        .map_err(|e| format!("{:?}", e))?;
-
-    let resp: web_sys::Response = resp.dyn_into().map_err(|_| "response cast failed")?;
-    if !resp.ok() {
-        let text = wasm_bindgen_futures::JsFuture::from(
-            resp.text()
-                .map_err(|e: wasm_bindgen::JsValue| format!("{:?}", e))?,
-        )
-        .await
-        .map_err(|e| format!("{:?}", e))?;
-        let msg = text.as_string().unwrap_or_else(|| "Unknown error".to_string());
-        return Err(format!("Probe failed: {}", msg));
-    }
-    let text = wasm_bindgen_futures::JsFuture::from(
-        resp.text()
-            .map_err(|e: wasm_bindgen::JsValue| format!("{:?}", e))?,
-    )
-    .await
-    .map_err(|e| format!("{:?}", e))?;
-    let json_str = text.as_string().unwrap_or_default();
-    let v: Value = serde_json::from_str(&json_str).map_err(|e| e.to_string())?;
-    Ok(v.get("start_world").and_then(|x| x.as_str()).unwrap_or("").to_string())
 }
 
 pub async fn start_match_data(

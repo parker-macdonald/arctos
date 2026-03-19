@@ -51,7 +51,7 @@ from app.filters import is_head_ref
 from os import path, listdir
 
 from app.utils.footage import finalize_recording_worker
-from app.utils.user_uploads import user_autoclips_from_uploaded_video_worker, _get_video_start_world_datetime
+from app.utils.user_uploads import user_autoclips_from_uploaded_video_worker
 from app.utils.camera_helpers import (
     generate_camera_key,
     validate_camera_key,
@@ -1063,6 +1063,8 @@ def user_upload_video_footage(tournament_url: str):
         except ValueError:
             return jsonify({"error": "start_world must be an ISO timestamp"}), 400
 
+    camera_name_override = (request.form.get("camera_name") or "").strip()
+
     field_obj = Field.query.filter_by(event=tournament_url, id=field_id).first()
     if not field_obj:
         return jsonify({"error": "Field not found"}), 404
@@ -1070,6 +1072,8 @@ def user_upload_video_footage(tournament_url: str):
     upload_group_name = uuid.uuid4().hex[:12]
     original_filename = video_file.filename
     orig_stem = path.splitext(path.basename(original_filename))[0] or "upload"
+    if camera_name_override:
+        orig_stem = camera_name_override
     ext = path.splitext(original_filename)[1].lower()
     if not ext:
         ext = ".webm"
@@ -1118,29 +1122,6 @@ def user_upload_video_footage(tournament_url: str):
             "upload_group_name": upload_group_name,
         }
     )
-
-
-@bp.route("/tournaments/<tournament_url>/user-upload/probe-start", methods=["POST"])
-@login_required
-def user_upload_probe_start_timestamp(tournament_url: str):
-    """Authenticated endpoint: probe start timestamp from video metadata (no processing)."""
-    import os
-    import tempfile
-    from app.utils.user_uploads import _dt_to_iso_z
-
-    video_file = request.files.get("video") or request.files.get("file")
-    if not video_file or video_file.filename == "":
-        return jsonify({"error": "video file is required"}), 400
-
-    ext = path.splitext(video_file.filename)[1].lower() or ".webm"
-    with tempfile.TemporaryDirectory() as tmpdir:
-        tmp_abs = path.join(tmpdir, f"probe{ext}")
-        video_file.save(tmp_abs)
-        try:
-            dt = _get_video_start_world_datetime(tmp_abs)
-        except Exception as e:
-            return jsonify({"error": f"ffprobe failed: {e}"}), 400
-        return jsonify({"start_world": _dt_to_iso_z(dt)})
 
 
 @bp.route(
