@@ -15,6 +15,8 @@ from flask_executor import Executor
 from datetime import datetime, timedelta, timezone
 import json
 import time
+import threading
+import uuid
 
 from flask_login.utils import urlencode
 from urllib3.util import url
@@ -23,6 +25,7 @@ from models import (
     Match,
     Field,
     Tag,
+    Camera,
     TeamRegistration,
     PlayerRegistration,
     Team,
@@ -48,6 +51,7 @@ from app.filters import is_head_ref
 from os import path, listdir
 
 from app.utils.footage import finalize_recording_worker
+from app.utils.user_uploads import user_autoclips_from_uploaded_video_worker
 from app.utils.camera_helpers import (
     generate_camera_key,
     validate_camera_key,
@@ -1023,6 +1027,144 @@ def record_finalize():
             "match_id": match_id,
         }
     )
+
+
+@bp.route("/tournaments/<tournament_url>/user-upload", methods=["POST"])
+@login_required
+def user_upload_video_footage(tournament_url: str):
+    """Authenticated endpoint: upload a user-recorded video and auto-generate match highlights."""
+    import os
+
+    field_id_raw = request.form.get("field_id") or request.form.get("field")
+    if not tournament_url or not field_id_raw:
+        return jsonify({"error": "tournament and field_id are required"}), 400
+
+    try:
+        field_id = int(field_id_raw)
+    except ValueError:
+        return jsonify({"error": "field_id must be an integer"}), 400
+
+    video_file = request.files.get("video") or request.files.get("file")
+    if not video_file or video_file.filename == "":
+        return jsonify({"error": "video file is required"}), 400
+
+    field_obj = Field.query.filter_by(event=tournament_url, id=field_id).first()
+    if not field_obj:
+        return jsonify({"error": "Field not found"}), 404
+
+    upload_group_name = uuid.uuid4().hex[:12]
+    original_filename = video_file.filename
+    orig_stem = path.splitext(path.basename(original_filename))[0] or "upload"
+    ext = path.splitext(original_filename)[1].lower()
+    if not ext:
+        ext = ".webm"
+
+    upload_dir = path.join(
+        current_app.root_path,
+        "../static/uploads/videos",
+        tournament_url,
+        field_obj.name,
+        "user_uploads",
+        upload_group_name,
+    )
+    os.makedirs(upload_dir, exist_ok=True)
+
+    saved_name = f"source{ext}"
+    saved_abs_path = path.join(upload_dir, saved_name)
+    video_file.save(saved_abs_path)
+
+    uploader_user_id = str(current_user.id)
+    uploader_user_type = current_user.__class__.__name__.lower()
+
+    app_obj = current_app._get_current_object()
+    logger = current_app.logger
+
+    def run_user_autoclips():
+        with app_obj.app_context():
+            user_autoclips_from_uploaded_video_worker(
+                logger,
+                tournament_url=tournament_url,
+                field_name=field_obj.name,
+                match_points_padding_sec=3.0,
+                uploader_user_id=uploader_user_id,
+                uploader_user_type=uploader_user_type,
+                user_video_abs_path=saved_abs_path,
+                user_video_filename_stem=orig_stem,
+                upload_group_name=upload_group_name,
+            )
+
+    threading.Thread(target=run_user_autoclips, daemon=True).start()
+
+    return jsonify(
+        {
+            "success": True,
+            "message": "Upload received; processing has begun.",
+            "upload_group_name": upload_group_name,
+        }
+    )
+
+
+@bp.route(
+    "/tournaments/<tournament_url>/user-upload/delete-camera/<camera_uuid>",
+    methods=["DELETE"],
+)
+@require_tournament_organizer
+def user_upload_delete_camera(tournament_url: str, camera_uuid: str):
+    """TO-only: delete a user-uploaded camera highlight."""
+    import os
+
+    cam = (
+        Camera.query.filter_by(uuid=camera_uuid, event=tournament_url)
+        .filter_by(source_type="user_upload")
+        .first()
+    )
+    if not cam:
+        return jsonify({"error": "Camera not found"}), 404
+
+    # Best-effort local file cleanup.
+    if cam.file:
+        try:
+            abs_fp = path.join(current_app.root_path, "..", cam.file)
+            if os.path.exists(abs_fp):
+                os.remove(abs_fp)
+        except Exception:
+            pass
+
+    db.session.delete(cam)
+    db.session.commit()
+    return jsonify({"success": True})
+
+
+@bp.route("/tournaments/<tournament_url>/user-uploaded-cameras", methods=["GET"])
+@require_tournament_organizer
+def user_upload_list_cameras(tournament_url: str):
+    """TO-only: list user-uploaded cameras so TOs can moderate/delete them."""
+    cams = (
+        Camera.query.filter_by(event=tournament_url, source_type="user_upload")
+        .order_by(Camera.match_uuid.asc(), Camera.name.asc())
+        .all()
+    )
+
+    rows = []
+    for cam in cams:
+        m = Match.query.filter_by(uuid=cam.match_uuid).first()
+        f = Field.query.filter_by(id=cam.field).first()
+        rows.append(
+            {
+                "uuid": cam.uuid,
+                "match_uuid": cam.match_uuid,
+                "match_name": m.name if m else cam.match_uuid,
+                "field_name": f.name if f else str(cam.field),
+                "camera_name": cam.name,
+                "status": cam.status,
+                "link": cam.link,
+                "file": cam.file,
+                "uploaded_by_user_id": cam.uploaded_by_user_id,
+                "uploaded_by_user_type": cam.uploaded_by_user_type,
+            }
+        )
+
+    return jsonify({"cameras": rows})
 
 
 @bp.route("/<tournament_url>/update-settings", methods=["POST"])

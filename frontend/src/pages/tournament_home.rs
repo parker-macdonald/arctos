@@ -2,9 +2,19 @@ use crate::api;
 use crate::components::{
     EditRegistrationContext, EditRegistrationModal, EventHeader, LeagueRegistrationButtons,
 };
-use crate::types::{ToEntry, UpdatePlayerRegistrationRequest, UpdateTeamRegistrationRequest, User};
+use crate::types::{
+    FieldOption, ToEntry, UpdatePlayerRegistrationRequest, UpdateTeamRegistrationRequest, User,
+    UserUploadedCamerasResponse, UserUploadedCameraRow,
+};
 use crate::Route;
 use dioxus::prelude::*;
+
+#[derive(Clone)]
+struct PendingUpload {
+    filename: String,
+    file: dioxus::html::FileData,
+    field_id: u32,
+}
 
 fn is_current_user_to(me: Option<&Result<User, String>>, to_entries: &[ToEntry]) -> bool {
     me.and_then(|r| r.as_ref().ok())
@@ -58,6 +68,8 @@ pub fn TournamentHome(url: String) -> Element {
     let mut show_edit_team_modal = use_signal(|| false);
     let mut show_league_edit_modal = use_signal(|| false);
     let url_for_delete_confirm = url.clone();
+    let url_for_user_upload = url.clone();
+    let url_for_user_upload_delete = url.clone();
     let mut about_markdown = use_signal(|| Option::<String>::None);
     let mut delete_redirect_league = use_signal(|| None as Option<String>);
     use_effect(move || {
@@ -79,6 +91,34 @@ pub fn TournamentHome(url: String) -> Element {
             }
         }
     }));
+
+    // Upload footage UI state (hidden when not logged in).
+    let mut pending_uploads = use_signal(|| Vec::<PendingUpload>::new());
+    let mut upload_error = use_signal(|| None::<String>);
+    let mut uploading = use_signal(|| false);
+    let mut user_uploads_refresh = use_signal(|| 0u32);
+    let mut user_upload_delete_error = use_signal(|| None::<String>);
+
+    let url_for_fields = url.clone();
+    let fields_res = use_resource(move || {
+        let value = url_for_fields.clone();
+        async move {
+            api::tournament_fields(&value)
+                .await
+                .map_err(|e| e.to_string())
+        }
+    });
+
+    let url_for_uploads_list = url.clone();
+    let user_uploads_res = use_resource(move || {
+        let _ = user_uploads_refresh();
+        let u = url_for_uploads_list.clone();
+        async move {
+            api::user_uploaded_cameras_list(&u)
+                .await
+                .map_err(|e| e.to_string())
+        }
+    });
 
     rsx! {
         if let Some(Ok(d)) = val.read().as_ref() {
@@ -259,6 +299,158 @@ pub fn TournamentHome(url: String) -> Element {
                             }
                         }
                     }
+                    if let Some(Ok(_me)) = me_res.read().as_ref() {
+                        div {
+                            class: "card mt-4",
+                            div { class: "card-header", h5 { class: "mb-0", "Upload Footage" } }
+                            div { class: "card-body",
+                                if let Some(Ok(fields)) = fields_res.read().as_ref() {
+                                    if fields.is_empty() {
+                                        p { class: "text-muted", "No fields configured for this tournament." }
+                                    } else {
+                                        {{
+                                            let default_field_id = fields[0].id;
+                                            rsx! {
+                                                if pending_uploads().is_empty() {
+                                                    p { class: "text-muted", "Select one or more video files to upload." }
+                                                }
+                                                input {
+                                                    class: "form-control form-control-sm",
+                                                    r#type: "file",
+                                                    accept: "video/*",
+                                                    multiple: true,
+                                                    disabled: uploading(),
+                                                    onchange: move |evt| {
+                                                        #[cfg(target_arch = "wasm32")]
+                                                        {
+                                                            use dioxus::html::HasFileData;
+                                                    let files = evt.files();
+                                                    if files.is_empty() {
+                                                        return;
+                                                    }
+                                                    let mut items: Vec<PendingUpload> = Vec::new();
+                                                    for f in files {
+                                                        items.push(PendingUpload {
+                                                            filename: f.name(),
+                                                            file: f,
+                                                            field_id: default_field_id,
+                                                        });
+                                                            }
+                                                    pending_uploads.set(items);
+                                                    upload_error.set(None);
+                                                        }
+                                                    }
+                                                }
+                                                if !pending_uploads().is_empty() {
+                                                    div { class: "mt-3 table-responsive",
+                                                        table { class: "table table-sm align-middle",
+                                                            tbody {
+                                                                for (idx, item) in pending_uploads().iter().enumerate() {
+                                                                    tr { key: "{item.filename}-{idx}",
+                                                                        td { "{item.filename}" }
+                                                                        td {
+                                                                            select {
+                                                                                class: "form-select form-select-sm",
+                                                                                value: "{item.field_id}",
+                                                                                disabled: uploading(),
+                                                                                onchange: move |ev| {
+                                                                                    let v = ev.value().parse::<u32>().unwrap_or(default_field_id);
+                                                                                    let mut list = pending_uploads();
+                                                                                    if let Some(t) = list.get_mut(idx) {
+                                                                                        t.field_id = v;
+                                                                                    }
+                                                                                    pending_uploads.set(list);
+                                                                                }
+                                                                                ,
+                                                                                for f in fields.iter() {
+                                                                                    option { value: "{f.id}", "{f.name}" }
+                                                                                }
+                                                                            }
+                                                                        }
+                                                                        td {
+                                                                            button {
+                                                                                class: "btn btn-sm btn-outline-danger",
+                                                                                disabled: uploading(),
+                                                                                onclick: move |_| {
+                                                                                    let mut list = pending_uploads();
+                                                                                    if idx < list.len() {
+                                                                                        list.remove(idx);
+                                                                                    }
+                                                                                    pending_uploads.set(list);
+                                                                                },
+                                                                                "Remove"
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                    if let Some(err) = upload_error() {
+                                                        p { class: "text-danger mt-2", "{err}" }
+                                                    }
+                                                    button {
+                                                        class: "btn btn-primary mt-3",
+                                                        disabled: uploading(),
+                                                        onclick: move |_| {
+                                                            #[cfg(target_arch = "wasm32")]
+                                                            {
+                                                                let url = url_for_user_upload.clone();
+                                                                let uploads = pending_uploads();
+                                                                if uploads.is_empty() {
+                                                                    return;
+                                                                }
+                                                                uploading.set(true);
+                                                                upload_error.set(None);
+                                                                spawn(async move {
+                                                                    let mut first_err: Option<String> = None;
+                                                                    for u in uploads {
+                                                                        let content_type = u.file.content_type();
+                                                                        let bytes = match u.file.read_bytes().await {
+                                                                            Ok(b) => b,
+                                                                            Err(_) => {
+                                                                                if first_err.is_none() {
+                                                                                    first_err =
+                                                                                        Some("Failed to read uploaded file".to_string());
+                                                                                }
+                                                                                continue;
+                                                                            }
+                                                                        };
+                                                                        if let Err(e) = api::user_upload_video_footage(
+                                                                            &url,
+                                                                            u.field_id,
+                                                                            bytes,
+                                                                            content_type,
+                                                                        )
+                                                                        .await
+                                                                        {
+                                                                            if first_err.is_none() {
+                                                                                first_err = Some(e);
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                    uploading.set(false);
+                                                                    if let Some(e) = first_err {
+                                                                        upload_error.set(Some(e));
+                                                                    } else {
+                                                                        pending_uploads.set(Vec::new());
+                                                                        user_uploads_refresh.set(user_uploads_refresh() + 1);
+                                                                    }
+                                                                });
+                                                            }
+                                                        },
+                                                        if uploading() { "Uploading..." } else { "Upload Videos" }
+                                                    }
+                                                }
+                                            }
+                                        }}
+                                    }
+                                } else {
+                                    p { class: "text-muted", "Loading fields..." }
+                                }
+                            }
+                        }
+                    }
                 }
                                 if is_current_user_to(me_res.read().as_ref(), &d.to_entries) {
                                     div { class: "col-md-4",
@@ -282,6 +474,80 @@ pub fn TournamentHome(url: String) -> Element {
                                         },
                                         "Delete Tournament"
                                     }
+                                }
+                            }
+                        }
+                        div { class: "card mt-4",
+                            div { class: "card-header",
+                                h5 { class: "mb-0", "User Uploaded Videos" }
+                            }
+                            div { class: "card-body",
+                                if let Some(Ok(cams)) = user_uploads_res.read().as_ref() {
+                                    if cams.cameras.is_empty() {
+                                        p { class: "text-muted", "No user uploads yet." }
+                                    } else {
+                                        div { class: "table-responsive",
+                                            table { class: "table table-sm align-middle",
+                                                thead {
+                                                    tr {
+                                                        th { "Match" }
+                                                        th { "Field" }
+                                                        th { "Camera" }
+                                                        th { "Status" }
+                                                        th { "" }
+                                                    }
+                                                }
+                                                tbody {
+                                                    for cam in cams.cameras.iter().cloned() {
+                                                        tr { key: "{cam.uuid}",
+                                                            td { "{cam.match_name}" }
+                                                            td { "{cam.field_name}" }
+                                                            td { "{cam.camera_name}" }
+                                                            td { "{cam.status}" }
+                                                            td {
+                                                                {{
+                                                                    let url = url_for_user_upload_delete.clone();
+                                                                    let uuid = cam.uuid.clone();
+                                                                    let delete_err = user_upload_delete_error.clone();
+                                                                    let refresh_sig = user_uploads_refresh.clone();
+                                                                    rsx! {
+                                                                        button {
+                                                                            class: "btn btn-sm btn-outline-danger",
+                                                                            disabled: uploading(),
+                                                                            onclick: move |_| {
+                                                                                let mut delete_err_local = delete_err.clone();
+                                                                                let mut refresh_sig_local = refresh_sig.clone();
+                                                                                delete_err_local.set(None);
+                                                                                let url = url.clone();
+                                                                                let uuid = uuid.clone();
+                                                                                spawn(async move {
+                                                                                    match api::delete_user_uploaded_camera(&url, &uuid).await {
+                                                                                        Ok(()) => {
+                                                                                            refresh_sig_local
+                                                                                                .set(refresh_sig_local() + 1);
+                                                                                        }
+                                                                                        Err(e) => {
+                                                                                            delete_err_local.set(Some(e));
+                                                                                        }
+                                                                                    }
+                                                                                });
+                                                                            },
+                                                                            "Delete"
+                                                                        }
+                                                                    }
+                                                                }}
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    p { class: "text-muted", "Loading..." }
+                                }
+                                if let Some(err) = user_upload_delete_error() {
+                                    p { class: "text-danger mt-3", "{err}" }
                                 }
                             }
                         }

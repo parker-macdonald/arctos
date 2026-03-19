@@ -521,8 +521,41 @@ pub struct CameraData {
     pub video_path: Option<String>,
     pub camera_id: Option<String>,
     pub session_id: Option<String>,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub source_type: Option<String>,
+    #[serde(default)]
+    pub time_world: Option<Vec<String>>,
+    #[serde(default)]
+    pub time_video: Option<Vec<f64>>,
     #[serde(default, deserialize_with = "deserialize_point_timestamps")]
     pub point_timestamps: Option<Vec<PointTimestamp>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct FieldOption {
+    pub id: u32,
+    pub name: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct UserUploadedCameraRow {
+    pub uuid: String,
+    pub match_uuid: String,
+    pub match_name: String,
+    pub field_name: String,
+    pub camera_name: String,
+    pub status: String,
+    pub link: Option<String>,
+    pub file: Option<String>,
+    pub uploaded_by_user_id: Option<String>,
+    pub uploaded_by_user_type: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct UserUploadedCamerasResponse {
+    pub cameras: Vec<UserUploadedCameraRow>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

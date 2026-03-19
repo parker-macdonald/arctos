@@ -46,6 +46,7 @@ from models import (
     Match,
     Point,
     Field,
+    Camera,
     Tag,
     Injury,
     MatchNote,
@@ -3369,135 +3370,121 @@ def tournament_match_detail(tournament_url):
         for p in points
     ]
 
-    # Get camera data (same logic as match_page route)
+    # Get camera data. New sources come from the `Camera` table; legacy
+    # recorded point timestamps are read from `Match.camera_stream_starts`.
     available_cameras = []
     camera_url = None
     from app.utils.camera_helpers import parse_camera_urls
     import os
-    from flask import current_app
 
-    stream_starts = {}
-    recorded_videos = []
-    camera_urls = []
-
+    legacy_point_timestamps_by_camera_name = {}
     if match.camera_stream_starts:
         try:
-            stream_starts_data = json.loads(match.camera_stream_starts)
-            for camera_id, recording_data in stream_starts_data.items():
-                recordings = (
-                    recording_data
-                    if isinstance(recording_data, list)
-                    else [recording_data]
-                )
-                for recording in recordings:
-                    if isinstance(recording, dict) and "video_path" in recording:
-                        video_path = recording.get("video_path", "")
-                        if video_path:
-                            # S3: video_path is the object key; resolve to presigned URL
-                            if recording.get("storage") == "s3":
-                                bucket = current_app.config.get("S3_VIDEO_BUCKET")
-                                if bucket:
-                                    from app.utils.s3_video import get_presigned_url
-                                    region = current_app.config.get("AWS_REGION") or "us-east-1"
-                                    expiry = current_app.config.get(
-                                        "S3_PRESIGNED_EXPIRY_SECONDS", 3600
-                                    )
-                                    endpoint_url = current_app.config.get("S3_ENDPOINT_URL")
-                                    playable_url = get_presigned_url(
-                                        bucket, video_path, region=region,
-                                        expiry_seconds=expiry, endpoint_url=endpoint_url
-                                    )
-                                    if playable_url:
-                                        recorded_videos.append(
-                                            {
-                                                "camera_id": camera_id,
-                                                "video_path": playable_url,
-                                                "point_timestamps": recording.get(
-                                                    "point_timestamps"
-                                                ),
-                                                "type": "recorded",
-                                                "start_time": recording.get("start_time"),
-                                                "start_timestamp": recording.get(
-                                                    "start_timestamp"
-                                                ),
-                                                "session_id": recording.get("session_id"),
-                                            }
-                                        )
-                            else:
-                                # Local: resolve to full path and check file exists
-                                if video_path.startswith("static/"):
-                                    video_full_path = os.path.join(
-                                        current_app.root_path, "..", video_path
-                                    )
-                                else:
-                                    video_full_path = os.path.join(
-                                        current_app.root_path, "../static", video_path
-                                    )
-                                if os.path.exists(video_full_path):
-                                    recorded_videos.append(
-                                        {
-                                            "camera_id": camera_id,
-                                            "video_path": video_path,
-                                            "point_timestamps": recording.get(
-                                                "point_timestamps"
-                                            ),
-                                            "type": "recorded",
-                                            "start_time": recording.get("start_time"),
-                                            "start_timestamp": recording.get(
-                                                "start_timestamp"
-                                            ),
-                                            "session_id": recording.get("session_id"),
-                                        }
-                                    )
+            legacy_data = json.loads(match.camera_stream_starts) or {}
+            if isinstance(legacy_data, dict):
+                for cam_name, recording_data in legacy_data.items():
+                    if isinstance(recording_data, dict):
+                        pts = recording_data.get("point_timestamps")
+                        if pts is not None:
+                            legacy_point_timestamps_by_camera_name[cam_name] = pts
         except (json.JSONDecodeError, TypeError):
             pass
 
-    # Get YouTube cameras from field configuration
+    # 1) YouTube livestream cameras from Field configuration (source of truth initially).
+    camera_urls: list[str] = []
     if match.field:
         field_obj = Field.query.filter_by(
             event=tournament_url, name=match.field
         ).first()
         if field_obj and field_obj.camera:
             camera_urls = parse_camera_urls(field_obj.camera)
-            if camera_urls:
-                for idx, url in enumerate(camera_urls):
-                    stream_start_str = stream_starts.get(str(idx))
-                    available_cameras.append(
-                        {
-                            "index": idx,
-                            "url": url,
-                            "stream_start_time": (
-                                stream_start_str if stream_start_str else None
-                            ),
-                            "type": "youtube",
-                        }
-                    )
+            for idx, url in enumerate(camera_urls):
+                available_cameras.append(
+                    {
+                        "index": idx,
+                        "url": url,
+                        "stream_start_time": None,
+                        "type": "youtube",
+                        "status": "SUCCESS",
+                    }
+                )
 
-    # Add recorded videos whenever we have them (match may be in progress, completed, or not yet started)
-    if recorded_videos:
-        for idx, recording in enumerate(recorded_videos):
-            start_time = recording.get("start_time")
-            if not start_time and recording.get("start_timestamp"):
-                start_time = datetime.fromtimestamp(
-                    int(recording["start_timestamp"]) / 1000, tz=timezone.utc
-                ).isoformat()
-            available_cameras.append(
-                {
-                    "index": len(camera_urls) + idx,
-                    "url": None,
-                    "stream_start_time": start_time,
-                    "type": "recorded",
-                    "video_path": recording["video_path"],
-                    "camera_id": recording.get("camera_id", "unknown"),
-                    "session_id": recording.get("session_id", ""),
-                    "point_timestamps": recording.get("point_timestamps"),
-                }
-            )
+    # 2) Match-scoped cameras from the new Camera table.
+    camera_rows = (
+        Camera.query.filter_by(match_uuid=match.uuid)
+        .filter_by(event=tournament_url)
+        .order_by(Camera.name.asc())
+        .all()
+    )
+    for idx, cam in enumerate(camera_rows):
+        cam_type = (
+            "youtube"
+            if (cam.source_type or "").strip() == "youtube_livestream"
+            else "recorded"
+        )
+        time_world = None
+        time_video = None
+        try:
+            time_world = json.loads(cam.time_world) if cam.time_world else None
+        except (json.JSONDecodeError, TypeError):
+            time_world = None
+        try:
+            time_video = json.loads(cam.time_video) if cam.time_video else None
+        except (json.JSONDecodeError, TypeError):
+            time_video = None
+
+        # Only provide YouTube URL/id once upload succeeded.
+        url = cam.link if cam.status == "SUCCESS" else None
+
+        # FAILED downloads:
+        # - if `file` is a local static/ path, frontend can link directly
+        # - if `file` looks like an S3 key, return a presigned URL instead
+        video_path = cam.file
+        if cam.status == "FAILED" and video_path and not video_path.startswith(
+            "static/"
+        ):
+            bucket = current_app.config.get("S3_VIDEO_BUCKET")
+            if bucket:
+                from app.utils.s3_video import get_presigned_url
+
+                region = (current_app.config.get("AWS_REGION") or "us-east-1") or "us-east-1"
+                expiry = current_app.config.get(
+                    "S3_PRESIGNED_EXPIRY_SECONDS", 3600
+                )
+                endpoint_url = current_app.config.get("S3_ENDPOINT_URL")
+                playable_url = get_presigned_url(
+                    bucket,
+                    video_path,
+                    region=region,
+                    expiry_seconds=expiry,
+                    endpoint_url=endpoint_url,
+                )
+                if playable_url:
+                    video_path = playable_url
+
+        available_cameras.append(
+            {
+                "index": len(camera_urls) + idx,
+                "url": url,
+                "stream_start_time": None,
+                "type": cam_type,
+                "video_path": video_path,
+                "camera_id": cam.name,
+                "session_id": None,
+                "point_timestamps": legacy_point_timestamps_by_camera_name.get(
+                    cam.name
+                ),
+                "status": cam.status,
+                "source_type": cam.source_type,
+                "time_world": time_world,
+                "time_video": time_video,
+            }
+        )
 
     if available_cameras:
         first_cam = available_cameras[0]
         if first_cam.get("type") == "youtube":
-            camera_url = first_cam["url"]
+            camera_url = first_cam.get("url")
 
     # Get match notes
     initial_notes = match.initial_notes or ""

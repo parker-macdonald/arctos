@@ -216,6 +216,133 @@ pub async fn tournament_detail(tournament_url: &str) -> Result<TournamentDetailR
     response_json(r).await
 }
 
+pub async fn tournament_fields(tournament_url: &str) -> Result<Vec<FieldOption>, String> {
+    let c = client();
+    let r = with_credentials(
+        c.get(format!("{}/_api/tournaments/{}/fields", base(), tournament_url))
+    )
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let data: Value = response_json(r).await?;
+    let fields_val = data.get("fields").cloned().unwrap_or_else(|| Value::Array(vec![]));
+    serde_json::from_value::<Vec<FieldOption>>(fields_val).map_err(|e| e.to_string())
+}
+
+pub async fn user_uploaded_cameras_list(
+    tournament_url: &str,
+) -> Result<UserUploadedCamerasResponse, String> {
+    let c = client();
+    let r = with_credentials(
+        c.get(format!(
+            "{}/_api/tournaments/{}/user-uploaded-cameras",
+            base(),
+            tournament_url
+        ))
+    )
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    response_json(r).await
+}
+
+pub async fn delete_user_uploaded_camera(
+    tournament_url: &str,
+    camera_uuid: &str,
+) -> Result<(), String> {
+    let c = client();
+    let r = with_credentials(
+        c.delete(format!(
+            "{}/_api/tournaments/{}/user-upload/delete-camera/{}",
+            base(),
+            tournament_url,
+            camera_uuid
+        ))
+    )
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    let data: Value = response_json(r).await?;
+    if data.get("success").and_then(|v| v.as_bool()) == Some(true) {
+        Ok(())
+    } else {
+        Err(data
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Delete failed")
+            .to_string())
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub async fn user_upload_video_footage(
+    tournament_url: &str,
+    field_id: u32,
+    video_bytes: bytes::Bytes,
+    content_type: Option<String>,
+) -> Result<String, String> {
+    use wasm_bindgen::JsCast;
+
+    let form = web_sys::FormData::new().map_err(|_| "FormData::new failed")?;
+    form.append_with_str("field_id", &field_id.to_string())
+        .map_err(|_| "append field_id failed")?;
+
+    // Create a Blob from the raw bytes read via Dioxus `FileData`.
+    let arr = js_sys::Uint8Array::new_from_slice(video_bytes.as_ref());
+    let parts = js_sys::Array::new();
+    parts.push(&arr);
+    let blob_opts = web_sys::BlobPropertyBag::new();
+    if let Some(ct) = content_type {
+        blob_opts.set_type(&ct);
+    }
+    let blob = web_sys::Blob::new_with_u8_array_sequence_and_options(
+        &parts.into(),
+        &blob_opts,
+    )
+    .map_err(|e| format!("{:?}", e))?;
+    form.append_with_blob("video", &blob)
+        .map_err(|_| "append video failed")?;
+
+    let url = format!("{}/_api/tournaments/{}/user-upload", base(), tournament_url);
+    let opts = web_sys::RequestInit::new();
+    opts.set_method("POST");
+    let form_js = wasm_bindgen::JsValue::from(form);
+    opts.set_body(form_js.as_ref());
+
+    // Ensure cookies/session are included.
+    #[allow(deprecated)]
+    opts.set_credentials(web_sys::RequestCredentials::Include);
+
+    let window = web_sys::window().ok_or("no window")?;
+    let request = web_sys::Request::new_with_str_and_init(&url, &opts)
+        .map_err(|_| "Request::new failed")?;
+    let resp = wasm_bindgen_futures::JsFuture::from(window.fetch_with_request(&request))
+        .await
+        .map_err(|e| format!("{:?}", e))?;
+
+    let resp: web_sys::Response = resp.dyn_into().map_err(|_| "response cast failed")?;
+    if !resp.ok() {
+        let text = wasm_bindgen_futures::JsFuture::from(
+            resp.text()
+                .map_err(|e: wasm_bindgen::JsValue| format!("{:?}", e))?,
+        )
+            .await
+            .map_err(|e| format!("{:?}", e))?;
+        let msg = text.as_string().unwrap_or_else(|| "Unknown error".to_string());
+        return Err(format!("Upload failed: {}", msg));
+    }
+    let text = wasm_bindgen_futures::JsFuture::from(
+        resp.text()
+            .map_err(|e: wasm_bindgen::JsValue| format!("{:?}", e))?,
+    )
+        .await
+        .map_err(|e| format!("{:?}", e))?;
+    let json_str = text.as_string().unwrap_or_default();
+    let v: Value = serde_json::from_str(&json_str).map_err(|e| e.to_string())?;
+    Ok(v.get("upload_group_name").and_then(|x| x.as_str()).unwrap_or("").to_string())
+}
+
 pub async fn start_match_data(
     tournament_url: &str,
     match_id: &str,
