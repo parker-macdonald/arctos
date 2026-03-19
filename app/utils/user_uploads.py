@@ -260,6 +260,7 @@ def user_autoclips_from_uploaded_video_worker(
     user_video_abs_path: str,
     user_video_filename_stem: str,
     upload_group_name: str,
+    video_start_world_override_iso: Optional[str] = None,
 ):
     """
     Create one highlight video per match overlapped by the uploaded footage.
@@ -279,7 +280,11 @@ def user_autoclips_from_uploaded_video_worker(
         _log.error("user_autoclips: could not determine duration for %s", user_video_abs_path)
         return
 
-    video_start_world = _get_video_start_world_datetime(user_video_abs_path)
+    if video_start_world_override_iso:
+        override_dt = _parse_iso_to_datetime_utc(video_start_world_override_iso)
+        video_start_world = override_dt or _get_video_start_world_datetime(user_video_abs_path)
+    else:
+        video_start_world = _get_video_start_world_datetime(user_video_abs_path)
     from datetime import timedelta
 
     video_end_world = video_start_world + timedelta(seconds=video_duration_sec)

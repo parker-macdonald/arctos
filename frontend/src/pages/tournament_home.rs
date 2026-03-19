@@ -2,10 +2,7 @@ use crate::api;
 use crate::components::{
     EditRegistrationContext, EditRegistrationModal, EventHeader, LeagueRegistrationButtons,
 };
-use crate::types::{
-    FieldOption, ToEntry, UpdatePlayerRegistrationRequest, UpdateTeamRegistrationRequest, User,
-    UserUploadedCamerasResponse, UserUploadedCameraRow,
-};
+use crate::types::{ToEntry, UpdatePlayerRegistrationRequest, UpdateTeamRegistrationRequest, User};
 use crate::Route;
 use dioxus::prelude::*;
 
@@ -14,6 +11,10 @@ struct PendingUpload {
     filename: String,
     file: dioxus::html::FileData,
     field_id: u32,
+    start_world_suggested: Option<String>,
+    start_world_value: String,
+    start_world_loading: bool,
+    start_world_error: Option<String>,
 }
 
 fn is_current_user_to(me: Option<&Result<User, String>>, to_entries: &[ToEntry]) -> bool {
@@ -96,6 +97,7 @@ pub fn TournamentHome(url: String) -> Element {
     let mut pending_uploads = use_signal(|| Vec::<PendingUpload>::new());
     let mut upload_error = use_signal(|| None::<String>);
     let mut uploading = use_signal(|| false);
+    let mut upload_modal_open = use_signal(|| false);
     let mut user_uploads_refresh = use_signal(|| 0u32);
     let mut user_upload_delete_error = use_signal(|| None::<String>);
 
@@ -144,6 +146,16 @@ pub fn TournamentHome(url: String) -> Element {
                     Link { to: Route::Results { url: url.clone() }, class: "btn btn-outline-primary", "Results" }
                     if d.tournament.bracket && (d.tournament.schedule_published || is_current_user_to(me_res.read().as_ref(), &d.to_entries)) {
                         Link { to: Route::Bracket { url: url.clone() }, class: "btn btn-outline-primary", "Bracket" }
+                    }
+                    if me_res.read().as_ref().and_then(|r| r.as_ref().ok()).is_some() {
+                        button {
+                            class: "btn btn-outline-secondary",
+                            onclick: move |_| {
+                                upload_modal_open.set(true);
+                                upload_error.set(None);
+                            },
+                            "Upload Footage"
+                        }
                     }
                     if let Some(ref l) = d.tournament.league {
                         LeagueRegistrationButtons {
@@ -299,158 +311,7 @@ pub fn TournamentHome(url: String) -> Element {
                             }
                         }
                     }
-                    if let Some(Ok(_me)) = me_res.read().as_ref() {
-                        div {
-                            class: "card mt-4",
-                            div { class: "card-header", h5 { class: "mb-0", "Upload Footage" } }
-                            div { class: "card-body",
-                                if let Some(Ok(fields)) = fields_res.read().as_ref() {
-                                    if fields.is_empty() {
-                                        p { class: "text-muted", "No fields configured for this tournament." }
-                                    } else {
-                                        {{
-                                            let default_field_id = fields[0].id;
-                                            rsx! {
-                                                if pending_uploads().is_empty() {
-                                                    p { class: "text-muted", "Select one or more video files to upload." }
-                                                }
-                                                input {
-                                                    class: "form-control form-control-sm",
-                                                    r#type: "file",
-                                                    accept: "video/*",
-                                                    multiple: true,
-                                                    disabled: uploading(),
-                                                    onchange: move |evt| {
-                                                        #[cfg(target_arch = "wasm32")]
-                                                        {
-                                                            use dioxus::html::HasFileData;
-                                                    let files = evt.files();
-                                                    if files.is_empty() {
-                                                        return;
-                                                    }
-                                                    let mut items: Vec<PendingUpload> = Vec::new();
-                                                    for f in files {
-                                                        items.push(PendingUpload {
-                                                            filename: f.name(),
-                                                            file: f,
-                                                            field_id: default_field_id,
-                                                        });
-                                                            }
-                                                    pending_uploads.set(items);
-                                                    upload_error.set(None);
-                                                        }
-                                                    }
-                                                }
-                                                if !pending_uploads().is_empty() {
-                                                    div { class: "mt-3 table-responsive",
-                                                        table { class: "table table-sm align-middle",
-                                                            tbody {
-                                                                for (idx, item) in pending_uploads().iter().enumerate() {
-                                                                    tr { key: "{item.filename}-{idx}",
-                                                                        td { "{item.filename}" }
-                                                                        td {
-                                                                            select {
-                                                                                class: "form-select form-select-sm",
-                                                                                value: "{item.field_id}",
-                                                                                disabled: uploading(),
-                                                                                onchange: move |ev| {
-                                                                                    let v = ev.value().parse::<u32>().unwrap_or(default_field_id);
-                                                                                    let mut list = pending_uploads();
-                                                                                    if let Some(t) = list.get_mut(idx) {
-                                                                                        t.field_id = v;
-                                                                                    }
-                                                                                    pending_uploads.set(list);
-                                                                                }
-                                                                                ,
-                                                                                for f in fields.iter() {
-                                                                                    option { value: "{f.id}", "{f.name}" }
-                                                                                }
-                                                                            }
-                                                                        }
-                                                                        td {
-                                                                            button {
-                                                                                class: "btn btn-sm btn-outline-danger",
-                                                                                disabled: uploading(),
-                                                                                onclick: move |_| {
-                                                                                    let mut list = pending_uploads();
-                                                                                    if idx < list.len() {
-                                                                                        list.remove(idx);
-                                                                                    }
-                                                                                    pending_uploads.set(list);
-                                                                                },
-                                                                                "Remove"
-                                                                            }
-                                                                        }
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                    if let Some(err) = upload_error() {
-                                                        p { class: "text-danger mt-2", "{err}" }
-                                                    }
-                                                    button {
-                                                        class: "btn btn-primary mt-3",
-                                                        disabled: uploading(),
-                                                        onclick: move |_| {
-                                                            #[cfg(target_arch = "wasm32")]
-                                                            {
-                                                                let url = url_for_user_upload.clone();
-                                                                let uploads = pending_uploads();
-                                                                if uploads.is_empty() {
-                                                                    return;
-                                                                }
-                                                                uploading.set(true);
-                                                                upload_error.set(None);
-                                                                spawn(async move {
-                                                                    let mut first_err: Option<String> = None;
-                                                                    for u in uploads {
-                                                                        let content_type = u.file.content_type();
-                                                                        let bytes = match u.file.read_bytes().await {
-                                                                            Ok(b) => b,
-                                                                            Err(_) => {
-                                                                                if first_err.is_none() {
-                                                                                    first_err =
-                                                                                        Some("Failed to read uploaded file".to_string());
-                                                                                }
-                                                                                continue;
-                                                                            }
-                                                                        };
-                                                                        if let Err(e) = api::user_upload_video_footage(
-                                                                            &url,
-                                                                            u.field_id,
-                                                                            bytes,
-                                                                            content_type,
-                                                                        )
-                                                                        .await
-                                                                        {
-                                                                            if first_err.is_none() {
-                                                                                first_err = Some(e);
-                                                                            }
-                                                                        }
-                                                                    }
-                                                                    uploading.set(false);
-                                                                    if let Some(e) = first_err {
-                                                                        upload_error.set(Some(e));
-                                                                    } else {
-                                                                        pending_uploads.set(Vec::new());
-                                                                        user_uploads_refresh.set(user_uploads_refresh() + 1);
-                                                                    }
-                                                                });
-                                                            }
-                                                        },
-                                                        if uploading() { "Uploading..." } else { "Upload Videos" }
-                                                    }
-                                                }
-                                            }
-                                        }}
-                                    }
-                                } else {
-                                    p { class: "text-muted", "Loading fields..." }
-                                }
-                            }
-                        }
-                    }
+                    // Upload Footage is now a modal triggered from the button row.
                 }
                                 if is_current_user_to(me_res.read().as_ref(), &d.to_entries) {
                                     div { class: "col-md-4",
@@ -711,6 +572,341 @@ pub fn TournamentHome(url: String) -> Element {
                                 show_league_edit_modal.set(false);
                                 refresh.set(refresh() + 1);
                             },
+                        }
+                    }
+                }
+            }
+
+            if upload_modal_open() {
+                div {
+                    class: "modal show d-block",
+                    style: "background: rgba(0,0,0,0.5);",
+                    tabindex: "-1",
+                    role: "dialog",
+                    onclick: move |_| upload_modal_open.set(false),
+                    div {
+                        class: "modal-dialog modal-dialog-centered modal-lg",
+                        onclick: move |ev: Event<MouseData>| { ev.stop_propagation(); },
+                        div { class: "modal-content",
+                            div { class: "modal-header",
+                                h5 { class: "modal-title", "Upload Footage" }
+                                button {
+                                    r#type: "button",
+                                    class: "btn-close",
+                                    aria_label: "Close",
+                                    onclick: move |_| upload_modal_open.set(false),
+                                }
+                            }
+                            div { class: "modal-body",
+                                if let Some(err) = upload_error() {
+                                    div { class: "alert alert-danger mb-3", "{err}" }
+                                }
+                                if let Some(Ok(fields)) = fields_res.read().as_ref() {
+                                    if fields.is_empty() {
+                                        p { class: "text-muted", "No fields configured for this tournament." }
+                                    } else {
+                                        {{
+                                            let default_field_id = fields[0].id;
+                                            let upload_url_onchange = url_for_user_upload.clone();
+                                            let upload_url_reset = url_for_user_upload.clone();
+                                            rsx! {
+                                                p { class: "text-muted mb-2",
+                                                    "Select one or more videos. We'll auto-detect the start timestamp from metadata; you can edit it if it's wrong."
+                                                }
+                                                input {
+                                                    class: "form-control",
+                                                    r#type: "file",
+                                                    accept: "video/*",
+                                                    multiple: true,
+                                                    disabled: uploading(),
+                                                    onchange: move |evt| {
+                                                        #[cfg(target_arch = "wasm32")]
+                                                        {
+                                                            use dioxus::html::HasFileData;
+                                                            let files = evt.files();
+                                                            if files.is_empty() {
+                                                                return;
+                                                            }
+
+                                                            let mut items: Vec<PendingUpload> = Vec::new();
+                                                            for f in files {
+                                                                items.push(PendingUpload {
+                                                                    filename: f.name(),
+                                                                    file: f,
+                                                                    field_id: default_field_id,
+                                                                    start_world_suggested: None,
+                                                                    start_world_value: String::new(),
+                                                                    start_world_loading: true,
+                                                                    start_world_error: None,
+                                                                });
+                                                            }
+                                                            pending_uploads.set(items);
+                                                            upload_error.set(None);
+
+                                                            // Probe metadata timestamps in the background.
+                                                            let tournament_url = upload_url_onchange.clone();
+                                                            let mut pending_sig = pending_uploads.clone();
+                                                            spawn(async move {
+                                                                let snapshot = pending_sig();
+                                                                for (idx, u) in snapshot.iter().enumerate() {
+                                                                    let bytes = match u.file.read_bytes().await {
+                                                                        Ok(b) => b,
+                                                                        Err(_) => {
+                                                                            let mut list = pending_sig();
+                                                                            if let Some(t) = list.get_mut(idx) {
+                                                                                t.start_world_loading = false;
+                                                                                t.start_world_error =
+                                                                                    Some("Failed to read file".to_string());
+                                                                            }
+                                                                            pending_sig.set(list);
+                                                                            continue;
+                                                                        }
+                                                                    };
+                                                                    let ct = u.file.content_type();
+                                                                    match api::user_upload_probe_start_timestamp(
+                                                                        &tournament_url,
+                                                                        bytes,
+                                                                        ct,
+                                                                    )
+                                                                    .await
+                                                                    {
+                                                                        Ok(ts) => {
+                                                                            let mut list = pending_sig();
+                                                                            if let Some(t) = list.get_mut(idx) {
+                                                                                t.start_world_loading = false;
+                                                                                t.start_world_suggested = Some(ts.clone());
+                                                                                t.start_world_value = ts;
+                                                                                t.start_world_error = None;
+                                                                            }
+                                                                            pending_sig.set(list);
+                                                                        }
+                                                                        Err(e) => {
+                                                                            let mut list = pending_sig();
+                                                                            if let Some(t) = list.get_mut(idx) {
+                                                                                t.start_world_loading = false;
+                                                                                t.start_world_error = Some(e);
+                                                                            }
+                                                                            pending_sig.set(list);
+                                                                        }
+                                                                    }
+                                                                }
+                                                            });
+                                                        }
+                                                    }
+                                                }
+
+                                                if !pending_uploads().is_empty() {
+                                                    div { class: "mt-3 table-responsive",
+                                                        table { class: "table table-sm align-middle",
+                                                            thead {
+                                                                tr {
+                                                                    th { "File" }
+                                                                    th { "Field" }
+                                                                    th { "Start timestamp (UTC)" }
+                                                                    th { "" }
+                                                                }
+                                                            }
+                                                            tbody {
+                                                                for (idx, item) in pending_uploads().iter().enumerate() {
+                                                                    tr { key: "{item.filename}-{idx}",
+                                                                        td { "{item.filename}" }
+                                                                        td {
+                                                                            select {
+                                                                                class: "form-select form-select-sm",
+                                                                                value: "{item.field_id}",
+                                                                                disabled: uploading(),
+                                                                                onchange: move |ev| {
+                                                                                    let v = ev.value().parse::<u32>().unwrap_or(default_field_id);
+                                                                                    let mut list = pending_uploads();
+                                                                                    if let Some(t) = list.get_mut(idx) {
+                                                                                        t.field_id = v;
+                                                                                    }
+                                                                                    pending_uploads.set(list);
+                                                                                }
+                                                                                ,
+                                                                                for f in fields.iter() {
+                                                                                    option { value: "{f.id}", "{f.name}" }
+                                                                                }
+                                                                            }
+                                                                        }
+                                                                        td {
+                                                                            div { class: "d-flex gap-2 align-items-center",
+                                                                                input {
+                                                                                    class: "form-control form-control-sm",
+                                                                                    r#type: "text",
+                                                                                    placeholder: "2026-03-18T01:23:45Z",
+                                                                                    value: "{item.start_world_value}",
+                                                                                    disabled: uploading() || item.start_world_loading,
+                                                                                    oninput: move |e| {
+                                                                                        let mut list = pending_uploads();
+                                                                                        if let Some(t) = list.get_mut(idx) {
+                                                                                            t.start_world_value = e.value();
+                                                                                        }
+                                                                                        pending_uploads.set(list);
+                                                                                    }
+                                                                                }
+                                                                                {{
+                                                                                    let reset_url = upload_url_reset.clone();
+                                                                                    rsx! {
+                                                                                        button {
+                                                                                            class: "btn btn-sm btn-outline-secondary",
+                                                                                            disabled: uploading() || item.start_world_loading,
+                                                                                            onclick: move |_| {
+                                                                                                #[cfg(target_arch = "wasm32")]
+                                                                                                {
+                                                                                                    let tournament_url = reset_url.clone();
+                                                                                                    let u = pending_uploads()[idx].clone();
+                                                                                                    let mut pending_sig = pending_uploads.clone();
+                                                                                                    spawn(async move {
+                                                                                                        let bytes = match u.file.read_bytes().await {
+                                                                                                            Ok(b) => b,
+                                                                                                            Err(_) => {
+                                                                                                                let mut list = pending_sig();
+                                                                                                                if let Some(t) = list.get_mut(idx) {
+                                                                                                                    t.start_world_error = Some("Failed to read file".to_string());
+                                                                                                                }
+                                                                                                                pending_sig.set(list);
+                                                                                                                return;
+                                                                                                            }
+                                                                                                        };
+                                                                                                        let ct = u.file.content_type();
+                                                                                                        match api::user_upload_probe_start_timestamp(
+                                                                                                            &tournament_url,
+                                                                                                            bytes,
+                                                                                                            ct,
+                                                                                                        )
+                                                                                                        .await
+                                                                                                        {
+                                                                                                            Ok(ts) => {
+                                                                                                                let mut list = pending_sig();
+                                                                                                                if let Some(t) = list.get_mut(idx) {
+                                                                                                                    t.start_world_suggested = Some(ts.clone());
+                                                                                                                    t.start_world_value = ts;
+                                                                                                                    t.start_world_error = None;
+                                                                                                                }
+                                                                                                                pending_sig.set(list);
+                                                                                                            }
+                                                                                                            Err(e) => {
+                                                                                                                let mut list = pending_sig();
+                                                                                                                if let Some(t) = list.get_mut(idx) {
+                                                                                                                    t.start_world_error = Some(e);
+                                                                                                                }
+                                                                                                                pending_sig.set(list);
+                                                                                                            }
+                                                                                                        }
+                                                                                                    });
+                                                                                                }
+                                                                                            },
+                                                                                            "Reset"
+                                                                                        }
+                                                                                    }
+                                                                                }}
+                                                                            }
+                                                                            if item.start_world_loading {
+                                                                                div { class: "text-muted small mt-1", "Reading metadata…" }
+                                                                            } else if let Some(err) = &item.start_world_error {
+                                                                                div { class: "text-danger small mt-1", "{err}" }
+                                                                            } else if let Some(s) = &item.start_world_suggested {
+                                                                                div { class: "text-muted small mt-1", "Metadata: {s}" }
+                                                                            }
+                                                                        }
+                                                                        td {
+                                                                            button {
+                                                                                class: "btn btn-sm btn-outline-danger",
+                                                                                disabled: uploading(),
+                                                                                onclick: move |_| {
+                                                                                    let mut list = pending_uploads();
+                                                                                    if idx < list.len() {
+                                                                                        list.remove(idx);
+                                                                                    }
+                                                                                    pending_uploads.set(list);
+                                                                                },
+                                                                                "Remove"
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }}
+                                    }
+                                } else {
+                                    p { class: "text-muted", "Loading fields..." }
+                                }
+                            }
+                            div { class: "modal-footer",
+                                button {
+                                    class: "btn btn-secondary",
+                                    onclick: move |_| upload_modal_open.set(false),
+                                    "Close"
+                                }
+                                {{
+                                    let upload_url_submit = url_for_user_upload.clone();
+                                    rsx! {
+                                        button {
+                                            class: "btn btn-primary",
+                                            disabled: uploading() || pending_uploads().is_empty(),
+                                            onclick: move |_| {
+                                                #[cfg(target_arch = "wasm32")]
+                                                {
+                                                    let url = upload_url_submit.clone();
+                                                    let uploads = pending_uploads();
+                                                    if uploads.is_empty() {
+                                                        return;
+                                                    }
+                                                    uploading.set(true);
+                                                    upload_error.set(None);
+                                                    spawn(async move {
+                                                        let mut first_err: Option<String> = None;
+                                                        for u in uploads {
+                                                            let content_type = u.file.content_type();
+                                                            let bytes = match u.file.read_bytes().await {
+                                                                Ok(b) => b,
+                                                                Err(_) => {
+                                                                    if first_err.is_none() {
+                                                                        first_err = Some("Failed to read uploaded file".to_string());
+                                                                    }
+                                                                    continue;
+                                                                }
+                                                            };
+                                                            let start_world = if u.start_world_value.trim().is_empty() {
+                                                                None
+                                                            } else {
+                                                                Some(u.start_world_value.clone())
+                                                            };
+                                                            if let Err(e) = api::user_upload_video_footage(
+                                                                &url,
+                                                                u.field_id,
+                                                                bytes,
+                                                                content_type,
+                                                                start_world,
+                                                            )
+                                                            .await
+                                                            {
+                                                                if first_err.is_none() {
+                                                                    first_err = Some(e);
+                                                                }
+                                                            }
+                                                        }
+                                                        uploading.set(false);
+                                                        if let Some(e) = first_err {
+                                                            upload_error.set(Some(e));
+                                                        } else {
+                                                            pending_uploads.set(Vec::new());
+                                                            user_uploads_refresh.set(user_uploads_refresh() + 1);
+                                                            upload_modal_open.set(false);
+                                                        }
+                                                    });
+                                                }
+                                            },
+                                            if uploading() { "Uploading..." } else { "Upload" }
+                                        }
+                                    }
+                                }}
+                            }
                         }
                     }
                 }

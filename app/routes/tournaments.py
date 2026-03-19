@@ -51,7 +51,7 @@ from app.filters import is_head_ref
 from os import path, listdir
 
 from app.utils.footage import finalize_recording_worker
-from app.utils.user_uploads import user_autoclips_from_uploaded_video_worker
+from app.utils.user_uploads import user_autoclips_from_uploaded_video_worker, _get_video_start_world_datetime
 from app.utils.camera_helpers import (
     generate_camera_key,
     validate_camera_key,
@@ -1034,6 +1034,7 @@ def record_finalize():
 def user_upload_video_footage(tournament_url: str):
     """Authenticated endpoint: upload a user-recorded video and auto-generate match highlights."""
     import os
+    from datetime import datetime, timezone
 
     field_id_raw = request.form.get("field_id") or request.form.get("field")
     if not tournament_url or not field_id_raw:
@@ -1047,6 +1048,20 @@ def user_upload_video_footage(tournament_url: str):
     video_file = request.files.get("video") or request.files.get("file")
     if not video_file or video_file.filename == "":
         return jsonify({"error": "video file is required"}), 400
+
+    start_world_override = request.form.get("start_world") or request.form.get("start_timestamp")
+    if start_world_override:
+        # validate early; allow either ISO with Z or datetime-local style
+        s = start_world_override.strip()
+        if s.endswith("Z"):
+            s = s.replace("Z", "+00:00")
+        try:
+            dt = datetime.fromisoformat(s)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            start_world_override = dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+        except ValueError:
+            return jsonify({"error": "start_world must be an ISO timestamp"}), 400
 
     field_obj = Field.query.filter_by(event=tournament_url, id=field_id).first()
     if not field_obj:
@@ -1091,6 +1106,7 @@ def user_upload_video_footage(tournament_url: str):
                 user_video_abs_path=saved_abs_path,
                 user_video_filename_stem=orig_stem,
                 upload_group_name=upload_group_name,
+                video_start_world_override_iso=start_world_override,
             )
 
     threading.Thread(target=run_user_autoclips, daemon=True).start()
@@ -1104,11 +1120,34 @@ def user_upload_video_footage(tournament_url: str):
     )
 
 
+@bp.route("/tournaments/<tournament_url>/user-upload/probe-start", methods=["POST"])
+@login_required
+def user_upload_probe_start_timestamp(tournament_url: str):
+    """Authenticated endpoint: probe start timestamp from video metadata (no processing)."""
+    import os
+    import tempfile
+    from app.utils.user_uploads import _dt_to_iso_z
+
+    video_file = request.files.get("video") or request.files.get("file")
+    if not video_file or video_file.filename == "":
+        return jsonify({"error": "video file is required"}), 400
+
+    ext = path.splitext(video_file.filename)[1].lower() or ".webm"
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp_abs = path.join(tmpdir, f"probe{ext}")
+        video_file.save(tmp_abs)
+        try:
+            dt = _get_video_start_world_datetime(tmp_abs)
+        except Exception as e:
+            return jsonify({"error": f"ffprobe failed: {e}"}), 400
+        return jsonify({"start_world": _dt_to_iso_z(dt)})
+
+
 @bp.route(
     "/tournaments/<tournament_url>/user-upload/delete-camera/<camera_uuid>",
     methods=["DELETE"],
 )
-@require_tournament_organizer
+@require_tournament_organizer()
 def user_upload_delete_camera(tournament_url: str, camera_uuid: str):
     """TO-only: delete a user-uploaded camera highlight."""
     import os
@@ -1136,7 +1175,7 @@ def user_upload_delete_camera(tournament_url: str, camera_uuid: str):
 
 
 @bp.route("/tournaments/<tournament_url>/user-uploaded-cameras", methods=["GET"])
-@require_tournament_organizer
+@require_tournament_organizer()
 def user_upload_list_cameras(tournament_url: str):
     """TO-only: list user-uploaded cameras so TOs can moderate/delete them."""
     cams = (
