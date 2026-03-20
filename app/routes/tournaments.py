@@ -1169,6 +1169,19 @@ def user_upload_list_cameras(tournament_url: str):
     for cam in cams:
         m = Match.query.filter_by(uuid=cam.match_uuid).first()
         f = Field.query.filter_by(id=cam.field).first()
+        world_start = None
+        if cam.time_world:
+            try:
+                tw = json.loads(cam.time_world)
+                if isinstance(tw, list) and tw:
+                    world_start = str(tw[0])
+            except Exception:
+                world_start = None
+        uploader = None
+        if cam.uploaded_by_user_type and cam.uploaded_by_user_id:
+            uploader = f"{cam.uploaded_by_user_type}:{cam.uploaded_by_user_id}"
+        elif cam.uploaded_by_user_id:
+            uploader = str(cam.uploaded_by_user_id)
         rows.append(
             {
                 "uuid": cam.uuid,
@@ -1177,6 +1190,8 @@ def user_upload_list_cameras(tournament_url: str):
                 "field_name": f.name if f else str(cam.field),
                 "camera_name": cam.name,
                 "status": cam.status,
+                "user": uploader,
+                "world_start_timestamp": world_start,
                 "link": cam.link,
                 "file": cam.file,
                 "uploaded_by_user_id": cam.uploaded_by_user_id,

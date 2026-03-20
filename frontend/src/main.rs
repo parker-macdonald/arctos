@@ -91,6 +91,9 @@ enum Route {
     #[route("/:url/manage")]
     Manage { url: String },
 
+    #[route("/:url/manage-user-uploads")]
+    ManageUserUploads { url: String },
+
     #[route("/:url/invitations")]
     Invitations { url: String },
 

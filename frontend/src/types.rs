@@ -547,6 +547,8 @@ pub struct UserUploadedCameraRow {
     pub field_name: String,
     pub camera_name: String,
     pub status: String,
+    pub user: Option<String>,
+    pub world_start_timestamp: Option<String>,
     pub link: Option<String>,
     pub file: Option<String>,
     pub uploaded_by_user_id: Option<String>,

@@ -93,7 +93,6 @@ pub fn TournamentHome(url: String) -> Element {
     let mut show_league_edit_modal = use_signal(|| false);
     let url_for_delete_confirm = url.clone();
     let url_for_user_upload = url.clone();
-    let url_for_user_upload_delete = url.clone();
     let mut about_markdown = use_signal(|| Option::<String>::None);
     let mut delete_redirect_league = use_signal(|| None as Option<String>);
     use_effect(move || {
@@ -121,25 +120,12 @@ pub fn TournamentHome(url: String) -> Element {
     let mut upload_error = use_signal(|| None::<String>);
     let mut uploading = use_signal(|| false);
     let mut upload_modal_open = use_signal(|| false);
-    let mut user_uploads_refresh = use_signal(|| 0u32);
-    let user_upload_delete_error = use_signal(|| None::<String>);
 
     let url_for_fields = url.clone();
     let fields_res = use_resource(move || {
         let value = url_for_fields.clone();
         async move {
             api::tournament_fields(&value)
-                .await
-                .map_err(|e| e.to_string())
-        }
-    });
-
-    let url_for_uploads_list = url.clone();
-    let user_uploads_res = use_resource(move || {
-        let _ = user_uploads_refresh();
-        let u = url_for_uploads_list.clone();
-        async move {
-            api::user_uploaded_cameras_list(&u)
                 .await
                 .map_err(|e| e.to_string())
         }
@@ -349,6 +335,11 @@ pub fn TournamentHome(url: String) -> Element {
                                                     } else {
                                                         Link { to: Route::Manage { url: url.clone() }, class: "btn btn-outline-warning", "Registration Management" }
                                                     }
+                                                    Link {
+                                                        to: Route::ManageUserUploads { url: url.clone() },
+                                                        class: "btn btn-outline-secondary",
+                                                        "Manage User Uploaded Videos"
+                                                    }
                                     button {
                                         class: "btn btn-outline-danger",
                                         onclick: move |_| {
@@ -358,80 +349,6 @@ pub fn TournamentHome(url: String) -> Element {
                                         },
                                         "Delete Tournament"
                                     }
-                                }
-                            }
-                        }
-                        div { class: "card mt-4",
-                            div { class: "card-header",
-                                h5 { class: "mb-0", "User Uploaded Videos" }
-                            }
-                            div { class: "card-body",
-                                if let Some(Ok(cams)) = user_uploads_res.read().as_ref() {
-                                    if cams.cameras.is_empty() {
-                                        p { class: "text-muted", "No user uploads yet." }
-                                    } else {
-                                        div { class: "table-responsive",
-                                            table { class: "table table-sm align-middle",
-                                                thead {
-                                                    tr {
-                                                        th { "Match" }
-                                                        th { "Field" }
-                                                        th { "Camera" }
-                                                        th { "Status" }
-                                                        th { "" }
-                                                    }
-                                                }
-                                                tbody {
-                                                    for cam in cams.cameras.iter().cloned() {
-                                                        tr { key: "{cam.uuid}",
-                                                            td { "{cam.match_name}" }
-                                                            td { "{cam.field_name}" }
-                                                            td { "{cam.camera_name}" }
-                                                            td { "{cam.status}" }
-                                                            td {
-                                                                {{
-                                                                    let url = url_for_user_upload_delete.clone();
-                                                                    let uuid = cam.uuid.clone();
-                                                                    let delete_err = user_upload_delete_error.clone();
-                                                                    let refresh_sig = user_uploads_refresh.clone();
-                                                                    rsx! {
-                                                                        button {
-                                                                            class: "btn btn-sm btn-outline-danger",
-                                                                            disabled: uploading(),
-                                                                            onclick: move |_| {
-                                                                                let mut delete_err_local = delete_err.clone();
-                                                                                let mut refresh_sig_local = refresh_sig.clone();
-                                                                                delete_err_local.set(None);
-                                                                                let url = url.clone();
-                                                                                let uuid = uuid.clone();
-                                                                                spawn(async move {
-                                                                                    match api::delete_user_uploaded_camera(&url, &uuid).await {
-                                                                                        Ok(()) => {
-                                                                                            refresh_sig_local
-                                                                                                .set(refresh_sig_local() + 1);
-                                                                                        }
-                                                                                        Err(e) => {
-                                                                                            delete_err_local.set(Some(e));
-                                                                                        }
-                                                                                    }
-                                                                                });
-                                                                            },
-                                                                            "Delete"
-                                                                        }
-                                                                    }
-                                                                }}
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                } else {
-                                    p { class: "text-muted", "Loading..." }
-                                }
-                                if let Some(err) = user_upload_delete_error() {
-                                    p { class: "text-danger mt-3", "{err}" }
                                 }
                             }
                         }
@@ -849,7 +766,6 @@ pub fn TournamentHome(url: String) -> Element {
                                                             upload_error.set(Some(e));
                                                         } else {
                                                             pending_uploads.set(Vec::new());
-                                                            user_uploads_refresh.set(user_uploads_refresh() + 1);
                                                             upload_modal_open.set(false);
                                                         }
                                                     });
