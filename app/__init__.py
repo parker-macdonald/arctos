@@ -260,6 +260,37 @@ def create_app(config=None):
     except Exception:
         pass
 
+    # On boot: resume any YouTube uploads that were left in-progress before a restart.
+    # This is best-effort and only runs outside of tests.
+    try:
+        if not app.config.get("TESTING", False):
+            from models import Camera
+            import threading
+
+            # If YouTube upload is not configured, uploading would immediately mark them FAILED.
+            # Guard early to avoid churn.
+            if os.environ.get("YOUTUBE_UPLOAD_REFRESH_TOKEN", "").strip():
+                from app.utils.youtube_upload import upload_camera_to_youtube
+
+                with app.app_context():
+                    in_progress = Camera.query.filter_by(status="UPLOADING").all()
+                    if in_progress:
+                        app_obj = app._get_current_object()
+
+                        def _resume(uuid: str) -> None:
+                            with app_obj.app_context():
+                                upload_camera_to_youtube(uuid)
+
+                        for cam in in_progress:
+                            threading.Thread(
+                                target=_resume,
+                                args=(str(cam.uuid),),
+                                daemon=True,
+                            ).start()
+    except Exception:
+        # Never block app startup due to background upload resume failures.
+        pass
+
     @app.errorhandler(413)
     def too_large(e):
         from flask import jsonify
