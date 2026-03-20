@@ -130,6 +130,44 @@ def _build_camera_title(camera: Camera) -> str:
     return f"{match.name}: {t1} vs {t2} ({camera.name} on {field_name})"
 
 
+def _upload_failed_source_to_s3(
+    camera: Camera, file_path_abs: str, content_type: str
+) -> None:
+    """
+    Best-effort fallback: upload source file to S3 only after YouTube failure.
+    If successful, rewrite `camera.file` to the S3 key so API can serve presigned downloads.
+    """
+    bucket = current_app.config.get("S3_VIDEO_BUCKET")
+    if not bucket:
+        return
+
+    region = (current_app.config.get("AWS_REGION") or "us-east-1") or "us-east-1"
+    prefix = (current_app.config.get("S3_VIDEO_PREFIX") or "").strip() or None
+    endpoint_url = current_app.config.get("S3_ENDPOINT_URL")
+
+    from app.utils.s3_video import upload_video
+
+    ext = path.splitext(file_path_abs)[1].lower() or ".bin"
+    key_part = f"{camera.match_uuid}/{camera.name}{ext}"
+    s3_key = f"{prefix}/{key_part}" if prefix else key_part
+
+    ok = upload_video(
+        file_path_abs,
+        bucket,
+        s3_key,
+        content_type,
+        region=region,
+        endpoint_url=endpoint_url,
+    )
+    if ok:
+        camera.file = s3_key
+        current_app.logger.info(
+            "youtube_upload: fallback source uploaded to s3 key=%s camera uuid=%s",
+            s3_key,
+            camera.uuid,
+        )
+
+
 def _youtube_init_request(
     session: requests.Session,
     access_token: str,
@@ -247,6 +285,17 @@ def upload_camera_to_youtube(camera_uuid: str) -> None:
 
     if not cfg:
         camera.status = "FAILED"
+        try:
+            ext = path.splitext(camera.file or "")[1].lower()
+            content_type = "video/mp4" if ext == ".mp4" else "video/webm"
+            file_path_abs = _video_file_abs_path(camera)
+            if path.exists(file_path_abs):
+                _upload_failed_source_to_s3(camera, file_path_abs, content_type)
+        except Exception:
+            current_app.logger.exception(
+                "youtube_upload: failed to upload source to s3 after missing config camera uuid=%s",
+                camera_uuid,
+            )
         db.session.commit()
         current_app.logger.warning(
             "youtube_upload: missing YouTube upload config (YOUTUBE_UPLOAD_REFRESH_TOKEN/clients); camera uuid=%s",
@@ -266,8 +315,13 @@ def upload_camera_to_youtube(camera_uuid: str) -> None:
         return
 
     file_size = path.getsize(file_path_abs)
-    # We re-encode to webm in the recording pipeline.
+
+    # Recording pipeline now uploads the concatenated final.{mp4|webm} directly.
+    # Use extension-derived content type so YouTube gets the right upload headers.
+    ext = path.splitext(camera.file or "")[1].lower()
     content_type = "video/webm"
+    if ext == ".mp4":
+        content_type = "video/mp4"
 
     title = _build_camera_title(camera)
     access_token = _get_access_token(cfg)
@@ -293,6 +347,13 @@ def upload_camera_to_youtube(camera_uuid: str) -> None:
         )
     except Exception:
         camera.status = "FAILED"
+        try:
+            _upload_failed_source_to_s3(camera, file_path_abs, content_type)
+        except Exception:
+            current_app.logger.exception(
+                "youtube_upload: failed to upload source to s3 after upload failure camera uuid=%s",
+                camera_uuid,
+            )
         db.session.commit()
         current_app.logger.exception("youtube_upload: upload failed camera uuid=%s", camera_uuid)
         return

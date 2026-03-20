@@ -6,7 +6,7 @@ use crate::Route;
 use dioxus::core::use_drop;
 use dioxus::prelude::*;
 use std::cell::RefCell;
-use std::collections::{VecDeque, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
 
 #[cfg(target_arch = "wasm32")]
@@ -1125,6 +1125,10 @@ async fn run_recording_loop(
         }
     }
     let upload_queue: Rc<RefCell<VecDeque<(String, QueueItem)>>> = Rc::new(RefCell::new(VecDeque::new()));
+    // Barrier tracking for finalize ordering:
+    // For each match_id, keep a count of chunk uploads that have not yet been confirmed successful.
+    // A FinalizeMatch item must not run until this reaches 0.
+    let pending_chunks_by_match: Rc<RefCell<HashMap<String, u32>>> = Rc::new(RefCell::new(HashMap::new()));
     if let Some(ref db) = *db_holder.borrow() {
         if let Ok(entries) = record_idb::cursor_entries_ordered(db).await {
             for (key, value) in entries {
@@ -1133,10 +1137,12 @@ async fn run_recording_loop(
                         .borrow_mut()
                         .push_back((key, QueueItem::FinalizeMatch { match_id }));
                 } else if let Some((meta, _blob)) = record_idb::parse_chunk_value(&value) {
+                    let match_id = meta.match_id.clone();
+                    *pending_chunks_by_match.borrow_mut().entry(match_id.clone()).or_insert(0) += 1;
                     upload_queue.borrow_mut().push_back((
                         key,
                         QueueItem::Chunk {
-                            match_id: Some(meta.match_id.clone()),
+                            match_id: Some(match_id),
                         },
                     ));
                 } else {
@@ -1228,6 +1234,7 @@ async fn run_recording_loop(
     const NUM_UPLOAD_WORKERS: u32 = 3;
     for _ in 0..NUM_UPLOAD_WORKERS {
         let q = upload_queue.clone();
+            let pending_chunks_by_match_sig = pending_chunks_by_match.clone();
         let tour = tournament_url.clone();
         let f = field.clone();
         let cam = camera_name.clone();
@@ -1240,7 +1247,19 @@ async fn run_recording_loop(
                 Ok(d) => d,
                 Err(_) => return,
             };
-            run_upload_worker(q, db, tour, f, cam, k, is_up, up_cnt, bar_items).await;
+                run_upload_worker(
+                    q,
+                    db,
+                    tour,
+                    f,
+                    cam,
+                    k,
+                    pending_chunks_by_match_sig,
+                    is_up,
+                    up_cnt,
+                    bar_items,
+                )
+                .await;
         });
     }
 
@@ -1437,6 +1456,7 @@ async fn run_recording_loop(
                                 match record_idb::put_chunk(db, &key, &meta, &st.blob).await {
                                     Ok(()) => {
                                         let mut q = upload_queue.borrow_mut();
+                                                    *pending_chunks_by_match.borrow_mut().entry(match_id.clone()).or_insert(0) += 1;
                                         q.push_back((
                                             key,
                                             QueueItem::Chunk {
@@ -1640,6 +1660,7 @@ async fn run_upload_worker(
     field: String,
     camera_name: String,
     key: Option<String>,
+    pending_chunks_by_match: Rc<RefCell<HashMap<String, u32>>>,
     mut is_uploading_sig: Signal<bool>,
     mut upload_count_sig: Signal<u32>,
     mut upload_bar_items_sig: Signal<Vec<UploadBarItem>>,
@@ -1666,6 +1687,15 @@ async fn run_upload_worker(
                                     if record_idb::delete_entry(&db, &key_str).await.is_ok() {
                                         upload_count_sig.set(upload_count_sig() + 1);
                                         success = true;
+                                        // Confirmed success: decrement pending chunk count for this match.
+                                        let mid = meta.match_id.clone();
+                                        let mut pending = pending_chunks_by_match.borrow_mut();
+                                        if let Some(v) = pending.get_mut(&mid) {
+                                            *v = v.saturating_sub(1);
+                                            if *v == 0 {
+                                                pending.remove(&mid);
+                                            }
+                                        }
                                     }
                                     break;
                                 }
@@ -1675,6 +1705,18 @@ async fn run_upload_worker(
                     }
                 }
                 QueueItem::FinalizeMatch { match_id } => {
+                    // Barrier: wait until all chunk uploads for this match are confirmed successful.
+                    loop {
+                        let remaining = pending_chunks_by_match
+                            .borrow()
+                            .get(match_id)
+                            .copied()
+                            .unwrap_or(0);
+                        if remaining == 0 {
+                            break;
+                        }
+                        gloo_timers::future::TimeoutFuture::new(250).await;
+                    }
                     for _ in 0..API_RETRY_ATTEMPTS {
                         if api::record_finalize(
                             &tournament_url,

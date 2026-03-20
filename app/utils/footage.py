@@ -518,14 +518,16 @@ def finalize_recording_worker(
         _log.info("finalize_recording: point_timestamps=%s", point_timestamps)
 
         from flask import current_app
-        from app.utils.s3_video import upload_video
-
-        bucket = current_app.config.get("S3_VIDEO_BUCKET") if current_app else None
-        region = (current_app.config.get("AWS_REGION") or "us-east-1") if current_app else "us-east-1"
-        prefix = (current_app.config.get("S3_VIDEO_PREFIX") or "").strip() or None
-        endpoint_url = current_app.config.get("S3_ENDPOINT_URL") if current_app else None
-
-        video_path = None
+        video_path = path.join(
+            "static",
+            "uploads",
+            "videos",
+            tournament_url,
+            field_name,
+            match_id,
+            camera_name,
+            final_basename,
+        ).replace("\\", "/")
 
         # 1. Write camera_stream_starts pointing to local final_video.{ext} (no S3 upload yet)
         local_final_rel = path.join(
@@ -553,138 +555,65 @@ def finalize_recording_worker(
             print(f"finalize_recording: committed camera_stream_starts (local) for match {match_id}", flush=True)
             _log.info("finalize_recording: committed camera_stream_starts for match %s", match_id)
 
-        # 2. Convert final_video.{ext} to webm (vp9, crf=30)
-        reencoded_basename = "final_video_reencoded.webm"
-        reencoded_path = path.join(chunk_dir, reencoded_basename)
-        reencode_cmd = [
-            "ffmpeg", "-i", path.basename(final_path),
-            "-c:v", "libvpx-vp9", "-crf", "30", "-b:v", "0", "-row-mt", "1",
-            "-c:a", "libopus", "-b:a", "128k",
-            "-loglevel", "error", "-y", reencoded_basename,
-        ]
-        result = subprocess.run(
-            reencode_cmd,
-            cwd=chunk_dir,
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode != 0 or not path.exists(reencoded_path) or path.getsize(reencoded_path) == 0:
-            _log.warning(
-                "finalize_recording: reencode to webm failed returncode=%s stderr=%s",
-                result.returncode, (result.stderr or "").strip(),
-            )
-            if result.stderr:
-                print(result.stderr.strip(), flush=True)
-            # Leave camera_stream_starts pointing at original; skip upload and old-file delete
-        else:
-            print(f"finalize_recording: reencoded to {reencoded_basename}", flush=True)
-
-            # 3. Optionally upload the processed webm to S3, but always keep a local copy
-            # for YouTube upload and for FAILED-source downloads.
-            video_path = path.join(
-                "static",
-                "uploads",
-                "videos",
-                tournament_url,
-                field_name,
-                match_id,
-                camera_name,
-                reencoded_basename,
-            ).replace("\\", "/")
-
-            if bucket:
+        # 2. Update camera_stream_starts to point to the final video
+        if match and video_path:
+            if match.camera_stream_starts:
                 try:
-                    key_part = f"{match_id}/{camera_name}.webm"
-                    s3_key = f"{prefix}/{key_part}" if prefix else key_part
-                    ok = upload_video(
-                        reencoded_path,
-                        bucket,
-                        s3_key,
-                        "video/webm",
-                        region=region,
-                        endpoint_url=endpoint_url,
-                    )
-                    if ok:
-                        _log.info(
-                            "finalize_recording: uploaded webm to S3 key=%s",
-                            s3_key,
-                        )
-                    else:
-                        _log.warning("finalize_recording: S3 upload failed; keeping local file")
-                except Exception as e:
-                    _log.warning("finalize_recording: S3 upload exception: %s", e)
+                    stream_starts = json.loads(match.camera_stream_starts)
+                except (TypeError, ValueError):
+                    stream_starts = {}
+            stream_starts[camera_name] = {
+                "video_path": video_path,
+                "point_timestamps": point_timestamps,
+                "type": "recorded",
+                "stream_start_time": stream_start_iso,
+            }
+            match.camera_stream_starts = json.dumps(stream_starts)
+            db.session.commit()
+            print(f"finalize_recording: committed camera_stream_starts (final) for match {match_id}", flush=True)
+            _log.info("finalize_recording: committed camera_stream_starts (final) for match %s", match_id)
 
-            # 4. Update camera_stream_starts to point to the new video
-            if match and video_path:
-                if match.camera_stream_starts:
-                    try:
-                        stream_starts = json.loads(match.camera_stream_starts)
-                    except (TypeError, ValueError):
-                        stream_starts = {}
-                stream_starts[camera_name] = {
-                    "video_path": video_path,
-                    "point_timestamps": point_timestamps,
-                    "type": "recorded",
-                    "stream_start_time": stream_start_iso,
-                }
-                match.camera_stream_starts = json.dumps(stream_starts)
+        # 3. Create a match-scoped camera row for the final video.
+        # The YouTube upload worker (implemented elsewhere) will transition UPLOADING -> SUCCESS/FAILED.
+        try:
+            field_obj = Field.query.filter_by(
+                event=tournament_url, name=field_name
+            ).first()
+            if field_obj and video_path:
+                camera_row = Camera(
+                    match_uuid=match_id,
+                    event=tournament_url,
+                    field=field_obj.id,
+                    name=camera_name,
+                    source_type="recording",
+                    status="UPLOADING",
+                    file=video_path,
+                    time_world=json.dumps(time_world),
+                    time_video=json.dumps(time_video),
+                )
+                db.session.add(camera_row)
                 db.session.commit()
-                print(f"finalize_recording: committed camera_stream_starts (final) for match {match_id}", flush=True)
-                _log.info("finalize_recording: committed camera_stream_starts (final) for match %s", match_id)
 
-            # 5. Delete the old final_video.{ext}
-            # Create a match-scoped camera row for the processed video.
-            # The YouTube upload worker (implemented elsewhere) will transition UPLOADING -> SUCCESS/FAILED.
-            try:
-                field_obj = Field.query.filter_by(
-                    event=tournament_url, name=field_name
-                ).first()
-                if field_obj and video_path:
-                    camera_row = Camera(
-                        match_uuid=match_id,
-                        event=tournament_url,
-                        field=field_obj.id,
-                        name=camera_name,
-                        source_type="recording",
-                        status="UPLOADING",
-                        file=video_path,
-                        time_world=json.dumps(time_world),
-                        time_video=json.dumps(time_video),
-                    )
-                    db.session.add(camera_row)
-                    db.session.commit()
+                _log.info(
+                    "finalize_recording: created camera row uuid=%s match=%s camera=%s",
+                    camera_row.uuid,
+                    match_id,
+                    camera_name,
+                )
 
-                    _log.info(
-                        "finalize_recording: created camera row uuid=%s match=%s camera=%s",
-                        camera_row.uuid,
-                        match_id,
-                        camera_name,
-                    )
+                import threading
 
-                    import threading
+                app_obj = current_app._get_current_object()
 
-                    app_obj = current_app._get_current_object()
+                def _yt_upload():
+                    with app_obj.app_context():
+                        from app.utils.youtube_upload import upload_camera_to_youtube
 
-                    def _yt_upload():
-                        with app_obj.app_context():
-                            from app.utils.youtube_upload import (
-                                upload_camera_to_youtube,
-                            )
+                        upload_camera_to_youtube(str(camera_row.uuid))
 
-                            upload_camera_to_youtube(str(camera_row.uuid))
-
-                    threading.Thread(target=_yt_upload, daemon=True).start()
-            except Exception as e:
-                _log.exception("finalize_recording: failed to create/upload camera row: %s", e)
-
-            try:
-                if path.exists(final_path):
-                    os.remove(final_path)
-                    _log.info("finalize_recording: removed old %s", final_path)
-            except OSError as e:
-                _log.warning("finalize_recording: could not remove old video %s: %s", final_path, e)
-
-            # Keep local reencoded_path for YouTube upload and for FAILED download.
+                threading.Thread(target=_yt_upload, daemon=True).start()
+        except Exception as e:
+            _log.exception("finalize_recording: failed to create/upload camera row: %s", e)
 
         # Delete all chunks and intermediate files
         to_remove = []
