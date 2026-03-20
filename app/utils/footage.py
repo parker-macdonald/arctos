@@ -458,7 +458,45 @@ def finalize_recording_worker(
             print(result.stderr.strip(), flush=True)
         return
 
-    print(f"finalize_recording: wrote {final_basename}", flush=True)
+    # Some browser/webm muxers produce streams whose timestamps are not well-behaved when
+    # concatenated via -c copy. YouTube can interpret these incorrectly (e.g. playing too fast).
+    # Fix by remuxing with regenerated PTS and resetting timestamps. This is not a re-encode
+    # (still -c copy); it should only repair container timing metadata.
+    remux_fixed_basename = f"final_video_fixed.{ext}"
+    remux_fixed_path = path.join(chunk_dir, remux_fixed_basename)
+    remux_cmd = [
+        "ffmpeg",
+        "-fflags",
+        "+genpts",
+        "-i",
+        path.basename(final_path),
+        "-c",
+        "copy",
+        "-map",
+        "0",
+        "-reset_timestamps",
+        "1",
+        "-loglevel",
+        "error",
+        "-y",
+        remux_fixed_basename,
+    ]
+    result = subprocess.run(
+        remux_cmd,
+        cwd=chunk_dir,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode == 0 and path.exists(remux_fixed_path) and path.getsize(remux_fixed_path) > 0:
+        try:
+            os.remove(final_path)
+        except OSError:
+            pass
+        final_basename = remux_fixed_basename
+        final_path = remux_fixed_path
+        print(f"finalize_recording: wrote {final_basename} (timestamp-fixed)", flush=True)
+    else:
+        print(f"finalize_recording: wrote {final_basename} (no timestamp fix); stderr={((result.stderr or '').strip() or 'n/a')}", flush=True)
 
     # 4. Compute point_timestamps and stream_start_time for frontend scrubbing
     try:
