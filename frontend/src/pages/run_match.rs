@@ -6,6 +6,8 @@ use dioxus::prelude::*;
 use serde_json::Value;
 #[cfg(target_arch = "wasm32")]
 use gloo_timers::callback::Interval;
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::JsCast;
 
 /// Parse ISO timestamp to epoch seconds (for stones elapsed).
 /// Handles RFC3339 (with Z or offset), and naive ISO from Python (e.g. "2025-02-16T19:34:56.123456").
@@ -276,6 +278,69 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                         gloo_timers::future::TimeoutFuture::new(997).await;
                     }
                 });
+            }
+        });
+    }
+
+    // Screen wake lock: keep the device awake while the match page is open (wasm only).
+    #[cfg(target_arch = "wasm32")]
+    {
+        let wake_lock_sentinel = use_signal(|| None::<wasm_bindgen::JsValue>);
+        use_effect(move || {
+            let mut sentinel_sig = wake_lock_sentinel.to_owned();
+            wasm_bindgen_futures::spawn_local(async move {
+                let window = match web_sys::window() {
+                    Some(w) => w,
+                    None => return,
+                };
+                let navigator = window.navigator();
+
+                let wake_lock_js = match js_sys::Reflect::get(
+                    &navigator,
+                    &wasm_bindgen::JsValue::from_str("wakeLock"),
+                ) {
+                    Ok(v) if !v.is_undefined() && !v.is_null() => v,
+                    _ => return,
+                };
+                let request_js =
+                    match js_sys::Reflect::get(&wake_lock_js, &wasm_bindgen::JsValue::from_str("request")) {
+                        Ok(v) if v.is_function() => v,
+                        _ => return,
+                    };
+
+                let request_fn = match request_js.dyn_ref::<js_sys::Function>() {
+                    Some(f) => f,
+                    None => return,
+                };
+
+                let type_arg = wasm_bindgen::JsValue::from_str("screen");
+                let promise = request_fn
+                    .call1(&wake_lock_js, &type_arg)
+                    .ok()
+                    .and_then(|v| v.dyn_into::<js_sys::Promise>().ok());
+
+                let promise = match promise {
+                    Some(p) => p,
+                    None => return,
+                };
+
+                let result = wasm_bindgen_futures::JsFuture::from(promise).await;
+                if let Ok(sentinel) = result {
+                    sentinel_sig.set(Some(sentinel));
+                }
+            });
+        });
+
+        let wake_lock_for_drop = wake_lock_sentinel.to_owned();
+        use_drop(move || {
+            if let Some(sentinel) = wake_lock_for_drop() {
+                let release_js =
+                    js_sys::Reflect::get(&sentinel, &wasm_bindgen::JsValue::from_str("release")).ok();
+                if let Some(release_fn) = release_js
+                    .and_then(|f| f.dyn_ref::<js_sys::Function>().map(|f| f.clone()))
+                {
+                    let _ = release_fn.call0(&sentinel);
+                }
             }
         });
     }
