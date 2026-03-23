@@ -1095,7 +1095,7 @@ def user_upload_video_footage(tournament_url: str):
     uploader_user_id = str(current_user.id)
     uploader_user_type = current_user.__class__.__name__.lower()
 
-    app_obj = current_app._get_current_object()
+    app_obj = current_app._get_current_object()  # type: ignore[attr-defined]
     logger = current_app.logger
 
     def run_user_autoclips():
@@ -1120,6 +1120,222 @@ def user_upload_video_footage(tournament_url: str):
             "success": True,
             "message": "Upload received; processing has begun.",
             "upload_group_name": upload_group_name,
+        }
+    )
+
+
+@bp.route("/tournaments/<tournament_url>/user-upload/chunk", methods=["POST"])
+@login_required
+def user_upload_video_footage_chunk(tournament_url: str):
+    """
+    Chunked upload endpoint for large user footage files.
+    Each request contains one chunk (<100MB from frontend).
+    """
+    import os
+    import re
+
+    field_id_raw = request.form.get("field_id") or request.form.get("field")
+    upload_id = (request.form.get("upload_id") or "").strip()
+    chunk_index_raw = (request.form.get("chunk_index") or "").strip()
+    total_chunks_raw = (request.form.get("total_chunks") or "").strip()
+    filename = (request.form.get("filename") or "source.webm").strip()
+    content_type = (request.form.get("content_type") or "").strip()
+    start_world_override = (request.form.get("start_world") or "").strip() or None
+    camera_name_override = (request.form.get("camera_name") or "").strip() or None
+    chunk_file = request.files.get("chunk")
+
+    if not field_id_raw or not upload_id or chunk_file is None:
+        return jsonify({"error": "field_id, upload_id, and chunk are required"}), 400
+    if not re.fullmatch(r"[A-Za-z0-9_-]{6,80}", upload_id):
+        return jsonify({"error": "Invalid upload_id"}), 400
+
+    try:
+        field_id = int(field_id_raw)
+        chunk_index = int(chunk_index_raw)
+        total_chunks = int(total_chunks_raw)
+    except ValueError:
+        return jsonify({"error": "chunk_index/total_chunks/field_id must be integers"}), 400
+    if chunk_index < 0 or total_chunks <= 0 or chunk_index >= total_chunks:
+        return jsonify({"error": "Invalid chunk_index/total_chunks"}), 400
+
+    field_obj = Field.query.filter_by(event=tournament_url, id=field_id).first()
+    if not field_obj:
+        return jsonify({"error": "Field not found"}), 404
+
+    incoming_dir = path.join(
+        current_app.root_path,
+        "../static/uploads/videos",
+        tournament_url,
+        field_obj.name,
+        "user_uploads",
+        "_incoming",
+        upload_id,
+    )
+    os.makedirs(incoming_dir, exist_ok=True)
+
+    chunk_filename = f"chunk_{chunk_index:06d}.part"
+    chunk_abs_path = path.join(incoming_dir, chunk_filename)
+    chunk_file.save(chunk_abs_path)
+
+    meta = {
+        "upload_id": upload_id,
+        "tournament_url": tournament_url,
+        "field_id": field_id,
+        "field_name": field_obj.name,
+        "filename": filename,
+        "content_type": content_type,
+        "total_chunks": total_chunks,
+        "start_world_override": start_world_override,
+        "camera_name_override": camera_name_override,
+        "uploaded_by_user_id": str(current_user.id),
+        "uploaded_by_user_type": current_user.__class__.__name__.lower(),
+    }
+    with open(path.join(incoming_dir, "meta.json"), "w") as f:
+        json.dump(meta, f)
+
+    return jsonify(
+        {
+            "success": True,
+            "upload_id": upload_id,
+            "chunk_index": chunk_index,
+            "total_chunks": total_chunks,
+        }
+    )
+
+
+@bp.route("/tournaments/<tournament_url>/user-upload/complete", methods=["POST"])
+@login_required
+def user_upload_video_footage_complete(tournament_url: str):
+    """Finalize a chunked upload, assemble source file on disk, then start processing worker."""
+    import os
+    from datetime import datetime, timezone
+
+    payload = request.get_json(silent=True) or {}
+    upload_id = (payload.get("upload_id") or request.form.get("upload_id") or "").strip()
+    if not upload_id:
+        return jsonify({"error": "upload_id is required"}), 400
+
+    incoming_root = path.join(
+        current_app.root_path,
+        "../static/uploads/videos",
+        tournament_url,
+    )
+
+    # Locate upload directory by scanning fields under this tournament.
+    incoming_dir = None
+    field_name = None
+    for field_obj in Field.query.filter_by(event=tournament_url).all():
+        candidate = path.join(
+            incoming_root,
+            field_obj.name,
+            "user_uploads",
+            "_incoming",
+            upload_id,
+        )
+        if path.exists(candidate):
+            incoming_dir = candidate
+            field_name = field_obj.name
+            break
+    if not incoming_dir or not field_name:
+        return jsonify({"error": "Upload not found"}), 404
+
+    meta_path = path.join(incoming_dir, "meta.json")
+    if not path.exists(meta_path):
+        return jsonify({"error": "Upload metadata missing"}), 400
+
+    with open(meta_path, "r") as f:
+        meta = json.load(f)
+
+    if str(meta.get("uploaded_by_user_id")) != str(current_user.id):
+        return jsonify({"error": "You cannot complete another user's upload"}), 403
+
+    total_chunks = int(meta.get("total_chunks") or 0)
+    if total_chunks <= 0:
+        return jsonify({"error": "Invalid total_chunks metadata"}), 400
+
+    filename = meta.get("filename") or "source.webm"
+    ext = path.splitext(path.basename(filename))[1].lower() or ".webm"
+    final_dir = path.join(
+        current_app.root_path,
+        "../static/uploads/videos",
+        tournament_url,
+        field_name,
+        "user_uploads",
+        upload_id,
+    )
+    os.makedirs(final_dir, exist_ok=True)
+    saved_abs_path = path.join(final_dir, f"source{ext}")
+
+    # Assemble chunk files in order without loading entire upload into RAM.
+    with open(saved_abs_path, "wb") as out:
+        for i in range(total_chunks):
+            part_path = path.join(incoming_dir, f"chunk_{i:06d}.part")
+            if not path.exists(part_path):
+                return jsonify({"error": f"Missing chunk {i}"}), 400
+            with open(part_path, "rb") as inp:
+                while True:
+                    buf = inp.read(1024 * 1024)
+                    if not buf:
+                        break
+                    out.write(buf)
+
+    start_world_override = meta.get("start_world_override")
+    if start_world_override:
+        s = start_world_override.strip()
+        if s.endswith("Z"):
+            s = s.replace("Z", "+00:00")
+        try:
+            dt = datetime.fromisoformat(s)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            start_world_override = dt.astimezone(timezone.utc).isoformat().replace(
+                "+00:00", "Z"
+            )
+        except ValueError:
+            return jsonify({"error": "start_world must be an ISO timestamp"}), 400
+
+    camera_name_override = (meta.get("camera_name_override") or "").strip()
+    orig_stem = path.splitext(path.basename(filename))[0] or "upload"
+    if camera_name_override:
+        orig_stem = camera_name_override
+
+    uploader_user_id = str(current_user.id)
+    uploader_user_type = current_user.__class__.__name__.lower()
+
+    app_obj = current_app._get_current_object()  # type: ignore[attr-defined]
+    logger = current_app.logger
+
+    def run_user_autoclips():
+        with app_obj.app_context():
+            user_autoclips_from_uploaded_video_worker(
+                logger,
+                tournament_url=tournament_url,
+                field_name=field_name,
+                match_points_padding_sec=3.0,
+                uploader_user_id=uploader_user_id,
+                uploader_user_type=uploader_user_type,
+                user_video_abs_path=saved_abs_path,
+                user_video_filename_stem=orig_stem,
+                upload_group_name=upload_id,
+                video_start_world_override_iso=start_world_override,
+            )
+
+    threading.Thread(target=run_user_autoclips, daemon=True).start()
+
+    # Best-effort cleanup of chunk parts after assembly.
+    try:
+        for i in range(total_chunks):
+            part_path = path.join(incoming_dir, f"chunk_{i:06d}.part")
+            if path.exists(part_path):
+                os.remove(part_path)
+    except Exception:
+        pass
+
+    return jsonify(
+        {
+            "success": True,
+            "message": "Upload received; processing has begun.",
+            "upload_group_name": upload_id,
         }
     )
 

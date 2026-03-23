@@ -279,82 +279,111 @@ pub async fn delete_user_uploaded_camera(
 pub async fn user_upload_video_footage(
     tournament_url: &str,
     field_id: u32,
-    video_bytes: bytes::Bytes,
-    content_type: Option<String>,
+    file: dioxus::html::FileData,
     start_world_override: Option<String>,
     camera_name: Option<String>,
 ) -> Result<String, String> {
     use wasm_bindgen::JsCast;
 
-    let form = web_sys::FormData::new().map_err(|_| "FormData::new failed")?;
-    form.append_with_str("field_id", &field_id.to_string())
-        .map_err(|_| "append field_id failed")?;
-    if let Some(sw) = start_world_override {
-        if !sw.trim().is_empty() {
-            form.append_with_str("start_world", sw.trim())
-                .map_err(|_| "append start_world failed")?;
-        }
-    }
-    if let Some(name) = camera_name {
-        if !name.trim().is_empty() {
-            form.append_with_str("camera_name", name.trim())
-                .map_err(|_| "append camera_name failed")?;
-        }
-    }
-
-    // Create a Blob from the raw bytes read via Dioxus `FileData`.
-    let arr = js_sys::Uint8Array::new_from_slice(video_bytes.as_ref());
-    let parts = js_sys::Array::new();
-    parts.push(&arr);
-    let blob_opts = web_sys::BlobPropertyBag::new();
-    if let Some(ct) = content_type {
-        blob_opts.set_type(&ct);
-    }
-    let blob = web_sys::Blob::new_with_u8_array_sequence_and_options(
-        &parts.into(),
-        &blob_opts,
-    )
-    .map_err(|e| format!("{:?}", e))?;
-    form.append_with_blob("video", &blob)
-        .map_err(|_| "append video failed")?;
-
-    let url = format!("{}/_api/tournaments/{}/user-upload", base(), tournament_url);
-    let opts = web_sys::RequestInit::new();
-    opts.set_method("POST");
-    let form_js = wasm_bindgen::JsValue::from(form);
-    opts.set_body(form_js.as_ref());
-
-    // Ensure cookies/session are included.
-    #[allow(deprecated)]
-    opts.set_credentials(web_sys::RequestCredentials::Include);
-
     let window = web_sys::window().ok_or("no window")?;
-    let request = web_sys::Request::new_with_str_and_init(&url, &opts)
-        .map_err(|_| "Request::new failed")?;
-    let resp = wasm_bindgen_futures::JsFuture::from(window.fetch_with_request(&request))
-        .await
-        .map_err(|e| format!("{:?}", e))?;
+    const CHUNK_SIZE_BYTES: u64 = 90 * 1024 * 1024; // must remain < 100MB
 
-    let resp: web_sys::Response = resp.dyn_into().map_err(|_| "response cast failed")?;
-    if !resp.ok() {
-        let text = wasm_bindgen_futures::JsFuture::from(
-            resp.text()
-                .map_err(|e: wasm_bindgen::JsValue| format!("{:?}", e))?,
-        )
+    let web_file = file
+        .inner()
+        .downcast_ref::<web_sys::File>()
+        .cloned()
+        .ok_or_else(|| "Could not access browser file handle".to_string())?;
+    let file_size = web_file.size() as u64;
+    let total_chunks = ((file_size + CHUNK_SIZE_BYTES - 1) / CHUNK_SIZE_BYTES).max(1);
+    let upload_id = format!(
+        "u{}{}",
+        js_sys::Date::now() as u64,
+        (js_sys::Math::random() * 1_000_000_000.0) as u64
+    );
+    let content_type = file
+        .content_type()
+        .unwrap_or_else(|| "application/octet-stream".to_string());
+    let filename = file.name();
+
+    let chunk_url = format!("{}/_api/tournaments/{}/user-upload/chunk", base(), tournament_url);
+    for idx in 0..total_chunks {
+        let start = idx * CHUNK_SIZE_BYTES;
+        let end = std::cmp::min(start + CHUNK_SIZE_BYTES, file_size);
+        let blob = web_file
+            .slice_with_f64_and_f64(start as f64, end as f64)
+            .map_err(|_| "Failed to slice file chunk")?;
+
+        let form = web_sys::FormData::new().map_err(|_| "FormData::new failed")?;
+        form.append_with_str("field_id", &field_id.to_string())
+            .map_err(|_| "append field_id failed")?;
+        form.append_with_str("upload_id", &upload_id)
+            .map_err(|_| "append upload_id failed")?;
+        form.append_with_str("chunk_index", &idx.to_string())
+            .map_err(|_| "append chunk_index failed")?;
+        form.append_with_str("total_chunks", &total_chunks.to_string())
+            .map_err(|_| "append total_chunks failed")?;
+        form.append_with_str("filename", &filename)
+            .map_err(|_| "append filename failed")?;
+        form.append_with_str("content_type", &content_type)
+            .map_err(|_| "append content_type failed")?;
+        if let Some(sw) = start_world_override.as_deref() {
+            if !sw.trim().is_empty() {
+                form.append_with_str("start_world", sw.trim())
+                    .map_err(|_| "append start_world failed")?;
+            }
+        }
+        if let Some(name) = camera_name.as_deref() {
+            if !name.trim().is_empty() {
+                form.append_with_str("camera_name", name.trim())
+                    .map_err(|_| "append camera_name failed")?;
+            }
+        }
+        form.append_with_blob("chunk", &blob)
+            .map_err(|_| "append chunk failed")?;
+
+        let opts = web_sys::RequestInit::new();
+        opts.set_method("POST");
+        let form_js = wasm_bindgen::JsValue::from(form);
+        opts.set_body(form_js.as_ref());
+        #[allow(deprecated)]
+        opts.set_credentials(web_sys::RequestCredentials::Include);
+        let request = web_sys::Request::new_with_str_and_init(&chunk_url, &opts)
+            .map_err(|_| "Request::new failed")?;
+        let resp = wasm_bindgen_futures::JsFuture::from(window.fetch_with_request(&request))
             .await
             .map_err(|e| format!("{:?}", e))?;
-        let msg = text.as_string().unwrap_or_else(|| "Unknown error".to_string());
-        return Err(format!("Upload failed: {}", msg));
+        let resp: web_sys::Response = resp.dyn_into().map_err(|_| "response cast failed")?;
+        if !resp.ok() {
+            let text = wasm_bindgen_futures::JsFuture::from(
+                resp.text()
+                    .map_err(|e: wasm_bindgen::JsValue| format!("{:?}", e))?,
+            )
+            .await
+            .map_err(|e| format!("{:?}", e))?;
+            let msg = text
+                .as_string()
+                .unwrap_or_else(|| "Unknown error".to_string());
+            return Err(format!("Chunk upload failed: {}", msg));
+        }
     }
-    let text = wasm_bindgen_futures::JsFuture::from(
-        resp.text()
-            .map_err(|e: wasm_bindgen::JsValue| format!("{:?}", e))?,
-    )
+
+    let complete_url = format!(
+        "{}/_api/tournaments/{}/user-upload/complete",
+        base(),
+        tournament_url
+    );
+    let body = serde_json::json!({ "upload_id": upload_id });
+    let c = client();
+    let r = with_credentials(c.post(complete_url).json(&body))
+        .send()
         .await
-        .map_err(|e| format!("{:?}", e))?;
-    let json_str = text.as_string().unwrap_or_default();
-    let v: Value = serde_json::from_str(&json_str).map_err(|e| e.to_string())?;
-    Ok(v.get("upload_group_name").and_then(|x| x.as_str()).unwrap_or("").to_string())
+        .map_err(|e| e.to_string())?;
+    let v: Value = response_json(r).await?;
+    Ok(v
+        .get("upload_group_name")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string())
 }
 
 pub async fn start_match_data(

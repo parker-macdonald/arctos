@@ -731,16 +731,6 @@ pub fn TournamentHome(url: String) -> Element {
                                                     spawn(async move {
                                                         let mut first_err: Option<String> = None;
                                                         for u in uploads {
-                                                            let content_type = u.file.content_type();
-                                                            let bytes = match u.file.read_bytes().await {
-                                                                Ok(b) => b,
-                                                                Err(_) => {
-                                                                    if first_err.is_none() {
-                                                                        first_err = Some("Failed to read uploaded file".to_string());
-                                                                    }
-                                                                    continue;
-                                                                }
-                                                            };
                                                             let start_world = if u.start_world_value.trim().is_empty() {
                                                                 None
                                                             } else {
@@ -749,8 +739,7 @@ pub fn TournamentHome(url: String) -> Element {
                                                             if let Err(e) = api::user_upload_video_footage(
                                                                 &url,
                                                                 u.field_id,
-                                                                bytes,
-                                                                content_type,
+                                                                u.file.clone(),
                                                                 start_world,
                                                                 Some(u.camera_name.clone()),
                                                             )
