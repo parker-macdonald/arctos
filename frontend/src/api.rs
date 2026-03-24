@@ -283,6 +283,30 @@ pub async fn user_upload_video_footage(
     start_world_override: Option<String>,
     camera_name: Option<String>,
 ) -> Result<String, String> {
+    user_upload_video_footage_with_progress(
+        tournament_url,
+        field_id,
+        file,
+        start_world_override,
+        camera_name,
+        |_, _| {},
+    )
+    .await
+}
+
+/// `on_progress(bytes_sent, total_bytes)` after each chunk succeeds and after finalize completes.
+#[cfg(target_arch = "wasm32")]
+pub async fn user_upload_video_footage_with_progress<F>(
+    tournament_url: &str,
+    field_id: u32,
+    file: dioxus::html::FileData,
+    start_world_override: Option<String>,
+    camera_name: Option<String>,
+    mut on_progress: F,
+) -> Result<String, String>
+where
+    F: FnMut(u64, u64),
+{
     use wasm_bindgen::JsCast;
 
     let window = web_sys::window().ok_or("no window")?;
@@ -294,6 +318,8 @@ pub async fn user_upload_video_footage(
         .cloned()
         .ok_or_else(|| "Could not access browser file handle".to_string())?;
     let file_size = web_file.size() as u64;
+    on_progress(0, file_size);
+
     let total_chunks = ((file_size + CHUNK_SIZE_BYTES - 1) / CHUNK_SIZE_BYTES).max(1);
     let upload_id = format!(
         "u{}{}",
@@ -365,6 +391,7 @@ pub async fn user_upload_video_footage(
                 .unwrap_or_else(|| "Unknown error".to_string());
             return Err(format!("Chunk upload failed: {}", msg));
         }
+        on_progress(end, file_size);
     }
 
     let complete_url = format!(
@@ -379,6 +406,7 @@ pub async fn user_upload_video_footage(
         .await
         .map_err(|e| e.to_string())?;
     let v: Value = response_json(r).await?;
+    on_progress(file_size, file_size);
     Ok(v
         .get("upload_group_name")
         .and_then(|x| x.as_str())

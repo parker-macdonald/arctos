@@ -119,6 +119,8 @@ pub fn TournamentHome(url: String) -> Element {
     let mut pending_uploads = use_signal(|| Vec::<PendingUpload>::new());
     let mut upload_error = use_signal(|| None::<String>);
     let mut uploading = use_signal(|| false);
+    // Per-row upload percent (0–100) while uploading; empty when idle.
+    let mut upload_row_progress = use_signal(|| Vec::<Option<u32>>::new());
     let mut upload_modal_open = use_signal(|| false);
 
     let url_for_fields = url.clone();
@@ -593,6 +595,7 @@ pub fn TournamentHome(url: String) -> Element {
                                                             thead {
                                                                 tr {
                                                                     th { "File" }
+                                                                    th { "Progress" }
                                                                     th { "Clip/camera name" }
                                                                     th { "Field" }
                                                                     th { "Start timestamp (UTC)" }
@@ -603,6 +606,25 @@ pub fn TournamentHome(url: String) -> Element {
                                                                 for (idx, item) in pending_uploads().iter().enumerate() {
                                                                     tr { key: "{item.filename}-{idx}",
                                                                         td { "{item.filename}" }
+                                                                        td {
+                                                                            if uploading() {
+                                                                                if let Some(p) = upload_row_progress().get(idx).copied().flatten() {
+                                                                                    div { class: "progress",
+                                                                                        style: "min-width: 6rem; height: 1.1rem;",
+                                                                                        div {
+                                                                                            class: "progress-bar",
+                                                                                            role: "progressbar",
+                                                                                            style: "width: {p}%",
+                                                                                            "{p}%"
+                                                                                        }
+                                                                                    }
+                                                                                } else {
+                                                                                    span { class: "text-muted small", "—" }
+                                                                                }
+                                                                            } else {
+                                                                                span { class: "text-muted small", "—" }
+                                                                            }
+                                                                        }
                                                                         td {
                                                                             input {
                                                                                 class: "form-control form-control-sm",
@@ -726,22 +748,38 @@ pub fn TournamentHome(url: String) -> Element {
                                                     if uploads.is_empty() {
                                                         return;
                                                     }
+                                                    let n = uploads.len();
+                                                    let progress_sig = upload_row_progress.clone();
                                                     uploading.set(true);
                                                     upload_error.set(None);
+                                                    upload_row_progress.set(vec![Some(0); n]);
                                                     spawn(async move {
                                                         let mut first_err: Option<String> = None;
-                                                        for u in uploads {
+                                                        for (file_idx, u) in uploads.into_iter().enumerate() {
                                                             let start_world = if u.start_world_value.trim().is_empty() {
                                                                 None
                                                             } else {
                                                                 Some(u.start_world_value.clone())
                                                             };
-                                                            if let Err(e) = api::user_upload_video_footage(
+                                                            let mut progress_sig = progress_sig.clone();
+                                                            if let Err(e) = api::user_upload_video_footage_with_progress(
                                                                 &url,
                                                                 u.field_id,
-                                                                u.file.clone(),
+                                                                u.file,
                                                                 start_world,
-                                                                Some(u.camera_name.clone()),
+                                                                Some(u.camera_name),
+                                                                move |sent, total| {
+                                                                    let pct = if total > 0 {
+                                                                        ((sent as u128 * 100) / total as u128) as u32
+                                                                    } else {
+                                                                        0
+                                                                    };
+                                                                    let mut v = progress_sig();
+                                                                    if file_idx < v.len() {
+                                                                        v[file_idx] = Some(pct.min(100));
+                                                                        progress_sig.set(v);
+                                                                    }
+                                                                },
                                                             )
                                                             .await
                                                             {
@@ -754,6 +792,7 @@ pub fn TournamentHome(url: String) -> Element {
                                                         if let Some(e) = first_err {
                                                             upload_error.set(Some(e));
                                                         } else {
+                                                            upload_row_progress.set(Vec::new());
                                                             pending_uploads.set(Vec::new());
                                                             upload_modal_open.set(false);
                                                         }
