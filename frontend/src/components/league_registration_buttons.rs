@@ -20,6 +20,8 @@ pub fn LeagueRegistrationButtons(
     /// Label for the register button when not registered. Default "Register".
     #[props(default = String::from("Register"))]
     register_label: String,
+    #[props(default = false)]
+    show_edit_warning: bool,
     /// Per-role toggles; when provided, override the aggregate flag.
     #[props(default = None)]
     team_registration_open: Option<bool>,
@@ -27,7 +29,7 @@ pub fn LeagueRegistrationButtons(
     player_registration_open: Option<bool>,
 ) -> Element {
     let show_register_only = current_user.is_none();
-    let (is_registered, user_type) = current_user
+    let (_is_registered, user_type) = current_user
         .as_ref()
         .and_then(|r| r.as_ref().ok())
         .map(|u| {
@@ -61,13 +63,13 @@ pub fn LeagueRegistrationButtons(
                             r#type: "button",
                             class: "btn btn-outline-secondary",
                             onclick: move |_| on_edit_registration.call(()),
-                            "Edit Registration"
+                            if show_edit_warning { "Edit Registration ⚠️"} else { "Edit Registration" }
                         }
                     } else {
                         Link {
                             to: Route::LeagueRegister { league_url: league_url.clone() },
                             class: "btn btn-outline-secondary",
-                            "Edit Registration"
+                            if show_edit_warning { "Edit Registration ⚠️" } else { "Edit Registration" }
                         }
                     }
                 } else if team_open {
@@ -91,13 +93,13 @@ pub fn LeagueRegistrationButtons(
                             r#type: "button",
                             class: "btn btn-outline-secondary",
                             onclick: move |_| on_edit_registration.call(()),
-                            "Edit Registration"
+                            if show_edit_warning { "Edit Registration ⚠️" } else { "Edit Registration" }
                         }
                     } else {
                         Link {
                             to: Route::LeagueRegister { league_url: league_url.clone() },
                             class: "btn btn-outline-secondary",
-                            "Edit Registration"
+                            if show_edit_warning { "Edit Registration ⚠️" } else { "Edit Registration" }
                         }
                     }
                 } else if player_open {

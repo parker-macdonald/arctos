@@ -34,6 +34,7 @@ from app.utils.helpers import (
     resolve_team_name_to_id,
     resolve_tag_to_team,
     can_head_ref_match,
+    get_registrable_config,
 )
 from app.utils.scheduling import (
     compute_dynamic_match_nominal_start_time,
@@ -66,6 +67,7 @@ from app.domain.enums import (
 # only one worker bc ffmpeg does its own parallelism
 # so we only ever want to run one at a time
 executor = Executor()
+MAX_WAIVER_BYTES = 10 * 1024 * 1024
 
 bp = Blueprint("tournaments", __name__, url_prefix="/_api")
 
@@ -286,6 +288,78 @@ def create_league():
     }), 200
 
 
+@bp.route("/<tournament_url>/upload-waiver", methods=["POST"])
+@login_required
+def upload_tournament_waiver(tournament_url):
+    """TO upload the current waiver for a tournament (extensionless + overwrites)."""
+    tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
+
+    user_type = current_user.__class__.__name__.lower()
+    if tournament.league_id:
+        is_to = (
+            TO.query.filter_by(
+                user_id=current_user.id,
+                user_type=user_type,
+                league_id=tournament.league_id,
+            ).first()
+            is not None
+        )
+    else:
+        is_to = (
+            TO.query.filter_by(
+                user_id=current_user.id,
+                user_type=user_type,
+                event=tournament_url,
+            ).first()
+            is not None
+        )
+
+    if not is_to:
+        return jsonify({"error": "Forbidden"}), 403
+
+    data = request.get_data() or b""
+    if not data:
+        return jsonify({"error": "No waiver data"}), 400
+    if len(data) > MAX_WAIVER_BYTES:
+        return jsonify({"error": "Waiver file is too large (max 10 MB)"}), 400
+
+    import hashlib
+    import os
+
+    waiver_sha256 = hashlib.sha256(data).hexdigest()
+
+    # Store based on canonical scope (league waiver is shared across its tournaments).
+    scope_url = tournament.league_id or tournament.url
+
+    upload_dir = os.path.join(
+        current_app.root_path, "../static", "uploads", "waivers", scope_url
+    )
+    os.makedirs(upload_dir, exist_ok=True)
+    file_path = os.path.join(upload_dir, "waiver")
+
+    try:
+        with open(file_path, "wb") as f:
+            f.write(data)
+    except Exception as e:
+        return jsonify({"error": f"Error saving waiver: {e}"}), 500
+
+    cfg = get_registrable_config(tournament)
+    if not cfg:
+        return jsonify({"error": "Registrable config not found"}), 500
+
+    cfg.waiver_sha256 = waiver_sha256
+    cfg.waiver_filepath = (
+        f"/leagues/{scope_url}/waiver" if tournament.league_id else f"/{scope_url}/waiver"
+    )
+    db.session.commit()
+
+    return jsonify(
+        {
+            "success": True,
+            "waiver_filepath": cfg.waiver_filepath,
+            "waiver_sha256": cfg.waiver_sha256,
+        }
+    )
 
 
 @bp.route("/<tournament_url>/recompute-schedule", methods=["POST"])
@@ -970,6 +1044,29 @@ def update_tournament_settings(tournament_url):
         rc.player_registration_open = (
             "player_registration_open" in request.form or legacy_reg_open
         )
+        # Waiver requirement toggle.
+        # If unchecked, clear the waiver config so players don't have to sign.
+        require_waiver_signature = "require_waiver_signature" in request.form
+        if not require_waiver_signature:
+            rc.waiver_filepath = None
+            rc.waiver_sha256 = None
+            # Best-effort cleanup of the on-disk waiver file.
+            import os
+
+            scope_url = tournament.url
+            file_path = os.path.join(
+                current_app.root_path,
+                "../static",
+                "uploads",
+                "waivers",
+                scope_url,
+                "waiver",
+            )
+            try:
+                if os.path.isfile(file_path):
+                    os.remove(file_path)
+            except Exception:
+                pass
         n_max = request.form.get("n_max_teams", "").strip()
         rc.n_max_teams = int(n_max) if n_max else None
         roster = request.form.get("max_team_size_roster", "").strip()

@@ -6,7 +6,7 @@ from app.models.base import db
 from app.domain.enums import RegistrationStatus, TeamRegistrationStatus
 
 
-class TeamRegistration(db.Model):
+class TeamRegistration(db.Model):  # type: ignore[misc]
     __tablename__ = "team_registrations"
 
     id = db.Column(db.Integer, primary_key=True)
@@ -33,7 +33,7 @@ class TeamRegistration(db.Model):
     payment_notes = db.Column(db.Text)
 
 
-class PlayerRegistration(db.Model):
+class PlayerRegistration(db.Model):  # type: ignore[misc]
     __tablename__ = "player_registrations"
 
     id = db.Column(db.Integer, primary_key=True)
@@ -60,3 +60,15 @@ class PlayerRegistration(db.Model):
     payment_method = db.Column(db.String(50))
     payment_reference = db.Column(db.String(100))
     payment_notes = db.Column(db.Text)
+
+    # signature of the current waiver.
+    # Never send this field to non-player/non-TO contexts.
+    waiver_legal_name_signature = db.Column(db.Text)
+    # SHA-256 of the waiver file at the moment the player signed.
+    waiver_legal_name_signature_sha256 = db.Column(db.String(64))
+    # Server timestamp when the signature was submitted.
+    waiver_signature_submitted_at = db.Column(
+        db.DateTime,
+        default=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
+        nullable=True,
+    )

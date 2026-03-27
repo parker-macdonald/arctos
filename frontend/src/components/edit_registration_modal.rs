@@ -119,6 +119,7 @@ fn DeregisterConfirmOverlay(
 ) -> Element {
     let league_url = context.league_url();
     let tournament_url = context.tournament_url();
+    let deregister_error = use_signal(|| None::<String>);
     rsx! {
         div {
             class: "position-absolute top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center",
@@ -135,6 +136,9 @@ fn DeregisterConfirmOverlay(
                             "Are you sure you want to deregister? You will be removed."
                         }
                     }
+                    if let Some(ref err) = deregister_error() {
+                        div { class: "alert alert-danger small py-2 mb-3", "{err}" }
+                    }
                     div { class: "d-flex gap-2 justify-content-end",
                         button {
                             r#type: "button",
@@ -146,29 +150,64 @@ fn DeregisterConfirmOverlay(
                             r#type: "button",
                             class: "btn btn-danger",
                             onclick: move |_| {
-                                on_close.call(());
                                 if let Some(lu) = league_url.clone() {
                                     if is_team {
+                                        let on_close = on_close.clone();
+                                        let on_success = on_success.clone();
+                                        let mut deregister_error = deregister_error.clone();
                                         spawn(async move {
-                                            let _ = api::league_deregister_team(&lu).await;
-                                            on_success.call(());
+                                            deregister_error.set(None);
+                                            match api::league_deregister_team(&lu).await {
+                                                Ok(_) => {
+                                                    on_close.call(());
+                                                    on_success.call(());
+                                                }
+                                                Err(e) => deregister_error.set(Some(e)),
+                                            }
                                         });
                                     } else {
+                                        let on_close = on_close.clone();
+                                        let on_success = on_success.clone();
+                                        let mut deregister_error = deregister_error.clone();
                                         spawn(async move {
-                                            let _ = api::league_deregister_player(&lu).await;
-                                            on_success.call(());
+                                            deregister_error.set(None);
+                                            match api::league_deregister_player(&lu).await {
+                                                Ok(_) => {
+                                                    on_close.call(());
+                                                    on_success.call(());
+                                                }
+                                                Err(e) => deregister_error.set(Some(e)),
+                                            }
                                         });
                                     }
                                 } else if let Some(tu) = tournament_url.clone() {
                                     if is_team {
+                                        let on_close = on_close.clone();
+                                        let on_success = on_success.clone();
+                                        let mut deregister_error = deregister_error.clone();
                                         spawn(async move {
-                                            let _ = api::deregister_team(&tu).await;
-                                            on_success.call(());
+                                            deregister_error.set(None);
+                                            match api::deregister_team(&tu).await {
+                                                Ok(_) => {
+                                                    on_close.call(());
+                                                    on_success.call(());
+                                                }
+                                                Err(e) => deregister_error.set(Some(e)),
+                                            }
                                         });
                                     } else {
+                                        let on_close = on_close.clone();
+                                        let on_success = on_success.clone();
+                                        let mut deregister_error = deregister_error.clone();
                                         spawn(async move {
-                                            let _ = api::deregister_player(&tu).await;
-                                            on_success.call(());
+                                            deregister_error.set(None);
+                                            match api::deregister_player(&tu).await {
+                                                Ok(_) => {
+                                                    on_close.call(());
+                                                    on_success.call(());
+                                                }
+                                                Err(e) => deregister_error.set(Some(e)),
+                                            }
                                         });
                                     }
                                 }
@@ -188,12 +227,18 @@ fn EditPlayerRegistrationContent(
     on_close: EventHandler<()>,
     on_success: EventHandler<()>,
 ) -> Element {
+    let backend = api::base_url();
     let mut jersey_name = use_signal(|| "".to_string());
     let mut jersey_number = use_signal(|| "".to_string());
     let mut team = use_signal(|| "".to_string());
     let mut current_team_name = use_signal(|| "".to_string());
     let mut status = use_signal(|| "".to_string());
     let mut teams = use_signal(|| vec![]);
+    let mut waiver_required = use_signal(|| false);
+    let mut waiver_signature_valid = use_signal(|| false);
+    let mut waiver_filepath = use_signal(|| None::<String>);
+    let mut waiver_sha256 = use_signal(|| None::<String>);
+    let mut waiver_legal_name_signature = use_signal(|| "".to_string());
     let mut error = use_signal(|| None::<String>);
     let mut loading = use_signal(|| true);
 
@@ -220,6 +265,14 @@ fn EditPlayerRegistrationContent(
                     jersey_name.set(res.registration.jersey_name.unwrap_or_default());
                     jersey_number.set(res.registration.jersey_number.unwrap_or_default());
                     status.set(res.registration.status.clone());
+
+                    waiver_required.set(res.waiver_required);
+                    waiver_signature_valid.set(res.waiver_signature_valid);
+                    waiver_filepath.set(res.waiver_filepath);
+                    waiver_sha256.set(res.waiver_sha256);
+                    waiver_legal_name_signature
+                        .set(res.waiver_legal_name_signature.unwrap_or_default());
+
                     if let Some(ref ct) = res.current_team {
                         current_team_name.set(ct.pseudonym.clone().unwrap_or_else(|| ct.id.clone()));
                     }
@@ -260,6 +313,11 @@ fn EditPlayerRegistrationContent(
                 jersey_name: Some(jersey_name()),
                 jersey_number: Some(jersey_number()),
                 team: team_opt,
+                waiver_legal_name_signature: if waiver_required() && !waiver_signature_valid() {
+                    Some(waiver_legal_name_signature())
+                } else {
+                    None
+                },
             };
             let res = match &ctx {
                 EditRegistrationContext::League { league_url } => {
@@ -336,6 +394,42 @@ fn EditPlayerRegistrationContent(
                         }
                         br {}
                         "If you change teams, your new team must approve your request."
+                    }
+                }
+                if waiver_required() {
+                    div { class: "mb-3",
+                        label { class: "form-label", "Waiver Signature" }
+                        if let Some(link) = waiver_filepath() {
+                            div { class: "form-text mb-2",
+                                "Waiver file: "
+                                a { href: "{backend}{link}", target: "_blank", class: "text-decoration-none", "{backend}{link}" }
+                                if let Some(sha) = waiver_sha256() {
+                                    div { class: "text-muted mt-1", "Hash (SHA-256):" }
+                                    pre { class: "p-2 border rounded bg-light mt-1 mb-0", style: "white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word;", code { "{sha}" } }
+                                }
+                            }
+                        }
+                        p { class: "form-text mb-2", "By entering your full legal name below, you agree to the terms of the waiver linked above, and affirm that the waiver you viewed matches the SHA-256 hash displayed." }
+                        input {
+                            class: if waiver_signature_valid() {
+                                "form-control bg-light text-muted"
+                            } else {
+                                "form-control"
+                            },
+                            r#type: "text",
+                            value: "{waiver_legal_name_signature}",
+                            disabled: waiver_signature_valid(),
+                            required: !waiver_signature_valid(),
+                            oninput: move |e| waiver_legal_name_signature.set(e.value()),
+                        }
+                        div { class: "form-text mb-2",
+                            "Waiver signature:"
+                            if waiver_signature_valid() {
+                                span { class: "text-success ms-2", "Valid" }
+                            } else {
+                                span { class: "text-warning ms-2", "Needs signing / re-signing" }
+                            }
+                        }
                     }
                 }
             }

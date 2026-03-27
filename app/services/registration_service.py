@@ -128,9 +128,17 @@ class RegistrationService:
         cfg = get_registrable_config(tournament)
         n_max = getattr(cfg, "n_max_teams", None) if cfg else None
         if n_max is not None:
-            current_team_count = TeamRegistration.query.filter_by(
-                event=tournament_url, status="CONFIRMED"
-            ).count()
+            # For league tournaments, team registrations are stored on league_id.
+            if getattr(tournament, "league_id", None):
+                current_team_count = TeamRegistration.query.filter_by(
+                    league_id=tournament.league_id,
+                    status=TeamRegistrationStatus.CONFIRMED,
+                ).count()
+            else:
+                current_team_count = TeamRegistration.query.filter_by(
+                    event=tournament_url,
+                    status=TeamRegistrationStatus.CONFIRMED,
+                ).count()
             if current_team_count >= n_max:
                 return Err(
                     ValidationError(
@@ -163,6 +171,7 @@ class RegistrationService:
         *,
         jersey_number: str = "",
         jersey_name: str = "",
+        waiver_legal_name_signature: str = "",
     ) -> Result["PlayerRegistration", ArctosError]:
         from models import PlayerRegistration, db
 
@@ -216,6 +225,21 @@ class RegistrationService:
             player_registration.paid_at = datetime.now(timezone.utc).replace(
                 tzinfo=None
             )
+
+        # If a waiver is configured, players must sign it.
+        waiver_filepath = getattr(cfg, "waiver_filepath", None) if cfg else None
+        if waiver_filepath:
+            signature = (waiver_legal_name_signature or "").strip()
+            if not signature:
+                return Err(ValidationError("Waiver signature is required"))
+            current_waiver_sha = getattr(cfg, "waiver_sha256", None)
+            if not current_waiver_sha:
+                return Err(ValidationError("Waiver is missing its checksum"))
+
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
+            player_registration.waiver_legal_name_signature = signature
+            player_registration.waiver_legal_name_signature_sha256 = current_waiver_sha
+            player_registration.waiver_signature_submitted_at = now
 
         db.session.add(player_registration)
 
@@ -339,6 +363,19 @@ class RegistrationService:
                 ValidationError("Your team is already registered for this league")
             )
 
+        n_max = getattr(rc, "n_max_teams", None) if rc else None
+        if n_max is not None:
+            current_team_count = TeamRegistration.query.filter_by(
+                league_id=league_id,
+                status=TeamRegistrationStatus.CONFIRMED,
+            ).count()
+            if current_team_count >= n_max:
+                return Err(
+                    ValidationError(
+                        f"Maximum number of teams ({n_max}) already registered"
+                    )
+                )
+
         team_registration = TeamRegistration(
             event=None,
             league_id=league_id,
@@ -365,6 +402,7 @@ class RegistrationService:
         *,
         jersey_number: str = "",
         jersey_name: str = "",
+        waiver_legal_name_signature: str = "",
     ) -> Result["PlayerRegistration", ArctosError]:
         from models import PlayerRegistration, League, db
 
@@ -421,6 +459,21 @@ class RegistrationService:
             player_registration.paid = True
             player_registration.amount_paid = 0.0
             player_registration.paid_at = datetime.now(timezone.utc).replace(tzinfo=None)
+
+        # If a waiver is configured, players must sign it.
+        waiver_filepath = getattr(rc, "waiver_filepath", None) if rc else None
+        if waiver_filepath:
+            signature = (waiver_legal_name_signature or "").strip()
+            if not signature:
+                return Err(ValidationError("Waiver signature is required"))
+            current_waiver_sha = getattr(rc, "waiver_sha256", None)
+            if not current_waiver_sha:
+                return Err(ValidationError("Waiver is missing its checksum"))
+
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
+            player_registration.waiver_legal_name_signature = signature
+            player_registration.waiver_legal_name_signature_sha256 = current_waiver_sha
+            player_registration.waiver_signature_submitted_at = now
 
         db.session.add(player_registration)
         db.session.commit()

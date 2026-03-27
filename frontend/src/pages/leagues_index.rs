@@ -90,6 +90,19 @@ fn LeagueUserRegBadges(urs: UserRegStatus) -> Element {
         _ => "bg-secondary",
     };
     let paid_class = if urs.paid { "bg-success" } else { "bg-warning text-dark" };
+    let waiver_status = urs.waiver_status.as_deref().unwrap_or("NOT_SIGNED");
+    let waiver_class = match waiver_status {
+        "VALID" => "bg-success",
+        "OUT_OF_DATE" => "bg-warning text-dark",
+        "NOT_SIGNED" => "bg-danger",
+        _ => "bg-secondary",
+    };
+    let waiver_label = match waiver_status {
+        "VALID" => "Waiver valid",
+        "OUT_OF_DATE" => "Waiver out of date",
+        "NOT_SIGNED" => "Waiver not signed",
+        _ => "Waiver status unknown",
+    };
     rsx! {
         span { class: "badge status-badge me-1 {status_class}",
             if urs.reg_type == "team" {
@@ -100,6 +113,11 @@ fn LeagueUserRegBadges(urs: UserRegStatus) -> Element {
         }
         span { class: "badge status-badge {paid_class}",
             if urs.paid { "Paid" } else { "Unpaid" }
+        }
+        if urs.waiver_required {
+            span { class: "badge status-badge ms-1 {waiver_class}",
+                "{waiver_label}"
+            }
         }
     }
 }

@@ -25,6 +25,7 @@ pub fn LeagueRegister(league_url: String) -> Element {
     let navigator = use_navigator();
     let mut error = use_signal(|| None::<String>);
     let lu = league_url.clone();
+    let backend = api::base_url();
     let data = use_resource(move || {
         let u = lu.clone();
         async move { api::league_detail(&u).await.map_err(|e| e.to_string()) }
@@ -90,10 +91,20 @@ pub fn LeagueRegister(league_url: String) -> Element {
                                                 let jersey_number = get_form_value("jersey_number");
                                                 let team_id = get_form_select_value("team");
                                                 let team_opt = if team_id.is_empty() { None } else { Some(team_id.clone()) };
+                                            let waiver_legal_name_signature =
+                                                get_form_value("waiver_legal_name_signature");
                                                 let nav = navigator.clone();
                                                 let lu = league_url.clone();
                                                 spawn(async move {
-                                                    match api::league_register_player(&lu, team_opt.as_deref(), &jersey_number, &jersey_name).await {
+                                                match api::league_register_player(
+                                                    &lu,
+                                                    team_opt.as_deref(),
+                                                    &jersey_number,
+                                                    &jersey_name,
+                                                    &waiver_legal_name_signature,
+                                                )
+                                                .await
+                                                {
                                                         Ok(res) if res.success => {
                                                             let path = format!("/leagues/{}?registered=1", lu);
                                                             let _ = nav.push(path);
@@ -128,6 +139,29 @@ pub fn LeagueRegister(league_url: String) -> Element {
                                                     }
                                                 }
                                                 div { class: "form-text", "If you select a team, they will need to approve your request" }
+                                            }
+                                            if d.league.waiver_required {
+                                                div { class: "mb-3",
+                                                    label { r#for: "waiver_legal_name_signature", class: "form-label", "Waiver Signature" }
+                                                    if let Some(link) = &d.league.waiver_filepath {
+                                                        div { class: "form-text mb-2",
+                                                            "Waiver file: "
+                                                            a { href: "{backend}{link}", target: "_blank", class: "text-decoration-none", "{backend}{link}" }
+                                                            if let Some(sha) = &d.league.waiver_sha256 {
+                                                                div { class: "text-muted mt-1", "Hash (SHA-256):" }
+                                                                pre { class: "p-2 border rounded bg-light mt-1 mb-0", style: "white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word;", code { "{sha}" } }
+                                                            }
+                                                        }
+                                                    }
+                                                    p { class: "form-text mb-2", "By entering your full legal name below, you agree to the terms of the waiver linked above, and affirm that the waiver you viewed matches the SHA-256 hash displayed." }
+                                                    input {
+                                                        r#type: "text",
+                                                        class: "form-control",
+                                                        id: "waiver_legal_name_signature",
+                                                        name: "waiver_legal_name_signature",
+                                                        required: true
+                                                    }
+                                                }
                                             }
                                             div { class: "d-grid",
                                                 button { r#type: "submit", class: "btn btn-primary", "Register Player" }

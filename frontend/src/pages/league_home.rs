@@ -6,29 +6,12 @@ use crate::components::{
 use crate::types::{ToEntry, User};
 use crate::Route;
 use dioxus::prelude::*;
-use wasm_bindgen::JsCast;
 
 fn get_query_param(name: &str) -> Option<String> {
     let window = web_sys::window()?;
     let search = window.location().search().ok()?;
     let params = web_sys::UrlSearchParams::new_with_str(&search).ok()?;
     params.get(name)
-}
-
-fn get_form_value(id: &str) -> String {
-    let doc = web_sys::window().and_then(|w| w.document()).unwrap();
-    doc.get_element_by_id(id)
-        .and_then(|e| e.dyn_into::<web_sys::HtmlInputElement>().ok())
-        .map(|e| e.value())
-        .unwrap_or_default()
-}
-
-fn get_form_select_value(id: &str) -> String {
-    let doc = web_sys::window().and_then(|w| w.document()).unwrap();
-    doc.get_element_by_id(id)
-        .and_then(|e| e.dyn_into::<web_sys::HtmlSelectElement>().ok())
-        .map(|e| e.value())
-        .unwrap_or_default()
 }
 
 fn is_current_user_to(me: Option<&Result<User, String>>, to_entries: &[ToEntry]) -> bool {
@@ -57,7 +40,6 @@ fn format_date_display(start: &str, end: Option<&String>) -> String {
 pub fn LeagueHome(league_url: String) -> Element {
     let url_for_data = league_url.clone();
     let mut refresh = use_signal(|| 0u32);
-    let mut to_error = use_signal(|| None::<String>);
     let mut show_edit_modal = use_signal(|| false);
     let mut delete_modal_open = use_signal(|| false);
     let mut delete_confirm_url = use_signal(|| String::new());
@@ -71,8 +53,17 @@ pub fn LeagueHome(league_url: String) -> Element {
         async move { api::league_detail(&lu).await.map_err(|e| e.to_string()) }
     });
     let me_res = use_resource(move || async move { api::me().await });
+    let league_url_for_warning = league_url.clone();
+    let waiver_warning = use_resource(move || {
+        let lu = league_url_for_warning.clone();
+        async move {
+            match api::get_my_player_registration_league(&lu).await {
+                Ok(res) => res.waiver_required && !res.waiver_signature_valid,
+                Err(_) => false,
+            }
+        }
+    });
     let val = data.value();
-    let backend = api::base_url();
     let mut about_markdown = use_signal(|| Option::<String>::None);
     use_effect(move || {
         let v = val.read();
@@ -139,6 +130,12 @@ pub fn LeagueHome(league_url: String) -> Element {
                             use_edit_modal: true,
                             on_edit_registration: move |_| show_edit_modal.set(true),
                             register_label: String::from("Register"),
+                            show_edit_warning: waiver_warning
+                                .value()
+                                .read()
+                                .as_ref()
+                                .copied()
+                                .unwrap_or(false),
                         }
                     }
                 }
@@ -155,6 +152,9 @@ pub fn LeagueHome(league_url: String) -> Element {
                         player_fee,
                         team_fee_str: team_fee_str.clone(),
                         player_fee_str: player_fee_str.clone(),
+                        max_teams: d.league.n_max_teams,
+                        max_roster: d.league.max_team_size_roster,
+                        max_field: d.league.max_team_size_field,
                         about_html: about_html.value().read().as_ref().and_then(|r| r.as_ref().ok()).cloned(),
                         about_raw: d.league.about.clone(),
                         empty_message: "League details coming soon!".to_string(),

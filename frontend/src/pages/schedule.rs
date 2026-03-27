@@ -1828,7 +1828,7 @@ fn FieldsModal(
                                     label { class: "form-label", "Field name" }
                                     input {
                                         class: "form-control",
-                                        placeholder: "e.g. Main court",
+                                        placeholder: "e.g. Blue",
                                         value: "{new_name}",
                                         oninput: move |e| new_name.set(e.value())
                                     }

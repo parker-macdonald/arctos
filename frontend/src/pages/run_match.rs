@@ -48,6 +48,35 @@ fn now_epoch_secs() -> f64 {
     chrono::Utc::now().timestamp() as f64
 }
 
+fn browser_tz_offset_minutes() -> i64 {
+    #[cfg(target_arch = "wasm32")]
+    {
+        // JS getTimezoneOffset returns minutes behind UTC.
+        -(js_sys::Date::new_0().get_timezone_offset() as i64)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        0_i64
+    }
+}
+
+fn format_iso_to_local_datetime(iso: &str) -> String {
+    let utc_dt = if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(iso) {
+        dt.naive_utc()
+    } else if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(iso, "%Y-%m-%dT%H:%M:%S%.f") {
+        dt
+    } else if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(iso, "%Y-%m-%dT%H:%M:%S") {
+        dt
+    } else if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(iso, "%Y-%m-%dT%H:%M") {
+        dt
+    } else {
+        return iso.to_string();
+    };
+
+    let local = utc_dt + chrono::Duration::minutes(browser_tz_offset_minutes());
+    local.format("%Y-%m-%d %H:%M").to_string()
+}
+
 /// Play sound and trigger vibration for start/end point button. Different sound and pattern for start vs end.
 #[cfg(target_arch = "wasm32")]
 fn point_button_feedback(is_end_point: bool) {
@@ -1656,7 +1685,13 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                                                         div { class: "text-muted", "{player.name}" }
                                                     }
                                                 }
-                                                h6 { class: "mb-2", "Penalty history this tournament" }
+                                                h6 { class: "mb-2",
+                                                    if d.match_data.is_league_event {
+                                                        "Penalty history this season"
+                                                    } else {
+                                                        "Penalty history this tournament"
+                                                    }
+                                                }
                                                 div { class: "table-responsive mb-3",
                                                     table { class: "table table-sm table-striped mb-0",
                                                         thead { class: "table-light",
@@ -1686,7 +1721,7 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                                                                             tr {
                                                                                 td { style: format!("border-left: 8px solid #{}; background-color: #{}22;", row_color, row_color), "{item.penalty_type_name}" }
                                                                                 td { "{item.match_name}" }
-                                                                                td { "{item.date}" }
+                                                                                td { "{format_iso_to_local_datetime(&item.date)}" }
                                                                                 td {
                                                                                     if item.is_current_match {
                                                                                         span { class: "badge bg-info", "current match" }
