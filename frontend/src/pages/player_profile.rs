@@ -271,6 +271,8 @@ pub fn PlayerProfile(id: Signal<String>) -> Element {
                                                 th { "Team" }
                                                 th { "Jersey" }
                                                 th { "Status" }
+                                                th { "Payment" }
+                                                th { "Waiver" }
                                             }
                                         }
                                         tbody {
@@ -312,6 +314,31 @@ pub fn PlayerProfile(id: Signal<String>) -> Element {
                                                     td {
                                                         span { class: if r.status == "CONFIRMED" { "badge bg-success" } else { "badge bg-warning" },
                                                             "{r.status}"
+                                                        }
+                                                    }
+                                                    td {
+                                                        if let Some(paid) = r.paid {
+                                                            span { class: if paid { "badge bg-success" } else { "badge bg-warning text-dark" },
+                                                                if paid { "Paid" } else { "Unpaid" }
+                                                            }
+                                                        } else {
+                                                            span { class: "text-muted", "-" }
+                                                        }
+                                                    }
+                                                    td {
+                                                        if r.waiver_required {
+                                                            {
+                                                                let ws = r.waiver_status.as_deref().unwrap_or("NOT_SIGNED");
+                                                                let (cls, label) = match ws {
+                                                                    "VALID" => ("bg-success", "Waiver valid"),
+                                                                    "OUT_OF_DATE" => ("bg-warning text-dark", "Waiver out of date"),
+                                                                    "NOT_SIGNED" => ("bg-danger", "Waiver not signed"),
+                                                                    _ => ("bg-secondary", "Waiver status unknown"),
+                                                                };
+                                                                rsx! { span { class: "badge {cls}", "{label}" } }
+                                                            }
+                                                        } else {
+                                                            span { class: "text-muted", "-" }
                                                         }
                                                     }
                                                 }

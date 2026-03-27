@@ -97,7 +97,7 @@ fn LeagueToRow(
 pub fn LeagueSettings(league_url: String) -> Element {
     let mut refresh = use_signal(|| 0u32);
     let lu = league_url.clone();
-    let lu_form1 = league_url.clone();
+    let lu_form1_submit = league_url.clone();
     let mut data = use_resource(move || {
         let _ = refresh();
         let u = lu.clone();
@@ -107,6 +107,27 @@ pub fn LeagueSettings(league_url: String) -> Element {
     let mut save_error = use_signal(|| None::<String>);
     let mut save_success = use_signal(|| false);
     let mut to_error = use_signal(|| None as Option<String>);
+    let navigator = use_navigator();
+    let _backend = api::base_url();
+    let mut waiver_file_bytes = use_signal(|| None as Option<bytes::Bytes>);
+    let mut waiver_reading = use_signal(|| false);
+    let mut waiver_upload_error = use_signal(|| None as Option<String>);
+    let mut require_waiver_signature_ui = use_signal(|| false);
+    let mut waiver_toggle_initialized = use_signal(|| false);
+
+    // Initialize waiver requirement toggle from backend state.
+    use_effect(move || {
+        if let Some(Ok(d)) = data.value().read().as_ref() {
+            if !waiver_toggle_initialized() {
+                require_waiver_signature_ui.set(d.league.waiver_required);
+                waiver_toggle_initialized.set(true);
+                if !d.league.waiver_required {
+                    waiver_file_bytes.set(None);
+                    waiver_upload_error.set(None);
+                }
+            }
+        }
+    });
 
     rsx! {
         if let Some(Ok(d)) = data.value().read().as_ref() {
@@ -142,7 +163,7 @@ pub fn LeagueSettings(league_url: String) -> Element {
                     let team_registration_open = get_form_check("team_registration_open");
                     let player_registration_open = get_form_check("player_registration_open");
                     let published = get_form_check("published");
-                    let terms_link = get_form_value("terms_link");
+                    let require_waiver_signature = get_form_check("require_waiver_signature");
                     let mut params = HashMap::new();
                     params.insert("about".to_string(), serde_json::json!(about));
                     params.insert("team_reg_fee".to_string(), serde_json::json!(team_reg_fee));
@@ -150,17 +171,35 @@ pub fn LeagueSettings(league_url: String) -> Element {
                     params.insert("team_registration_open".to_string(), serde_json::json!(team_registration_open));
                     params.insert("player_registration_open".to_string(), serde_json::json!(player_registration_open));
                     params.insert("published".to_string(), serde_json::json!(published));
-                    params.insert("terms_link".to_string(), serde_json::json!(if terms_link.is_empty() { serde_json::Value::Null } else { serde_json::json!(terms_link) }));
+                    params.insert(
+                        "require_waiver_signature".to_string(),
+                        serde_json::json!(require_waiver_signature),
+                    );
                     let n_max_teams = get_form_value("n_max_teams");
                     let max_roster = get_form_value("max_team_size_roster");
                     let max_field = get_form_value("max_team_size_field");
                     params.insert("n_max_teams".to_string(), serde_json::json!(if n_max_teams.trim().is_empty() { serde_json::Value::Null } else { serde_json::json!(n_max_teams.parse::<u32>().unwrap_or(0)) }));
                     params.insert("max_team_size_roster".to_string(), serde_json::json!(if max_roster.trim().is_empty() { serde_json::Value::Null } else { serde_json::json!(max_roster.parse::<u32>().unwrap_or(0)) }));
                     params.insert("max_team_size_field".to_string(), serde_json::json!(if max_field.trim().is_empty() { serde_json::Value::Null } else { serde_json::json!(max_field.parse::<u32>().unwrap_or(0)) }));
-                    let lu = lu_form1.clone();
+                    let lu = lu_form1_submit.clone();
+                    let nav = navigator.clone();
+                    let league_url_for_nav = lu.clone();
+                    let waiver_bytes_for_save = waiver_file_bytes();
                     spawn(async move {
                         match api::league_update_settings(&lu, &params).await {
-                            Ok(res) if res.success => save_success.set(true),
+                                    Ok(res) if res.success => {
+                                        if let Some(bytes) = waiver_bytes_for_save {
+                                            match api::league_upload_waiver(&lu, bytes).await {
+                                                Ok(_) => {}
+                                                Err(e) => {
+                                                    save_error.set(Some(e));
+                                                    return;
+                                                }
+                                            }
+                                        }
+                                        save_success.set(true);
+                                        let _ = nav.push(Route::LeagueHome { league_url: league_url_for_nav.clone() });
+                                    }
                             Ok(res) => save_error.set(Some(res.error.unwrap_or_else(|| "Save failed.".to_string()))),
                             Err(e) => save_error.set(Some(e)),
                         }
@@ -204,8 +243,84 @@ pub fn LeagueSettings(league_url: String) -> Element {
                             }
                         }
                         div { class: "mb-3",
-                            label { r#for: "terms_link", class: "form-label", "Terms link (optional)" }
-                            input { r#type: "text", class: "form-control", id: "terms_link", name: "terms_link", value: "{d.league.terms_link.as_deref().unwrap_or(\"\")}" }
+                            h5 { class: "mb-2", "Waiver Upload" }
+                            div { class: "form-check mb-2",
+                                input {
+                                    class: "form-check-input",
+                                    r#type: "checkbox",
+                                    id: "require_waiver_signature",
+                                    checked: require_waiver_signature_ui(),
+                                    onchange: move |ev| {
+                                        let checked = ev.checked();
+                                        require_waiver_signature_ui.set(checked);
+                                        if !checked {
+                                            waiver_file_bytes.set(None);
+                                            waiver_upload_error.set(None);
+                                        }
+                                    }
+                                }
+                                label { class: "form-check-label", r#for: "require_waiver_signature", "Require waiver signature during registration" }
+                            }
+
+                            if require_waiver_signature_ui() {
+                                if let Some(sha) = d.league.waiver_sha256.as_deref() {
+                                    div { class: "form-text mb-1", "Current waiver hash (SHA-256):" }
+                                    pre { class: "p-2 border rounded bg-light mb-2", style: "white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word;", code { "{sha}" } }
+                                } else {
+                                    p { class: "form-text mb-1", "No waiver uploaded yet." }
+                                }
+                                if let Some(link) = d.league.waiver_filepath.as_deref() {
+                                    a {
+                                        href: "{_backend}{link}",
+                                        class: "d-block small mb-3",
+                                        target: "_blank",
+                                        rel: "noreferrer",
+                                        "View current waiver"
+                                    }
+                                }
+
+                                input {
+                                    r#type: "file",
+                                    class: "form-control",
+                                    accept: "*/*",
+                                    disabled: waiver_reading(),
+                                    onchange: move |evt| {
+                                        #[cfg(target_arch = "wasm32")]
+                                        {
+                                            use dioxus::html::HasFileData;
+                                            let files = evt.files();
+                                            if let Some(file) = files.into_iter().next() {
+                                                waiver_upload_error.set(None);
+                                                waiver_reading.set(true);
+                                                spawn(async move {
+                                                    match file.read_bytes().await {
+                                                        Ok(bytes) => {
+                                                            waiver_file_bytes.set(Some(bytes));
+                                                        }
+                                                        Err(_) => {
+                                                            waiver_file_bytes.set(None);
+                                                            waiver_upload_error.set(Some("Failed to read file".to_string()));
+                                                        }
+                                                    }
+                                                    waiver_reading.set(false);
+                                                });
+                                            }
+                                        }
+                                    }
+                                }
+
+                                if waiver_file_bytes().is_some() {
+                                    p { class: "text-muted small mt-2 mb-2", "Ready to upload the selected waiver file." }
+                                }
+
+                                if let Some(ref err) = waiver_upload_error() {
+                                    div { class: "alert alert-danger small py-2 mt-2", "{err}" }
+                                }
+
+                                div { class: "form-text mt-2", "Selected waiver uploads when you click Save Settings." }
+                            } else {
+                                div { class: "form-text text-muted mt-2", "Waiver signature will not be required." }
+                            }
                         }
                         div { class: "row mb-3",
                             div { class: "col-md-4",

@@ -117,11 +117,48 @@ class TournamentService:
                             event=t.url, player=user.id
                         ).first()
                     if reg:
+                        reg_status_val = (
+                            reg.status.value
+                            if hasattr(reg.status, "value")
+                            else str(reg.status or "")
+                        )
+                        # If a player's registration is cancelled, hide all status/waiver badges.
+                        if reg_status_val == "CANCELLED":
+                            continue
+
+                        from app.utils.helpers import get_registrable_config
+
+                        cfg = get_registrable_config(t)
+                        waiver_required = bool(
+                            getattr(cfg, "waiver_filepath", None)
+                        ) if cfg else False
+                        waiver_sha_current = (
+                            getattr(cfg, "waiver_sha256", None) if cfg else None
+                        )
+                        stored_signature_sha = (
+                            getattr(reg, "waiver_legal_name_signature_sha256", None)
+                            if waiver_required
+                            else None
+                        )
+                        if not waiver_required:
+                            waiver_status = None
+                        elif not stored_signature_sha:
+                            waiver_status = "NOT_SIGNED"
+                        elif (
+                            waiver_sha_current is not None
+                            and stored_signature_sha == waiver_sha_current
+                        ):
+                            waiver_status = "VALID"
+                        else:
+                            waiver_status = "OUT_OF_DATE"
+
                         user_reg_status[t.url] = {
                             "type": "player",
                             "status": reg.status.value if hasattr(reg.status, "value") else str(reg.status or ""),
                             "paid": bool(reg.paid),
                             "amount_paid": reg.amount_paid or 0.0,
+                            "waiver_required": waiver_required,
+                            "waiver_status": waiver_status,
                         }
 
         now = datetime.now(timezone.utc).replace(tzinfo=None)

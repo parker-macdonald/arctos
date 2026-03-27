@@ -219,9 +219,19 @@ pub fn LeagueResults(league_url: String) -> Element {
                                                             None | Some(None) => rsx! { p { class: "text-muted mb-0", "Loading…" } },
                                                             Some(Some(Err(e))) => rsx! { p { class: "text-danger mb-0", "{e}" } },
                                                             Some(Some(Ok(ref resp))) => {
-                                                            let max_sets = resp.matches.iter().map(|m| m.sets.len()).max().unwrap_or(0).max(1);
+                                                            let visible_matches: Vec<_> = resp
+                                                                .matches
+                                                                .iter()
+                                                                .filter(|m| include_ribbon() || !m.ribbon)
+                                                                .collect();
+                                                            let max_sets = visible_matches
+                                                                .iter()
+                                                                .map(|m| m.sets.len())
+                                                                .max()
+                                                                .unwrap_or(0)
+                                                                .max(1);
                                                             rsx! {
-                                                                if resp.matches.is_empty() {
+                                                                if visible_matches.is_empty() {
                                                                     p { class: "text-muted mb-0", "No matches in this league yet." }
                                                                 } else {
                                                                     div { class: "table-responsive",
@@ -245,7 +255,7 @@ pub fn LeagueResults(league_url: String) -> Element {
                                                                                 }
                                                                             }
                                                                             tbody {
-                                                                                for game_row in resp.matches.iter() {
+                                                                                for game_row in visible_matches.iter() {
                                                                                     {
                                                                                         let match_url = game_row.event.as_deref().unwrap_or("").to_string();
                                                                                         let team_won = game_row.match_winner.as_deref() == game_row.your_side.as_deref();

@@ -5,7 +5,7 @@ from __future__ import annotations
 from app.models.base import db
 
 
-class RegistrableConfig(db.Model):
+class RegistrableConfig(db.Model):  # type: ignore[misc]
     """
     Shared registration config for standalone tournaments and leagues.
 
@@ -26,6 +26,11 @@ class RegistrableConfig(db.Model):
     team_registration_open = db.Column(db.Boolean, default=False, nullable=False)
     player_registration_open = db.Column(db.Boolean, default=False, nullable=False)
     terms_link = db.Column(db.String(500))
+    # Waiver file uploaded by TOs for this event (standalone tournament or league).
+    # Stored as a relative filepath so the frontend can link consistently.
+    waiver_filepath = db.Column(db.String(500))
+    # SHA-256 of the waiver file bytes (hex string).
+    waiver_sha256 = db.Column(db.String(64))
     n_max_teams = db.Column(db.Integer)
     max_team_size_roster = db.Column(db.Integer)
     max_team_size_field = db.Column(db.Integer)

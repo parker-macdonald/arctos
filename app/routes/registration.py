@@ -3,7 +3,7 @@ Tournament registration management routes.
 """
 
 from flask import Blueprint, request, jsonify
-from flask_login import login_required, current_user
+from flask_login import login_required, current_user  # type: ignore[import-untyped]
 from datetime import datetime, timezone
 from models import (
     Tournament,
@@ -55,6 +55,7 @@ def register_player_for_tournament(tournament_url):
         team_id,
         jersey_number=request.form.get("jersey_number", ""),
         jersey_name=request.form.get("jersey_name", ""),
+        waiver_legal_name_signature=request.form.get("waiver_legal_name_signature", ""),
     )
     match res:
         case Ok(_):

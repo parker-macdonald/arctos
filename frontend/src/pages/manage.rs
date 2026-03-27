@@ -10,6 +10,7 @@ pub fn Manage(url: String) -> Element {
     let mut submitted_search = use_signal(|| String::new());
     let mut submitted_type = use_signal(|| "both".to_string());
     let mut refresh = use_signal(|| 0u32);
+    let deregister_error = use_signal(|| None::<String>);
     let url_for_data = url.clone();
     let data = use_resource(move || {
         let u = url_for_data.clone();
@@ -35,6 +36,9 @@ pub fn Manage(url: String) -> Element {
 
             div { class: "row mb-3",
                 div { class: "col-12",
+                    if let Some(ref err) = deregister_error() {
+                        div { class: "alert alert-danger small py-2 mb-0", "{err}" }
+                    }
                     form { class: "row g-2",
                         onsubmit: move |ev| {
                             ev.prevent_default();
@@ -46,7 +50,7 @@ pub fn Manage(url: String) -> Element {
                                 r#type: "text",
                                 class: "form-control",
                                 name: "search",
-                                placeholder: "Search teams or players by name",
+                                placeholder: "Search teams, players, or signed waiver names",
                                 value: "{search()}",
                                 oninput: move |ev| search.set(ev.value().clone()),
                             }
@@ -119,9 +123,13 @@ pub fn Manage(url: String) -> Element {
                                                             onclick: move |_| {
                                                                 let u = url_dereg.clone();
                                                                 let tid = team_id_dereg.clone();
+                                                                let mut deregister_error = deregister_error.clone();
                                                                 spawn(async move {
-                                                                    let _ = api::deregister_any_team(&u, &tid).await;
-                                                                    refresh.set(refresh() + 1);
+                                                                    deregister_error.set(None);
+                                                                    match api::deregister_any_team(&u, &tid).await {
+                                                                        Ok(_) => refresh.set(refresh() + 1),
+                                                                        Err(e) => deregister_error.set(Some(e)),
+                                                                    }
                                                                 });
                                                             },
                                                             "Deregister"
@@ -200,6 +208,10 @@ pub fn Manage(url: String) -> Element {
                                             th { "Player Name" }
                                             th { "Team" }
                                             th { "Jersey" }
+                                            if d.tournament.waiver_required {
+                                                th { "Waiver Signed Name" }
+                                                th { "Waiver Status" }
+                                            }
                                             th { "Status" }
                                             th { "Registration Date" }
                                             th { "Actions" }
@@ -233,6 +245,29 @@ pub fn Manage(url: String) -> Element {
                                                         span { class: "text-muted", "No jersey info" }
                                                     }
                                                 }
+                                                if d.tournament.waiver_required {
+                                                    td {
+                                                        span { class: "text-muted",
+                                                            "{player_data.registration.waiver_legal_name_signature.as_deref().unwrap_or(\"-\")}"
+                                                        }
+                                                    }
+                                                    td {
+                                                        if player_data.registration.waiver_required {
+                                                            {
+                                                                let ws = player_data.registration.waiver_status.as_deref().unwrap_or("NOT_SIGNED");
+                                                                let (cls, label) = match ws {
+                                                                    "VALID" => ("bg-success", "Waiver valid"),
+                                                                    "OUT_OF_DATE" => ("bg-warning text-dark", "Waiver out of date"),
+                                                                    "NOT_SIGNED" => ("bg-danger", "Waiver not signed"),
+                                                                    _ => ("bg-secondary", "Waiver status unknown"),
+                                                                };
+                                                                rsx! { span { class: "badge {cls}", "{label}" } }
+                                                            }
+                                                        } else {
+                                                            span { class: "text-muted", "-" }
+                                                        }
+                                                    }
+                                                }
                                                 td {
                                                     span {
                                                         class: format!(
@@ -263,9 +298,13 @@ pub fn Manage(url: String) -> Element {
 onclick: move |_| {
                                                                 let u = url_dereg.clone();
                                                                 let pid = player_id_dereg.clone();
+                                                        let mut deregister_error = deregister_error.clone();
                                                                 spawn(async move {
-                                                                    let _ = api::deregister_any_player(&u, &pid).await;
-                                                                    refresh.set(refresh() + 1);
+                                                                    deregister_error.set(None);
+                                                                    match api::deregister_any_player(&u, &pid).await {
+                                                                        Ok(_) => refresh.set(refresh() + 1),
+                                                                        Err(e) => deregister_error.set(Some(e)),
+                                                                    }
                                                                 });
                                                             },
                                                             "Deregister"

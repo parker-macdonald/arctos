@@ -13,6 +13,9 @@ pub struct EventAboutProps {
     pub about_html: Option<String>,
     pub about_raw: Option<String>,
     pub empty_message: String,
+    pub max_teams: Option<u32>,
+    pub max_roster: Option<u32>,
+    pub max_field: Option<u32>,
 }
 
 #[component]
@@ -27,11 +30,27 @@ pub fn EventAbout(props: EventAboutProps) -> Element {
         about_html,
         about_raw,
         empty_message,
+        max_teams,
+        max_roster,
+        max_field,
     } = props;
     rsx! {
         div { class: "card",
             div { class: "card-header", h5 { class: "mb-0", "{card_title}" } }
             div { class: "card-body",
+                if max_teams.is_some() || max_roster.is_some() || max_field.is_some() {
+                    div { class: "mb-3",
+                        if let Some(max) = max_teams {
+                            p { strong { "Max Teams: " } "{max}" }
+                        }
+                        if let Some(roster) = max_roster {
+                            p { strong { "Max Team Size (Roster): " } "{roster}" }
+                        }
+                        if let Some(field) = max_field {
+                            p { strong { "Max Team Size (Field): " } "{field}" }
+                        }
+                    }
+                }
                 if show_fees && (team_fee > 0.0 || player_fee > 0.0) {
                     div { class: "alert alert-info mb-3",
                         h6 { class: "mb-2", "Registration Fees" }
