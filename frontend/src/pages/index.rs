@@ -127,8 +127,16 @@ fn TournamentCard(
         div { key: "{tournament.url}", class: "col-md-6 col-lg-4 mb-3",
             Link {
                 to: Route::TournamentHome { url: tournament.url.clone() },
-                class: "card tournament-card text-decoration-none",
+                class: "card tournament-card text-decoration-none position-relative",
                 style: "display: block; transition: box-shadow 0.2s ease, transform 0.2s ease;",
+                if let Some(ref league) = tournament.league {
+                    Link {
+                        to: Route::LeagueHome { league_url: league.league_url.clone() },
+                        class: "position-absolute top-0 end-0 m-2 badge bg-secondary text-decoration-none",
+                        style: "z-index: 1;",
+                        "{league.name}"
+                    }
+                }
                 div { class: "card-body",
                     h5 { class: "card-title", "{tournament.name}" }
                     p { class: "card-text",
@@ -168,6 +176,20 @@ fn UserRegBadges(urs: UserRegStatus) -> Element {
         _ => "bg-secondary",
     };
     let paid_class = if urs.paid { "bg-success" } else { "bg-warning text-dark" };
+
+    let waiver_status = urs.waiver_status.as_deref().unwrap_or("NOT_SIGNED");
+    let waiver_class = match waiver_status {
+        "VALID" => "bg-success",
+        "OUT_OF_DATE" => "bg-warning text-dark",
+        "NOT_SIGNED" => "bg-danger",
+        _ => "bg-secondary",
+    };
+    let waiver_label = match waiver_status {
+        "VALID" => "Waiver valid",
+        "OUT_OF_DATE" => "Waiver out of date",
+        "NOT_SIGNED" => "Waiver not signed",
+        _ => "Waiver status unknown",
+    };
     rsx! {
         span { class: "badge status-badge me-1 {status_class}",
             if urs.reg_type == "team" {
@@ -178,6 +200,11 @@ fn UserRegBadges(urs: UserRegStatus) -> Element {
         }
         span { class: "badge status-badge {paid_class}",
             if urs.paid { "Paid" } else { "Unpaid" }
+        }
+        if urs.waiver_required {
+            span { class: "badge status-badge ms-1 {waiver_class}",
+                "{waiver_label}"
+            }
         }
     }
 }

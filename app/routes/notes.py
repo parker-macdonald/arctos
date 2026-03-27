@@ -4,27 +4,36 @@ Match notes management routes.
 
 from flask import Blueprint, request
 from flask_login import login_required, current_user
-from models import Match, MatchNote, Point, db
+from models import Match, MatchNote, Point, Tournament, db
 from app.domain.enums import MatchNoteTarget
 from app.filters import is_head_ref
-from app.utils.helpers import can_head_ref_match
+from app.utils.helpers import can_head_ref_match, match_event_urls_for_penalties
 from app.serializers.match_note_serializer import MatchNoteSerializer
 from app.utils.responses import json_error, json_success
 
 bp = Blueprint("notes", __name__, url_prefix="/_api")
 
 
+def _match_in_tournament_scope(match, tournament_url):
+    """True if match belongs to this event or (for league) any event in the league."""
+    tournament = Tournament.query.filter_by(url=tournament_url).first()
+    if not tournament:
+        return False
+    event_urls = match_event_urls_for_penalties(tournament)
+    return match.event in event_urls
+
+
 @bp.route("/<tournament_url>/get-notes")
 @login_required
 def get_notes(tournament_url):
-    """Get notes for a match."""
+    """Get notes for a match. For league events, match may be from any event in the league."""
     match_id = request.args.get("match_id")
 
     if not match_id:
         return json_error("Match ID required")
 
     match = Match.query.get(match_id)
-    if not match or match.event != tournament_url:
+    if not match or not _match_in_tournament_scope(match, tournament_url):
         return json_error("Match not found")
 
     if not can_head_ref_match(tournament_url, current_user.id, match=match):
@@ -68,7 +77,7 @@ def add_note(tournament_url):
         return json_error("Match ID and text required")
 
     match = Match.query.get(match_id)
-    if not match or match.event != tournament_url:
+    if not match or not _match_in_tournament_scope(match, tournament_url):
         return json_error("Match not found")
 
     if not can_head_ref_match(tournament_url, current_user.id, match=match):
@@ -102,7 +111,7 @@ def assign_notes_to_point(tournament_url):
         return json_error("Point not found")
 
     match = Match.query.get(point.match)
-    if not match or match.event != tournament_url:
+    if not match or not _match_in_tournament_scope(match, tournament_url):
         return json_error("Match not found")
 
     if not is_head_ref(tournament_url, current_user.id):
@@ -131,7 +140,7 @@ def get_point_notes(tournament_url):
         return json_error("Match ID and Point ID required")
 
     match = Match.query.get(match_id)
-    if not match or match.event != tournament_url:
+    if not match or not _match_in_tournament_scope(match, tournament_url):
         return json_error("Match not found")
 
     # Check if user is a head ref (for full access to all notes)
@@ -177,7 +186,7 @@ def add_point_note(tournament_url):
         return json_error("Text or penalty type required")
 
     match = Match.query.get(match_id)
-    if not match or match.event != tournament_url:
+    if not match or not _match_in_tournament_scope(match, tournament_url):
         return json_error("Match not found")
 
     if not can_head_ref_match(tournament_url, current_user.id, match=match):
@@ -214,7 +223,7 @@ def set_point_note(tournament_url):
         return json_error("Match ID and Point ID required")
 
     match = Match.query.get(match_id)
-    if not match or match.event != tournament_url:
+    if not match or not _match_in_tournament_scope(match, tournament_url):
         return json_error("Match not found")
 
     if not can_head_ref_match(tournament_url, current_user.id, match=match):
@@ -259,7 +268,7 @@ def delete_point_note(tournament_url):
         return json_error("Note not found")
 
     match = Match.query.get(note.match)
-    if not match or match.event != tournament_url:
+    if not match or not _match_in_tournament_scope(match, tournament_url):
         return json_error("Match not found")
 
     from app.utils.helpers import can_head_ref_match
@@ -288,7 +297,7 @@ def unassign_notes_from_point(tournament_url):
         return json_error("Point not found")
 
     match = Match.query.get(point.match)
-    if not match or match.event != tournament_url:
+    if not match or not _match_in_tournament_scope(match, tournament_url):
         return json_error("Match not found")
 
     if not is_head_ref(tournament_url, current_user.id):

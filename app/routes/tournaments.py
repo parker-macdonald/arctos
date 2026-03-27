@@ -27,13 +27,14 @@ from models import (
     PlayerRegistration,
     Team,
     TO,
+    League,
     db,
 )
 from app.utils.helpers import (
     resolve_team_name_to_id,
     resolve_tag_to_team,
-    validate_permission_key,
     can_head_ref_match,
+    get_registrable_config,
 )
 from app.utils.scheduling import (
     compute_dynamic_match_nominal_start_time,
@@ -66,6 +67,7 @@ from app.domain.enums import (
 # only one worker bc ffmpeg does its own parallelism
 # so we only ever want to run one at a time
 executor = Executor()
+MAX_WAIVER_BYTES = 10 * 1024 * 1024
 
 bp = Blueprint("tournaments", __name__, url_prefix="/_api")
 
@@ -180,24 +182,47 @@ def create_tournament():
     """Create a new tournament."""
     name = request.form["name"]
     url = request.form["url"]
-    permission_key = request.form.get("permission_key", "").strip()
-
-    # Validate permission key
-    if not validate_permission_key(url, permission_key):
-        return jsonify({
-            "success": False,
-            "error": "Invalid permission key. Please contact reid@xz.ax to request a permission key for your tournament URL slug.",
-        }), 400
 
     if Tournament.query.filter_by(url=url).first():
         return jsonify({"success": False, "error": "Tournament URL already exists"}), 400
 
+    league_id = None
+    raw_league_id = request.form.get("league_id", "").strip()
+    if raw_league_id:
+        league = League.query.get(raw_league_id)
+        if not league:
+            return jsonify({"success": False, "error": "League not found"}), 400
+        is_league_to = TO.query.filter_by(
+            user_id=current_user.id,
+            user_type=current_user.__class__.__name__.lower(),
+            league_id=raw_league_id,
+        ).first()
+        if not is_league_to:
+            return jsonify({
+                "success": False,
+                "error": "You must be an organizer of that league to attach a tournament to it.",
+            }), 403
+        league_id = raw_league_id
+
+    from models import RegistrableConfig
+
+    start_date = datetime.now(timezone.utc).replace(tzinfo=None)
     tournament = Tournament(
         url=url,
         name=name,
-        start_date=datetime.now(timezone.utc).replace(tzinfo=None),
-        end_date=None,
+        start_date=start_date,
+        end_date=start_date,
+        league_id=league_id,
     )
+    if not league_id:
+        rc = RegistrableConfig(
+            team_reg_fee=0.0,
+            player_reg_fee=0.0,
+            registration_open=False,
+        )
+        db.session.add(rc)
+        db.session.flush()
+        tournament.registrable_config_id = rc.id
 
     db.session.add(tournament)
 
@@ -212,8 +237,143 @@ def create_tournament():
     return jsonify({"success": True, "message": f'Tournament "{name}" created successfully!', "url": url}), 200
 
 
+@bp.route("/create-league", methods=["POST"])
+@login_required
+def create_league():
+    """Create a new league. TOs create a new league for each season."""
+    from models import League, TO, db
+
+    league_name = request.form.get("league_name", "").strip()
+    league_url = request.form.get("league_url", "").strip()
+
+    if not league_name or not league_url:
+        return jsonify({
+            "success": False,
+            "error": "League name and URL slug are required.",
+        }), 400
+
+    if League.query.filter_by(url=league_url).first():
+        return jsonify({"success": False, "error": "League URL already exists"}), 400
+
+    from models import RegistrableConfig
+
+    rc = RegistrableConfig(
+        team_reg_fee=0.0,
+        player_reg_fee=0.0,
+        registration_open=False,
+    )
+    db.session.add(rc)
+    db.session.flush()
+    league = League(
+        url=league_url,
+        name=league_name,
+        registrable_config_id=rc.id,
+    )
+    db.session.add(league)
+    db.session.flush()
+
+    to_entry = TO(
+        user_id=current_user.id,
+        user_type=current_user.__class__.__name__.lower(),
+        event=None,
+        league_id=league_url,
+    )
+    db.session.add(to_entry)
+    db.session.commit()
+
+    return jsonify({
+        "success": True,
+        "message": f'League "{league_name}" created successfully!',
+        "league_url": league_url,
+    }), 200
 
 
+@bp.route("/<tournament_url>/upload-waiver", methods=["POST"])
+@login_required
+def upload_tournament_waiver(tournament_url):
+    """TO upload the current waiver for a tournament (extensionless + overwrites)."""
+    tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
+
+    user_type = current_user.__class__.__name__.lower()
+    if tournament.league_id:
+        is_to = (
+            TO.query.filter_by(
+                user_id=current_user.id,
+                user_type=user_type,
+                league_id=tournament.league_id,
+            ).first()
+            is not None
+        )
+    else:
+        is_to = (
+            TO.query.filter_by(
+                user_id=current_user.id,
+                user_type=user_type,
+                event=tournament_url,
+            ).first()
+            is not None
+        )
+
+    if not is_to:
+        return jsonify({"error": "Forbidden"}), 403
+
+    data = request.get_data() or b""
+    if not data:
+        return jsonify({"error": "No waiver data"}), 400
+    if len(data) > MAX_WAIVER_BYTES:
+        return jsonify({"error": "Waiver file is too large (max 10 MB)"}), 400
+
+    import hashlib
+    import os
+    import re
+
+    waiver_sha256 = hashlib.sha256(data).hexdigest()
+
+    # Store based on canonical scope (league waiver is shared across its tournaments).
+    scope_url = tournament.league_id or tournament.url
+
+    upload_dir = os.path.join(
+        current_app.root_path, "../static", "uploads", "waivers", scope_url
+    )
+    os.makedirs(upload_dir, exist_ok=True)
+    uploaded_filename = (request.headers.get("X-Waiver-Filename") or "").strip()
+    ext = os.path.splitext(uploaded_filename)[1].lower()
+    if not re.fullmatch(r"\.[a-z0-9]{1,12}", ext or ""):
+        ext = ""
+    stored_name = f"waiver{ext}"
+    file_path = os.path.join(upload_dir, stored_name)
+
+    # Remove previous waiver files (legacy and prior extension variants).
+    for existing_name in os.listdir(upload_dir):
+        if existing_name == "waiver" or existing_name.startswith("waiver."):
+            existing_path = os.path.join(upload_dir, existing_name)
+            try:
+                if os.path.isfile(existing_path):
+                    os.remove(existing_path)
+            except Exception:
+                pass
+
+    try:
+        with open(file_path, "wb") as f:
+            f.write(data)
+    except Exception as e:
+        return jsonify({"error": f"Error saving waiver: {e}"}), 500
+
+    cfg = get_registrable_config(tournament)
+    if not cfg:
+        return jsonify({"error": "Registrable config not found"}), 500
+
+    cfg.waiver_sha256 = waiver_sha256
+    cfg.waiver_filepath = f"/static/uploads/waivers/{scope_url}/{stored_name}"
+    db.session.commit()
+
+    return jsonify(
+        {
+            "success": True,
+            "waiver_filepath": cfg.waiver_filepath,
+            "waiver_sha256": cfg.waiver_sha256,
+        }
+    )
 
 
 @bp.route("/<tournament_url>/recompute-schedule", methods=["POST"])
@@ -876,18 +1036,7 @@ def update_tournament_settings(tournament_url):
 
     tournament.name = request.form["name"]
     tournament.location = request.form.get("location", "")
-    tournament.num_fields = int(request.form.get("num_fields", 1))
-    tournament.n_max_teams = int(request.form.get("n_max_teams", 0) or 0) or None
-    tournament.max_team_size_roster = (
-        int(request.form.get("max_team_size_roster", 0) or 0) or None
-    )
-    tournament.max_team_size_field = (
-        int(request.form.get("max_team_size_field", 0) or 0) or None
-    )
-    tournament.team_reg_fee = float(request.form.get("team_reg_fee", 0))
-    tournament.player_reg_fee = float(request.form.get("player_reg_fee", 0))
     tournament.about = request.form.get("about", "")
-    tournament.terms_link = request.form.get("terms_link", "")
     tournament.head_refs_allowed_list = request.form.get("head_refs_allowed_list", "")
     tournament.head_refs_allow_reffing_teams = (
         "head_refs_allow_reffing_teams" in request.form
@@ -895,17 +1044,65 @@ def update_tournament_settings(tournament_url):
     tournament.head_refs_allow_anyone = "head_refs_allow_anyone" in request.form
     tournament.published = "published" in request.form
     tournament.schedule_published = "schedule_published" in request.form
-    tournament.registration_open = "registration_open" in request.form
+    if not tournament.league_id and tournament.registrable_config:
+        rc = tournament.registrable_config
+        rc.team_reg_fee = float(request.form.get("team_reg_fee", 0))
+        rc.player_reg_fee = float(request.form.get("player_reg_fee", 0))
+        rc.terms_link = request.form.get("terms_link", "") or None
+        # Legacy combined flag; if provided, acts as default for team/player when
+        # more specific checkboxes are absent.
+        legacy_reg_open = "registration_open" in request.form
+        rc.team_registration_open = (
+            "team_registration_open" in request.form or legacy_reg_open
+        )
+        rc.player_registration_open = (
+            "player_registration_open" in request.form or legacy_reg_open
+        )
+        # Waiver requirement toggle.
+        # If unchecked, clear the waiver config so players don't have to sign.
+        require_waiver_signature = "require_waiver_signature" in request.form
+        if not require_waiver_signature:
+            rc.waiver_filepath = None
+            rc.waiver_sha256 = None
+            # Best-effort cleanup of the on-disk waiver file.
+            import os
+
+            scope_url = tournament.url
+            waiver_dir = os.path.join(
+                current_app.root_path,
+                "../static",
+                "uploads",
+                "waivers",
+                scope_url,
+            )
+            try:
+                if os.path.isdir(waiver_dir):
+                    for existing_name in os.listdir(waiver_dir):
+                        if existing_name == "waiver" or existing_name.startswith("waiver."):
+                            existing_path = os.path.join(waiver_dir, existing_name)
+                            if os.path.isfile(existing_path):
+                                os.remove(existing_path)
+            except Exception:
+                pass
+        n_max = request.form.get("n_max_teams", "").strip()
+        rc.n_max_teams = int(n_max) if n_max else None
+        roster = request.form.get("max_team_size_roster", "").strip()
+        rc.max_team_size_roster = int(roster) if roster else None
+        field = request.form.get("max_team_size_field", "").strip()
+        rc.max_team_size_field = int(field) if field else None
 
     if request.form.get("start_date"):
         tournament.start_date = datetime.strptime(
             request.form["start_date"], "%Y-%m-%d"
         )
 
-    if request.form.get("end_date"):
-        tournament.end_date = datetime.strptime(request.form["end_date"], "%Y-%m-%d")
-    else:
-        tournament.end_date = None
+    end_date_val = request.form.get("end_date", "").strip()
+    if not end_date_val:
+        return jsonify({
+            "success": False,
+            "error": "End date is required.",
+        }), 400
+    tournament.end_date = datetime.strptime(end_date_val, "%Y-%m-%d")
 
     db.session.commit()
     return jsonify({"success": True, "message": "Tournament settings updated successfully!"}), 200
@@ -1182,10 +1379,6 @@ def add_field(tournament_url):
     db.session.add(field)
     db.session.commit()
 
-    current_field_count = Field.query.filter_by(event=tournament_url).count()
-    if current_field_count >= tournament.num_fields:
-        return jsonify({"success": False, "error": f"Maximum number of fields ({tournament.num_fields}) reached"}), 400
-
     return jsonify({"success": True, "message": "Field added successfully!"}), 200
 
 
@@ -1438,6 +1631,30 @@ def update_match(tournament_url):
         else:
             schedule_type = ScheduleType.STATIC
         set_type = request.form.get("match_type", match.set_type)
+
+    # Allowed schedule type transitions (only these target types allowed from each source)
+    _ALLOWED_SCHEDULE_TYPE_TRANSITIONS = {
+        ScheduleType.STATIC: (ScheduleType.STATIC, ScheduleType.SAFE, ScheduleType.FAST),
+        ScheduleType.SAFE: (ScheduleType.SAFE, ScheduleType.FAST),
+        ScheduleType.FAST: (ScheduleType.FAST,),
+        ScheduleType.BREAK: (ScheduleType.BREAK,),
+        ScheduleType.JOIN: (ScheduleType.JOIN,),
+    }
+    current_schedule_type = match.schedule_type
+    allowed = _ALLOWED_SCHEDULE_TYPE_TRANSITIONS.get(
+        current_schedule_type, (current_schedule_type,)
+    )
+    if schedule_type not in allowed:
+        return (
+            jsonify(
+                {
+                    "success": False,
+                    "error": f"Match type cannot be changed from {current_schedule_type.value} to {schedule_type.value}. "
+                    "Allowed changes: Static→Safe/Fast, Safe→Fast only.",
+                }
+            ),
+            400,
+        )
 
     # BREAK and JOIN matches don't have teams/refs
     if schedule_type in (ScheduleType.BREAK, ScheduleType.JOIN):
@@ -1773,18 +1990,18 @@ def push_back_matches(tournament_url):
 def tournament_autocomplete(tournament_url):
     """Autocomplete endpoint for tournament setup.
     Returns a list of suggestions with fields: type, value, label, id
+    Supports both standalone events (event=url) and league events (league registrants).
     """
     q_raw = request.args.get("q", "")
     query = (q_raw or "").strip().lower()
 
     suggestions = []
 
-    from app.domain.enums import RegistrationStatus
+    tournament = Tournament.query.filter_by(url=tournament_url).first()
+    from app.services.registration_resolver import team_registrations_for_tournament
 
-    # Teams registered in this tournament
-    team_regs = TeamRegistration.query.filter_by(
-        event=tournament_url, status=RegistrationStatus.CONFIRMED
-    ).all()
+    # Teams registered for this tournament (event or league)
+    team_regs = team_registrations_for_tournament(tournament) if tournament else []
     for reg in team_regs:
         pseudonym = (reg.pseudonym or "").strip()
         if not query or query in pseudonym.lower():
@@ -2022,7 +2239,9 @@ def delete_tournament(tournament_url):
         )
     Match.query.filter_by(event=tournament_url).delete(synchronize_session=False)
     # PenaltyType after MatchNote (notes reference penalty_type_id)
-    PenaltyType.query.filter_by(event=tournament_url).delete(synchronize_session=False)
+    # Only delete event-level penalty types; league events use league's penalty types
+    if not tournament.league_id:
+        PenaltyType.query.filter_by(event=tournament_url).delete(synchronize_session=False)
     HeadRef.query.filter_by(event=tournament_url).delete(synchronize_session=False)
     PlayerRegistration.query.filter_by(event=tournament_url).delete(
         synchronize_session=False
@@ -2033,7 +2252,13 @@ def delete_tournament(tournament_url):
     Field.query.filter_by(event=tournament_url).delete(synchronize_session=False)
     Tag.query.filter_by(event=tournament_url).delete(synchronize_session=False)
     TO.query.filter_by(event=tournament_url).delete(synchronize_session=False)
+    rc_id = tournament.registrable_config_id if not tournament.league_id else None
     db.session.delete(tournament)
+    if rc_id:
+        from models import RegistrableConfig
+        rc = RegistrableConfig.query.get(rc_id)
+        if rc:
+            db.session.delete(rc)
     db.session.commit()
 
     return jsonify({"success": True, "message": f'Tournament "{tournament.name}" has been permanently deleted.'}), 200
@@ -2043,6 +2268,13 @@ def delete_tournament(tournament_url):
 @login_required
 def add_to(tournament_url):
     """Add a TO to the tournament."""
+
+    tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
+    if tournament.league_id:
+        return jsonify({
+            "success": False,
+            "error": "TOs for league events are managed from the league page.",
+        }), 403
 
     if is_not_TO(tournament_url):
         return jsonify({"success": False, "error": "Only tournament organizers can access this page"}), 403
@@ -2086,6 +2318,13 @@ def add_to(tournament_url):
 @login_required
 def remove_to(tournament_url):
     """Remove a TO from the tournament."""
+
+    tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
+    if tournament.league_id:
+        return jsonify({
+            "success": False,
+            "error": "TOs for league events are managed from the league page.",
+        }), 403
 
     if is_not_TO(tournament_url):
         return jsonify({"success": False, "error": "Only tournament organizers can access this page"}), 403

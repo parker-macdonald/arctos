@@ -1,4 +1,5 @@
 use crate::api;
+use crate::components::TeamRegistrationHelpModal;
 use crate::Route;
 use dioxus::prelude::*;
 use wasm_bindgen::JsCast;
@@ -74,8 +75,17 @@ pub fn TournamentRegister(url: String) -> Element {
                                                 let jersey_name = get_form_value("jersey_name");
                                                 let jersey_number = get_form_value("jersey_number");
                                                 let team = get_form_select_value("team");
-                                                let agree_terms = get_form_check("agree_terms");
-                                                match api::register_player(&u, &jersey_name, &jersey_number, &team, agree_terms).await {
+                                                let waiver_legal_name_signature =
+                                                    get_form_value("waiver_legal_name_signature");
+                                                match api::register_player(
+                                                    &u,
+                                                    &jersey_name,
+                                                    &jersey_number,
+                                                    &team,
+                                                    &waiver_legal_name_signature,
+                                                )
+                                                .await
+                                                {
                                                     Ok(res) if res.success => {
                                                         navigator.push(Route::TournamentHome { url: u });
                                                     }
@@ -128,16 +138,26 @@ pub fn TournamentRegister(url: String) -> Element {
                                                 }
                                             }
                                         }
-                                        if let Some(link) = &d.tournament.terms_link {
-                                            if !link.is_empty() {
-                                                div { class: "mb-3",
-                                                    div { class: "form-check",
-                                                        input { class: "form-check-input", r#type: "checkbox", id: "agree_terms", name: "agree_terms", required: true }
-                                                        label { class: "form-check-label", r#for: "agree_terms",
-                                                            "I agree to the "
-                                                            a { href: "{link}", target: "_blank", class: "text-decoration-none", "tournament terms and conditions" }
+                                        if d.tournament.waiver_required {
+                                            div { class: "mb-3",
+                                                label { r#for: "waiver_legal_name_signature", class: "form-label", "Waiver Signature" }
+                                                if let Some(link) = &d.tournament.waiver_filepath {
+                                                    div { class: "form-text mb-2",
+                                                        "Waiver file: "
+                                                        a { href: "{_backend}{link}", target: "_blank", class: "text-decoration-none", "{_backend}{link}" }
+                                                        if let Some(sha) = &d.tournament.waiver_sha256 {
+                                                            div { class: "text-muted mt-1", "Hash (SHA-256):" }
+                                                            pre { class: "p-2 border rounded bg-light mt-1 mb-0", style: "white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word;", code { "{sha}" } }
                                                         }
                                                     }
+                                                }
+                                                p { class: "form-text mb-2", "By entering your full legal name below, you agree to the terms of the waiver linked above, and affirm that the waiver you viewed matches the SHA-256 hash displayed." }
+                                                input {
+                                                    r#type: "text",
+                                                    class: "form-control",
+                                                    id: "waiver_legal_name_signature",
+                                                    name: "waiver_legal_name_signature",
+                                                    required: true
                                                 }
                                             }
                                         }
@@ -162,8 +182,7 @@ pub fn TournamentRegister(url: String) -> Element {
                                             let u = url.clone();
                                             spawn(async move {
                                                 let pseudonym = get_form_value("pseudonym");
-                                                let agree_terms = get_form_check("agree_terms_team");
-                                                match api::register_team(&u, &pseudonym, agree_terms).await {
+                                                    match api::register_team(&u, &pseudonym).await {
                                                     Ok(res) if res.success => {
                                                         navigator.push(Route::TournamentHome { url: u });
                                                     }
@@ -189,19 +208,6 @@ pub fn TournamentRegister(url: String) -> Element {
                                                         p {
                                                             strong { "Team Registration: " }
                                                             {format!("${:.2}", fee)}
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        if let Some(link) = &d.tournament.terms_link {
-                                            if !link.is_empty() {
-                                                div { class: "mb-3",
-                                                    div { class: "form-check",
-                                                        input { class: "form-check-input", r#type: "checkbox", id: "agree_terms_team", name: "agree_terms", required: true }
-                                                        label { class: "form-check-label", r#for: "agree_terms_team",
-                                                            "I agree to the "
-                                                            a { href: "{link}", target: "_blank", class: "text-decoration-none", "tournament terms and conditions" }
                                                         }
                                                     }
                                                 }
@@ -237,50 +243,11 @@ pub fn TournamentRegister(url: String) -> Element {
             }
 
             if show_help_modal() {
-                div {
-                        class: "modal show d-block",
-                        style: "background: rgba(0,0,0,0.5);",
-                        tabindex: "-1",
-                        role: "dialog",
-                        aria_modal: "true",
-                        onclick: move |_| show_help_modal.set(false),
-                        div {
-                            class: "modal-dialog modal-dialog-centered",
-                            onclick: move |ev: Event<MouseData>| { ev.stop_propagation(); },
-                            div { class: "modal-content",
-                                div { class: "modal-header",
-                                    h5 { class: "modal-title", id: "teamRegistrationHelpModalLabel", "Registration Help" }
-                                    button {
-                                        r#type: "button",
-                                        class: "btn-close",
-                                        aria_label: "Close",
-                                        onclick: move |_| show_help_modal.set(false),
-                                    }
-                                }
-                                div { class: "modal-body",
-                                    p { "The registration process works in three steps:" }
-                                    ol {
-                                        li { strong { "Teams register first:" } " A team account must register for the tournament before players can join that team." }
-                                        li { strong { "Players register under the team:" } " Once a team is registered, players can select that team from the dropdown and register to join them." }
-                                        li { strong { "Team accepts the player:" } " After a player requests to join a team, the team must approve the player's request before they are officially on the roster." }
-                                    }
-                                    p { class: "mb-0",
-                                        strong { "Don't see your team in the dropdown?" }
-                                        " They may not have registered yet. Check the tournament homepage to see all registered teams. Ask your team to register the team first, then come back to complete your player registration."
-                                    }
-                                }
-                                div { class: "modal-footer",
-                                    button {
-                                        r#type: "button",
-                                        class: "btn btn-secondary",
-                                        onclick: move |_| show_help_modal.set(false),
-                                        "Close"
-                                    }
-                                }
-                            }
-                        }
-                    }
+                TeamRegistrationHelpModal {
+                    context: String::from("tournament"),
+                    on_close: move |_| show_help_modal.set(false),
                 }
+            }
         } else if let Some(Err(e)) = val.read().as_ref() {
             p { class: "text-danger", "{e}" }
         } else {

@@ -326,16 +326,20 @@ def validate_match_input(match, tournament_url: str) -> Tuple[bool, Optional[str
         return False, 'Match names cannot contain "::".'
     from app.models.match import Match
 
+    schedule_type = getattr(match, "schedule_type", None)
     existing = Match.query.filter_by(
         event=tournament_url,
         name=match.name.strip(),
     )
+    # For BREAK/JOIN, only check uniqueness on the same field and same type
+    if schedule_type in (ScheduleType.BREAK, ScheduleType.JOIN):
+        field = (getattr(match, "field", None) or "").strip()
+        existing = existing.filter(
+            Match.field == field, Match.schedule_type == schedule_type
+        )
     if match.uuid:
         existing = existing.filter(Match.uuid != match.uuid)
-    if existing.first() and getattr(match, "schedule_type", None) not in (
-        "BREAK",
-        "JOIN",
-    ):
+    if existing.first():
         return False, "A match with this name already exists."
     return True, None
 

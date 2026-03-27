@@ -3,7 +3,7 @@ Tournament site Flask application factory.
 """
 
 from flask import Flask
-from flask_login import LoginManager
+from flask_login import LoginManager  # type: ignore[import-untyped]
 import os
 
 # Initialize extensions (will be initialized in create_app)
@@ -132,11 +132,13 @@ def create_app(config=None):
     from app.routes.matches import bp as matches_bp
     from app.routes.notes import bp as notes_bp
     from app.routes.registration import bp as registration_bp
+    from app.routes.waivers import bp as waivers_bp
     from app.routes._api import bp as _api_bp
 
     app.register_blueprint(_api_bp)
     app.register_blueprint(auth_bp)
     app.register_blueprint(tournaments_bp)
+    app.register_blueprint(waivers_bp)
     app.register_blueprint(matches_bp)
     app.register_blueprint(notes_bp)
     app.register_blueprint(registration_bp)

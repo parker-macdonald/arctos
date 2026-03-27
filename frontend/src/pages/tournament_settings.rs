@@ -472,13 +472,35 @@ pub fn TournamentSettings(url: String) -> Element {
     let mut show_color_picker_for = use_signal(|| None as Option<i32>);
     let mut custom_color_hex = use_signal(|| String::new());
     let mut to_error = use_signal(|| None as Option<String>);
+    let mut waiver_file_bytes = use_signal(|| None as Option<bytes::Bytes>);
+    let mut waiver_file_name = use_signal(|| None as Option<String>);
+    let mut waiver_reading = use_signal(|| false);
+    let mut waiver_upload_error = use_signal(|| None as Option<String>);
+    let mut require_waiver_signature_ui = use_signal(|| false);
+    let mut waiver_toggle_initialized = use_signal(|| false);
     let val = data.value();
     let _backend = api::base_url();
     let url_form = url.clone();
+    let url_form_submit = url_form.clone();
+
+    use_effect(move || {
+        if let Some(Ok(d)) = val.read().as_ref() {
+            // Only initialize once so user toggles aren't overwritten by rerenders.
+            if !waiver_toggle_initialized() {
+                require_waiver_signature_ui.set(d.tournament.waiver_required);
+                waiver_toggle_initialized.set(true);
+                if !d.tournament.waiver_required {
+                    waiver_file_bytes.set(None);
+                    waiver_file_name.set(None);
+                    waiver_upload_error.set(None);
+                }
+            }
+        }
+    });
     rsx! {
         if let Some(Ok(d)) = val.read().as_ref() {
             div { class: "penalty-settings-wrap",
-            div { class: "row",
+                div { class: "row",
                 div { class: "col-12",
                     h1 { "{d.tournament.name} - Settings" }
                     nav { aria_label: "breadcrumb",
@@ -501,22 +523,19 @@ pub fn TournamentSettings(url: String) -> Element {
                                 id: "tournament-settings-form",
                                 onsubmit: move |ev| {
                                     ev.prevent_default();
-                                    let params: Vec<(String, String)> = vec![
+                                    let mut params: Vec<(String, String)> = vec![
                                         ("name".into(), get_form_value("name")),
                                         ("location".into(), get_form_value("location")),
                                         ("start_date".into(), get_form_value("start_date")),
                                         ("end_date".into(), get_form_value("end_date")),
-                                        ("num_fields".into(), get_form_value("num_fields")),
                                         ("n_max_teams".into(), get_form_value("n_max_teams")),
                                         ("max_team_size_roster".into(), get_form_value("max_team_size_roster")),
                                         ("max_team_size_field".into(), get_form_value("max_team_size_field")),
+                                        ("about".into(), get_form_textarea("about")),
+                                        ("head_refs_allowed_list".into(), get_form_value("head_refs_allowed_list")),
                                         ("team_reg_fee".into(), get_form_value("team_reg_fee")),
                                         ("player_reg_fee".into(), get_form_value("player_reg_fee")),
-                                        ("about".into(), get_form_textarea("about")),
-                                        ("terms_link".into(), get_form_value("terms_link")),
-                                        ("head_refs_allowed_list".into(), get_form_value("head_refs_allowed_list")),
                                     ];
-                                    let mut params = params;
                                     if get_form_check("head_refs_allow_anyone") {
                                         params.push(("head_refs_allow_anyone".into(), "on".to_string()));
                                     }
@@ -529,15 +548,37 @@ pub fn TournamentSettings(url: String) -> Element {
                                     if get_form_check("schedule_published") {
                                         params.push(("schedule_published".into(), "on".to_string()));
                                     }
-                                    if get_form_check("registration_open") {
-                                        params.push(("registration_open".into(), "on".to_string()));
+                                    if get_form_check("team_registration_open") {
+                                        params.push(("team_registration_open".into(), "on".to_string()));
+                                    }
+                                    if get_form_check("player_registration_open") {
+                                        params.push(("player_registration_open".into(), "on".to_string()));
+                                    }
+                                    if get_form_check("require_waiver_signature") {
+                                        params.push((
+                                            "require_waiver_signature".into(),
+                                            "on".to_string(),
+                                        ));
                                     }
                                     let nav = navigator.clone();
-                                    let url_submit = url_form.clone();
+                                    let url_submit = url_form_submit.clone();
+                                    let waiver_bytes_for_save = waiver_file_bytes();
+                                    let waiver_name_for_save = waiver_file_name();
                                     spawn(async move {
                                         match api::update_tournament_settings(&url_submit, &params).await {
                                             Ok(res) => {
                                                 if res.success {
+                                                    if let Some(bytes) = waiver_bytes_for_save {
+                                                        let filename =
+                                                            waiver_name_for_save.as_deref().unwrap_or("waiver");
+                                                        match api::upload_waiver(&url_submit, bytes, filename).await {
+                                                            Ok(_) => {}
+                                                            Err(e) => {
+                                                                waiver_upload_error.set(Some(e));
+                                                                return;
+                                                            }
+                                                        }
+                                                    }
                                                     nav.push(Route::TournamentHome { url: url_submit });
                                                 }
                                             }
@@ -570,17 +611,12 @@ pub fn TournamentSettings(url: String) -> Element {
                                     div { class: "col-md-6",
                                         div { class: "mb-3",
                                             label { r#for: "end_date", class: "form-label", "End Date" }
-                                            input { r#type: "date", class: "form-control", id: "end_date", name: "end_date", value: "{d.tournament.end_date.as_deref().map(|s| s.split('T').next().unwrap_or(s)).unwrap_or(\"\")}" }
-                                        }
-                                    }
-                                    div { class: "col-md-6",
-                                        div { class: "mb-3",
-                                            label { r#for: "num_fields", class: "form-label", "Number of Fields" }
-                                            input { r#type: "number", class: "form-control", id: "num_fields", name: "num_fields", value: "{d.tournament.num_fields.unwrap_or(1)}", min: "1" }
+                                            input { r#type: "date", class: "form-control", id: "end_date", name: "end_date", value: "{d.tournament.end_date.as_deref().map(|s| s.split('T').next().unwrap_or(s)).unwrap_or(\"\")}", required: true }
                                         }
                                     }
                                 }
 
+                                if d.tournament.league.is_none() {
                                 div { class: "row",
                                     div { class: "col-md-6",
                                         div { class: "mb-3",
@@ -606,7 +642,9 @@ pub fn TournamentSettings(url: String) -> Element {
                                         }
                                     }
                                 }
+                                }
 
+                                if d.tournament.league.is_none() {
                                 div { class: "row",
                                     div { class: "col-md-6",
                                         div { class: "mb-3",
@@ -627,6 +665,7 @@ pub fn TournamentSettings(url: String) -> Element {
                                         }
                                     }
                                 }
+                                }
 
                                 div { class: "mb-3",
                                     label { r#for: "about", class: "form-label", "About" }
@@ -644,10 +683,87 @@ pub fn TournamentSettings(url: String) -> Element {
                                     }
                                 }
 
-                                div { class: "mb-3",
-                                    label { r#for: "terms_link", class: "form-label", "Terms and Conditions Link" }
-                                    input { r#type: "url", class: "form-control", id: "terms_link", name: "terms_link", value: "{d.tournament.terms_link.as_deref().unwrap_or(\"\")}", placeholder: "https://example.com/terms" }
-                                    div { class: "form-text", "If given, teams and players must agree to these terms upon registration." }
+                                if d.tournament.league.is_none() {
+                                    div { class: "mb-3",
+                                        h5 { class: "mb-2", "Waiver Upload" }
+                                        div { class: "form-check mb-2",
+                                            input {
+                                                class: "form-check-input",
+                                                r#type: "checkbox",
+                                                id: "require_waiver_signature",
+                                                checked: require_waiver_signature_ui(),
+                                                onchange: move |ev| {
+                                                    let checked = ev.checked();
+                                                    require_waiver_signature_ui.set(checked);
+                                                    if !checked {
+                                                        waiver_file_bytes.set(None);
+                                                        waiver_file_name.set(None);
+                                                        waiver_upload_error.set(None);
+                                                    }
+                                                }
+                                            }
+                                            label { class: "form-check-label", r#for: "require_waiver_signature", "Require waiver signature during registration" }
+                                        }
+
+                                        if require_waiver_signature_ui() {
+                                            if let Some(sha) = d.tournament.waiver_sha256.as_deref() {
+                                                div { class: "form-text mb-1", "Current waiver hash (SHA-256):" }
+                                                pre { class: "p-2 border rounded bg-light mb-2", style: "white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word;", code { "{sha}" } }
+                                            } else {
+                                                p { class: "form-text mb-1", "No waiver uploaded yet." }
+                                            }
+                                            if let Some(link) = d.tournament.waiver_filepath.as_deref() {
+                                                a { href: "{_backend}{link}", class: "d-block small mb-3", target: "_blank", rel: "noreferrer", "View current waiver" }
+                                            }
+
+                                            div { class: "mb-2",
+                                                input {
+                                                    r#type: "file",
+                                                    class: "form-control",
+                                                    accept: "*/*",
+                                                    disabled: waiver_reading(),
+                                                    onchange: move |evt| {
+                                                        #[cfg(target_arch = "wasm32")]
+                                                        {
+                                                            use dioxus::html::HasFileData;
+                                                            let files = evt.files();
+                                                            if let Some(file) = files.into_iter().next() {
+                                                                waiver_upload_error.set(None);
+                                                                waiver_reading.set(true);
+                                                                let filename = file.name();
+                                                                spawn(async move {
+                                                                    match file.read_bytes().await {
+                                                                        Ok(bytes) => {
+                                                                            waiver_file_bytes.set(Some(bytes));
+                                                                            waiver_file_name.set(Some(filename));
+                                                                        }
+                                                                        Err(_) => {
+                                                                            waiver_file_bytes.set(None);
+                                                                            waiver_file_name.set(None);
+                                                                            waiver_upload_error.set(Some("Failed to read file".to_string()));
+                                                                        }
+                                                                    }
+                                                                    waiver_reading.set(false);
+                                                                });
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+
+                                            if waiver_file_bytes().is_some() {
+                                                p { class: "text-muted small mb-2", "Ready to upload the selected waiver file." }
+                                            }
+
+                                            if let Some(ref err) = waiver_upload_error() {
+                                                div { class: "alert alert-danger small py-2", "{err}" }
+                                            }
+
+                                            div { class: "form-text", "Selected waiver uploads when you click Save Settings." }
+                                        } else {
+                                            div { class: "form-text text-muted", "Waiver signature will not be required." }
+                                        }
+                                    }
                                 }
 
                                 h3 { "Head Ref Options" }
@@ -698,10 +814,16 @@ pub fn TournamentSettings(url: String) -> Element {
                                         div { class: "form-text", "show the schedule will be visible to all users. Still visible to TOs and head refs if unchecked." }
                                     }
                                 }
-                                div { class: "mb-3",
-                                    div { class: "form-check",
-                                        input { class: "form-check-input", r#type: "checkbox", id: "registration_open", name: "registration_open", checked: d.tournament.registration_open }
-                                        label { class: "form-check-label", r#for: "registration_open", "Registration Open" }
+                                if d.tournament.league.is_none() {
+                                    div { class: "mb-3",
+                                        div { class: "form-check",
+                                            input { class: "form-check-input", r#type: "checkbox", id: "team_registration_open", name: "team_registration_open", checked: d.tournament.team_registration_open }
+                                            label { class: "form-check-label", r#for: "team_registration_open", "Team Registration Open" }
+                                        }
+                                        div { class: "form-check mt-1",
+                                            input { class: "form-check-input", r#type: "checkbox", id: "player_registration_open", name: "player_registration_open", checked: d.tournament.player_registration_open }
+                                            label { class: "form-check-label", r#for: "player_registration_open", "Player Registration Open" }
+                                        }
                                     }
                                 }
 
@@ -714,6 +836,7 @@ pub fn TournamentSettings(url: String) -> Element {
                 }
 
                 div { class: "col-md-4",
+                    if d.tournament.league.is_none() {
                     div { class: "card",
                         div { class: "card-header", h5 { class: "mb-0", "Penalty Types" } }
                         div { class: "card-body",
@@ -746,7 +869,9 @@ pub fn TournamentSettings(url: String) -> Element {
                             }
                         }
                     }
+                    }
 
+                    if d.tournament.league.is_none() {
                     div { class: "card mt-4",
                         div { class: "card-header",
                             h5 { class: "mb-0", "Tournament Organizers" }
@@ -823,6 +948,7 @@ pub fn TournamentSettings(url: String) -> Element {
                                 }
                             }
                         }
+                    }
                     }
                 }
             }

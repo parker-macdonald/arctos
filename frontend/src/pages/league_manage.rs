@@ -4,20 +4,20 @@ use dioxus::prelude::*;
 use wasm_bindgen::JsCast;
 
 #[component]
-pub fn Manage(url: String) -> Element {
+pub fn LeagueManage(league_url: String) -> Element {
     let mut search = use_signal(|| String::new());
     let mut search_type = use_signal(|| "both".to_string());
     let mut submitted_search = use_signal(|| String::new());
     let mut submitted_type = use_signal(|| "both".to_string());
     let mut refresh = use_signal(|| 0u32);
     let deregister_error = use_signal(|| None::<String>);
-    let url_for_data = url.clone();
+    let url_for_data = league_url.clone();
     let data = use_resource(move || {
         let u = url_for_data.clone();
         let s = submitted_search().clone();
         let t = submitted_type().clone();
         let _r = refresh();
-        async move { api::tournament_manage(&u, &s, &t).await.map_err(|e| e.to_string()) }
+        async move { api::league_manage(&u, &s, &t).await.map_err(|e| e.to_string()) }
     });
     let val = data.value();
     rsx! {
@@ -27,7 +27,7 @@ pub fn Manage(url: String) -> Element {
                     h1 { "{d.tournament.name} - Registration Management" }
                     nav { aria_label: "breadcrumb",
                         ol { class: "breadcrumb",
-                            li { class: "breadcrumb-item", Link { to: Route::TournamentHome { url: url.clone() }, "{d.tournament.name}" } }
+                            li { class: "breadcrumb-item", Link { to: Route::LeagueHome { league_url: league_url.clone() }, "{d.tournament.name}" } }
                             li { class: "breadcrumb-item active", "Registration Management" }
                         }
                     }
@@ -89,7 +89,7 @@ pub fn Manage(url: String) -> Element {
                                         }
                                     }
                                     tbody {
-                                        for (url_dereg, url_save, team_id_dereg, reg_id_save, team_data) in d.team_registrations.iter().map(|t| (url.clone(), url.clone(), t.registration.team.clone(), t.registration.id, t)) {
+                                        for (url_dereg, url_save, team_id_dereg, reg_id_save, team_data) in d.team_registrations.iter().map(|t| (league_url.clone(), league_url.clone(), t.registration.team.clone(), t.registration.id, t)) {
                                             tr { key: "{team_data.registration.id}",
                                                 td {
                                                     a { href: "/teams/{team_data.registration.team}", class: "text-decoration-none",
@@ -126,7 +126,7 @@ pub fn Manage(url: String) -> Element {
                                                                 let mut deregister_error = deregister_error.clone();
                                                                 spawn(async move {
                                                                     deregister_error.set(None);
-                                                                    match api::deregister_any_team(&u, &tid).await {
+                                                                    match api::league_deregister_any_team(&u, &tid).await {
                                                                         Ok(_) => refresh.set(refresh() + 1),
                                                                         Err(e) => deregister_error.set(Some(e)),
                                                                     }
@@ -174,7 +174,7 @@ pub fn Manage(url: String) -> Element {
                                                                             .and_then(|e| e.dyn_into::<web_sys::HtmlInputElement>().ok())
                                                                             .map(|e: web_sys::HtmlInputElement| e.checked())
                                                                             .unwrap_or(false);
-                                                                        let _ = api::mark_team_paid(&u, rid, amount, paid, "", "", "").await;
+                                                                        let _ = api::league_mark_team_paid(&u, rid, amount, paid, "", "", "").await;
                                                                         refresh.set(refresh() + 1);
                                                                     });
                                                                 },
@@ -218,7 +218,7 @@ pub fn Manage(url: String) -> Element {
                                         }
                                     }
                                     tbody {
-                                        for (url_dereg, url_save, player_id_dereg, reg_id_save, player_data) in d.player_registrations.iter().map(|p| (url.clone(), url.clone(), p.registration.player.clone(), p.registration.id, p)) {
+                                        for (url_dereg, url_save, player_id_dereg, reg_id_save, player_data) in d.player_registrations.iter().map(|p| (league_url.clone(), league_url.clone(), p.registration.player.clone(), p.registration.id, p)) {
                                             tr { key: "{player_data.registration.id}",
                                                 td {
                                                     a { href: "/players/{player_data.registration.player}", class: "text-decoration-none",
@@ -295,13 +295,13 @@ pub fn Manage(url: String) -> Element {
                                                         button {
                                                             r#type: "button",
                                                             class: "btn btn-sm btn-outline-danger",
-onclick: move |_| {
+                                                            onclick: move |_| {
                                                                 let u = url_dereg.clone();
                                                                 let pid = player_id_dereg.clone();
-                                                        let mut deregister_error = deregister_error.clone();
+                                                                let mut deregister_error = deregister_error.clone();
                                                                 spawn(async move {
                                                                     deregister_error.set(None);
-                                                                    match api::deregister_any_player(&u, &pid).await {
+                                                                    match api::league_deregister_any_player(&u, &pid).await {
                                                                         Ok(_) => refresh.set(refresh() + 1),
                                                                         Err(e) => deregister_error.set(Some(e)),
                                                                     }
@@ -333,7 +333,7 @@ onclick: move |_| {
                                                             button {
                                                                 r#type: "button",
                                                                 class: "btn btn-sm btn-outline-primary",
-                                                            onclick: move |_| {
+                                                                onclick: move |_| {
                                                                     let u = url_save.clone();
                                                                     let rid = reg_id_save;
                                                                     spawn(async move {
@@ -349,7 +349,7 @@ onclick: move |_| {
                                                                             .and_then(|e| e.dyn_into::<web_sys::HtmlInputElement>().ok())
                                                                             .map(|e: web_sys::HtmlInputElement| e.checked())
                                                                             .unwrap_or(false);
-                                                                        let _ = api::mark_player_paid(&u, rid, amount, paid, "", "", "").await;
+                                                                        let _ = api::league_mark_player_paid(&u, rid, amount, paid, "", "", "").await;
                                                                         refresh.set(refresh() + 1);
                                                                     });
                                                                 },
