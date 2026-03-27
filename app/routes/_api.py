@@ -24,6 +24,7 @@ from app.utils.helpers import (
     get_next_penalty_color,
     get_registrable_config,
 )
+from app.utils.match_ref_resolution import refs_string_to_tokens, resolve_refs_slots
 from app.utils.dependencies import apply_match_dependencies
 from app.serializers.match_note_serializer import MatchNoteSerializer
 from app.error_values import Ok, Err
@@ -4545,25 +4546,17 @@ def update_match_api(tournament_url, match_id):
                 match.team2 = final_team2
                 match.team2_initial = team2_name
 
-        # Refs
+        # Refs: parallel refs / refs_initial (same slot count)
         if refs is not None:
             if isinstance(refs, list):
-                # Process refs list
-                final_refs = []
-                final_refs_initial = []
-                for r in refs:
-                    rid, rinit = resolve_team_name_to_id(r, tournament_url)
-                    if rid:
-                        final_refs.append(rid)
-                    if rinit:
-                        final_refs_initial.append(rinit)
-                match.refs = ",".join(final_refs) if final_refs else None
-                match.refs_initial = (
-                    ",".join(final_refs_initial) if final_refs_initial else None
-                )
+                r_csv, i_csv = resolve_refs_slots(refs, tournament_url)
+                match.refs = r_csv
+                match.refs_initial = i_csv
             else:
-                # Assume string input if not list
-                match.refs_initial = refs
+                toks = refs_string_to_tokens(refs)
+                r_csv, i_csv = resolve_refs_slots(toks, tournament_url)
+                match.refs = r_csv
+                match.refs_initial = i_csv
 
     # Set Type
     if set_type_str:
@@ -4774,16 +4767,10 @@ def force_start_match_api(tournament_url, match_id):
     match.team2 = t2_id
     match.team2_initial = t2_initial or team2_input
 
-    # Refs: preserve slot count
-    final_refs = []
-    final_refs_initial = []
-    for r in refs_list:
-        r_str = (r or "").strip() if isinstance(r, str) else ""
-        rid, rinit = resolve_team_name_to_id(r_str, tournament_url)
-        final_refs.append(rid or "")
-        final_refs_initial.append(rinit or r_str)
-    match.refs = ",".join(final_refs) if final_refs else None
-    match.refs_initial = ",".join(final_refs_initial) if final_refs_initial else None
+    # Refs: preserve slot count (registration, explicit id, tag)
+    r_csv, i_csv = resolve_refs_slots(refs_list, tournament_url)
+    match.refs = r_csv
+    match.refs_initial = i_csv
 
     # Convert to static
     match.schedule_type = ScheduleType.STATIC
@@ -5176,21 +5163,12 @@ def create_match_api(tournament_url):
         match.team1_initial = team1_name or None
         match.team2_initial = team2_name or None
 
-    # Refs
+    # Refs: parallel refs / refs_initial (same slot count)
     refs = data.get("refs")
     if refs and isinstance(refs, list):
-        final_refs = []
-        final_refs_initial = []
-        for r in refs:
-            rid, rinit = resolve_team_name_to_id(r, tournament_url)
-            if rid:
-                final_refs.append(rid)
-            if rinit:
-                final_refs_initial.append(rinit)
-        match.refs = ",".join(final_refs) if final_refs else None
-        match.refs_initial = (
-            ",".join(final_refs_initial) if final_refs_initial else None
-        )
+        r_csv, i_csv = resolve_refs_slots(refs, tournament_url)
+        match.refs = r_csv
+        match.refs_initial = i_csv
 
     # Format
     set_type_str = data.get("set_type")

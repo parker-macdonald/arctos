@@ -196,68 +196,27 @@ class MatchScheduleSerializer:
         if not name:
             return Err(ValidationError("Match name cannot be empty"))
 
-        # Helper to check if a value is an explicit team ID (not a tag or match reference)
-        def is_explicit_team_id(val: str) -> bool:
-            if not val or not val.strip():
-                return False
-            val = val.strip()
-            # Not a tag reference
-            if val.lower().startswith("tag::"):
-                return False
-            # Not a match reference (contains ::winner or ::loser)
-            if "::winner" in val.lower() or "::loser" in val.lower():
-                return False
-            # Must be an explicit team ID
-            return True
+        from app.utils.match_ref_resolution import (
+            refs_string_to_tokens,
+            resolve_refs_slots,
+            resolve_team_column,
+        )
 
         # Get _initial field values
         team1_initial = str(data.get("team1_initial", "")).strip() or None
         team2_initial = str(data.get("team2_initial", "")).strip() or None
         refs_initial = str(data.get("refs_initial", "")).strip() or None
 
-        # Clear team1/team2/refs (they are derived from _initial fields)
-        # But populate explicit team IDs and resolved tag references from _initial fields
-        from app.utils.helpers import resolve_tag_to_team
+        team1 = resolve_team_column(team1_initial, tournament_url)
+        team2 = resolve_team_column(team2_initial, tournament_url)
 
-        team1 = None
-        if team1_initial:
-            if is_explicit_team_id(team1_initial):
-                team1 = team1_initial
-            else:
-                # Try to resolve as tag reference
-                resolved_team = resolve_tag_to_team(team1_initial, tournament_url)
-                if resolved_team:
-                    team1 = resolved_team
-
-        team2 = None
-        if team2_initial:
-            if is_explicit_team_id(team2_initial):
-                team2 = team2_initial
-            else:
-                # Try to resolve as tag reference
-                resolved_team = resolve_tag_to_team(team2_initial, tournament_url)
-                if resolved_team:
-                    team2 = resolved_team
-
-        # For refs, populate explicit team IDs and resolved tag references maintaining index structure
         refs = None
         if refs_initial:
-            refs_initial_list = [r.strip() for r in refs_initial.split(",")]
-            refs_list = [""] * len(refs_initial_list)
-            has_explicit_ids = False
-            for i, initial_ref in enumerate(refs_initial_list):
-                if initial_ref:
-                    if is_explicit_team_id(initial_ref):
-                        refs_list[i] = initial_ref
-                        has_explicit_ids = True
-                    else:
-                        # Try to resolve as tag reference
-                        resolved_team = resolve_tag_to_team(initial_ref, tournament_url)
-                        if resolved_team:
-                            refs_list[i] = resolved_team
-                            has_explicit_ids = True
-            if has_explicit_ids:
-                refs = ", ".join(refs_list)
+            r_csv, _ = resolve_refs_slots(
+                refs_string_to_tokens(refs_initial), tournament_url
+            )
+            if r_csv and any(s.strip() for s in r_csv.split(",")):
+                refs = r_csv
 
         schedule_type = str(data.get("schedule_type", "STATIC")).strip() or "STATIC"
         skip_condition_raw = str(data.get("skip_condition", "")).strip() or None
