@@ -6404,7 +6404,7 @@ def get_player_penalty_history(tournament_url, player_id):
             pt_map.get(note.penalty_type_id) if note.penalty_type_id else (note.text or "Other")
         )
         point_label = f"Set {set_number}" if set_number else "-"
-        date_str = created_at.strftime("%m/%d") if created_at else "-"
+        date_str = to_iso_z(created_at).unwrap_or(None) if created_at else None
         is_current = str(note.match) == current_match_id if current_match_id else False
         is_current_point = (
             str(note.point_id) == current_point_id if current_point_id and note.point_id else False
@@ -6414,7 +6414,7 @@ def get_player_penalty_history(tournament_url, player_id):
                 "penalty_type_name": pt_name,
                 "match_name": match_name or "-",
                 "point_label": point_label,
-                "date": date_str,
+                "date": date_str or "-",
                 "is_current_match": is_current,
                 "is_current_point": is_current_point,
                 "note_uuid": note.uuid,

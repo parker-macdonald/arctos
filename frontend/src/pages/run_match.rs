@@ -51,7 +51,6 @@ fn now_epoch_secs() -> f64 {
 fn browser_tz_offset_minutes() -> i64 {
     #[cfg(target_arch = "wasm32")]
     {
-        // JS getTimezoneOffset returns minutes behind UTC.
         -(js_sys::Date::new_0().get_timezone_offset() as i64)
     }
     #[cfg(not(target_arch = "wasm32"))]
@@ -60,21 +59,16 @@ fn browser_tz_offset_minutes() -> i64 {
     }
 }
 
+/// Convert UTC ISO timestamp to local MM/DD for display.
 fn format_iso_to_local_datetime(iso: &str) -> String {
     let utc_dt = if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(iso) {
         dt.naive_utc()
-    } else if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(iso, "%Y-%m-%dT%H:%M:%S%.f") {
-        dt
-    } else if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(iso, "%Y-%m-%dT%H:%M:%S") {
-        dt
-    } else if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(iso, "%Y-%m-%dT%H:%M") {
-        dt
     } else {
         return iso.to_string();
     };
 
     let local = utc_dt + chrono::Duration::minutes(browser_tz_offset_minutes());
-    local.format("%Y-%m-%d %H:%M").to_string()
+    local.format("%m/%d").to_string()
 }
 
 /// Play sound and trigger vibration for start/end point button. Different sound and pattern for start vs end.
