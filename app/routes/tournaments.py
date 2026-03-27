@@ -348,9 +348,7 @@ def upload_tournament_waiver(tournament_url):
         return jsonify({"error": "Registrable config not found"}), 500
 
     cfg.waiver_sha256 = waiver_sha256
-    cfg.waiver_filepath = (
-        f"/leagues/{scope_url}/waiver" if tournament.league_id else f"/{scope_url}/waiver"
-    )
+    cfg.waiver_filepath = f"/static/uploads/waivers/{scope_url}/waiver"
     db.session.commit()
 
     return jsonify(
