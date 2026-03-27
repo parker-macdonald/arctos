@@ -473,6 +473,7 @@ pub fn TournamentSettings(url: String) -> Element {
     let mut custom_color_hex = use_signal(|| String::new());
     let mut to_error = use_signal(|| None as Option<String>);
     let mut waiver_file_bytes = use_signal(|| None as Option<bytes::Bytes>);
+    let mut waiver_file_name = use_signal(|| None as Option<String>);
     let mut waiver_reading = use_signal(|| false);
     let mut waiver_upload_error = use_signal(|| None as Option<String>);
     let mut require_waiver_signature_ui = use_signal(|| false);
@@ -490,6 +491,7 @@ pub fn TournamentSettings(url: String) -> Element {
                 waiver_toggle_initialized.set(true);
                 if !d.tournament.waiver_required {
                     waiver_file_bytes.set(None);
+                    waiver_file_name.set(None);
                     waiver_upload_error.set(None);
                 }
             }
@@ -561,12 +563,15 @@ pub fn TournamentSettings(url: String) -> Element {
                                     let nav = navigator.clone();
                                     let url_submit = url_form_submit.clone();
                                     let waiver_bytes_for_save = waiver_file_bytes();
+                                    let waiver_name_for_save = waiver_file_name();
                                     spawn(async move {
                                         match api::update_tournament_settings(&url_submit, &params).await {
                                             Ok(res) => {
                                                 if res.success {
                                                     if let Some(bytes) = waiver_bytes_for_save {
-                                                        match api::upload_waiver(&url_submit, bytes).await {
+                                                        let filename =
+                                                            waiver_name_for_save.as_deref().unwrap_or("waiver");
+                                                        match api::upload_waiver(&url_submit, bytes, filename).await {
                                                             Ok(_) => {}
                                                             Err(e) => {
                                                                 waiver_upload_error.set(Some(e));
@@ -692,6 +697,7 @@ pub fn TournamentSettings(url: String) -> Element {
                                                     require_waiver_signature_ui.set(checked);
                                                     if !checked {
                                                         waiver_file_bytes.set(None);
+                                                        waiver_file_name.set(None);
                                                         waiver_upload_error.set(None);
                                                     }
                                                 }
@@ -724,13 +730,16 @@ pub fn TournamentSettings(url: String) -> Element {
                                                             if let Some(file) = files.into_iter().next() {
                                                                 waiver_upload_error.set(None);
                                                                 waiver_reading.set(true);
+                                                                let filename = file.name();
                                                                 spawn(async move {
                                                                     match file.read_bytes().await {
                                                                         Ok(bytes) => {
                                                                             waiver_file_bytes.set(Some(bytes));
+                                                                            waiver_file_name.set(Some(filename));
                                                                         }
                                                                         Err(_) => {
                                                                             waiver_file_bytes.set(None);
+                                                                            waiver_file_name.set(None);
                                                                             waiver_upload_error.set(Some("Failed to read file".to_string()));
                                                                         }
                                                                     }

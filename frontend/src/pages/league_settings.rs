@@ -110,6 +110,7 @@ pub fn LeagueSettings(league_url: String) -> Element {
     let navigator = use_navigator();
     let _backend = api::base_url();
     let mut waiver_file_bytes = use_signal(|| None as Option<bytes::Bytes>);
+    let mut waiver_file_name = use_signal(|| None as Option<String>);
     let mut waiver_reading = use_signal(|| false);
     let mut waiver_upload_error = use_signal(|| None as Option<String>);
     let mut require_waiver_signature_ui = use_signal(|| false);
@@ -123,6 +124,7 @@ pub fn LeagueSettings(league_url: String) -> Element {
                 waiver_toggle_initialized.set(true);
                 if !d.league.waiver_required {
                     waiver_file_bytes.set(None);
+                    waiver_file_name.set(None);
                     waiver_upload_error.set(None);
                 }
             }
@@ -185,11 +187,14 @@ pub fn LeagueSettings(league_url: String) -> Element {
                     let nav = navigator.clone();
                     let league_url_for_nav = lu.clone();
                     let waiver_bytes_for_save = waiver_file_bytes();
+                    let waiver_name_for_save = waiver_file_name();
                     spawn(async move {
                         match api::league_update_settings(&lu, &params).await {
                                     Ok(res) if res.success => {
                                         if let Some(bytes) = waiver_bytes_for_save {
-                                            match api::league_upload_waiver(&lu, bytes).await {
+                                            let filename =
+                                                waiver_name_for_save.as_deref().unwrap_or("waiver");
+                                            match api::league_upload_waiver(&lu, bytes, filename).await {
                                                 Ok(_) => {}
                                                 Err(e) => {
                                                     save_error.set(Some(e));
@@ -255,6 +260,7 @@ pub fn LeagueSettings(league_url: String) -> Element {
                                         require_waiver_signature_ui.set(checked);
                                         if !checked {
                                             waiver_file_bytes.set(None);
+                                            waiver_file_name.set(None);
                                             waiver_upload_error.set(None);
                                         }
                                     }
@@ -292,13 +298,16 @@ pub fn LeagueSettings(league_url: String) -> Element {
                                             if let Some(file) = files.into_iter().next() {
                                                 waiver_upload_error.set(None);
                                                 waiver_reading.set(true);
+                                                let filename = file.name();
                                                 spawn(async move {
                                                     match file.read_bytes().await {
                                                         Ok(bytes) => {
                                                             waiver_file_bytes.set(Some(bytes));
+                                                            waiver_file_name.set(Some(filename));
                                                         }
                                                         Err(_) => {
                                                             waiver_file_bytes.set(None);
+                                                            waiver_file_name.set(None);
                                                             waiver_upload_error.set(Some("Failed to read file".to_string()));
                                                         }
                                                     }

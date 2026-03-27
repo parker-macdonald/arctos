@@ -325,6 +325,7 @@ def upload_tournament_waiver(tournament_url):
 
     import hashlib
     import os
+    import re
 
     waiver_sha256 = hashlib.sha256(data).hexdigest()
 
@@ -335,7 +336,22 @@ def upload_tournament_waiver(tournament_url):
         current_app.root_path, "../static", "uploads", "waivers", scope_url
     )
     os.makedirs(upload_dir, exist_ok=True)
-    file_path = os.path.join(upload_dir, "waiver")
+    uploaded_filename = (request.headers.get("X-Waiver-Filename") or "").strip()
+    ext = os.path.splitext(uploaded_filename)[1].lower()
+    if not re.fullmatch(r"\.[a-z0-9]{1,12}", ext or ""):
+        ext = ""
+    stored_name = f"waiver{ext}"
+    file_path = os.path.join(upload_dir, stored_name)
+
+    # Remove previous waiver files (legacy and prior extension variants).
+    for existing_name in os.listdir(upload_dir):
+        if existing_name == "waiver" or existing_name.startswith("waiver."):
+            existing_path = os.path.join(upload_dir, existing_name)
+            try:
+                if os.path.isfile(existing_path):
+                    os.remove(existing_path)
+            except Exception:
+                pass
 
     try:
         with open(file_path, "wb") as f:
@@ -348,9 +364,7 @@ def upload_tournament_waiver(tournament_url):
         return jsonify({"error": "Registrable config not found"}), 500
 
     cfg.waiver_sha256 = waiver_sha256
-    cfg.waiver_filepath = (
-        f"/leagues/{scope_url}/waiver" if tournament.league_id else f"/{scope_url}/waiver"
-    )
+    cfg.waiver_filepath = f"/static/uploads/waivers/{scope_url}/{stored_name}"
     db.session.commit()
 
     return jsonify(
@@ -1054,17 +1068,20 @@ def update_tournament_settings(tournament_url):
             import os
 
             scope_url = tournament.url
-            file_path = os.path.join(
+            waiver_dir = os.path.join(
                 current_app.root_path,
                 "../static",
                 "uploads",
                 "waivers",
                 scope_url,
-                "waiver",
             )
             try:
-                if os.path.isfile(file_path):
-                    os.remove(file_path)
+                if os.path.isdir(waiver_dir):
+                    for existing_name in os.listdir(waiver_dir):
+                        if existing_name == "waiver" or existing_name.startswith("waiver."):
+                            existing_path = os.path.join(waiver_dir, existing_name)
+                            if os.path.isfile(existing_path):
+                                os.remove(existing_path)
             except Exception:
                 pass
         n_max = request.form.get("n_max_teams", "").strip()
