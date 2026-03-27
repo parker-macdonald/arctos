@@ -36,10 +36,6 @@ pub struct Tournament {
     pub max_team_size_roster: Option<u32>,
     pub max_team_size_field: Option<u32>,
     pub terms_link: Option<String>,
-    pub waiver_filepath: Option<String>,
-    pub waiver_sha256: Option<String>,
-    #[serde(default)]
-    pub waiver_required: bool,
     pub head_refs_allowed_list: Option<String>,
     #[serde(default)]
     pub head_refs_allow_reffing_teams: bool,
@@ -77,10 +73,6 @@ pub struct UserRegStatus {
     pub status: String,
     pub paid: bool,
     pub amount_paid: f64,
-    #[serde(default)]
-    pub waiver_required: bool,
-    #[serde(default)]
-    pub waiver_status: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -125,10 +117,6 @@ pub struct LeagueInfo {
     #[serde(default)]
     pub published: bool,
     pub terms_link: Option<String>,
-    pub waiver_filepath: Option<String>,
-    pub waiver_sha256: Option<String>,
-    #[serde(default)]
-    pub waiver_required: bool,
     pub n_max_teams: Option<u32>,
     pub max_team_size_roster: Option<u32>,
     pub max_team_size_field: Option<u32>,
@@ -224,12 +212,6 @@ pub struct ManagePlayerRegistrationData {
     pub amount_paid: f64,
     pub registered_at: Option<String>,
     pub paid_at: Option<String>,
-    pub waiver_legal_name_signature: Option<String>,
-    pub waiver_legal_name_signature_sha256: Option<String>,
-    #[serde(default)]
-    pub waiver_required: bool,
-    #[serde(default)]
-    pub waiver_status: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -462,8 +444,6 @@ pub struct MatchDetailData {
     pub nsets: Option<u32>,
     pub initial_notes: Option<String>,
     pub final_notes: Option<String>,
-    #[serde(default)]
-    pub is_league_event: bool,
 }
 
 /// Per-point in-video start time. Includes point_uuid so cameras can have different point sets.
@@ -838,12 +818,6 @@ pub struct PlayerRegItem {
     pub status: String,
     pub jersey_name: Option<String>,
     pub jersey_number: Option<String>,
-    #[serde(default)]
-    pub paid: Option<bool>,
-    #[serde(default)]
-    pub waiver_required: bool,
-    #[serde(default)]
-    pub waiver_status: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1105,20 +1079,6 @@ pub struct PlayerRegistrationData {
 pub struct MyPlayerRegistrationResponse {
     pub registration: PlayerRegistrationData,
     pub current_team: Option<TeamOption>,
-    #[serde(default)]
-    pub waiver_required: bool,
-    #[serde(default)]
-    pub waiver_filepath: Option<String>,
-    #[serde(default)]
-    pub waiver_sha256: Option<String>,
-    #[serde(default)]
-    pub waiver_legal_name_signature: Option<String>,
-    #[serde(default)]
-    pub waiver_signature_sha256: Option<String>,
-    #[serde(default)]
-    pub waiver_signature_submitted_at: Option<String>,
-    #[serde(default)]
-    pub waiver_signature_valid: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1126,8 +1086,6 @@ pub struct UpdatePlayerRegistrationRequest {
     pub jersey_name: Option<String>,
     pub jersey_number: Option<String>,
     pub team: Option<String>,
-    #[serde(default)]
-    pub waiver_legal_name_signature: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

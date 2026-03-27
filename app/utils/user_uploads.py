@@ -1,17 +1,20 @@
 from __future__ import annotations
 
+import fcntl
 import json
 import os
+import re
 import shutil
 import subprocess
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from os import path
-from typing import Optional
+from typing import Any, Optional
 
 from flask import current_app
 
-from models import Camera, Field, Match, Point, Team, db
+from models import Camera, Field, Match, Point, db
 from app.utils.youtube_upload import upload_camera_to_youtube
 
 
@@ -249,85 +252,290 @@ def _ffmpeg_concat_webm(
     subprocess.run(cmd, check=True, capture_output=True, text=True)
 
 
-def user_autoclips_from_uploaded_video_worker(
+def _static_root() -> str:
+    return path.normpath(path.join(current_app.root_path, "..", "static"))
+
+
+def batch_manifest_path(tournament_url: str, field_name: str, batch_id: str) -> str:
+    return path.join(
+        _static_root(),
+        "uploads",
+        "videos",
+        tournament_url,
+        field_name,
+        "user_uploads",
+        "_batches",
+        batch_id,
+        "manifest.json",
+    )
+
+
+def _slug_camera_dir(s: str, max_len: int = 48) -> str:
+    t = re.sub(r"[^a-zA-Z0-9._-]+", "_", s.strip())[:max_len]
+    return t or "cam"
+
+
+def _camera_fs_dir_name(batch_id: str, camera_display_name: str) -> str:
+    slug = _slug_camera_dir(camera_display_name)
+    name = f"{batch_id}_{slug}"
+    return name[:120]
+
+
+def _manifest_read_write_locked(manifest_path: str, mutator: Any) -> Any:
+    """mutator receives dict or None (missing), returns new dict to write."""
+    os.makedirs(path.dirname(manifest_path), exist_ok=True)
+    with open(manifest_path, "a+", encoding="utf-8") as fp:
+        fcntl.flock(fp.fileno(), fcntl.LOCK_EX)
+        try:
+            fp.seek(0)
+            raw = fp.read()
+            data: Optional[dict[str, Any]] = None
+            if raw.strip():
+                data = json.loads(raw)
+            new_data = mutator(data)
+            fp.seek(0)
+            fp.truncate()
+            fp.write(json.dumps(new_data, indent=2))
+            fp.flush()
+            return new_data
+        finally:
+            fcntl.flock(fp.fileno(), fcntl.LOCK_UN)
+
+
+def _manifest_set_status(manifest_path: str, status: str, error: Optional[str] = None) -> None:
+    def _m(data: Optional[dict[str, Any]]) -> dict[str, Any]:
+        if not data:
+            return {"status": status, "error": error}
+        data = dict(data)
+        data["status"] = status
+        if error is not None:
+            data["error"] = error
+        return data
+
+    _manifest_read_write_locked(manifest_path, _m)
+
+
+def register_batch_upload_completion(
     logger,
+    app_obj,
     *,
     tournament_url: str,
     field_name: str,
-    match_points_padding_sec: float,
+    batch_id: str,
+    batch_index: int,
+    batch_total: int,
+    camera_name: str,
+    upload_id: str,
+    saved_abs_path: str,
+    start_world_override: Optional[str],
     uploader_user_id: str,
     uploader_user_type: str,
-    user_video_abs_path: str,
-    user_video_filename_stem: str,
-    upload_group_name: str,
-    video_start_world_override_iso: Optional[str] = None,
-):
+) -> None:
     """
-    Create one highlight video per match overlapped by the uploaded footage.
-
-    For each point overlapped by the uploaded video time range, generate a clip
-    covering [point_start-3s, point_end+3s] (clamped), then concatenate clips
-    per match.
+    Record one assembled source file in the batch manifest. When all slots are
+    filled, spawn user_autoclips_from_uploaded_batch_worker in a daemon thread.
+    Raises ValueError if manifest metadata conflicts with this upload.
     """
     _log = logger or current_app.logger
-    user_video_abs_path = path.abspath(path.normpath(user_video_abs_path))
-    if not path.exists(user_video_abs_path):
-        _log.error("user_autoclips: source file missing: %s", user_video_abs_path)
-        return
+    saved_abs_path = path.abspath(path.normpath(saved_abs_path))
+    static_root = _static_root()
+    try:
+        source_relpath = path.relpath(saved_abs_path, static_root).replace("\\", "/")
+    except ValueError as e:
+        raise ValueError("assembled file is not under the static root") from e
 
-    video_duration_sec = _get_media_duration_sec(user_video_abs_path)
-    if video_duration_sec <= 0:
-        _log.error("user_autoclips: could not determine duration for %s", user_video_abs_path)
-        return
+    manifest_path = batch_manifest_path(tournament_url, field_name, batch_id)
+    display_name = (camera_name or "").strip() or "upload"
+    if len(display_name) > 200:
+        display_name = display_name[:200]
 
-    if video_start_world_override_iso:
-        override_dt = _parse_iso_to_datetime_utc(video_start_world_override_iso)
-        video_start_world = override_dt or _get_video_start_world_datetime(user_video_abs_path)
-    else:
-        video_start_world = _get_video_start_world_datetime(user_video_abs_path)
-    from datetime import timedelta
+    spawned = False
 
-    video_end_world = video_start_world + timedelta(seconds=video_duration_sec)
+    def _append(data: Optional[dict[str, Any]]) -> dict[str, Any]:
+        nonlocal spawned
+        if data is None:
+            data = {
+                "batch_id": batch_id,
+                "batch_total": batch_total,
+                "camera_name": display_name,
+                "field_name": field_name,
+                "tournament_url": tournament_url,
+                "uploader_user_id": uploader_user_id,
+                "uploader_user_type": uploader_user_type,
+                "status": "pending",
+                "files": {},
+            }
+        else:
+            if data.get("batch_id") != batch_id:
+                raise ValueError("batch_id mismatch")
+            if int(data.get("batch_total") or 0) != batch_total:
+                raise ValueError("batch_total mismatch")
+            if data.get("camera_name") != display_name:
+                raise ValueError("camera_name mismatch")
+            if data.get("field_name") != field_name:
+                raise ValueError("field_name mismatch")
+            if data.get("tournament_url") != tournament_url:
+                raise ValueError("tournament_url mismatch")
+            if str(data.get("uploader_user_id")) != str(uploader_user_id):
+                raise ValueError("uploader mismatch")
+
+        files: dict[str, Any] = dict(data.get("files") or {})
+        files[str(batch_index)] = {
+            "upload_id": upload_id,
+            "source_relpath": source_relpath,
+            "start_world_override": start_world_override,
+        }
+        data = dict(data)
+        data["files"] = files
+
+        ready = len(files) >= batch_total and all(
+            str(i) in files for i in range(batch_total)
+        )
+        if ready and data.get("status") == "pending":
+            data["status"] = "processing"
+            spawned = True
+        return data
+
+    try:
+        _manifest_read_write_locked(manifest_path, _append)
+    except ValueError:
+        raise
+
+    if spawned:
+
+        def _run() -> None:
+            with app_obj.app_context():
+                try:
+                    user_autoclips_from_uploaded_batch_worker(
+                        _log,
+                        manifest_path=manifest_path,
+                        tournament_url=tournament_url,
+                        field_name=field_name,
+                    )
+                except Exception:
+                    _log.exception("user_autoclips batch worker failed")
+                    try:
+                        _manifest_set_status(manifest_path, "failed", "worker exception")
+                    except Exception:
+                        pass
+
+        threading.Thread(target=_run, daemon=True).start()
+
+
+def user_autoclips_from_uploaded_batch_worker(
+    logger,
+    *,
+    manifest_path: str,
+    tournament_url: str,
+    field_name: str,
+    match_points_padding_sec: float = 3.0,
+):
+    """
+    Merge clip plans across all sources in the batch manifest (per match), then
+    create one Camera per match with the shared display name.
+    """
+    _log = logger or current_app.logger
+    static_root = _static_root()
+
+    with open(manifest_path, "r", encoding="utf-8") as f:
+        manifest = json.load(f)
+
+    batch_total = int(manifest.get("batch_total") or 0)
+    batch_id_key = (manifest.get("batch_id") or "").strip() or "batch"
+    camera_display_name = (manifest.get("camera_name") or "").strip() or "upload"
+    if len(camera_display_name) > 200:
+        camera_display_name = camera_display_name[:200]
+
+    uploader_user_id = str(manifest.get("uploader_user_id") or "")
+    uploader_user_type = str(manifest.get("uploader_user_type") or "")
+    files_map: dict[str, Any] = manifest.get("files") or {}
+
+    sources: list[tuple[str, Optional[str]]] = []
+    for i in range(batch_total):
+        entry = files_map.get(str(i))
+        if not entry:
+            _log.error("user_autoclips batch: missing file index %s", i)
+            _manifest_set_status(manifest_path, "failed", "missing file slot")
+            return
+        rel = entry.get("source_relpath") or ""
+        abs_path = path.normpath(path.join(static_root, rel))
+        if not path.exists(abs_path):
+            _log.error("user_autoclips batch: missing source %s", abs_path)
+            _manifest_set_status(manifest_path, "failed", "source missing")
+            return
+        sw = entry.get("start_world_override")
+        if isinstance(sw, str) and sw.strip():
+            sources.append((abs_path, sw.strip()))
+        else:
+            sources.append((abs_path, None))
 
     field_obj = Field.query.filter_by(event=tournament_url, name=field_name).first()
     if not field_obj:
-        _log.error("user_autoclips: field not found event=%s field_name=%s", tournament_url, field_name)
+        _log.error("user_autoclips batch: field not found event=%s field=%s", tournament_url, field_name)
+        _manifest_set_status(manifest_path, "failed", "field not found")
         return
 
-    # Query all matches on this field in this tournament.
     matches = Match.query.filter_by(event=tournament_url, field=field_name).all()
     if not matches:
-        _log.warning("user_autoclips: no matches for field=%s event=%s", field_name, tournament_url)
+        _log.warning("user_autoclips batch: no matches field=%s event=%s", field_name, tournament_url)
+        _manifest_set_status(manifest_path, "done")
         return
 
-    # Query points for all those matches once, then filter in memory.
     match_ids = [m.uuid for m in matches]
     points = Point.query.filter(Point.match.in_(match_ids)).order_by(Point.stamp.asc()).all()
 
-    # Group points by match_uuid.
     points_by_match: dict[str, list[Point]] = {}
     for pt in points:
         if not pt.match:
             continue
         points_by_match.setdefault(pt.match, []).append(pt)
 
+    camera_fs_name = _camera_fs_dir_name(batch_id_key, camera_display_name)
+
     for match_uuid, pts in points_by_match.items():
-        # Build per-point clip plans (clamped to uploaded video window).
-        plans = build_clip_plans_for_points(
-            video_start_world=video_start_world,
-            video_duration_sec=video_duration_sec,
-            points=pts,
-            padding_sec=match_points_padding_sec,
-        )
-        if not plans:
+        combined: list[tuple[UserUploadClipPlan, str]] = []
+        for user_video_abs_path, video_start_world_override_iso in sources:
+            user_video_abs_path = path.abspath(path.normpath(user_video_abs_path))
+            video_duration_sec = _get_media_duration_sec(user_video_abs_path)
+            if video_duration_sec <= 0:
+                _log.error(
+                    "user_autoclips batch: bad duration for %s", user_video_abs_path
+                )
+                continue
+
+            if video_start_world_override_iso:
+                override_dt = _parse_iso_to_datetime_utc(video_start_world_override_iso)
+                video_start_world = override_dt or _get_video_start_world_datetime(
+                    user_video_abs_path
+                )
+            else:
+                video_start_world = _get_video_start_world_datetime(user_video_abs_path)
+
+            plans = build_clip_plans_for_points(
+                video_start_world=video_start_world,
+                video_duration_sec=video_duration_sec,
+                points=pts,
+                padding_sec=match_points_padding_sec,
+            )
+            for p in plans:
+                combined.append((p, user_video_abs_path))
+
+        combined.sort(key=lambda x: x[0].point_start_world)
+        deduped: list[tuple[UserUploadClipPlan, str]] = []
+        seen_uuids: set[str] = set()
+        for plan, src in combined:
+            if plan.point_uuid in seen_uuids:
+                continue
+            seen_uuids.add(plan.point_uuid)
+            deduped.append((plan, src))
+
+        if not deduped:
             continue
 
         match_obj = Match.query.filter_by(uuid=match_uuid).first()
         if not match_obj:
             continue
 
-        # Output paths for this match highlight.
-        camera_name = f"{upload_group_name}-{user_video_filename_stem}"
         match_out_dir = path.join(
             current_app.root_path,
             "..",
@@ -337,7 +545,7 @@ def user_autoclips_from_uploaded_video_worker(
             tournament_url,
             field_name,
             match_uuid,
-            camera_name,
+            camera_fs_name,
         )
         os.makedirs(match_out_dir, exist_ok=True)
 
@@ -349,7 +557,7 @@ def user_autoclips_from_uploaded_video_worker(
         time_video: list[float] = []
 
         concat_offset = 0.0
-        for i, plan in enumerate(plans):
+        for i, (plan, user_video_abs_path) in enumerate(deduped):
             clip_name = f"point_clip_{i}.webm"
             clip_abs_path = path.join(src_clips_dir, clip_name)
             _ffmpeg_trim_to_webm(
@@ -360,18 +568,15 @@ def user_autoclips_from_uploaded_video_worker(
             )
             clip_paths.append(clip_abs_path)
 
-            # in-highlight time for the point's real start.
             point_start_in_highlight = concat_offset + plan.point_start_in_clip_sec
             time_world.append(_dt_to_iso_z(plan.point_start_world))
             time_video.append(round(point_start_in_highlight, 3))
 
             concat_offset += max(0.0, plan.clip_end_file_sec - plan.clip_start_file_sec)
 
-        # Concatenate per match.
         final_highlight_abs_path = path.join(match_out_dir, "final_video.webm")
         _ffmpeg_concat_webm(clip_paths=clip_paths, output_path=final_highlight_abs_path)
 
-        # Camera row file path should be static-relative.
         final_highlight_rel = path.join(
             "static",
             "uploads",
@@ -379,7 +584,7 @@ def user_autoclips_from_uploaded_video_worker(
             tournament_url,
             field_name,
             match_uuid,
-            camera_name,
+            camera_fs_name,
             "final_video.webm",
         ).replace("\\", "/")
 
@@ -387,7 +592,7 @@ def user_autoclips_from_uploaded_video_worker(
             match_uuid=match_uuid,
             event=tournament_url,
             field=field_obj.id,
-            name=camera_name,
+            name=camera_display_name,
             source_type="user_upload",
             uploaded_by_user_id=uploader_user_id,
             uploaded_by_user_type=uploader_user_type,
@@ -399,9 +604,6 @@ def user_autoclips_from_uploaded_video_worker(
         db.session.add(camera_row)
         db.session.commit()
 
-        # Kick off YouTube upload in a background thread.
-        import threading
-
         app_obj = current_app._get_current_object()
 
         def _yt_upload():
@@ -411,9 +613,11 @@ def user_autoclips_from_uploaded_video_worker(
         threading.Thread(target=_yt_upload, daemon=True).start()
 
         _log.info(
-            "user_autoclips: created camera uuid=%s match=%s points=%d",
+            "user_autoclips batch: created camera uuid=%s match=%s clips=%d",
             camera_row.uuid,
             match_uuid,
-            len(plans),
+            len(deduped),
         )
+
+    _manifest_set_status(manifest_path, "done")
 

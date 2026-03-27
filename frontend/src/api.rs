@@ -51,14 +51,6 @@ pub struct StatusResponse {
 }
 
 #[derive(serde::Deserialize)]
-pub struct UploadWaiverResponse {
-    pub success: bool,
-    pub waiver_filepath: Option<String>,
-    pub waiver_sha256: Option<String>,
-    pub error: Option<String>,
-}
-
-#[derive(serde::Deserialize)]
 pub struct CreateTournamentResponse {
     pub success: bool,
     #[allow(dead_code)]
@@ -282,6 +274,9 @@ pub async fn user_upload_video_footage(
     file: dioxus::html::FileData,
     start_world_override: Option<String>,
     camera_name: Option<String>,
+    batch_id: &str,
+    batch_index: u32,
+    batch_total: u32,
 ) -> Result<String, String> {
     user_upload_video_footage_with_progress(
         tournament_url,
@@ -289,6 +284,9 @@ pub async fn user_upload_video_footage(
         file,
         start_world_override,
         camera_name,
+        batch_id,
+        batch_index,
+        batch_total,
         |_, _| {},
     )
     .await
@@ -302,6 +300,9 @@ pub async fn user_upload_video_footage_with_progress<F>(
     file: dioxus::html::FileData,
     start_world_override: Option<String>,
     camera_name: Option<String>,
+    batch_id: &str,
+    batch_index: u32,
+    batch_total: u32,
     mut on_progress: F,
 ) -> Result<String, String>
 where
@@ -348,6 +349,12 @@ where
             .map_err(|_| "append chunk_index failed")?;
         form.append_with_str("total_chunks", &total_chunks.to_string())
             .map_err(|_| "append total_chunks failed")?;
+        form.append_with_str("batch_id", batch_id)
+            .map_err(|_| "append batch_id failed")?;
+        form.append_with_str("batch_index", &batch_index.to_string())
+            .map_err(|_| "append batch_index failed")?;
+        form.append_with_str("batch_total", &batch_total.to_string())
+            .map_err(|_| "append batch_total failed")?;
         form.append_with_str("filename", &filename)
             .map_err(|_| "append filename failed")?;
         form.append_with_str("content_type", &content_type)
@@ -502,76 +509,6 @@ pub async fn update_tournament_settings(
     post_form_status(&url, params).await
 }
 
-/// Upload the current waiver for a tournament (extensionless + overwrites).
-pub async fn upload_waiver(
-    tournament_url: &str,
-    bytes: bytes::Bytes,
-    filename: &str,
-) -> Result<UploadWaiverResponse, String> {
-    let c = client();
-    let r = with_credentials(
-        c.post(format!("{}/_api/{}/upload-waiver", base(), tournament_url))
-            .header("X-Waiver-Filename", filename)
-            .body(bytes),
-    )
-    .send()
-    .await
-    .map_err(|e| e.to_string())?;
-
-    let data: Value = response_json(r).await?;
-    let success = data.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
-    if success {
-        Ok(UploadWaiverResponse {
-            success,
-            waiver_filepath: data.get("waiver_filepath").and_then(|v| v.as_str()).map(String::from),
-            waiver_sha256: data.get("waiver_sha256").and_then(|v| v.as_str()).map(String::from),
-            error: None,
-        })
-    } else {
-        Err(
-            data.get("error")
-                .and_then(|v| v.as_str())
-                .unwrap_or("Upload failed")
-                .to_string(),
-        )
-    }
-}
-
-/// Upload the current waiver for a league (extensionless + overwrites).
-pub async fn league_upload_waiver(
-    league_url: &str,
-    bytes: bytes::Bytes,
-    filename: &str,
-) -> Result<UploadWaiverResponse, String> {
-    let c = client();
-    let r = with_credentials(
-        c.post(format!("{}/_api/leagues/{}/upload-waiver", base(), league_url))
-            .header("X-Waiver-Filename", filename)
-            .body(bytes),
-    )
-    .send()
-    .await
-    .map_err(|e| e.to_string())?;
-
-    let data: Value = response_json(r).await?;
-    let success = data.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
-    if success {
-        Ok(UploadWaiverResponse {
-            success,
-            waiver_filepath: data.get("waiver_filepath").and_then(|v| v.as_str()).map(String::from),
-            waiver_sha256: data.get("waiver_sha256").and_then(|v| v.as_str()).map(String::from),
-            error: None,
-        })
-    } else {
-        Err(
-            data.get("error")
-                .and_then(|v| v.as_str())
-                .unwrap_or("Upload failed")
-                .to_string(),
-        )
-    }
-}
-
 pub async fn add_tournament_to(
     tournament_url: &str,
     user_type: &str,
@@ -663,17 +600,16 @@ pub async fn register_player(
     jersey_name: &str,
     jersey_number: &str,
     team: &str,
-    waiver_legal_name_signature: &str,
+    agree_terms: bool,
 ) -> Result<StatusResponse, String> {
     let mut params = vec![
         ("jersey_name".into(), jersey_name.to_string()),
         ("jersey_number".into(), jersey_number.to_string()),
         ("team".into(), team.to_string()),
     ];
-    params.push((
-        "waiver_legal_name_signature".into(),
-        waiver_legal_name_signature.to_string(),
-    ));
+    if agree_terms {
+        params.push(("agree_terms".into(), "on".into()));
+    }
     let url = format!("{}/_api/{}/register-player", base(), tournament_url);
     post_form_status(&url, &params).await
 }
@@ -681,8 +617,12 @@ pub async fn register_player(
 pub async fn register_team(
     tournament_url: &str,
     pseudonym: &str,
+    agree_terms: bool,
 ) -> Result<StatusResponse, String> {
-    let params = vec![("pseudonym".into(), pseudonym.to_string())];
+    let mut params = vec![("pseudonym".into(), pseudonym.to_string())];
+    if agree_terms {
+        params.push(("agree_terms".into(), "on".into()));
+    }
     let url = format!("{}/_api/{}/register-team", base(), tournament_url);
     post_form_status(&url, &params).await
 }
@@ -829,7 +769,6 @@ pub async fn league_register_player(
     team: Option<&str>,
     jersey_number: &str,
     jersey_name: &str,
-    waiver_legal_name_signature: &str,
 ) -> Result<StatusResponse, String> {
     let mut params: Vec<(String, String)> = vec![
         ("jersey_number".into(), jersey_number.to_string()),
@@ -838,10 +777,6 @@ pub async fn league_register_player(
     if let Some(t) = team {
         params.push(("team".into(), t.to_string()));
     }
-    params.push((
-        "waiver_legal_name_signature".into(),
-        waiver_legal_name_signature.to_string(),
-    ));
     let url = format!("{}/_api/leagues/{}/register-player", base(), league_url);
     post_form_status(&url, &params).await
 }

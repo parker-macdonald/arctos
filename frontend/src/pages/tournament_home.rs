@@ -6,13 +6,12 @@ use crate::types::{ToEntry, UpdatePlayerRegistrationRequest, UpdateTeamRegistrat
 use crate::Route;
 use chrono::{DateTime, SecondsFormat, Utc};
 use dioxus::prelude::*;
+use uuid::Uuid;
 
 #[derive(Clone)]
 struct PendingUpload {
     filename: String,
     file: dioxus::html::FileData,
-    camera_name: String,
-    field_id: u32,
     start_world_suggested: Option<String>,
     start_world_value: String,
     start_world_error: Option<String>,
@@ -73,16 +72,6 @@ pub fn TournamentHome(url: String) -> Element {
         async move { api::tournament_detail(&u).await.map_err(|e| e.to_string()) }
     });
     let me_res = use_resource(move || async move { api::me().await });
-    let url_for_warning = url.clone();
-    let waiver_warning = use_resource(move || {
-        let u = url_for_warning.clone();
-        async move {
-            match api::get_my_player_registration(&u).await {
-                Ok(res) => res.waiver_required && !res.waiver_signature_valid,
-                Err(_) => false,
-            }
-        }
-    });
     let val = data.value();
     let backend = api::base_url();
     let mut delete_modal_open = use_signal(|| false);
@@ -90,7 +79,11 @@ pub fn TournamentHome(url: String) -> Element {
     let mut delete_error = use_signal(|| None::<String>);
     let mut show_edit_player_modal = use_signal(|| false);
     let mut show_edit_team_modal = use_signal(|| false);
+    let mut show_deregister_player_confirm = use_signal(|| false);
+    let mut show_deregister_team_confirm = use_signal(|| false);
     let mut show_league_edit_modal = use_signal(|| false);
+    let url_for_deregister_player = url.clone();
+    let url_for_deregister_team = url.clone();
     let url_for_delete_confirm = url.clone();
     let url_for_user_upload = url.clone();
     let mut about_markdown = use_signal(|| Option::<String>::None);
@@ -121,6 +114,10 @@ pub fn TournamentHome(url: String) -> Element {
     let mut uploading = use_signal(|| false);
     // Per-row upload percent (0–100) while uploading; empty when idle.
     let mut upload_row_progress = use_signal(|| Vec::<Option<u32>>::new());
+    // Shared display name for all files in this upload batch (one logical camera).
+    let mut upload_batch_camera_name = use_signal(|| String::new());
+    // Field for the whole batch (one camera sits on one field).
+    let mut upload_batch_field_id = use_signal(|| None::<u32>);
     let mut upload_modal_open = use_signal(|| false);
 
     let url_for_fields = url.clone();
@@ -180,12 +177,6 @@ pub fn TournamentHome(url: String) -> Element {
                             use_edit_modal: true,
                             on_edit_registration: move |_| show_league_edit_modal.set(true),
                             register_label: String::from("Register (league)"),
-                            show_edit_warning: waiver_warning
-                                .value()
-                                .read()
-                                .as_ref()
-                                .copied()
-                                .unwrap_or(false),
                         }
                     } else {
                         if let Some(current_user) = me_res.read().as_ref().and_then(|r| r.as_ref().ok()) {
@@ -212,17 +203,7 @@ pub fn TournamentHome(url: String) -> Element {
                                     button {
                                         class: "btn btn-outline-secondary",
                                         onclick: move |_| show_edit_player_modal.set(true),
-                                        if waiver_warning
-                                            .value()
-                                            .read()
-                                            .as_ref()
-                                            .copied()
-                                            .unwrap_or(false)
-                                        {
-                                            "Edit Registration ⚠️"
-                                        } else {
-                                            "Edit Registration"
-                                        }
+                                        "Edit Registration"
                                     }
                                 } else if d.tournament.player_registration_open {
                                     Link { to: Route::TournamentRegister { url: url.clone() }, class: "btn btn-success", "Register" }
@@ -472,33 +453,177 @@ pub fn TournamentHome(url: String) -> Element {
             }
 
             if show_edit_player_modal() {
-                if let Some(Ok(me)) = me_res.read().as_ref() {
-                    EditRegistrationModal {
-                        context: EditRegistrationContext::Tournament {
-                            tournament_url: url.clone(),
-                        },
-                        user_type: me.user_type.clone(),
-                        on_close: move |_| show_edit_player_modal.set(false),
-                        on_success: move |_| {
-                            show_edit_player_modal.set(false);
-                            refresh.set(refresh() + 1);
-                        },
+                div {
+                    class: "modal show d-block",
+                    style: "background: rgba(0,0,0,0.5);",
+                    tabindex: "-1",
+                    role: "dialog",
+                    onclick: move |_| {
+                        show_edit_player_modal.set(false);
+                        show_deregister_player_confirm.set(false);
+                    },
+                    div {
+                        class: "modal-dialog modal-dialog-centered",
+                        onclick: move |ev: Event<MouseData>| { ev.stop_propagation(); },
+                        div { class: "modal-content",
+                            div { class: "modal-header",
+                                h5 { class: "modal-title", "Edit Player Registration" }
+                                button {
+                                    r#type: "button",
+                                    class: "btn-close",
+                                    aria_label: "Close",
+                                    onclick: move |_| {
+                                        show_edit_player_modal.set(false);
+                                        show_deregister_player_confirm.set(false);
+                                    },
+                                }
+                            }
+                            div { class: "modal-body", style: "position: relative;",
+                                EditPlayerRegistrationModalContent {
+                                    tournament_url: url.clone(),
+                                    on_close: move |_| show_edit_player_modal.set(false),
+                                }
+                                if show_deregister_player_confirm() {
+                                    div {
+                                        class: "position-absolute top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center",
+                                        style: "background: rgba(0,0,0,0.3); z-index: 1050; border-radius: 0.25rem;",
+                                        onclick: move |_| show_deregister_player_confirm.set(false),
+                                        div {
+                                            class: "card shadow",
+                                            onclick: move |ev: Event<MouseData>| { ev.stop_propagation(); },
+                                            div { class: "card-body",
+                                                p { class: "mb-3", "Are you sure you want to deregister? You will be removed from this tournament." }
+                                                div { class: "d-flex gap-2 justify-content-end",
+                                                    button {
+                                                        r#type: "button",
+                                                        class: "btn btn-secondary",
+                                                        onclick: move |_| show_deregister_player_confirm.set(false),
+                                                        "Cancel"
+                                                    }
+                                                    button {
+                                                        r#type: "button",
+                                                        class: "btn btn-danger",
+                                                        onclick: move |_| {
+                                                            show_deregister_player_confirm.set(false);
+                                                            show_edit_player_modal.set(false);
+                                                            let u = url_for_deregister_player.clone();
+                                                            spawn(async move {
+                                                                if api::deregister_player(&u).await.is_ok() {
+                                                                    refresh.set(refresh() + 1);
+                                                                }
+                                                            });
+                                                        },
+                                                        "Deregister"
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                                div { class: "modal-footer",
+                                    button {
+                                        r#type: "button",
+                                        class: "btn btn-outline-danger",
+                                        onclick: move |_| show_deregister_player_confirm.set(true),
+                                        "Deregister Player"
+                                    }
+                                    button {
+                                        r#type: "submit",
+                                        form: "edit-player-registration-form",
+                                        class: "btn btn-primary",
+                                        "Save"
+                                    }
+                                }
+                        }
                     }
                 }
             }
 
             if show_edit_team_modal() {
-                if let Some(Ok(me)) = me_res.read().as_ref() {
-                    EditRegistrationModal {
-                        context: EditRegistrationContext::Tournament {
-                            tournament_url: url.clone(),
-                        },
-                        user_type: me.user_type.clone(),
-                        on_close: move |_| show_edit_team_modal.set(false),
-                        on_success: move |_| {
-                            show_edit_team_modal.set(false);
-                            refresh.set(refresh() + 1);
-                        },
+                div {
+                    class: "modal show d-block",
+                    style: "background: rgba(0,0,0,0.5);",
+                    tabindex: "-1",
+                    role: "dialog",
+                    onclick: move |_| {
+                        show_edit_team_modal.set(false);
+                        show_deregister_team_confirm.set(false);
+                    },
+                    div {
+                        class: "modal-dialog modal-dialog-centered",
+                        onclick: move |ev: Event<MouseData>| { ev.stop_propagation(); },
+                        div { class: "modal-content",
+                            div { class: "modal-header",
+                                h5 { class: "modal-title", "Edit Team Registration" }
+                                button {
+                                    r#type: "button",
+                                    class: "btn-close",
+                                    aria_label: "Close",
+                                    onclick: move |_| {
+                                        show_edit_team_modal.set(false);
+                                        show_deregister_team_confirm.set(false);
+                                    },
+                                }
+                            }
+                            div { class: "modal-body", style: "position: relative;",
+                                EditTeamRegistrationModalContent {
+                                    tournament_url: url.clone(),
+                                    on_close: move |_| show_edit_team_modal.set(false),
+                                }
+                                if show_deregister_team_confirm() {
+                                    div {
+                                        class: "position-absolute top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center",
+                                        style: "background: rgba(0,0,0,0.3); z-index: 1050; border-radius: 0.25rem;",
+                                        onclick: move |_| show_deregister_team_confirm.set(false),
+                                        div {
+                                            class: "card shadow",
+                                            onclick: move |ev: Event<MouseData>| { ev.stop_propagation(); },
+                                            div { class: "card-body",
+                                                p { class: "mb-3", "Are you sure you want to deregister your team? Your team will be removed from this tournament." }
+                                                div { class: "d-flex gap-2 justify-content-end",
+                                                    button {
+                                                        r#type: "button",
+                                                        class: "btn btn-secondary",
+                                                        onclick: move |_| show_deregister_team_confirm.set(false),
+                                                        "Cancel"
+                                                    }
+                                                    button {
+                                                        r#type: "button",
+                                                        class: "btn btn-danger",
+                                                        onclick: move |_| {
+                                                            show_deregister_team_confirm.set(false);
+                                                            show_edit_team_modal.set(false);
+                                                            let u = url_for_deregister_team.clone();
+                                                            spawn(async move {
+                                                                if api::deregister_team(&u).await.is_ok() {
+                                                                    refresh.set(refresh() + 1);
+                                                                }
+                                                            });
+                                                        },
+                                                        "Deregister"
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                                div { class: "modal-footer",
+                                    button {
+                                        r#type: "button",
+                                        class: "btn btn-outline-danger",
+                                        onclick: move |_| show_deregister_team_confirm.set(true),
+                                        "Deregister Team"
+                                    }
+                                    button {
+                                        r#type: "submit",
+                                        form: "edit-team-registration-form",
+                                        class: "btn btn-primary",
+                                        "Save"
+                                    }
+                                }
+                        }
                     }
                 }
             }
@@ -551,7 +676,10 @@ pub fn TournamentHome(url: String) -> Element {
                                             let default_field_id = fields[0].id;
                                             rsx! {
                                                 p { class: "text-muted mb-2",
-                                                    "Select one or more videos. We'll auto-detect the start timestamp from metadata; you can edit it if it's wrong."
+                                                    "All videos in this upload are treated as one camera on the field you choose below. For each match, we take every recorded point that falls in your footage (±3s), merge clips from all files in time order, and publish one highlight video with the camera name you set."
+                                                }
+                                                p { class: "text-muted mb-2 small",
+                                                    "If you split a session across multiple files, set the start timestamp per file so each lines up with real time. Large files upload in chunks; nothing is loaded whole into memory."
                                                 }
                                                 input {
                                                     class: "form-control",
@@ -568,18 +696,28 @@ pub fn TournamentHome(url: String) -> Element {
                                                             }
 
                                                             let mut items: Vec<PendingUpload> = Vec::new();
+                                                            let mut first_filename: Option<String> = None;
                                                             for f in files {
                                                                 let guessed_start = infer_start_world_from_file(&f);
                                                                 let filename = f.name();
+                                                                if first_filename.is_none() {
+                                                                    first_filename = Some(filename.clone());
+                                                                }
                                                                 items.push(PendingUpload {
-                                                                    camera_name: default_camera_name_from_filename(&filename),
                                                                     filename,
                                                                     file: f,
-                                                                    field_id: default_field_id,
                                                                     start_world_suggested: guessed_start.clone(),
                                                                     start_world_value: guessed_start.unwrap_or_default(),
                                                                     start_world_error: None,
                                                                 });
+                                                            }
+                                                            if upload_batch_field_id().is_none() {
+                                                                upload_batch_field_id.set(Some(default_field_id));
+                                                            }
+                                                            if upload_batch_camera_name().trim().is_empty() {
+                                                                if let Some(ref fnm) = first_filename {
+                                                                    upload_batch_camera_name.set(default_camera_name_from_filename(fnm));
+                                                                }
                                                             }
                                                             let mut existing = pending_uploads();
                                                             existing.extend(items);
@@ -590,14 +728,45 @@ pub fn TournamentHome(url: String) -> Element {
                                                 }
 
                                                 if !pending_uploads().is_empty() {
-                                                    div { class: "mt-3 table-responsive",
+                                                    div { class: "row g-2 mt-3 mb-2",
+                                                        div { class: "col-md-6",
+                                                            label { class: "form-label small mb-0", "Camera name" }
+                                                            input {
+                                                                class: "form-control form-control-sm",
+                                                                r#type: "text",
+                                                                placeholder: "e.g. house camera",
+                                                                value: "{upload_batch_camera_name()}",
+                                                                disabled: uploading(),
+                                                                oninput: move |e| {
+                                                                    upload_batch_camera_name.set(e.value());
+                                                                }
+                                                            }
+                                                            p { class: "text-muted small mt-1 mb-0",
+                                                                "Used for every match highlight from this upload."
+                                                            }
+                                                        }
+                                                        div { class: "col-md-6",
+                                                            label { class: "form-label small mb-0", "Field" }
+                                                            select {
+                                                                class: "form-select form-select-sm",
+                                                                value: "{upload_batch_field_id().unwrap_or(default_field_id)}",
+                                                                disabled: uploading(),
+                                                                onchange: move |ev| {
+                                                                    let v = ev.value().parse::<u32>().unwrap_or(default_field_id);
+                                                                    upload_batch_field_id.set(Some(v));
+                                                                },
+                                                                for f in fields.iter() {
+                                                                    option { value: "{f.id}", "{f.name}" }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                    div { class: "mt-1 table-responsive",
                                                         table { class: "table table-sm align-middle",
                                                             thead {
                                                                 tr {
                                                                     th { "File" }
                                                                     th { "Progress" }
-                                                                    th { "Clip/camera name" }
-                                                                    th { "Field" }
                                                                     th { "Start timestamp (UTC)" }
                                                                     th { "" }
                                                                 }
@@ -623,41 +792,6 @@ pub fn TournamentHome(url: String) -> Element {
                                                                                 }
                                                                             } else {
                                                                                 span { class: "text-muted small", "—" }
-                                                                            }
-                                                                        }
-                                                                        td {
-                                                                            input {
-                                                                                class: "form-control form-control-sm",
-                                                                                r#type: "text",
-                                                                                value: "{item.camera_name}",
-                                                                                placeholder: "Camera name",
-                                                                                disabled: uploading(),
-                                                                                oninput: move |e| {
-                                                                                    let mut list = pending_uploads();
-                                                                                    if let Some(t) = list.get_mut(idx) {
-                                                                                        t.camera_name = e.value();
-                                                                                    }
-                                                                                    pending_uploads.set(list);
-                                                                                }
-                                                                            }
-                                                                        }
-                                                                        td {
-                                                                            select {
-                                                                                class: "form-select form-select-sm",
-                                                                                value: "{item.field_id}",
-                                                                                disabled: uploading(),
-                                                                                onchange: move |ev| {
-                                                                                    let v = ev.value().parse::<u32>().unwrap_or(default_field_id);
-                                                                                    let mut list = pending_uploads();
-                                                                                    if let Some(t) = list.get_mut(idx) {
-                                                                                        t.field_id = v;
-                                                                                    }
-                                                                                    pending_uploads.set(list);
-                                                                                }
-                                                                                ,
-                                                                                for f in fields.iter() {
-                                                                                    option { value: "{f.id}", "{f.name}" }
-                                                                                }
                                                                             }
                                                                         }
                                                                         td {
@@ -739,7 +873,9 @@ pub fn TournamentHome(url: String) -> Element {
                                     rsx! {
                                         button {
                                             class: "btn btn-primary",
-                                            disabled: uploading() || pending_uploads().is_empty(),
+                                            disabled: uploading()
+                                                || pending_uploads().is_empty()
+                                                || upload_batch_camera_name().trim().is_empty(),
                                             onclick: move |_| {
                                                 #[cfg(target_arch = "wasm32")]
                                                 {
@@ -748,7 +884,22 @@ pub fn TournamentHome(url: String) -> Element {
                                                     if uploads.is_empty() {
                                                         return;
                                                     }
+                                                    let camera = upload_batch_camera_name().trim().to_string();
+                                                    if camera.is_empty() {
+                                                        upload_error.set(Some(
+                                                            "Enter a camera name.".into(),
+                                                        ));
+                                                        return;
+                                                    }
+                                                    let Some(field_id) = upload_batch_field_id() else {
+                                                        upload_error.set(Some("Select a field.".into()));
+                                                        return;
+                                                    };
                                                     let n = uploads.len();
+                                                    let batch_id = format!(
+                                                        "b{}",
+                                                        Uuid::new_v4().to_string().replace('-', "")
+                                                    );
                                                     let progress_sig = upload_row_progress.clone();
                                                     uploading.set(true);
                                                     upload_error.set(None);
@@ -764,10 +915,13 @@ pub fn TournamentHome(url: String) -> Element {
                                                             let mut progress_sig = progress_sig.clone();
                                                             if let Err(e) = api::user_upload_video_footage_with_progress(
                                                                 &url,
-                                                                u.field_id,
+                                                                field_id,
                                                                 u.file,
                                                                 start_world,
-                                                                Some(u.camera_name),
+                                                                Some(camera.clone()),
+                                                                batch_id.as_str(),
+                                                                file_idx as u32,
+                                                                n as u32,
                                                                 move |sent, total| {
                                                                     let pct = if total > 0 {
                                                                         ((sent as u128 * 100) / total as u128) as u32
@@ -794,6 +948,8 @@ pub fn TournamentHome(url: String) -> Element {
                                                         } else {
                                                             upload_row_progress.set(Vec::new());
                                                             pending_uploads.set(Vec::new());
+                                                            upload_batch_camera_name.set(String::new());
+                                                            upload_batch_field_id.set(None);
                                                             upload_modal_open.set(false);
                                                         }
                                                     });
@@ -899,18 +1055,12 @@ fn EditPlayerRegistrationModalContent(
     tournament_url: String,
     on_close: EventHandler<()>,
 ) -> Element {
-    let backend = api::base_url();
     let mut jersey_name = use_signal(|| "".to_string());
     let mut jersey_number = use_signal(|| "".to_string());
     let mut team = use_signal(|| "".to_string());
     let mut current_team_name = use_signal(|| "".to_string());
     let mut status = use_signal(|| "".to_string());
     let mut teams = use_signal(|| vec![]);
-    let mut waiver_required = use_signal(|| false);
-    let mut waiver_signature_valid = use_signal(|| false);
-    let mut waiver_filepath = use_signal(|| None::<String>);
-    let mut waiver_sha256 = use_signal(|| None::<String>);
-    let mut waiver_legal_name_signature = use_signal(|| "".to_string());
     let mut error = use_signal(|| None::<String>);
     let mut loading = use_signal(|| true);
 
@@ -926,14 +1076,6 @@ fn EditPlayerRegistrationModalContent(
                     jersey_name.set(res.registration.jersey_name.unwrap_or_default());
                     jersey_number.set(res.registration.jersey_number.unwrap_or_default());
                     status.set(res.registration.status.clone());
-
-                    waiver_required.set(res.waiver_required);
-                    waiver_signature_valid.set(res.waiver_signature_valid);
-                    waiver_filepath.set(res.waiver_filepath);
-                    waiver_sha256.set(res.waiver_sha256);
-                    waiver_legal_name_signature
-                        .set(res.waiver_legal_name_signature.unwrap_or_default());
-
                     if let Some(ref ct) = res.current_team {
                         current_team_name.set(ct.pseudonym.clone().unwrap_or_else(|| ct.id.clone()));
                     }
@@ -970,11 +1112,6 @@ fn EditPlayerRegistrationModalContent(
                 jersey_name: Some(jersey_name()),
                 jersey_number: Some(jersey_number()),
                 team: team_opt,
-                waiver_legal_name_signature: if waiver_required() && !waiver_signature_valid() {
-                    Some(waiver_legal_name_signature())
-                } else {
-                    None
-                },
             };
             match api::update_my_player_registration(&tournament_url, &req).await {
                 Ok(_) => {
@@ -1042,43 +1179,6 @@ fn EditPlayerRegistrationModalContent(
                         }
                         br {}
                         "If you change teams, your new team must approve your request."
-                    }
-                }
-                
-                if waiver_required() {
-                    div { class: "mb-3",
-                        label { class: "form-label", "Waiver Signature" }
-                        if let Some(link) = waiver_filepath() {
-                            div { class: "form-text mb-2",
-                                "Waiver file: "
-                                a { href: "{backend}{link}", target: "_blank", class: "text-decoration-none", "{backend}{link}" }
-                                if let Some(sha) = waiver_sha256() {
-                                    div { class: "text-muted mt-1", "Hash (SHA-256):" }
-                                    pre { class: "p-2 border rounded bg-light mt-1 mb-0", style: "white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word;", code { "{sha}" } }
-                                }
-                            }
-                        }
-                        p { class: "form-text mb-2", "By entering your full legal name below, you agree to the terms of the waiver linked above, and affirm that the waiver you viewed matches the SHA-256 hash displayed." }
-                        input {
-                            class: if waiver_signature_valid() {
-                                "form-control bg-light text-muted"
-                            } else {
-                                "form-control"
-                            },
-                            r#type: "text",
-                            value: "{waiver_legal_name_signature}",
-                            disabled: waiver_signature_valid(),
-                            required: !waiver_signature_valid(),
-                            oninput: move |e| waiver_legal_name_signature.set(e.value()),
-                        }
-                        div { class: "form-text mb-2",
-                            "Waiver signature:"
-                            if waiver_signature_valid() {
-                                span { class: "text-success ms-2", "Valid" }
-                            } else {
-                                span { class: "text-warning ms-2", "Needs signing / re-signing" }
-                            }
-                        }
                     }
                 }
             }
