@@ -308,10 +308,12 @@ pub async fn update_tournament_settings(
 pub async fn upload_waiver(
     tournament_url: &str,
     bytes: bytes::Bytes,
+    filename: &str,
 ) -> Result<UploadWaiverResponse, String> {
     let c = client();
     let r = with_credentials(
         c.post(format!("{}/_api/{}/upload-waiver", base(), tournament_url))
+            .header("X-Waiver-Filename", filename)
             .body(bytes),
     )
     .send()
@@ -341,10 +343,12 @@ pub async fn upload_waiver(
 pub async fn league_upload_waiver(
     league_url: &str,
     bytes: bytes::Bytes,
+    filename: &str,
 ) -> Result<UploadWaiverResponse, String> {
     let c = client();
     let r = with_credentials(
         c.post(format!("{}/_api/leagues/{}/upload-waiver", base(), league_url))
+            .header("X-Waiver-Filename", filename)
             .body(bytes),
     )
     .send()

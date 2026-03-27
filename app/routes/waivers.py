@@ -20,15 +20,30 @@ bp = Blueprint("waivers", __name__)
 
 
 def _waiver_disk_path(scope_url: str) -> str:
-    # Waivers are stored extensionless for a stable on-disk "current" file.
-    return os.path.join(
+    # Prefer any extension variant (waiver.<ext>) and fall back to legacy extensionless file.
+    base_dir = os.path.join(
         current_app.root_path,
         "../static",
         "uploads",
         "waivers",
         scope_url,
-        "waiver",
     )
+    if not os.path.isdir(base_dir):
+        return os.path.join(base_dir, "waiver")
+
+    # Find deterministic candidate waiver files.
+    candidates = []
+    for name in os.listdir(base_dir):
+        if name == "waiver" or name.startswith("waiver."):
+            path = os.path.join(base_dir, name)
+            if os.path.isfile(path):
+                candidates.append(name)
+    if not candidates:
+        return os.path.join(base_dir, "waiver")
+
+    # Prefer extension files first (better content-type), then extensionless.
+    candidates.sort(key=lambda n: (0 if n.startswith("waiver.") else 1, n))
+    return os.path.join(base_dir, candidates[0])
 
 
 @bp.route("/leagues/<league_url>/waiver", methods=["GET"])
