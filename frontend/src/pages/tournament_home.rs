@@ -1112,6 +1112,7 @@ fn EditPlayerRegistrationModalContent(
                 jersey_name: Some(jersey_name()),
                 jersey_number: Some(jersey_number()),
                 team: team_opt,
+                waiver_legal_name_signature: None,
             };
             match api::update_my_player_registration(&tournament_url, &req).await {
                 Ok(_) => {

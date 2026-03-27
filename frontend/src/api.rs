@@ -600,16 +600,17 @@ pub async fn register_player(
     jersey_name: &str,
     jersey_number: &str,
     team: &str,
-    agree_terms: bool,
+    waiver_legal_name_signature: &str,
 ) -> Result<StatusResponse, String> {
-    let mut params = vec![
+    let params = vec![
         ("jersey_name".into(), jersey_name.to_string()),
         ("jersey_number".into(), jersey_number.to_string()),
         ("team".into(), team.to_string()),
+        (
+            "waiver_legal_name_signature".into(),
+            waiver_legal_name_signature.to_string(),
+        ),
     ];
-    if agree_terms {
-        params.push(("agree_terms".into(), "on".into()));
-    }
     let url = format!("{}/_api/{}/register-player", base(), tournament_url);
     post_form_status(&url, &params).await
 }
@@ -617,12 +618,8 @@ pub async fn register_player(
 pub async fn register_team(
     tournament_url: &str,
     pseudonym: &str,
-    agree_terms: bool,
 ) -> Result<StatusResponse, String> {
-    let mut params = vec![("pseudonym".into(), pseudonym.to_string())];
-    if agree_terms {
-        params.push(("agree_terms".into(), "on".into()));
-    }
+    let params = vec![("pseudonym".into(), pseudonym.to_string())];
     let url = format!("{}/_api/{}/register-team", base(), tournament_url);
     post_form_status(&url, &params).await
 }
@@ -769,6 +766,7 @@ pub async fn league_register_player(
     team: Option<&str>,
     jersey_number: &str,
     jersey_name: &str,
+    waiver_legal_name_signature: &str,
 ) -> Result<StatusResponse, String> {
     let mut params: Vec<(String, String)> = vec![
         ("jersey_number".into(), jersey_number.to_string()),
@@ -777,8 +775,60 @@ pub async fn league_register_player(
     if let Some(t) = team {
         params.push(("team".into(), t.to_string()));
     }
+    params.push((
+        "waiver_legal_name_signature".into(),
+        waiver_legal_name_signature.to_string(),
+    ));
     let url = format!("{}/_api/leagues/{}/register-player", base(), league_url);
     post_form_status(&url, &params).await
+}
+
+/// Upload or replace the tournament waiver PDF (organizers only). Call after saving settings.
+pub async fn upload_waiver(
+    tournament_url: &str,
+    bytes: Vec<u8>,
+    filename: &str,
+) -> Result<(), String> {
+    let form = reqwest::multipart::Form::new().part(
+        "waiver",
+        reqwest::multipart::Part::bytes(bytes).file_name(filename.to_string()),
+    );
+    let c = client();
+    let url = format!("{}/_api/{}/upload-waiver", base(), tournament_url);
+    let r = with_credentials(c.post(url).multipart(form))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !r.status().is_success() {
+        let status = r.status();
+        let text = r.text().await.unwrap_or_default();
+        return Err(format!("{}: {}", status, text));
+    }
+    Ok(())
+}
+
+/// Upload or replace the league waiver PDF (organizers only).
+pub async fn league_upload_waiver(
+    league_url: &str,
+    bytes: Vec<u8>,
+    filename: &str,
+) -> Result<(), String> {
+    let form = reqwest::multipart::Form::new().part(
+        "waiver",
+        reqwest::multipart::Part::bytes(bytes).file_name(filename.to_string()),
+    );
+    let c = client();
+    let url = format!("{}/_api/leagues/{}/upload-waiver", base(), league_url);
+    let r = with_credentials(c.post(url).multipart(form))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !r.status().is_success() {
+        let status = r.status();
+        let text = r.text().await.unwrap_or_default();
+        return Err(format!("{}: {}", status, text));
+    }
+    Ok(())
 }
 
 pub async fn league_deregister_team(
