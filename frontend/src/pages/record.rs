@@ -16,6 +16,105 @@ use crate::record_idb;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::JsCast;
 
+/// Request screen wake lock and wire `release` to re-acquire (browsers often drop the lock without tab hide).
+#[cfg(target_arch = "wasm32")]
+fn schedule_screen_wake_lock_acquire(mut sentinel_sig: Signal<Option<wasm_bindgen::JsValue>>) {
+    use wasm_bindgen::closure::Closure;
+    use wasm_bindgen::JsValue;
+    wasm_bindgen_futures::spawn_local(async move {
+        let window = match web_sys::window() {
+            Some(w) => w,
+            None => return,
+        };
+        let navigator = window.navigator();
+        let wake_lock_js = match js_sys::Reflect::get(&navigator, &JsValue::from_str("wakeLock")) {
+            Ok(v) if !v.is_undefined() && !v.is_null() => v,
+            _ => return,
+        };
+        let request_js = match js_sys::Reflect::get(&wake_lock_js, &JsValue::from_str("request")) {
+            Ok(v) if v.is_function() => v,
+            _ => return,
+        };
+        let request_fn = match request_js.dyn_ref::<js_sys::Function>() {
+            Some(f) => f,
+            None => return,
+        };
+        let promise = match request_fn
+            .call1(&wake_lock_js, &JsValue::from_str("screen"))
+            .ok()
+            .and_then(|v| v.dyn_into::<js_sys::Promise>().ok())
+        {
+            Some(p) => p,
+            None => return,
+        };
+        let result = wasm_bindgen_futures::JsFuture::from(promise).await;
+        let sentinel = match result {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+        sentinel_sig.set(Some(sentinel.clone()));
+
+        let release_cb = Closure::wrap(Box::new({
+            let mut sentinel_sig = sentinel_sig.clone();
+            move || {
+                sentinel_sig.set(None);
+                schedule_screen_wake_lock_acquire(sentinel_sig.clone());
+            }
+        }) as Box<dyn FnMut()>);
+        if let Ok(add) = js_sys::Reflect::get(&sentinel, &JsValue::from_str("addEventListener")) {
+            if let Some(f) = add.dyn_ref::<js_sys::Function>() {
+                let _ = f.call3(
+                    &sentinel,
+                    &JsValue::from_str("release"),
+                    release_cb.as_ref().unchecked_ref(),
+                    &JsValue::UNDEFINED,
+                );
+            }
+        }
+        release_cb.forget();
+    });
+}
+
+/// Re-request wake lock when the tab becomes visible (lock is released while hidden) and on first pointer (gesture requirement on many phones).
+#[cfg(target_arch = "wasm32")]
+fn register_screen_wake_lock_listeners(sentinel_sig: Signal<Option<wasm_bindgen::JsValue>>) {
+    use wasm_bindgen::closure::Closure;
+    let Some(window) = web_sys::window() else {
+        return;
+    };
+    let Some(doc) = window.document() else {
+        return;
+    };
+
+    let vis = Closure::wrap(Box::new({
+        let mut sentinel_sig = sentinel_sig.clone();
+        move || {
+            if let Some(w) = web_sys::window() {
+                if let Some(d) = w.document() {
+                    if !d.hidden() {
+                        schedule_screen_wake_lock_acquire(sentinel_sig.clone());
+                    }
+                }
+            }
+        }
+    }) as Box<dyn FnMut()>);
+    let _ = doc.add_event_listener_with_callback("visibilitychange", vis.as_ref().unchecked_ref());
+    vis.forget();
+
+    let bootstrapped = std::cell::Cell::new(false);
+    let ptr = Closure::wrap(Box::new({
+        let mut sentinel_sig = sentinel_sig.clone();
+        move || {
+            if bootstrapped.replace(true) {
+                return;
+            }
+            schedule_screen_wake_lock_acquire(sentinel_sig.clone());
+        }
+    }) as Box<dyn FnMut()>);
+    let _ = window.add_event_listener_with_callback("pointerdown", ptr.as_ref().unchecked_ref());
+    ptr.forget();
+}
+
 #[cfg(target_arch = "wasm32")]
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum RecorderStatus {
@@ -195,41 +294,15 @@ pub fn Record(url: String, field: ReadSignal<String>, camera_key: ReadSignal<Str
         });
     }
 
-    // Screen wake lock: keep the device awake while the record page is open (wasm only).
+    // Screen wake lock: keep the device awake the entire time this page is open (wasm only).
+    // Initial request may fail without a user gesture; first pointerdown + visibility + release re-acquire.
     #[cfg(target_arch = "wasm32")]
     {
         let wake_lock_sentinel = use_signal(|| None::<wasm_bindgen::JsValue>);
         use_effect(move || {
-            let mut sentinel_sig = wake_lock_sentinel.to_owned();
-            wasm_bindgen_futures::spawn_local(async move {
-                let window = match web_sys::window() {
-                    Some(w) => w,
-                    None => return,
-                };
-                let navigator = window.navigator();
-                let wake_lock_js = match js_sys::Reflect::get(&navigator, &wasm_bindgen::JsValue::from_str("wakeLock")) {
-                    Ok(v) if !v.is_undefined() && !v.is_null() => v,
-                    _ => return,
-                };
-                let request_js = match js_sys::Reflect::get(&wake_lock_js, &wasm_bindgen::JsValue::from_str("request")) {
-                    Ok(v) if v.is_function() => v,
-                    _ => return,
-                };
-                let request_fn = match request_js.dyn_ref::<js_sys::Function>() {
-                    Some(f) => f,
-                    None => return,
-                };
-                let type_arg = wasm_bindgen::JsValue::from_str("screen");
-                let promise = request_fn.call1(&wake_lock_js, &type_arg).ok().and_then(|v| v.dyn_into::<js_sys::Promise>().ok());
-                let promise = match promise {
-                    Some(p) => p,
-                    None => return,
-                };
-                let result = wasm_bindgen_futures::JsFuture::from(promise).await;
-                if let Ok(sentinel) = result {
-                    sentinel_sig.set(Some(sentinel));
-                }
-            });
+            let sentinel_sig = wake_lock_sentinel.to_owned();
+            schedule_screen_wake_lock_acquire(sentinel_sig.clone());
+            register_screen_wake_lock_listeners(sentinel_sig);
         });
         let wake_lock_for_drop = wake_lock_sentinel.to_owned();
         use_drop(move || {
@@ -890,6 +963,70 @@ async fn capture_preview_frame() -> Result<bytes::Bytes, String> {
     Ok(bytes::Bytes::from(vec))
 }
 
+/// Parse a JS number or BigInt (or numeric string) to `f64`. Plain `JsValue::as_f64()` misses BigInt.
+#[cfg(target_arch = "wasm32")]
+fn js_value_to_f64(v: &wasm_bindgen::JsValue) -> Option<f64> {
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen::JsValue;
+    if v.is_undefined() || v.is_null() {
+        return None;
+    }
+    if let Some(n) = v.as_f64() {
+        if n.is_finite() {
+            return Some(n);
+        }
+    }
+    let number_ctor = js_sys::Reflect::get(&js_sys::global(), &"Number".into()).ok()?;
+    let number_fn = number_ctor.dyn_ref::<js_sys::Function>()?;
+    let num = number_fn.call1(&JsValue::NULL, v).ok()?;
+    let n = num.as_f64()?;
+    if n.is_finite() {
+        Some(n)
+    } else {
+        None
+    }
+}
+
+/// Best-effort bytes used: max of `estimate.usage`, Chrome `usageDetails.indexedDB`, and our queue blob sum.
+#[cfg(target_arch = "wasm32")]
+async fn effective_storage_usage_bytes(
+    estimate_js: &wasm_bindgen::JsValue,
+    queue_db: Option<&idb::Database>,
+) -> Option<f64> {
+    let mut m = 0.0f64;
+    let mut any = false;
+    if let Ok(u) = js_sys::Reflect::get(estimate_js, &"usage".into()) {
+        if let Some(x) = js_value_to_f64(&u) {
+            m = m.max(x);
+            any = true;
+        }
+    }
+    if let Ok(details) = js_sys::Reflect::get(estimate_js, &"usageDetails".into()) {
+        if let Ok(idb) = js_sys::Reflect::get(&details, &"indexedDB".into()) {
+            if let Some(x) = js_value_to_f64(&idb) {
+                m = m.max(x);
+                any = true;
+            }
+        }
+    }
+    if let Some(db) = queue_db {
+        if let Ok(q) = record_idb::sum_chunk_blob_bytes(db).await {
+            m = m.max(q as f64);
+            any = true;
+        }
+    } else if let Ok(db) = record_idb::open_db().await {
+        if let Ok(q) = record_idb::sum_chunk_blob_bytes(&db).await {
+            m = m.max(q as f64);
+            any = true;
+        }
+    }
+    if any {
+        Some(m)
+    } else {
+        None
+    }
+}
+
 /// Collect device storage (usage/quota in bytes) and battery level (0–1) for preview metadata. Best-effort.
 #[cfg(target_arch = "wasm32")]
 async fn collect_preview_metadata() -> api::PreviewMetadata {
@@ -901,12 +1038,11 @@ async fn collect_preview_metadata() -> api::PreviewMetadata {
         let storage = nav.storage();
         if let Ok(promise) = storage.estimate() {
             if let Ok(estimate_js) = wasm_bindgen_futures::JsFuture::from(promise).await {
-                storage_usage = js_sys::Reflect::get(&estimate_js, &"usage".into())
-                    .ok()
-                    .and_then(|v| v.as_f64());
+                storage_usage =
+                    effective_storage_usage_bytes(&estimate_js, None).await;
                 storage_quota = js_sys::Reflect::get(&estimate_js, &"quota".into())
                     .ok()
-                    .and_then(|v| v.as_f64());
+                    .and_then(|v| js_value_to_f64(&v));
             }
         }
         if let Ok(get_battery) = js_sys::Reflect::get(&nav, &"getBattery".into()) {
@@ -1038,7 +1174,7 @@ async fn run_recording_loop(
                         chunk_count: Rc<RefCell<u32>>,
                         session_id_ref: Rc<RefCell<String>>| {
         let mut options = MediaRecorderOptions::new();
-        options.set_video_bits_per_second(70_000_000);
+        options.set_video_bits_per_second(50_000_000);
         options.set_audio_bits_per_second(128_000);
         let mut chosen_container = "webm";
         for (mime, container) in MIME_PREFERENCE {
@@ -1216,19 +1352,22 @@ async fn run_recording_loop(
         if let Some(window) = web_sys::window() {
             let storage = window.navigator().storage();
             if let Ok(promise) = storage.estimate() {
-                    if let Ok(estimate_js) = wasm_bindgen_futures::JsFuture::from(promise).await {
-                        let quota = js_sys::Reflect::get(&estimate_js, &"quota".into())
-                            .ok().and_then(|v| v.as_f64()).unwrap_or(0.0);
-                        let usage = js_sys::Reflect::get(&estimate_js, &"usage".into())
-                            .ok().and_then(|v| v.as_f64()).unwrap_or(0.0);
-                        const LOW_STORAGE_BYTES: f64 = 100_000_000.0; // 100 MB
-                        if quota > 0.0 && (quota - usage) < LOW_STORAGE_BYTES {
-                            storage_warning_sig.set(Some(
-                                "Low device storage for recording buffer; uploads may fail if connection is slow.".to_string(),
-                            ));
-                        }
+                if let Ok(estimate_js) = wasm_bindgen_futures::JsFuture::from(promise).await {
+                    let quota = js_sys::Reflect::get(&estimate_js, &"quota".into())
+                        .ok()
+                        .and_then(|v| js_value_to_f64(&v))
+                        .unwrap_or(0.0);
+                    let usage = effective_storage_usage_bytes(&estimate_js, Some(db))
+                        .await
+                        .unwrap_or(0.0);
+                    const LOW_STORAGE_BYTES: f64 = 100_000_000.0; // 100 MB
+                    if quota > 0.0 && (quota - usage) < LOW_STORAGE_BYTES {
+                        storage_warning_sig.set(Some(
+                            "Low device storage for recording buffer; uploads may fail if connection is slow.".to_string(),
+                        ));
                     }
                 }
+            }
         }
     }
     const NUM_UPLOAD_WORKERS: u32 = 3;

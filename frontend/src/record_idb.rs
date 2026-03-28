@@ -92,6 +92,22 @@ pub async fn delete_entry(db: &Database, key: &str) -> Result<(), idb::Error> {
     Ok(())
 }
 
+/// Sum of [`web_sys::Blob::size`] for all chunk entries (finalize rows excluded). Used so preview
+/// metadata reflects the recording queue when `navigator.storage.estimate()` under-reports IDB.
+pub async fn sum_chunk_blob_bytes(db: &Database) -> Result<u64, idb::Error> {
+    let entries = cursor_entries_ordered(db).await?;
+    let mut total: u64 = 0;
+    for (_, value) in entries {
+        if let Some((_, blob)) = parse_chunk_value(&value) {
+            let s = blob.size();
+            if s.is_finite() && s >= 0.0 {
+                total = total.saturating_add(s as u64);
+            }
+        }
+    }
+    Ok(total)
+}
+
 /// Cursor over entries in key order (from "00000000" up to but not including "z_next").
 /// Returns (key, value) pairs for rebuilding the in-memory queue.
 pub async fn cursor_entries_ordered(db: &Database) -> Result<Vec<(String, JsValue)>, idb::Error> {
