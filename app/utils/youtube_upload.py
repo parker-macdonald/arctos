@@ -25,7 +25,9 @@ import requests
 
 from flask import current_app
 
-from models import Camera, Match, Field, Team, db
+from app.services.registration_resolver import team_registration_for_tournament
+
+from models import Camera, Field, Match, Team, Tournament, db
 
 
 YOUTUBE_TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -105,28 +107,34 @@ def _video_file_abs_path(camera: Camera) -> str:
     return path.normpath(path.join(current_app.root_path, "..", camera.file))
 
 
+def _team_label_for_youtube_title(tournament_url: str, team_id: str | None, fallback: str) -> str:
+    """Prefer tournament/league registration pseudonym; else team account name; else id."""
+    if not team_id:
+        return fallback
+    tournament = Tournament.query.filter_by(url=tournament_url).first()
+    if not tournament:
+        team = Team.query.get(team_id)
+        return team.name if team and team.name else team_id
+    reg = team_registration_for_tournament(tournament, team_id)
+    if reg and reg.pseudonym:
+        return reg.pseudonym
+    team = Team.query.get(team_id)
+    if team and team.name:
+        return team.name
+    return team_id
+
+
 def _build_camera_title(camera: Camera) -> str:
     match = Match.query.filter_by(uuid=camera.match_uuid).first()
     if not match:
         return camera.name
 
-    team1_name = None
-    team2_name = None
-    if match.team1:
-        t1 = Team.query.get(match.team1)
-        if t1:
-            team1_name = t1.name
-    if match.team2:
-        t2 = Team.query.get(match.team2)
-        if t2:
-            team2_name = t2.name
-
     field_obj = Field.query.get(camera.field)
     field_name = field_obj.name if field_obj else str(camera.field)
 
-    # Title format required by spec.
-    t1 = team1_name or str(match.team1) or "T1"
-    t2 = team2_name or str(match.team2) or "T2"
+    turl = match.event
+    t1 = _team_label_for_youtube_title(turl, match.team1, "T1")
+    t2 = _team_label_for_youtube_title(turl, match.team2, "T2")
     return f"{match.name}: {t1} vs {t2} ({camera.name} on {field_name})"
 
 
