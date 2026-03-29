@@ -498,3 +498,24 @@
     display: table-cell;
     vertical-align: middle;
 }
+
+/* Table view: same highlight semantics as timeline (team playing vs reffing) */
+.schedule-table-view tr.schedule-table-row--highlight-playing td {
+    background: linear-gradient(
+        to right,
+        rgba(229, 115, 115, 0.28) 0%,
+        rgba(229, 115, 115, 0.1) 50%,
+        transparent 100%
+    );
+    box-shadow: inset 5px 0 0 #e57373;
+}
+
+.schedule-table-view tr.schedule-table-row--highlight-ref td {
+    background: linear-gradient(
+        to right,
+        rgba(149, 117, 205, 0.28) 0%,
+        rgba(149, 117, 205, 0.1) 50%,
+        transparent 100%
+    );
+    box-shadow: inset 5px 0 0 #9575cd;
+}

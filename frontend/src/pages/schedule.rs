@@ -2478,31 +2478,6 @@ fn TableView(
                  return false;
              }
         }
-        if !highlight_team.is_empty() {
-             let ht = highlight_team.to_lowercase();
-             let t1 = m.team1.as_ref()
-                 .and_then(|id| data.team_options.iter().find(|o| &o.id == id))
-                 .and_then(|o| o.pseudonym.as_deref())
-                 .map(String::from)
-                 .unwrap_or_else(|| m.team1_initial.as_deref().unwrap_or("").to_string())
-                 .to_lowercase();
-             let t2 = m.team2.as_ref()
-                 .and_then(|id| data.team_options.iter().find(|o| &o.id == id))
-                 .and_then(|o| o.pseudonym.as_deref())
-                 .map(String::from)
-                 .unwrap_or_else(|| m.team2_initial.as_deref().unwrap_or("").to_string())
-                 .to_lowercase();
-             let refs_display = m.refs.as_deref().or(m.refs_initial.as_deref()).unwrap_or("")
-                 .split(',').map(|s| s.trim()).filter(|s| !s.is_empty())
-                 .map(|token| {
-                     data.team_options.iter().find(|o| o.id == token)
-                         .and_then(|o| o.pseudonym.as_deref())
-                         .map(String::from)
-                         .unwrap_or_else(|| token.to_string())
-                 })
-                 .collect::<Vec<_>>().join(", ").to_lowercase();
-             if !t1.contains(&ht) && !t2.contains(&ht) && !refs_display.contains(&ht) { return false; }
-        }
         true
     }).collect();
 
@@ -2530,13 +2505,11 @@ fn TableView(
                         let opt1 = m.team1.as_ref().and_then(|id| data.team_options.iter().find(|o| &o.id == id));
                         let t1_raw = opt1.and_then(|o| o.pseudonym.as_deref()).map(String::from)
                             .unwrap_or_else(|| m.team1_initial.as_deref().unwrap_or("").to_string());
-                        let t1 = if t1_raw.contains(',') { t1_raw.split(',').next().map(|s| s.trim().to_string()).unwrap_or_default() } else { t1_raw };
                         let photo1 = opt1.and_then(|o| o.profile_photo.clone());
                         // Team 2 column: only m.team2 / m.team2_initial (first token if comma-separated)
                         let opt2 = m.team2.as_ref().and_then(|id| data.team_options.iter().find(|o| &o.id == id));
                         let t2_raw = opt2.and_then(|o| o.pseudonym.as_deref()).map(String::from)
                             .unwrap_or_else(|| m.team2_initial.as_deref().unwrap_or("").to_string());
-                        let t2 = if t2_raw.contains(',') { t2_raw.split(',').next().map(|s| s.trim().to_string()).unwrap_or_default() } else { t2_raw };
                         let photo2 = opt2.and_then(|o| o.profile_photo.clone());
                         // Refs column: only m.refs / m.refs_initial (comma-separated list)
                         let refs_list: Vec<(String, Option<String>)> = m.refs.as_deref().or(m.refs_initial.as_deref()).unwrap_or("")
@@ -2550,6 +2523,33 @@ fn TableView(
                                 (display, photo)
                             })
                             .collect();
+                        // Same rules as ScheduleTimeline (before t1_raw/t2_raw are moved into display strings)
+                        let (highlight_playing, highlight_ref) = if highlight_team.is_empty() {
+                            (false, false)
+                        } else {
+                            let ht = highlight_team.to_lowercase();
+                            let playing = t1_raw.to_lowercase().contains(&ht)
+                                || t2_raw.to_lowercase().contains(&ht);
+                            let refs_joined = refs_list
+                                .iter()
+                                .map(|(d, _)| d.as_str())
+                                .collect::<Vec<_>>()
+                                .join(", ");
+                            let reffing = !playing && refs_joined.to_lowercase().contains(&ht);
+                            (playing, reffing)
+                        };
+                        let tr_row_class = {
+                            let mut s = String::new();
+                            if highlight_playing {
+                                s.push_str("schedule-table-row--highlight-playing ");
+                            }
+                            if highlight_ref {
+                                s.push_str("schedule-table-row--highlight-ref ");
+                            }
+                            s
+                        };
+                        let t1 = if t1_raw.contains(',') { t1_raw.split(',').next().map(|s| s.trim().to_string()).unwrap_or_default() } else { t1_raw };
+                        let t2 = if t2_raw.contains(',') { t2_raw.split(',').next().map(|s| s.trim().to_string()).unwrap_or_default() } else { t2_raw };
                         let (t1_kind, t1_label) = team_ref_display(&t1);
                         let (t2_kind, t2_label) = team_ref_display(&t2);
                         let refs_display_list: Vec<(String, Option<String>, u8, String)> = refs_list
@@ -2562,7 +2562,7 @@ fn TableView(
                         let schedule_type_display = m.schedule_type.as_deref().unwrap_or("-");
                         let (status_color, status_label) = if m.status.is_empty() { ("#e9ecef".to_string(), "-".to_string()) } else { status_color_and_label(&m.status) };
                         rsx! {
-                            tr { key: "{m.uuid}",
+                            tr { key: "{m.uuid}", class: "{tr_row_class}",
                                 td {
                                     if edit_mode {
                                         "{m.name}"
