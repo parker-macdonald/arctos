@@ -76,6 +76,7 @@ def _slot_resolved(
     initial: Optional[str],
     tournament_url: str,
     name_to_match: Dict,
+    tag_by_name: Optional[Dict[str, object]] = None,
 ) -> bool:
     """True if this team/ref slot is resolved to a specific team (or is empty)."""
     if team_id and str(team_id).strip():
@@ -87,8 +88,11 @@ def _slot_resolved(
         from app.models.tournament import Tag
 
         tag_name = initial[5:].strip()
-        tag = Tag.query.filter_by(event=tournament_url, name=tag_name).first()
-        return bool(tag and tag.team)
+        if tag_by_name is not None:
+            tag = tag_by_name.get(tag_name)
+        else:
+            tag = Tag.query.filter_by(event=tournament_url, name=tag_name).first()
+        return bool(tag and getattr(tag, "team", None))
     if "::winner" in initial or "::loser" in initial:
         base = initial.split("::")[0].strip()
         dep = name_to_match.get(base)
@@ -100,6 +104,7 @@ def _all_participating_teams_resolved(
     match: object,
     tournament_url: str,
     name_to_match: Dict,
+    tag_by_name: Optional[Dict[str, object]] = None,
 ) -> bool:
     """
     True if all participating teams (team1, team2, refs) are fully resolved:
@@ -117,6 +122,7 @@ def _all_participating_teams_resolved(
         getattr(match, "team1_initial", None),
         tournament_url,
         name_to_match,
+        tag_by_name,
     ):
         return False
     if not _slot_resolved(
@@ -124,6 +130,7 @@ def _all_participating_teams_resolved(
         getattr(match, "team2_initial", None),
         tournament_url,
         name_to_match,
+        tag_by_name,
     ):
         return False
 
@@ -137,7 +144,9 @@ def _all_participating_teams_resolved(
         initial = refs_initial_parts[i] if i < len(refs_initial_parts) else None
         if not team_id and not initial:
             continue
-        if not _slot_resolved(team_id, initial, tournament_url, name_to_match):
+        if not _slot_resolved(
+            team_id, initial, tournament_url, name_to_match, tag_by_name
+        ):
             return False
 
     return True
@@ -148,6 +157,7 @@ def _procedure_with_match(
     node: MatchGraphNode,
     tournament_url: str,
     name_to_match: Dict,
+    tag_by_name: Optional[Dict[str, object]] = None,
 ) -> None:
     """
     PROCEDURE: WITH MATCH m
@@ -204,7 +214,10 @@ def _procedure_with_match(
             ):
                 # Only mark READY_TO_START when all teams/refs are fully resolved
                 if _all_participating_teams_resolved(
-                    name_to_match[node.name], tournament_url, name_to_match
+                    name_to_match[node.name],
+                    tournament_url,
+                    name_to_match,
+                    tag_by_name,
                 ):
                     node.status = MatchStatus.READY_TO_START
                 # else: leave at TIME_FINALIZED (or NOT_STARTED for STATIC) until resolved
@@ -236,11 +249,14 @@ def run_scheduling(tournament_url: str) -> None:
     Same behavior on match create/edit and on match start/end.
     """
     from app.models.match import Match
+    from app.models.tournament import Tag
 
     lock = _get_tournament_lock(tournament_url)
     lock.acquire()
     try:
         all_matches = Match.query.filter_by(event=tournament_url).all()
+        tags = Tag.query.filter_by(event=tournament_url).all()
+        tag_by_name = {t.name: t for t in tags}
         uuid_to_match = {m.uuid: m for m in all_matches}
         name_to_match = {}
         for m in all_matches:
@@ -252,7 +268,7 @@ def run_scheduling(tournament_url: str) -> None:
             node = graph.get_node(name, field)
             if node:
                 _procedure_with_match(
-                    graph, node, tournament_url, name_to_match
+                    graph, node, tournament_url, name_to_match, tag_by_name
                 )
         _write_graph_to_db(graph, uuid_to_match)
         db.session.commit()

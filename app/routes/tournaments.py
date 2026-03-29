@@ -771,6 +771,7 @@ def record_upload_chunk():
     field = Field.query.filter_by(event=tournament_url, name=field_name).first()
     if not field:
         return jsonify({"error": "Field not found"}), 404
+    db.session.remove()
 
     if "chunk" not in request.files:
         return jsonify({"error": "No chunk file provided"}), 400
@@ -980,6 +981,8 @@ def user_upload_video_footage(tournament_url: str):
     field_obj = Field.query.filter_by(event=tournament_url, id=field_id).first()
     if not field_obj:
         return jsonify({"error": "Field not found"}), 404
+    field_name_resolved = field_obj.name
+    db.session.remove()
 
     upload_group_name = uuid.uuid4().hex[:12]
     original_filename = video_file.filename
@@ -994,7 +997,7 @@ def user_upload_video_footage(tournament_url: str):
         current_app.root_path,
         "../static/uploads/videos",
         tournament_url,
-        field_obj.name,
+        field_name_resolved,
         "user_uploads",
         upload_group_name,
     )
@@ -1016,7 +1019,7 @@ def user_upload_video_footage(tournament_url: str):
             logger,
             app_obj,
             tournament_url=tournament_url,
-            field_name=field_obj.name,
+            field_name=field_name_resolved,
             batch_id=upload_group_name,
             batch_index=0,
             batch_total=1,
@@ -1101,12 +1104,14 @@ def user_upload_video_footage_chunk(tournament_url: str):
     field_obj = Field.query.filter_by(event=tournament_url, id=field_id).first()
     if not field_obj:
         return jsonify({"error": "Field not found"}), 404
+    field_name_resolved = field_obj.name
+    db.session.remove()
 
     incoming_dir = path.join(
         current_app.root_path,
         "../static/uploads/videos",
         tournament_url,
-        field_obj.name,
+        field_name_resolved,
         "user_uploads",
         "_incoming",
         upload_id,
@@ -1140,7 +1145,7 @@ def user_upload_video_footage_chunk(tournament_url: str):
         "upload_id": upload_id,
         "tournament_url": tournament_url,
         "field_id": field_id,
-        "field_name": field_obj.name,
+        "field_name": field_name_resolved,
         "filename": filename,
         "content_type": content_type,
         "total_chunks": total_chunks,
@@ -1201,6 +1206,7 @@ def user_upload_video_footage_complete(tournament_url: str):
             break
     if not incoming_dir or not field_name:
         return jsonify({"error": "Upload not found"}), 404
+    db.session.remove()
 
     meta_path = path.join(incoming_dir, "meta.json")
     if not path.exists(meta_path):

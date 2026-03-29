@@ -389,6 +389,8 @@ class ScheduleImportExportService:
             return Err(ValidationError(error_message))
 
         # All validation passed - proceed with import
+        # Single commit at end keeps tags/fields/matches and deletions atomic (partial import
+        # on failure would leave inconsistent schedule vs file). SQLite WAL reduces lock contention.
         # Wrap in transaction so any error rolls back all changes
         try:
             # Keep track of which objects are present in the uploaded file for this tournament.

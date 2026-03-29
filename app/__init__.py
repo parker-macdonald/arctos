@@ -281,6 +281,7 @@ def create_app(config=None):
                         recompute_all_match_times(t.url)
                     except Exception:
                         pass
+                    db.session.remove()
     except Exception:
         pass
 

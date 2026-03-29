@@ -481,6 +481,7 @@ def user_autoclips_from_uploaded_batch_worker(
         _manifest_set_status(manifest_path, "done")
         return
 
+    uuid_to_match = {m.uuid: m for m in matches}
     match_ids = [m.uuid for m in matches]
     points = Point.query.filter(Point.match.in_(match_ids)).order_by(Point.stamp.asc()).all()
 
@@ -534,8 +535,7 @@ def user_autoclips_from_uploaded_batch_worker(
         if not deduped:
             continue
 
-        match_obj = Match.query.filter_by(uuid=match_uuid).first()
-        if not match_obj:
+        if match_uuid not in uuid_to_match:
             continue
 
         match_out_dir = path.join(

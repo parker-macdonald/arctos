@@ -759,9 +759,17 @@ def league_results_team_matches(league_url, team_id):
     if match_ids:
         for p in Point.query.filter(Point.match.in_(match_ids)).all():
             points_by_match.setdefault(p.match, []).append(p)
+    if matches:
+        event_urls = {m.event for m in matches}
+        tournaments_by_url = {
+            t.url: t
+            for t in Tournament.query.filter(Tournament.url.in_(event_urls)).all()
+        }
+    else:
+        tournaments_by_url = {}
     match_list = []
     for m in matches:
-        tournament = Tournament.query.get(m.event)
+        tournament = tournaments_by_url.get(m.event)
         if not tournament:
             continue
         team1_name = _team_name_for_match(tournament, m, "team1")
@@ -2317,7 +2325,8 @@ def tournament_bracket_upload_bytes_api(tournament_url):
     if not _check_to(tournament_url):
         return jsonify({"error": "Forbidden"}), 403
 
-    tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
+    Tournament.query.filter_by(url=tournament_url).first_or_404()
+    db.session.remove()
 
     from flask import current_app
     import os
