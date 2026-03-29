@@ -489,6 +489,8 @@ def user_autoclips_from_uploaded_batch_worker(
         if not pt.match:
             continue
         points_by_match.setdefault(pt.match, []).append(pt)
+    # Release DB connection before per-match ffmpeg (same rationale as finalize_recording_worker).
+    db.session.remove()
 
     camera_fs_name = _camera_fs_dir_name(batch_id_key, camera_display_name)
 

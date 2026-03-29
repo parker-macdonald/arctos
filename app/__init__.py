@@ -71,6 +71,15 @@ def create_app(config=None):
     if config:
         app.config.update(config)
 
+    # SQLite: increase busy timeout; finalize workers and HTTP handlers share one file.
+    uri = app.config.get("SQLALCHEMY_DATABASE_URI") or ""
+    if isinstance(uri, str) and uri.startswith("sqlite"):
+        opts = dict(app.config.get("SQLALCHEMY_ENGINE_OPTIONS") or {})
+        conn_args = dict(opts.get("connect_args") or {})
+        conn_args.setdefault("timeout", 30)
+        opts["connect_args"] = conn_args
+        app.config["SQLALCHEMY_ENGINE_OPTIONS"] = opts
+
     # Initialize OAuth and Executor (after config is finalized)
     from app.routes.auth import oauth
 
@@ -94,6 +103,23 @@ def create_app(config=None):
     db = db_instance
     db.init_app(app)
     init_db(db)
+    # WAL + busy_timeout: readers/writers interleave better than default rollback journal.
+    try:
+        with app.app_context():
+            eng = db.engine
+            if eng.dialect.name == "sqlite":
+                from sqlalchemy import event
+
+                @event.listens_for(eng, "connect")
+                def _sqlite_pragma(dbapi_connection, _connection_record):
+                    cur = dbapi_connection.cursor()
+                    try:
+                        cur.execute("PRAGMA journal_mode=WAL")
+                        cur.execute("PRAGMA busy_timeout=30000")
+                    finally:
+                        cur.close()
+    except Exception:
+        pass
     # Ensure tables exist (safe to call on startup)
     try:
         with app.app_context():

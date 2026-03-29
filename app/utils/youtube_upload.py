@@ -332,19 +332,18 @@ def upload_camera_to_youtube(camera_uuid: str) -> None:
         content_type = "video/mp4"
 
     title = _build_camera_title(camera)
-    access_token = _get_access_token(cfg)
-
-    session = requests.Session()
-    upload_url = _youtube_init_request(
-        session=session,
-        access_token=access_token,
-        file_size=file_size,
-        content_type=content_type,
-        title=title,
-        cfg=cfg,
-    )
 
     try:
+        access_token = _get_access_token(cfg)
+        session = requests.Session()
+        upload_url = _youtube_init_request(
+            session=session,
+            access_token=access_token,
+            file_size=file_size,
+            content_type=content_type,
+            title=title,
+            cfg=cfg,
+        )
         video_id = _youtube_upload_resumable(
             session=session,
             upload_url=upload_url,
@@ -362,8 +361,14 @@ def upload_camera_to_youtube(camera_uuid: str) -> None:
                 "youtube_upload: failed to upload source to s3 after upload failure camera uuid=%s",
                 camera_uuid,
             )
-        db.session.commit()
-        current_app.logger.exception("youtube_upload: upload failed camera uuid=%s", camera_uuid)
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            raise
+        current_app.logger.exception(
+            "youtube_upload: OAuth/init/upload failed camera uuid=%s", camera_uuid
+        )
         return
 
     # SUCCESS

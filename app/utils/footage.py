@@ -334,7 +334,13 @@ def finalize_recording_worker(
     ext = "mp4" if is_mp4 else "webm"
 
     pts = Point.query.filter_by(match=match_id).order_by(Point.stamp.asc()).all()
-    point_by_uuid = {str(pt.uuid): pt for pt in pts}
+    # Snapshot points and release the ORM session before long ffmpeg work so SQLite is not
+    # held open (avoids "database is locked" for concurrent request handlers).
+    pts_rows = [
+        {"uuid": str(pt.uuid), "stamp": pt.stamp, "end_stamp": pt.end_stamp}
+        for pt in pts
+    ]
+    db.session.remove()
 
     # list of (session_id, output_basename, segment_start_sec, session_start_iso)
     session_outputs = []
@@ -523,10 +529,10 @@ def finalize_recording_worker(
         stream_end_sec = stream_start_sec + sum(segment_durations)
 
         point_timestamps = []
-        for pt in pts:
-            if pt.stamp is None or pt.end_stamp is None:
+        for pt in pts_rows:
+            if pt["stamp"] is None or pt["end_stamp"] is None:
                 continue
-            pt_start_sec = pt.stamp.replace(tzinfo=timezone.utc).timestamp()
+            pt_start_sec = pt["stamp"].replace(tzinfo=timezone.utc).timestamp()
             if pt_start_sec < stream_start_sec or pt_start_sec >= stream_end_sec:
                 continue
             # Find segment j that contains pt_start_sec
@@ -548,7 +554,7 @@ def finalize_recording_worker(
             in_video_start = video_offset[segment_index] + (pt_start_sec - seg_start_sec)
             in_video_start = max(0.0, in_video_start)
             point_timestamps.append({
-                "point_uuid": str(pt.uuid),
+                "point_uuid": pt["uuid"],
                 "in_video_start": round(in_video_start, 3),
             })
 
@@ -567,34 +573,11 @@ def finalize_recording_worker(
             final_basename,
         ).replace("\\", "/")
 
-        # 1. Write camera_stream_starts pointing to local final_video.{ext} (no S3 upload yet)
-        local_final_rel = path.join(
-            "static", "uploads", "videos",
-            tournament_url, field_name, match_id, camera_name, final_basename,
-        ).replace("\\", "/")
         stream_starts = {}
         match = Match.query.filter_by(uuid=match_id).first()
         if not match:
             _log.error("finalize_recording: match not found uuid=%s", match_id)
-        else:
-            if match.camera_stream_starts:
-                try:
-                    stream_starts = json.loads(match.camera_stream_starts)
-                except (TypeError, ValueError):
-                    stream_starts = {}
-            stream_starts[camera_name] = {
-                "video_path": local_final_rel,
-                "point_timestamps": point_timestamps,
-                "type": "recorded",
-                "stream_start_time": stream_start_iso,
-            }
-            match.camera_stream_starts = json.dumps(stream_starts)
-            db.session.commit()
-            print(f"finalize_recording: committed camera_stream_starts (local) for match {match_id}", flush=True)
-            _log.info("finalize_recording: committed camera_stream_starts for match %s", match_id)
-
-        # 2. Update camera_stream_starts to point to the final video
-        if match and video_path:
+        elif video_path:
             if match.camera_stream_starts:
                 try:
                     stream_starts = json.loads(match.camera_stream_starts)
@@ -608,8 +591,13 @@ def finalize_recording_worker(
             }
             match.camera_stream_starts = json.dumps(stream_starts)
             db.session.commit()
-            print(f"finalize_recording: committed camera_stream_starts (final) for match {match_id}", flush=True)
-            _log.info("finalize_recording: committed camera_stream_starts (final) for match %s", match_id)
+            print(
+                f"finalize_recording: committed camera_stream_starts for match {match_id}",
+                flush=True,
+            )
+            _log.info(
+                "finalize_recording: committed camera_stream_starts for match %s", match_id
+            )
 
         # 3. Create a match-scoped camera row for the final video.
         # The YouTube upload worker (implemented elsewhere) will transition UPLOADING -> SUCCESS/FAILED.
