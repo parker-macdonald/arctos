@@ -20,6 +20,7 @@ from app.utils.MatchGraph import (
     MatchGraphNode,
     build_match_graph,
 )
+from app.utils.name_validation import match_name_char_error
 
 _tournament_locks: Dict[str, threading.Lock] = {}
 _locks_lock = threading.Lock()
@@ -338,8 +339,9 @@ def validate_match_input(match, tournament_url: str) -> Tuple[bool, Optional[str
     """
     if not match.name or not match.name.strip():
         return False, "Match name is required."
-    if "::" in match.name:
-        return False, 'Match names cannot contain "::".'
+    mn_err = match_name_char_error(match.name)
+    if mn_err:
+        return False, mn_err
     from app.models.match import Match
 
     schedule_type = getattr(match, "schedule_type", None)

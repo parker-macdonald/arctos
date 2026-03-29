@@ -89,7 +89,16 @@ def _get_access_token(cfg: YouTubeUploadConfig) -> str:
         },
         timeout=20,
     )
-    resp.raise_for_status()
+    if not resp.ok:
+        try:
+            err_body = resp.json()
+        except Exception:
+            err_body = resp.text[:800] if resp.text else "(empty body)"
+        raise RuntimeError(
+            f"OAuth token refresh failed HTTP {resp.status_code}: {err_body}. "
+            "Typical causes: invalid/expired/revoked refresh token, or client_id/client_secret "
+            "do not match the Google Cloud OAuth client that issued the refresh token."
+        ) from None
     data = resp.json()
     token = data.get("access_token")
     if not token:

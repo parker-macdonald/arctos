@@ -33,6 +33,7 @@ from app.utils.scheduling import (
     recompute_all_match_times,
     compute_dynamic_match_nominal_start_time,
 )
+from app.utils.name_validation import match_name_char_error, team_pseudonym_char_error
 from app.utils.datetime_helpers import to_iso_z
 from app.domain.enums import (
     RegistrationStatus,
@@ -1406,8 +1407,9 @@ def update_my_team_registration_league(league_url):
 
     if "pseudonym" in data:
         pseudonym = data["pseudonym"].strip()
-        if "::" in pseudonym:
-            return jsonify({"error": 'Team pseudonyms cannot contain "::"'}), 400
+        pn_err = team_pseudonym_char_error(pseudonym)
+        if pn_err:
+            return jsonify({"error": pn_err}), 400
         if not pseudonym:
             return jsonify({"error": "Team name is required"}), 400
         reg.pseudonym = pseudonym
@@ -4458,6 +4460,9 @@ def update_match_api(tournament_url, match_id):
 
     # Validate inputs
     if name:
+        mn_err = match_name_char_error(name.strip())
+        if mn_err:
+            return jsonify({"error": mn_err}), 400
         match.name = name
     if field is not None:  # field can be empty string/null
         match.field = field
@@ -5036,6 +5041,9 @@ def create_match_api(tournament_url):
     name = data.get("name")
     if not name:
         return jsonify({"error": "Match name is required"}), 400
+    mn_err = match_name_char_error(name.strip())
+    if mn_err:
+        return jsonify({"error": mn_err}), 400
 
     # Parse schedule type and field for name-uniqueness scope (BREAK/JOIN are unique per field)
     schedule_type_str = data.get("schedule_type")
@@ -5835,8 +5843,9 @@ def update_my_team_registration(tournament_url):
 
     if "pseudonym" in data:
         pseudonym = data["pseudonym"].strip()
-        if "::" in pseudonym:
-            return jsonify({"error": 'Team pseudonyms cannot contain "::"'}), 400
+        pn_err = team_pseudonym_char_error(pseudonym)
+        if pn_err:
+            return jsonify({"error": pn_err}), 400
         if not pseudonym:
             return jsonify({"error": "Team name is required"}), 400
         reg.pseudonym = pseudonym

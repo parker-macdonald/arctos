@@ -44,6 +44,7 @@ from app.utils.scheduling import (
     recompute_all_match_times,
     detect_match_conflicts,
 )
+from app.utils.name_validation import match_name_char_error
 from app.utils.decorators import require_tournament_organizer
 from app.filters import is_head_ref
 
@@ -1499,10 +1500,10 @@ def add_match(tournament_url):
 
     ribbon = request.form.get("ribbon", "") == "on"  # Checkbox value
 
-    # Validate match name doesn't contain "::"
     match_name = request.form["match_name"]
-    if "::" in match_name:
-        return jsonify({"success": False, "error": 'Match names cannot contain "::"'}), 400
+    mn_err = match_name_char_error(match_name)
+    if mn_err:
+        return jsonify({"success": False, "error": mn_err}), 400
 
     # Validate match name uniqueness
     # BREAK and JOIN matches can have duplicate names on different fields
@@ -2017,10 +2018,10 @@ def update_match(tournament_url):
         team2_id, _ = resolve_team_name_to_id(team2_name, tournament_url)
         refs_initial = request.form.get("refs", "")
 
-    # Validate match name doesn't contain "::"
     new_match_name = request.form.get("match_name", match.name)
-    if "::" in new_match_name:
-        return jsonify({"success": False, "error": 'Match names cannot contain "::"'}), 400
+    mn_err = match_name_char_error(new_match_name)
+    if mn_err:
+        return jsonify({"success": False, "error": mn_err}), 400
 
     # Validate match name uniqueness (excluding current match)
     # BREAK and JOIN matches can have duplicate names on different fields
