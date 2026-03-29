@@ -640,27 +640,27 @@ def finalize_recording_worker(
                 threading.Thread(target=_yt_upload, daemon=True).start()
         except Exception as e:
             _log.exception("finalize_recording: failed to create/upload camera row: %s", e)
-
-        # Delete all chunks and intermediate files
-        to_remove = []
-        for c in all_meta:
-            fn = c.get("filename")
-            if fn:
-                to_remove.append(path.join(chunk_dir, fn))
-        to_remove.append(path.join(chunk_dir, "chunks_meta.json"))
-        for sid, _basename, _start, _session_start_iso in session_outputs:
-            to_remove.append(path.join(chunk_dir, f"joined_raw_{sid}.{ext}"))
-        for _sid, basename, _start, _session_start_iso in session_outputs:
-            to_remove.append(path.join(chunk_dir, basename))
-        to_remove.append(path.join(chunk_dir, "concat_sessions.txt"))
-        for fp in to_remove:
-            try:
-                if path.exists(fp):
-                    os.remove(fp)
-                    _log.debug("finalize_recording: removed %s", fp)
-            except OSError as e:
-                _log.warning("finalize_recording: could not remove %s: %s", fp, e)
-        print(f"finalize_recording: deleted {len(to_remove)} chunk/intermediate file(s)", flush=True)
+        if False:
+            # Delete all chunks and intermediate files
+            to_remove = []
+            for c in all_meta:
+                fn = c.get("filename")
+                if fn:
+                    to_remove.append(path.join(chunk_dir, fn))
+            to_remove.append(path.join(chunk_dir, "chunks_meta.json"))
+            for sid, _basename, _start, _session_start_iso in session_outputs:
+                to_remove.append(path.join(chunk_dir, f"joined_raw_{sid}.{ext}"))
+            for _sid, basename, _start, _session_start_iso in session_outputs:
+                to_remove.append(path.join(chunk_dir, basename))
+            to_remove.append(path.join(chunk_dir, "concat_sessions.txt"))
+            for fp in to_remove:
+                try:
+                    if path.exists(fp):
+                        os.remove(fp)
+                        _log.debug("finalize_recording: removed %s", fp)
+                except OSError as e:
+                    _log.warning("finalize_recording: could not remove %s: %s", fp, e)
+            print(f"finalize_recording: deleted {len(to_remove)} chunk/intermediate file(s)", flush=True)
     except Exception as e:
         print(f"finalize_recording: ERROR after concat: {e}", flush=True)
         _log.exception("finalize_recording: failed after concat")
