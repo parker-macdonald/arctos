@@ -48,178 +48,6 @@ def _chunk_timestamp_to_iso_utc(c):
     return s if s.endswith("Z") else f"{s.rstrip('zZ')}Z"
 
 
-def _has_mp4_init(filepath):
-    """Return True if the file starts with an MP4 init segment (ftyp box)."""
-    try:
-        with open(filepath, "rb") as f:
-            head = f.read(12)
-        if len(head) < 8:
-            return False
-        if head[4:8] != b"ftyp":
-            return False
-        return True
-    except OSError:
-        return False
-
-
-def _has_webm_init(filepath):
-    """Return True if the file starts with WebM EBML header (0x1A 0x45 0xDF 0xA3)."""
-    try:
-        with open(filepath, "rb") as f:
-            head = f.read(4)
-        return len(head) >= 4 and head[:4] == b"\x1a\x45\xdf\xa3"
-    except OSError:
-        return False
-
-
-def _extract_mp4_init_and_remainder(filepath):
-    """
-    If the file starts with ftyp+moov (init segment), return (init_bytes, remainder_bytes).
-    Otherwise return (None, None). Box layout: 4-byte size (big-endian) + 4-byte type; size=1 means 64-bit size follows.
-    """
-    try:
-        with open(filepath, "rb") as f:
-            data = f.read()
-    except OSError:
-        return (None, None)
-    if len(data) < 16:
-        return (None, None)
-
-    def box_size_at(offset):
-        if offset + 8 > len(data):
-            return None
-        sz = int.from_bytes(data[offset : offset + 4], "big")
-        if sz == 1:
-            if offset + 16 > len(data):
-                return None
-            return int.from_bytes(data[offset + 8 : offset + 16], "big")
-        return sz
-
-    size1 = box_size_at(0)
-    if size1 is None or size1 < 8 or data[4:8] != b"ftyp":
-        return (None, None)
-    pos = size1
-    if pos + 8 > len(data):
-        return (None, None)
-    size2 = box_size_at(pos)
-    if size2 is None or size2 < 8 or data[pos + 4 : pos + 8] != b"moov":
-        return (None, None)
-    init_end = pos + size2
-    if init_end > len(data):
-        return (None, None)
-    return (data[:init_end], data[init_end:])
-
-
-def _build_joined_with_init_first(ordered_chunks, chunk_dir, joined_raw, ext, _log, session_id):
-    """
-    Build joined_raw so it starts with a valid init segment.
-    If the first chunk already has init (ftyp for MP4, EBML for WebM), cat chunks as usual.
-    If not, find the first chunk that has init and build: init + chunk_0 + ... + chunk_{i-1} + remainder_of_chunk_i + chunk_{i+1} + ...
-    Returns True on success, False on failure.
-    """
-    chunk_dir = path.abspath(chunk_dir)
-    has_init = _has_mp4_init if ext == "mp4" else _has_webm_init
-
-    first_path = path.join(chunk_dir, ordered_chunks[0]["filename"])
-    if has_init(first_path):
-        try:
-            with open(joined_raw, "wb") as out:
-                subprocess.run(
-                    ["cat"] + [c["filename"] for c in ordered_chunks],
-                    cwd=chunk_dir,
-                    stdout=out,
-                    check=True,
-                )
-            return True
-        except (OSError, subprocess.CalledProcessError) as e:
-            _log.warning("finalize_recording: session %s cat failed: %s", session_id, e)
-            return False
-
-    init_source_index = None
-    for i, c in enumerate(ordered_chunks):
-        p = path.join(chunk_dir, c["filename"])
-        if path.exists(p) and has_init(p):
-            init_source_index = i
-            break
-    if init_source_index is None:
-        _log.warning(
-            "finalize_recording: session %s no chunk has init segment, concatenating as-is (may be invalid)",
-            session_id,
-        )
-        try:
-            with open(joined_raw, "wb") as out:
-                subprocess.run(
-                    ["cat"] + [c["filename"] for c in ordered_chunks],
-                    cwd=chunk_dir,
-                    stdout=out,
-                    check=True,
-                )
-            return True
-        except (OSError, subprocess.CalledProcessError) as e:
-            _log.warning("finalize_recording: session %s cat failed: %s", session_id, e)
-            return False
-
-    if ext == "mp4":
-        init_bytes, remainder = _extract_mp4_init_and_remainder(
-            path.join(chunk_dir, ordered_chunks[init_source_index]["filename"])
-        )
-        if init_bytes is None or remainder is None:
-            _log.warning(
-                "finalize_recording: session %s could not extract init from chunk %s",
-                session_id,
-                ordered_chunks[init_source_index]["filename"],
-            )
-            try:
-                with open(joined_raw, "wb") as out:
-                    subprocess.run(
-                        ["cat"] + [c["filename"] for c in ordered_chunks],
-                        cwd=chunk_dir,
-                        stdout=out,
-                        check=True,
-                    )
-                return True
-            except (OSError, subprocess.CalledProcessError) as e:
-                _log.warning("finalize_recording: session %s cat failed: %s", session_id, e)
-                return False
-        try:
-            with open(joined_raw, "wb") as out:
-                out.write(init_bytes)
-                for j, c in enumerate(ordered_chunks):
-                    fn = c["filename"]
-                    chunk_path = path.join(chunk_dir, fn)
-                    if not path.exists(chunk_path):
-                        continue
-                    if j < init_source_index:
-                        with open(chunk_path, "rb") as f:
-                            out.write(f.read())
-                    elif j == init_source_index:
-                        out.write(remainder)
-                    else:
-                        with open(chunk_path, "rb") as f:
-                            out.write(f.read())
-            return True
-        except OSError as e:
-            _log.warning("finalize_recording: session %s write joined failed: %s", session_id, e)
-            return False
-    else:
-        _log.warning(
-            "finalize_recording: session %s first chunk has no WebM header, skipping to first chunk with header (some data loss)",
-            session_id,
-        )
-        try:
-            with open(joined_raw, "wb") as out:
-                subprocess.run(
-                    ["cat"] + [c["filename"] for c in ordered_chunks[init_source_index:]],
-                    cwd=chunk_dir,
-                    stdout=out,
-                    check=True,
-                )
-            return True
-        except (OSError, subprocess.CalledProcessError) as e:
-            _log.warning("finalize_recording: session %s cat failed: %s", session_id, e)
-            return False
-
-
 def _get_video_codec(file_path, cwd):
     """Return video codec name (hevc, h264, avc1) or None if unavailable."""
     if cwd:
@@ -371,11 +199,18 @@ def finalize_recording_worker(
         segment_start_ms = _chunk_timestamp_sort_key(ordered_chunks[0])
         segment_start_sec = segment_start_ms / 1000.0
 
-        # 1. Build joined raw so it starts with a valid init (browsers often put init in chunk_1, not chunk_0)
+        # 1. Concatenate chunk files in order (binary cat)
         joined_raw = path.join(chunk_dir, f"joined_raw_{session_id}.{ext}")
-        if not _build_joined_with_init_first(
-            ordered_chunks, chunk_dir, joined_raw, ext, _log, session_id
-        ):
+        try:
+            with open(joined_raw, "wb") as out:
+                subprocess.run(
+                    ["cat"] + [c["filename"] for c in ordered_chunks],
+                    cwd=chunk_dir,
+                    stdout=out,
+                    check=True,
+                )
+        except (OSError, subprocess.CalledProcessError) as e:
+            _log.warning("finalize_recording: session %s cat failed: %s", session_id, e)
             continue
 
         if not path.exists(joined_raw) or path.getsize(joined_raw) == 0:
