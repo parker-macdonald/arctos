@@ -1168,7 +1168,6 @@ async fn run_recording_loop(
 
     // Use a persistent chunk_count for chunk_start_timestamp (storage is drained often so queue length is not a valid index).
     let container_for_recorder = container_ref.clone();
-    // Build a MediaRecorder once per slot; later use stop + start_with_time_slice on the same instance.
     let make_recorder = |stream: &web_sys::MediaStream,
                         storage_queue: Rc<RefCell<Vec<StoredChunk>>>,
                         session_start: Rc<RefCell<f64>>,
@@ -1472,10 +1471,10 @@ async fn run_recording_loop(
         // web_sys::console::log_1(&format!("current match: {:?}", current_match).into());
         if !data.hasActiveMatch || data.match_id.as_ref().map(|s| s.as_str()) != current_match.as_ref().map(|id| id.as_str()) {
             if let Some(match_id) = current_match.take() {
-                if let Some(r1) = state1.borrow().recorder.as_ref() {
+                if let Some(r1) = state1.borrow_mut().recorder.take() {
                     let _ = r1.stop();
                 }
-                if let Some(r2) = state2.borrow().recorder.as_ref() {
+                if let Some(r2) = state2.borrow_mut().recorder.take() {
                     let _ = r2.stop();
                 }
                 storage1.borrow_mut().clear();
@@ -1516,7 +1515,7 @@ async fn run_recording_loop(
                     let new_sid = uuid_style_id();
                     state1.borrow_mut().current_session_id = new_sid.clone();
                     *session_id1.borrow_mut() = new_sid.clone();
-                    // Reuse the same MediaRecorder; only construct once if missing.
+                    // After a match ends we take and stop both recorders, so they are None for the next match. Recreate if needed.
                     if state1.borrow().recorder.is_none() {
                         if let Some(r) = make_recorder(
                             &stream,
@@ -1529,15 +1528,21 @@ async fn run_recording_loop(
                             state1.borrow_mut().recorder = Some(r);
                         }
                     } else if let Some(r) = state1.borrow().recorder.as_ref() {
-                        let _ = r.stop();
-                        let _ = r.start_with_time_slice(1000);
+                        let state_str: String = js_sys::Reflect::get(r.as_ref(), &"state".into())
+                            .ok()
+                            .and_then(|v| v.as_string())
+                            .unwrap_or_default();
+                        // Start unless already recording (some browsers may not report "inactive")
+                        if state_str != "recording" {
+                            let _ = r.start_with_time_slice(1000);
+                        }
                     }
-                    *session_start2.borrow_mut() = now_ms;
-                    *chunk_count2.borrow_mut() = 0;
-                    let sid2 = uuid_style_id();
-                    *session_id2.borrow_mut() = sid2.clone();
-                    state2.borrow_mut().current_session_id = sid2.clone();
                     if state2.borrow().recorder.is_none() {
+                        *session_start2.borrow_mut() = now_ms;
+                        *chunk_count2.borrow_mut() = 0;
+                        let sid2 = uuid_style_id();
+                        *session_id2.borrow_mut() = sid2.clone();
+                        state2.borrow_mut().current_session_id = sid2;
                         if let Some(r) = make_recorder(
                             &stream,
                             storage2.clone(),
@@ -1547,8 +1552,6 @@ async fn run_recording_loop(
                         ) {
                             state2.borrow_mut().recorder = Some(r);
                         }
-                    } else if let Some(r) = state2.borrow().recorder.as_ref() {
-                        let _ = r.stop();
                     }
                 }
             }
@@ -1635,7 +1638,7 @@ async fn run_recording_loop(
 
             if longer_run_secs > 10.0 {
                 web_sys::console::log_1(&format!("longer recorder running for too long: {}s (t1: {}s, t2: {}s)", longer_run_secs, now_ms-t1, now_ms-t2).into());
-                if let Some(r) = longer.borrow().recorder.as_ref() {
+                if let Some(r) = longer.borrow_mut().recorder.take() {
                     let _ = r.stop();
                 }
                 if std::ptr::eq(longer.as_ref(), state1.as_ref()) {
@@ -1669,9 +1672,7 @@ async fn run_recording_loop(
                 } else {
                     *session_id2.borrow_mut() = new_sid.clone();
                 }
-                if let Some(r) = longer.borrow().recorder.as_ref() {
-                    let _ = r.start_with_time_slice(1000);
-                } else if let Some(new_r) = make_recorder(
+                if let Some(new_r) = make_recorder(
                     &stream,
                     if std::ptr::eq(longer.as_ref(), state1.as_ref()) {
                         storage1.clone()
@@ -1684,8 +1685,8 @@ async fn run_recording_loop(
                 ) {
                     let _ = new_r.start_with_time_slice(1000);
                     longer.borrow_mut().recorder = Some(new_r);
+                    longer.borrow_mut().started_at = Some(now_ms);
                 }
-                longer.borrow_mut().started_at = Some(now_ms);
             } else if longer_run_secs > 5.0 {
                 let is_inactive = shorter
                     .borrow()
@@ -1700,9 +1701,9 @@ async fn run_recording_loop(
                     })
                     .unwrap_or(true);
                 if is_inactive {
-                    web_sys::console::log_1(&format!("shorter recorder is inactive, restarting for fresh init segment").into());
-                    if let Some(r) = shorter.borrow().recorder.as_ref() {
-                        let _ = r.stop();
+                    web_sys::console::log_1(&format!("shorter recorder is inactive, replacing with new recorder for fresh init segment").into());
+                    if let Some(old_r) = shorter.borrow_mut().recorder.take() {
+                        let _ = old_r.stop();
                     }
                     if std::ptr::eq(shorter.as_ref(), state1.as_ref()) {
                         storage1.borrow_mut().clear();
@@ -1733,9 +1734,7 @@ async fn run_recording_loop(
                     } else {
                         *session_id2.borrow_mut() = new_sid.clone();
                     }
-                    if let Some(r) = shorter.borrow().recorder.as_ref() {
-                        let _ = r.start_with_time_slice(1000);
-                    } else if let Some(new_r) = make_recorder(
+                    if let Some(new_r) = make_recorder(
                         &stream,
                         if std::ptr::eq(shorter.as_ref(), state1.as_ref()) {
                             storage1.clone()
