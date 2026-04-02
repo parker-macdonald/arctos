@@ -1,4 +1,5 @@
 //! Point recording page: single MP4 `MediaRecorder`, in-memory chunk queue with keyframe parsing, IndexedDB upload queue, match-status polling.
+//! The first chunk of each recording session is normalized to include `ftyp`+`moov` and to start on a video keyframe (`record_mp4::session_first_chunk`).
 
 use crate::api;
 use crate::types::{RecordMatchStatusResponse, RecordPointData};
@@ -923,6 +924,14 @@ async fn blob_to_bytes(blob: &web_sys::Blob) -> Vec<u8> {
 }
 
 #[cfg(target_arch = "wasm32")]
+fn bytes_to_blob(bytes: &[u8]) -> web_sys::Blob {
+    let arr = js_sys::Uint8Array::from(bytes);
+    let parts = js_sys::Array::new();
+    parts.push(&arr);
+    web_sys::Blob::new_with_u8_array_sequence(&parts).expect("Blob::new")
+}
+
+#[cfg(target_arch = "wasm32")]
 async fn parse_mem_video_chunk(
     ch: &mut MemVideoChunk,
     cached_timescale: &Rc<RefCell<Option<u32>>>,
@@ -957,6 +966,45 @@ async fn parse_mem_video_chunk(
         mp4_ms,
         total_ms
     ));
+}
+
+/// First chunk per session: ensure `ftyp`+`moov` + fragment starting on a video keyframe (see `record_mp4::session_first_chunk`).
+#[cfg(target_arch = "wasm32")]
+async fn prepare_video_chunk_for_upload(
+    mut ch: MemVideoChunk,
+    session_id: &str,
+    session_first: &Rc<RefCell<record_mp4::SessionFirstChunkState>>,
+    cached_init: &Rc<RefCell<Option<Vec<u8>>>>,
+    cached_timescale: &Rc<RefCell<Option<u32>>>,
+) -> Option<MemVideoChunk> {
+    {
+        let mut s = session_first.borrow_mut();
+        s.sync_session(session_id);
+        if s.first_chunk_done {
+            return Some(ch);
+        }
+    }
+    let bytes = blob_to_bytes(&ch.blob).await;
+    let init_cache = cached_init.borrow();
+    let init_slice = init_cache.as_deref();
+    let mut out: Option<MemVideoChunk> = None;
+    {
+        let mut s = session_first.borrow_mut();
+        match record_mp4::session_first_chunk(&bytes, init_slice, &mut s) {
+            record_mp4::FirstChunkOutcome::Skip => {}
+            record_mp4::FirstChunkOutcome::Emit(v) => {
+                ch.blob = bytes_to_blob(&v);
+                ch.parsed = false;
+                out = Some(ch);
+            }
+        }
+    }
+    if let Some(mut ch) = out {
+        parse_mem_video_chunk(&mut ch, cached_timescale, cached_init).await;
+        Some(ch)
+    } else {
+        None
+    }
 }
 
 /// Move `FinalizeMatch` from mem queue to IndexedDB upload queue; evict old video chunks (Idle only).
@@ -1484,13 +1532,6 @@ async fn run_recording_loop(
     const RECORD_TIMESLICE_MS: i32 = 500;
     const RECORD_CHUNK_LENGTH_MS: u32 = 500;
 
-    fn bytes_to_blob(bytes: &[u8]) -> web_sys::Blob {
-        let arr = js_sys::Uint8Array::from(bytes);
-        let parts = js_sys::Array::new();
-        parts.push(&arr);
-        web_sys::Blob::new_with_u8_array_sequence(&parts).expect("Blob::new")
-    }
-
     let key_ref = key.clone();
     let container = "mp4".to_string();
 
@@ -1500,6 +1541,8 @@ async fn run_recording_loop(
     let recording_session_wall_start_ms: Rc<RefCell<f64>> = Rc::new(RefCell::new(0.0));
     let cached_timescale: Rc<RefCell<Option<u32>>> = Rc::new(RefCell::new(None));
     let cached_init_segment: Rc<RefCell<Option<Vec<u8>>>> = Rc::new(RefCell::new(None));
+    let session_first_chunk_state: Rc<RefCell<record_mp4::SessionFirstChunkState>> =
+        Rc::new(RefCell::new(record_mp4::SessionFirstChunkState::default()));
     let recorder_holder: Rc<RefCell<Option<MediaRecorder>>> = Rc::new(RefCell::new(None));
 
     let mq_cb = mem_queue.clone();
@@ -1811,6 +1854,17 @@ async fn run_recording_loop(
                     let mut n_added = 0u32;
                     for item in drained {
                         if let MemQueueItem::Video(ch) = item {
+                            let Some(ch) = prepare_video_chunk_for_upload(
+                                ch,
+                                &session_id,
+                                &session_first_chunk_state,
+                                &cached_init_segment,
+                                &cached_timescale,
+                            )
+                            .await
+                            else {
+                                continue;
+                            };
                             let keyframe_wall_times_json =
                                 serde_json::to_string(&ch.keyframe_wall_times_ms)
                                     .unwrap_or_else(|_| "[]".to_string());
@@ -1862,6 +1916,8 @@ async fn run_recording_loop(
                 recording_session_uuid.borrow_mut().clear();
                 *cached_timescale.borrow_mut() = None;
                 *cached_init_segment.borrow_mut() = None;
+                *session_first_chunk_state.borrow_mut() =
+                    record_mp4::SessionFirstChunkState::default();
                 is_recording_sig.set(false);
             }
             if data.hasActiveMatch {
@@ -1870,6 +1926,8 @@ async fn run_recording_loop(
                     is_recording_sig.set(true);
                     *cached_timescale.borrow_mut() = None;
                     *cached_init_segment.borrow_mut() = None;
+                    *session_first_chunk_state.borrow_mut() =
+                        record_mp4::SessionFirstChunkState::default();
                     if recorder_holder.borrow().is_none() {
                         if let Some(r) = make_recorder(&stream) {
                             let _ = r.start_with_time_slice(RECORD_TIMESLICE_MS);
@@ -1911,6 +1969,17 @@ async fn run_recording_loop(
                 for item in drained {
                     match item {
                         MemQueueItem::Video(ch) => {
+                            let Some(ch) = prepare_video_chunk_for_upload(
+                                ch,
+                                &session_id,
+                                &session_first_chunk_state,
+                                &cached_init_segment,
+                                &cached_timescale,
+                            )
+                            .await
+                            else {
+                                continue;
+                            };
                             let keyframe_wall_times_json =
                                 serde_json::to_string(&ch.keyframe_wall_times_ms)
                                     .unwrap_or_else(|_| "[]".to_string());
@@ -2047,6 +2116,17 @@ async fn run_recording_loop(
                 for item in drained {
                     match item {
                         MemQueueItem::Video(ch) => {
+                            let Some(ch) = prepare_video_chunk_for_upload(
+                                ch,
+                                &session_id,
+                                &session_first_chunk_state,
+                                &cached_init_segment,
+                                &cached_timescale,
+                            )
+                            .await
+                            else {
+                                continue;
+                            };
                             let keyframe_wall_times_json =
                                 serde_json::to_string(&ch.keyframe_wall_times_ms)
                                     .unwrap_or_else(|_| "[]".to_string());

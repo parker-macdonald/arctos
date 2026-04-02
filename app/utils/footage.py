@@ -59,23 +59,115 @@ def _chunk_timestamp_to_iso_utc(c):
     return s if s.endswith("Z") else f"{s.rstrip('zZ')}Z"
 
 
+def _top_level_box_spans(data: bytes):
+    """Yield (fourcc, start_byte, end_exclusive) for each top-level ISO BMFF box."""
+    i = 0
+    n = len(data)
+    while i + 8 <= n:
+        sz = int.from_bytes(data[i : i + 4], "big")
+        if sz < 8:
+            break
+        typ = data[i + 4 : i + 8]
+        end = i + sz
+        if end > n:
+            break
+        yield (typ, i, end)
+        i = end
+
+
+def _strip_leading_init_segment(data: bytes) -> bytes:
+    """
+    MediaRecorder often emits a full fMP4 per timeslice: [ftyp][moov][moof][mdat]...
+    Concatenating those repeats moov and breaks ffmpeg (trun/tfhd errors).
+    For fragments after the first, drop leading ftyp+moov if present.
+    Pure [moof][mdat] fragments are returned unchanged.
+    """
+    spans = list(_top_level_box_spans(data))
+    if not spans:
+        return data
+    idx = 0
+    if spans[idx][0] == b"ftyp":
+        idx += 1
+    else:
+        return data
+    if idx < len(spans) and spans[idx][0] == b"moov":
+        idx += 1
+    else:
+        return data
+    if idx >= len(spans):
+        return b""
+    start = spans[idx][1]
+    return data[start:]
+
+
+def _chunk_file_starts_with_ftyp(chunk_dir: str, filename: str) -> bool:
+    fp = path.join(chunk_dir, filename)
+    try:
+        with open(fp, "rb") as f:
+            head = f.read(12)
+        return len(head) >= 8 and head[4:8] == b"ftyp"
+    except OSError:
+        return False
+
+
+def _reorder_session_chunks_ftyp_first(chunks, chunk_dir):
+    """
+    Put a chunk that begins with an ftyp box first (init segment), then others by _chunk_sort_key.
+    If none start with ftyp, preserve sort order by _chunk_sort_key only.
+    """
+    return sorted(
+        chunks,
+        key=lambda c: (
+            0 if _chunk_file_starts_with_ftyp(chunk_dir, c["filename"]) else 1,
+            _chunk_sort_key(c),
+        ),
+    )
+
+
 def _cat_session_chunks(ordered_chunks, chunk_dir, joined_raw, _log, session_id):
     """
-    Concatenate fMP4 chunk files in upload order with cat (one recording session).
-    The browser sends init + moof/mdat fragments; concatenation matches the frontend design.
+    Concatenate fMP4 fragments for one recording session.
+
+    `ordered_chunks` must already be ordered with a chunk that starts with ftyp (init) first
+    (see _reorder_session_chunks_ftyp_first).
+
+    - Write the first chunk verbatim.
+    - For following chunks, strip leading ftyp+moov when present (duplicate init per
+      MediaRecorder timeslice); keep pure moof+mdat fragments as-is.
     """
     chunk_dir = path.abspath(chunk_dir)
+    if not ordered_chunks:
+        return False
     try:
-        with open(joined_raw, "wb") as out:
-            subprocess.run(
-                ["cat"] + [c["filename"] for c in ordered_chunks],
-                cwd=chunk_dir,
-                stdout=out,
-                check=True,
+        first_fn = ordered_chunks[0]["filename"]
+        if not _chunk_file_starts_with_ftyp(chunk_dir, first_fn):
+            _log.warning(
+                "finalize_recording: session %s first chunk %s does not start with "
+                "ftyp; joined file may be unreadable (missing moov).",
+                session_id,
+                first_fn,
             )
+        with open(joined_raw, "wb") as out:
+            for i, c in enumerate(ordered_chunks):
+                fp = path.join(chunk_dir, c["filename"])
+                with open(fp, "rb") as f:
+                    data = f.read()
+                if i == 0:
+                    preview = data[:16].hex() if data else ""
+                    _log.info(
+                        "finalize_recording: session %s concat[0] %s bytes=%s head16=%s",
+                        session_id,
+                        c["filename"],
+                        len(data),
+                        preview,
+                    )
+                    out.write(data)
+                else:
+                    stripped = _strip_leading_init_segment(data)
+                    out.write(stripped)
         return True
-    except (OSError, subprocess.CalledProcessError) as e:
-        _log.warning("finalize_recording: session %s cat failed: %s", session_id, e)
+    except OSError as e:
+        _log.warning("finalize_recording: session %s concat failed: %s", session_id, e)
         return False
 
 
@@ -212,24 +304,29 @@ def finalize_recording_worker(
             _log.warning("finalize_recording: session %s has no existing chunk files", session_id)
             continue
 
+        # Chronological first chunk (metadata / points). Concat order may differ (ftyp init first).
+        earliest_chunk = min(ordered_chunks, key=_chunk_sort_key)
+
         if stream_start_iso is None:
-            stream_start_iso = _chunk_timestamp_to_iso_utc(ordered_chunks[0])
+            stream_start_iso = _chunk_timestamp_to_iso_utc(earliest_chunk)
 
         # Recording session start timestamp (world time alignment) used for interpolation.
         # If missing, fall back to chunk_start_timestamp.
-        rec_session_start_raw = ordered_chunks[0].get("recording_session_start_time")
+        rec_session_start_raw = earliest_chunk.get("recording_session_start_time")
         if rec_session_start_raw is None:
-            rec_session_start_raw = ordered_chunks[0].get("chunk_start_timestamp")
+            rec_session_start_raw = earliest_chunk.get("chunk_start_timestamp")
         session_start_iso = _chunk_timestamp_to_iso_utc(
             {"chunk_start_timestamp": rec_session_start_raw}
         )
 
         # Wall-clock segment start for point_timestamps (chunk_start_timestamp is epoch ms; blob_event is not).
-        segment_start_ms = _chunk_timestamp_sort_key(ordered_chunks[0])
+        segment_start_ms = _chunk_timestamp_sort_key(earliest_chunk)
         segment_start_sec = segment_start_ms / 1000.0
 
+        concat_chunks = _reorder_session_chunks_ftyp_first(ordered_chunks, chunk_dir)
+
         joined_raw = path.join(chunk_dir, f"joined_raw_{session_id}.{ext}")
-        if not _cat_session_chunks(ordered_chunks, chunk_dir, joined_raw, _log, session_id):
+        if not _cat_session_chunks(concat_chunks, chunk_dir, joined_raw, _log, session_id):
             continue
 
         if not path.exists(joined_raw) or path.getsize(joined_raw) == 0:
