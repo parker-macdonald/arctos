@@ -186,13 +186,6 @@ enum QueueItem {
     FinalizeMatch { match_id: String },
 }
 
-#[cfg(target_arch = "wasm32")]
-#[derive(Clone)]
-struct UploadBarItem {
-    match_id: Option<String>,
-    is_finalize: bool,
-}
-
 /// LocalStorage key for the selected camera device ID (wasm only).
 #[cfg(target_arch = "wasm32")]
 const RECORD_CAMERA_DEVICE_ID_KEY: &str = "arctos_record_camera_id";
@@ -319,8 +312,6 @@ pub fn Record(url: String, field: ReadSignal<String>, camera_key: ReadSignal<Str
     let mut selected_camera_id = use_signal(|| None::<String>);
     let mut preview_stream = use_signal(|| None::<web_sys::MediaStream>);
     let mut storage_warning = use_signal(|| None::<String>);
-    #[cfg(target_arch = "wasm32")]
-    let mut upload_bar_items = use_signal(|| Vec::<UploadBarItem>::new());
 
     #[cfg(target_arch = "wasm32")]
     {
@@ -377,9 +368,12 @@ pub fn Record(url: String, field: ReadSignal<String>, camera_key: ReadSignal<Str
             }
             if let Some(window) = web_sys::window() {
                 if let Some(doc) = window.document() {
-                    if let Some(el) = doc.get_element_by_id("record-preview") {
-                        let _ = el.dyn_into::<web_sys::HtmlMediaElement>().map(|media| media.set_src_object(None));
-                    }
+            if let Some(el) = doc.get_element_by_id("record-preview-capture") {
+                let _ = el.dyn_into::<web_sys::HtmlMediaElement>().map(|media| {
+                    let _ = media.pause();
+                    media.set_src_object(None);
+                });
+            }
                 }
             }
         });
@@ -399,7 +393,6 @@ pub fn Record(url: String, field: ReadSignal<String>, camera_key: ReadSignal<Str
         let upload_count_sig = upload_count.to_owned();
         let upload_total_sig = upload_total.to_owned();
         let storage_warning_sig = storage_warning.to_owned();
-        let upload_bar_items_sig = upload_bar_items.to_owned();
         let preview_stream_sig = preview_stream.to_owned();
         use_effect(move || {
             let stream_opt = preview_stream_sig();
@@ -428,7 +421,6 @@ pub fn Record(url: String, field: ReadSignal<String>, camera_key: ReadSignal<Str
                     upload_count_sig,
                     upload_total_sig,
                     storage_warning_sig,
-                    upload_bar_items_sig,
                 )
                 .await;
             });
@@ -487,8 +479,11 @@ pub fn Record(url: String, field: ReadSignal<String>, camera_key: ReadSignal<Str
                                                 class: "btn btn-success", 
                                                 onclick: move |_| {
                                                     let new_name = temp_name();
-                                                    if let Route::Record { url, field, camera_key, .. } = route.clone() {
-                                                        reload_record_page_with_camera_name(&url, &field, &camera_key, &new_name);
+                                                    // Full navigation reloads the app — only when the name actually changes (avoids accidental mobile reloads).
+                                                    if new_name.trim() != camera_name().trim() {
+                                                        if let Route::Record { url, field, camera_key, .. } = route.clone() {
+                                                            reload_record_page_with_camera_name(&url, &field, &camera_key, &new_name.trim());
+                                                        }
                                                     }
                                                     is_editing_name.set(false);
                                                 },
@@ -557,24 +552,9 @@ pub fn Record(url: String, field: ReadSignal<String>, camera_key: ReadSignal<Str
                                     is_uploading,
                                     upload_count,
                                     upload_total,
-                                    upload_bar_items,
                                 }
                                 if let Some(ref msg) = storage_warning() {
                                     div { class: "alert alert-warning", "{msg}" }
-                                }
-                                div {
-                                    id: "record-video-container",
-                                    style: format!("display: {};", if matches!(status(), RecordStatus::Connected) { "block" } else { "none" }),
-                                    div { class: "mb-2",
-                                        video {
-                                            id: "record-preview",
-                                            autoplay: true,
-                                            muted: true,
-                                            playsinline: true,
-                                            style: "width: 100%; max-width: 640px; border: 2px solid #333; background: #000;",
-                                        }
-                                    }
-                                    // Recording indicator is now part of the match header above.
                                 }
                                 if matches!(status(), RecordStatus::NoMatch) && !is_recording() {
                                     div { class: "alert alert-secondary", id: "record-no-match",
@@ -595,20 +575,29 @@ fn upload_progress_section(
     is_uploading: Signal<bool>,
     upload_count: Signal<u32>,
     upload_total: Signal<u32>,
-    upload_bar_items: Signal<Vec<UploadBarItem>>,
 ) -> Element {
-    let remaining = {
-        let total = upload_total();
-        let done = upload_count();
-        total.saturating_sub(done)
+    let total = upload_total();
+    let done = upload_count();
+    let remaining = total.saturating_sub(done);
+    let pct = if total > 0 {
+        (100.0_f64 * f64::from(done) / f64::from(total.max(1))).min(100.0)
+    } else {
+        0.0
     };
-    let status_text = if remaining == 0 {
+    let status_text = if total == 0 {
+        "No uploads queued".to_string()
+    } else if remaining == 0 {
         "All data uploaded".to_string()
     } else {
-        format!("{remaining} chunks remaining to be uploaded")
+        format!(
+            "{done} of {total} finished uploading ({remaining} remaining){}",
+            if is_uploading() {
+                " — working…"
+            } else {
+                ""
+            }
+        )
     };
-
-    let items = upload_bar_items();
 
     rsx! {
         div { class: "mt-3",
@@ -617,60 +606,19 @@ fn upload_progress_section(
                 class: "mb-1 small text-muted",
                 "{status_text}"
             }
-            if !items.is_empty() {
-                div {
-                    class: "d-flex",
-                    style: "height: 10px; border-radius: 4px; overflow: hidden; background: #e9ecef;",
-                    for (idx, item) in items.iter().enumerate() {
-                        div {
-                            key: "{idx}",
-                            style: format!(
-                                "flex: 0 0 {}; background: {}; position: relative;{}",
-                                upload_bar_width(items.len()),
-                                upload_bar_color(item.match_id.as_deref()),
-                                if idx < items.len().saturating_sub(1) {
-                                    " border-right: 1px solid rgba(0,0,0,0.25);"
-                                } else {
-                                    ""
-                                }
-                            ),
-                            if item.is_finalize {
-                                span {
-                                    style: "position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 9px; color: #fff;",
-                                    "F"
-                                }
-                            }
-                        }
-                    }
-                }
-            } else {
+            if total > 0 {
                 div {
                     class: "progress",
-                    style: "height: 6px;",
+                    style: "height: 12px;",
                     div {
                         class: "progress-bar bg-success",
-                        style: "width: 100%;",
+                        role: "progressbar",
+                        style: format!("width: {pct:.2}%;"),
                     }
                 }
             }
         }
     }
-}
-
-fn upload_bar_width(count: usize) -> String {
-    format!("{:.4}%", 100.0 / (count.max(1) as f32))
-}
-
-fn upload_bar_color(match_id: Option<&str>) -> String {
-    if let Some(id) = match_id {
-        if id.len() >= 6 {
-            if let Ok(val) = u32::from_str_radix(&id[..6].replace('-', ""), 16) {
-                let h = (val % 360) as i32;
-                return format!("hsl({h}, 70%, 55%)");
-            }
-        }
-    }
-    "#0d6efd".to_string()
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -867,19 +815,6 @@ async fn initialize_camera_and_enumerate(
     };
 
     preview_stream.set(Some(stream.clone()));
-
-    if let Some(doc) = window.document() {
-        if let Some(video_el) = doc.get_element_by_id("record-preview") {
-            if let Ok(media_el) = video_el.dyn_into::<web_sys::HtmlMediaElement>() {
-                media_el.set_src_object(Some(&stream));
-                // Safari (especially iOS) often won't show the preview until play() is called.
-                let play_promise = media_el.play();
-                if let Ok(p) = play_promise {
-                    let _ = wasm_bindgen_futures::JsFuture::from(p).await;
-                }
-            }
-        }
-    }
 }
 
 /// Parse ISO timestamp string to milliseconds since epoch.
@@ -982,56 +917,83 @@ async fn parse_mem_video_chunk(
     ch.parsed = true;
 }
 
-/// Capture one frame from #record-preview video as JPEG (max width 640, quality 0.7). WASM only.
+/// Move `FinalizeMatch` from mem queue to IndexedDB upload queue; evict old video chunks (Idle only).
 #[cfg(target_arch = "wasm32")]
-async fn capture_preview_frame() -> Result<bytes::Bytes, String> {
+async fn mem_queue_idle_finalize_and_evict(
+    mem_queue: &Rc<RefCell<VecDeque<MemQueueItem>>>,
+    db_holder: &Rc<RefCell<Option<idb::Database>>>,
+    upload_queue: &Rc<RefCell<VecDeque<(String, QueueItem)>>>,
+    mut upload_total_sig: Signal<u32>,
+    now_ms: f64,
+) {
+    loop {
+        let is_finalize = mem_queue
+            .borrow()
+            .front()
+            .map(|it| matches!(it, MemQueueItem::FinalizeMatch { .. }))
+            .unwrap_or(false);
+        if !is_finalize {
+            break;
+        }
+        let Some(MemQueueItem::FinalizeMatch { match_id: fid }) = mem_queue.borrow_mut().pop_front() else {
+            break;
+        };
+        if let Some(ref db) = *db_holder.borrow() {
+            if let Ok(k) = record_idb::get_next_sequence(db).await {
+                if record_idb::put_finalize(db, &k, &fid).await.is_ok() {
+                    upload_total_sig.set(upload_total_sig() + 1);
+                    upload_queue.borrow_mut().push_back((
+                        k,
+                        QueueItem::FinalizeMatch { match_id: fid },
+                    ));
+                }
+            }
+        }
+    }
+
+    let should_evict_front = {
+        let q = mem_queue.borrow();
+        match q.front() {
+            Some(MemQueueItem::Video(front)) => {
+                let age_ok = now_ms - front.wall_epoch_ms > 10_000.0;
+                if !age_ok {
+                    false
+                } else {
+                    let mut other_has_kf = false;
+                    let mut kf_outside_ge_10s = false;
+                    for (idx, item) in q.iter().enumerate() {
+                        if let MemQueueItem::Video(ch) = item {
+                            if idx == 0 {
+                                continue;
+                            }
+                            if !ch.keyframe_wall_times_ms.is_empty() {
+                                other_has_kf = true;
+                            }
+                            for t in &ch.keyframe_wall_times_ms {
+                                if now_ms - *t >= 10_000.0 {
+                                    kf_outside_ge_10s = true;
+                                }
+                            }
+                        }
+                    }
+                    let cond2 = other_has_kf;
+                    age_ok && cond2 && kf_outside_ge_10s
+                }
+            }
+            _ => false,
+        }
+    };
+    if should_evict_front {
+        mem_queue.borrow_mut().pop_front();
+    }
+}
+
+/// JPEG encode helper (quality 0.7 via canvas `toBlob`).
+#[cfg(target_arch = "wasm32")]
+async fn canvas_to_jpeg_bytes(canvas: &web_sys::HtmlCanvasElement) -> Result<bytes::Bytes, String> {
     use wasm_bindgen::closure::Closure;
     use wasm_bindgen::JsCast;
 
-    let window = web_sys::window().ok_or("no window")?;
-    let doc = window.document().ok_or("no document")?;
-    let video_el = doc
-        .get_element_by_id("record-preview")
-        .ok_or("no record-preview element")?;
-    let video = video_el
-        .dyn_ref::<web_sys::HtmlVideoElement>()
-        .ok_or("record-preview is not a video")?
-        .clone();
-    let vw = video.video_width();
-    let vh = video.video_height();
-    if vw == 0 || vh == 0 {
-        return Err("video not ready".to_string());
-    }
-    let (canvas_w, canvas_h) = if vw > 640 {
-        (640u32, (vh as u32 * 640 / vw as u32))
-    } else {
-        (vw as u32, vh as u32)
-    };
-    let canvas = doc
-        .create_element("canvas")
-        .map_err(|_| "create canvas")?
-        .dyn_into::<web_sys::HtmlCanvasElement>()
-        .map_err(|_| "canvas")?;
-    canvas.set_width(canvas_w);
-    canvas.set_height(canvas_h);
-    let ctx = canvas
-        .get_context("2d")
-        .map_err(|_| "get context")?
-        .ok_or("no context")?
-        .dyn_into::<web_sys::CanvasRenderingContext2d>()
-        .map_err(|_| "2d")?;
-    ctx.draw_image_with_html_video_element_and_sw_and_sh_and_dx_and_dy_and_dw_and_dh(
-        &video,
-        0.0,
-        0.0,
-        vw as f64,
-        vh as f64,
-        0.0,
-        0.0,
-        canvas_w as f64,
-        canvas_h as f64,
-    )
-    .map_err(|_| "draw".to_string())?;
     let promise = js_sys::Promise::new(&mut |resolve, reject| {
         let resolve = resolve.clone();
         let reject = reject.clone();
@@ -1054,8 +1016,198 @@ async fn capture_preview_frame() -> Result<bytes::Bytes, String> {
         .await
         .map_err(|_| "array_buffer".to_string())?;
     let arr = js_sys::Uint8Array::new(&ab);
-    let vec = arr.to_vec();
-    Ok(bytes::Bytes::from(vec))
+    Ok(bytes::Bytes::from(arr.to_vec()))
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn grab_frame_via_image_capture(
+    track: &web_sys::MediaStreamTrack,
+) -> Result<web_sys::ImageBitmap, wasm_bindgen::JsValue> {
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen::JsValue;
+
+    let global = js_sys::global();
+    let ic_ctor = js_sys::Reflect::get(&global, &"ImageCapture".into())?;
+    if ic_ctor.is_undefined() || ic_ctor.is_null() {
+        return Err(JsValue::from_str("no ImageCapture"));
+    }
+    let ctor = ic_ctor
+        .dyn_ref::<js_sys::Function>()
+        .ok_or_else(|| JsValue::from_str("not ImageCapture"))?;
+    let args = js_sys::Array::new();
+    args.push(&JsValue::from(track.clone()));
+    let image_capture = js_sys::Reflect::construct(ctor, &args)?;
+    let grab = js_sys::Reflect::get(&image_capture, &"grabFrame".into())?;
+    let grab_fn = grab
+        .dyn_ref::<js_sys::Function>()
+        .ok_or_else(|| JsValue::from_str("no grabFrame"))?;
+    let p = grab_fn.call0(&image_capture)?;
+    let promise = p.dyn_into::<js_sys::Promise>()?;
+    let result = wasm_bindgen_futures::JsFuture::from(promise).await?;
+    result
+        .dyn_into::<web_sys::ImageBitmap>()
+        .map_err(|_| JsValue::from_str("not ImageBitmap"))
+}
+
+/// Off-screen video used only when `ImageCapture` is unavailable (e.g. some Safari builds). Muted, zero volume, not visible.
+#[cfg(target_arch = "wasm32")]
+async fn ensure_hidden_capture_video(stream: &web_sys::MediaStream) -> Result<web_sys::HtmlVideoElement, String> {
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen_futures::JsFuture;
+
+    let window = web_sys::window().ok_or("no window")?;
+    let doc = window.document().ok_or("no document")?;
+    let body = doc.body().ok_or("no body")?;
+
+    let video: web_sys::HtmlVideoElement = if let Some(el) = doc.get_element_by_id("record-preview-capture") {
+        el.dyn_into().map_err(|_| "record-preview-capture")?
+    } else {
+        let v = doc
+            .create_element("video")
+            .map_err(|_| "create video")?
+            .dyn_into::<web_sys::HtmlVideoElement>()
+            .map_err(|_| "video cast")?;
+        v.set_id("record-preview-capture");
+        v.set_muted(true);
+        v.set_volume(0.0);
+        let _ = v.set_attribute("playsinline", "");
+        let _ = v.set_attribute(
+            "style",
+            "position:fixed;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none;",
+        );
+        body.append_child(&v).map_err(|_| "append")?;
+        v
+    };
+
+    if video.src_object().is_none() {
+        video.set_src_object(Some(stream));
+        if let Ok(p) = video.play() {
+            let _ = JsFuture::from(p).await;
+        }
+    }
+    Ok(video)
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn canvas_jpeg_from_image_bitmap(bitmap: &web_sys::ImageBitmap) -> Result<bytes::Bytes, String> {
+    use wasm_bindgen::JsCast;
+
+    let vw = bitmap.width() as i32;
+    let vh = bitmap.height() as i32;
+    if vw <= 0 || vh <= 0 {
+        return Err("bitmap empty".to_string());
+    }
+    let (canvas_w, canvas_h) = if vw > 640 {
+        (640u32, (vh as u32 * 640 / vw as u32))
+    } else {
+        (vw as u32, vh as u32)
+    };
+    let window = web_sys::window().ok_or("no window")?;
+    let doc = window.document().ok_or("no document")?;
+    let canvas = doc
+        .create_element("canvas")
+        .map_err(|_| "create canvas")?
+        .dyn_into::<web_sys::HtmlCanvasElement>()
+        .map_err(|_| "canvas")?;
+    canvas.set_width(canvas_w);
+    canvas.set_height(canvas_h);
+    let ctx = canvas
+        .get_context("2d")
+        .map_err(|_| "get context")?
+        .ok_or("no context")?
+        .dyn_into::<web_sys::CanvasRenderingContext2d>()
+        .map_err(|_| "2d")?;
+    ctx.draw_image_with_image_bitmap_and_sw_and_sh_and_dx_and_dy_and_dw_and_dh(
+        bitmap,
+        0.0,
+        0.0,
+        vw as f64,
+        vh as f64,
+        0.0,
+        0.0,
+        canvas_w as f64,
+        canvas_h as f64,
+    )
+    .map_err(|_| "draw".to_string())?;
+    canvas_to_jpeg_bytes(&canvas).await
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn canvas_jpeg_from_video_element(
+    video: &web_sys::HtmlVideoElement,
+    vw: u32,
+    vh: u32,
+) -> Result<bytes::Bytes, String> {
+    use wasm_bindgen::JsCast;
+
+    let (canvas_w, canvas_h) = if vw > 640 {
+        (640u32, vh * 640 / vw)
+    } else {
+        (vw, vh)
+    };
+    let window = web_sys::window().ok_or("no window")?;
+    let doc = window.document().ok_or("no document")?;
+    let canvas = doc
+        .create_element("canvas")
+        .map_err(|_| "create canvas")?
+        .dyn_into::<web_sys::HtmlCanvasElement>()
+        .map_err(|_| "canvas")?;
+    canvas.set_width(canvas_w);
+    canvas.set_height(canvas_h);
+    let ctx = canvas
+        .get_context("2d")
+        .map_err(|_| "get context")?
+        .ok_or("no context")?
+        .dyn_into::<web_sys::CanvasRenderingContext2d>()
+        .map_err(|_| "2d")?;
+    ctx.draw_image_with_html_video_element_and_sw_and_sh_and_dx_and_dy_and_dw_and_dh(
+        video,
+        0.0,
+        0.0,
+        f64::from(vw),
+        f64::from(vh),
+        0.0,
+        0.0,
+        canvas_w as f64,
+        canvas_h as f64,
+    )
+    .map_err(|_| "draw".to_string())?;
+    canvas_to_jpeg_bytes(&canvas).await
+}
+
+/// Capture one frame as JPEG (max width 640). Prefers `ImageCapture` (no `<video>` playback); falls back to a hidden muted video element.
+#[cfg(target_arch = "wasm32")]
+async fn capture_preview_frame_from_stream(stream: &web_sys::MediaStream) -> Result<bytes::Bytes, String> {
+    use wasm_bindgen::JsCast;
+
+    let tracks = stream.get_video_tracks();
+    if tracks.length() == 0 {
+        return Err("no video track".to_string());
+    }
+    let track = tracks
+        .get(0)
+        .dyn_into::<web_sys::MediaStreamTrack>()
+        .map_err(|_| "video track")?;
+
+    if let Ok(bitmap) = grab_frame_via_image_capture(&track).await {
+        let res = canvas_jpeg_from_image_bitmap(&bitmap).await;
+        bitmap.close();
+        return res;
+    }
+
+    let video = ensure_hidden_capture_video(stream).await?;
+    for _ in 0..60 {
+        if video.video_width() > 0 && video.video_height() > 0 {
+            break;
+        }
+        gloo_timers::future::TimeoutFuture::new(100).await;
+    }
+    let vw = video.video_width();
+    let vh = video.video_height();
+    if vw == 0 || vh == 0 {
+        return Err("video not ready".to_string());
+    }
+    canvas_jpeg_from_video_element(&video, vw, vh).await
 }
 
 /// Parse a JS number or BigInt (or numeric string) to `f64`. Plain `JsValue::as_f64()` misses BigInt.
@@ -1165,6 +1317,7 @@ async fn collect_preview_metadata() -> api::PreviewMetadata {
 #[cfg(target_arch = "wasm32")]
 async fn run_preview_sender_loop(
     stop_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    camera_stream: web_sys::MediaStream,
     tournament_url: String,
     field: String,
     camera_key: String,
@@ -1173,7 +1326,7 @@ async fn run_preview_sender_loop(
     use std::sync::atomic::Ordering;
 
     while !stop_flag.load(Ordering::SeqCst) {
-        let bytes = match capture_preview_frame().await {
+        let bytes = match capture_preview_frame_from_stream(&camera_stream).await {
             Ok(b) => b,
             Err(_) => {
                 gloo_timers::future::TimeoutFuture::new(500).await;
@@ -1227,7 +1380,6 @@ async fn run_recording_loop(
     mut upload_count_sig: Signal<u32>,
     mut upload_total_sig: Signal<u32>,
     mut storage_warning_sig: Signal<Option<String>>,
-    mut upload_bar_items_sig: Signal<Vec<UploadBarItem>>,
 ) {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
@@ -1340,7 +1492,6 @@ async fn run_recording_loop(
             if n > 0 {
                 upload_total_sig.set(upload_total_sig() + n);
             }
-            update_upload_bar_from_queue(&q_ref, upload_bar_items_sig.to_owned());
         }
         let chunk_match_ids: HashSet<String> = upload_queue
             .borrow()
@@ -1388,8 +1539,6 @@ async fn run_recording_loop(
                 }
                 if added > 0 {
                     upload_total_sig.set(upload_total_sig() + added);
-                    let q_ref = upload_queue.borrow();
-                    update_upload_bar_from_queue(&q_ref, upload_bar_items_sig.to_owned());
                 }
             }
         }
@@ -1425,7 +1574,6 @@ async fn run_recording_loop(
         let k = key_ref.clone();
         let is_up = is_uploading_sig.to_owned();
         let up_cnt = upload_count_sig.to_owned();
-        let bar_items = upload_bar_items_sig.to_owned();
         spawn(async move {
             let db = match record_idb::open_db().await {
                 Ok(d) => d,
@@ -1441,7 +1589,6 @@ async fn run_recording_loop(
                 pending_chunks_by_match_sig,
                 is_up,
                 up_cnt,
-                bar_items,
             )
             .await;
         });
@@ -1485,12 +1632,13 @@ async fn run_recording_loop(
             if let Some(ref key_str) = key {
                 let stop = Arc::new(AtomicBool::new(false));
                 let stop_c = stop.clone();
+                let stream_for_preview = stream.clone();
                 let tour = tournament_url.clone();
                 let f = field.clone();
                 let k = key_str.clone();
                 let cam = camera_name.clone();
                 dioxus::prelude::spawn(async move {
-                    run_preview_sender_loop(stop_c, tour, f, k, cam).await;
+                    run_preview_sender_loop(stop_c, stream_for_preview, tour, f, k, cam).await;
                 });
                 preview_stop = Some(stop);
                 preview_sender_running = true;
@@ -1587,8 +1735,6 @@ async fn run_recording_loop(
                     }
                     if n_added > 0 {
                         upload_total_sig.set(upload_total_sig() + n_added);
-                        let q_ref = upload_queue.borrow();
-                        update_upload_bar_from_queue(&q_ref, upload_bar_items_sig.to_owned());
                     }
                 }
                 mem_queue
@@ -1622,10 +1768,13 @@ async fn run_recording_loop(
                     }
                 }
             }
-            gloo_timers::future::TimeoutFuture::new(500).await;
-            continue;
         }
 
+        let poll_aligned_with_match = data.hasActiveMatch
+            && current_match.is_some()
+            && data.match_id.as_ref().map(|s| s.as_str()) == current_match.as_ref().map(|id| id.as_str());
+
+        if poll_aligned_with_match {
         let match_id = current_match.as_ref().expect("current_match is None").clone();
 
         if *fsm.borrow() == RecordFsm::Recording && !in_window {
@@ -1690,8 +1839,6 @@ async fn run_recording_loop(
                 }
                 if n_added > 0 {
                     upload_total_sig.set(upload_total_sig() + n_added);
-                    let q_ref = upload_queue.borrow();
-                    update_upload_bar_from_queue(&q_ref, upload_bar_items_sig.to_owned());
                 }
             }
             *fsm.borrow_mut() = RecordFsm::Idle;
@@ -1813,77 +1960,30 @@ async fn run_recording_loop(
                 }
                 if n_added > 0 {
                     upload_total_sig.set(upload_total_sig() + n_added);
-                    let q_ref = upload_queue.borrow();
-                    update_upload_bar_from_queue(&q_ref, upload_bar_items_sig.to_owned());
                 }
             }
         }
 
         if *fsm.borrow() == RecordFsm::Idle {
-            loop {
-                let is_finalize = mem_queue
-                    .borrow()
-                    .front()
-                    .map(|it| matches!(it, MemQueueItem::FinalizeMatch { .. }))
-                    .unwrap_or(false);
-                if !is_finalize {
-                    break;
-                }
-                let Some(MemQueueItem::FinalizeMatch { match_id: fid }) =
-                    mem_queue.borrow_mut().pop_front()
-                else {
-                    break;
-                };
-                if let Some(ref db) = *db_holder.borrow() {
-                    if let Ok(k) = record_idb::get_next_sequence(db).await {
-                        if record_idb::put_finalize(db, &k, &fid).await.is_ok() {
-                            upload_total_sig.set(upload_total_sig() + 1);
-                            upload_queue.borrow_mut().push_back((
-                                k,
-                                QueueItem::FinalizeMatch { match_id: fid },
-                            ));
-                            let q_ref = upload_queue.borrow();
-                            update_upload_bar_from_queue(&q_ref, upload_bar_items_sig.to_owned());
-                        }
-                    }
-                }
-            }
+            mem_queue_idle_finalize_and_evict(
+                &mem_queue,
+                &db_holder,
+                &upload_queue,
+                upload_total_sig.to_owned(),
+                now_ms,
+            )
+            .await;
+        }
 
-            let should_evict_front = {
-                let q = mem_queue.borrow();
-                match q.front() {
-                    Some(MemQueueItem::Video(front)) => {
-                        let age_ok = now_ms - front.wall_epoch_ms > 10_000.0;
-                        if !age_ok {
-                            false
-                        } else {
-                            let mut other_has_kf = false;
-                            let mut kf_outside_ge_10s = false;
-                            for (idx, item) in q.iter().enumerate() {
-                                if let MemQueueItem::Video(ch) = item {
-                                    if idx == 0 {
-                                        continue;
-                                    }
-                                    if !ch.keyframe_wall_times_ms.is_empty() {
-                                        other_has_kf = true;
-                                    }
-                                    for t in &ch.keyframe_wall_times_ms {
-                                        if now_ms - *t >= 10_000.0 {
-                                            kf_outside_ge_10s = true;
-                                        }
-                                    }
-                                }
-                            }
-                            let cond2 = other_has_kf;
-                            age_ok && cond2 && kf_outside_ge_10s
-                        }
-                    }
-                    _ => false,
-                }
-            };
-            if should_evict_front {
-                mem_queue.borrow_mut().pop_front();
-            }
+        } else if *fsm.borrow() == RecordFsm::Idle {
+            mem_queue_idle_finalize_and_evict(
+                &mem_queue,
+                &db_holder,
+                &upload_queue,
+                upload_total_sig.to_owned(),
+                now_ms,
+            )
+            .await;
         }
 
         if data.hasActiveMatch {
@@ -1906,7 +2006,6 @@ async fn run_upload_worker(
     pending_chunks_by_match: Rc<RefCell<HashMap<String, u32>>>,
     mut is_uploading_sig: Signal<bool>,
     mut upload_count_sig: Signal<u32>,
-    mut upload_bar_items_sig: Signal<Vec<UploadBarItem>>,
 ) {
     /// Delay before retrying a failed upload (connection lost, etc.).
     const RETRY_DELAY_MS: u32 = 3000;
@@ -1971,8 +2070,10 @@ async fn run_upload_worker(
                         .await
                         .is_ok()
                         {
-                            let _ = record_idb::delete_entry(&db, &key_str).await;
-                            success = true;
+                            if record_idb::delete_entry(&db, &key_str).await.is_ok() {
+                                upload_count_sig.set(upload_count_sig() + 1);
+                                success = true;
+                            }
                             break;
                         }
                         gloo_timers::future::TimeoutFuture::new(API_RETRY_DELAY_MS).await;
@@ -1982,35 +2083,11 @@ async fn run_upload_worker(
             if !success {
                 let mut q = queue.borrow_mut();
                 q.push_front((key_str, queue_item));
-                update_upload_bar_from_queue(&q, upload_bar_items_sig.to_owned());
                 gloo_timers::future::TimeoutFuture::new(RETRY_DELAY_MS).await;
-            } else {
-                let q = queue.borrow();
-                update_upload_bar_from_queue(&q, upload_bar_items_sig.to_owned());
             }
             is_uploading_sig.set(false);
         }
     }
-}
-
-fn update_upload_bar_from_queue(
-    queue: &VecDeque<(String, QueueItem)>,
-    mut items_sig: Signal<Vec<UploadBarItem>>,
-) {
-    let mut items = Vec::with_capacity(queue.len());
-    for (_key, qitem) in queue.iter() {
-        match qitem {
-            QueueItem::Chunk { match_id } => items.push(UploadBarItem {
-                match_id: match_id.clone(),
-                is_finalize: false,
-            }),
-            QueueItem::FinalizeMatch { match_id } => items.push(UploadBarItem {
-                match_id: Some(match_id.clone()),
-                is_finalize: true,
-            }),
-        }
-    }
-    items_sig.set(items);
 }
 
 fn uuid_style_id() -> String {

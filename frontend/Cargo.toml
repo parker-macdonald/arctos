@@ -30,7 +30,7 @@ web-sys = { version = "0.3", features = [
     "DomException", "Blob", "Response", "Request", "RequestInit", "RequestMode",
     "Headers", "ResponseType", "MouseEvent", "DomRect", "TouchEvent", "Touch", "TouchList", "CustomEvent",
     "Url", "HtmlAnchorElement",
-    "FormData", "HtmlVideoElement", "HtmlMediaElement", "MediaDevices", "MediaStream",
+    "FormData", "HtmlVideoElement", "HtmlMediaElement", "ImageBitmap", "MediaDevices", "MediaStream",
     "MediaRecorder", "MediaRecorderOptions", "MediaStreamConstraints", "BlobEvent",
     "MediaDeviceInfo", "MediaStreamTrack",
     "Storage",
