@@ -20,6 +20,26 @@ use wasm_bindgen::closure::Closure;
 #[cfg(target_arch = "wasm32")]
 use crate::record_mp4;
 
+/// High-resolution timestamps and structured `[record]` lines for debugging the recording pipeline in DevTools.
+#[cfg(target_arch = "wasm32")]
+fn record_now_ms() -> f64 {
+    web_sys::window()
+        .and_then(|w| w.performance())
+        .map(|p| p.now())
+        .unwrap_or_else(js_sys::Date::now)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn record_log(msg: &str) {
+    web_sys::console::log_1(&format!("[record] {}", msg).into());
+}
+
+#[cfg(target_arch = "wasm32")]
+fn record_log_duration(label: &str, t0: f64) {
+    let dt = record_now_ms() - t0;
+    record_log(&format!("{} → {:.2} ms", label, dt));
+}
+
 /// Request screen wake lock and wire `release` to re-acquire (browsers often drop the lock without tab hide).
 #[cfg(target_arch = "wasm32")]
 fn schedule_screen_wake_lock_acquire(mut sentinel_sig: Signal<Option<wasm_bindgen::JsValue>>) {
@@ -86,6 +106,9 @@ async fn stop_media_recorder_fully(rec: web_sys::MediaRecorder) {
     use wasm_bindgen::JsValue;
     use wasm_bindgen_futures::JsFuture;
 
+    let t_stop = record_now_ms();
+    record_log("MediaRecorder: stop_media_recorder_fully → begin (requestData + stop + await onstop)");
+
     let resolve_fn: Rc<RefCell<Option<js_sys::Function>>> = Rc::new(RefCell::new(None));
     let resolve_fn_c = resolve_fn.clone();
     let promise = js_sys::Promise::new(&mut move |resolve, _reject| {
@@ -113,6 +136,7 @@ async fn stop_media_recorder_fully(rec: web_sys::MediaRecorder) {
     // Detach handlers to allow GC and prevent late events calling into stale closures.
     rec.set_onstop(None);
     rec.set_ondataavailable(None);
+    record_log_duration("MediaRecorder: stop_media_recorder_fully (total)", t_stop);
 }
 
 /// Re-request wake lock when the tab becomes visible (lock is released while hidden) and on first pointer (gesture requirement on many phones).
@@ -656,6 +680,9 @@ async fn initialize_camera_and_enumerate(
     use wasm_bindgen_futures::JsFuture;
     use web_sys::MediaStreamConstraints;
 
+    let t_cam = record_now_ms();
+    record_log("initialize_camera: start (getUserMedia + enumerate + device-specific stream)");
+
     let window = match web_sys::window() {
         Some(w) => w,
         None => return,
@@ -815,6 +842,7 @@ async fn initialize_camera_and_enumerate(
     };
 
     preview_stream.set(Some(stream.clone()));
+    record_log_duration("initialize_camera: complete (total)", t_cam);
 }
 
 /// Parse ISO timestamp string to milliseconds since epoch.
@@ -903,7 +931,11 @@ async fn parse_mem_video_chunk(
     if ch.parsed {
         return;
     }
+    let t_parse = record_now_ms();
+    let t_read = record_now_ms();
     let bytes = blob_to_bytes(&ch.blob).await;
+    let read_ms = record_now_ms() - t_read;
+    let t_mp4 = record_now_ms();
     if let Some(init) = record_mp4::extract_ftyp_moov(&bytes) {
         *cached_init.borrow_mut() = Some(init);
     }
@@ -915,6 +947,16 @@ async fn parse_mem_video_chunk(
     ch.sync_samples = sync;
     ch.keyframe_wall_times_ms = ch.sync_samples.iter().map(|s| s.wall_epoch_ms).collect();
     ch.parsed = true;
+    let mp4_ms = record_now_ms() - t_mp4;
+    let total_ms = record_now_ms() - t_parse;
+    record_log(&format!(
+        "parse_mem_video_chunk: wall_epoch_ms={:.1} bytes={} blob_read={:.2} ms mp4_sync={:.2} ms total={:.2} ms",
+        ch.wall_epoch_ms,
+        bytes.len(),
+        read_ms,
+        mp4_ms,
+        total_ms
+    ));
 }
 
 /// Move `FinalizeMatch` from mem queue to IndexedDB upload queue; evict old video chunks (Idle only).
@@ -926,6 +968,8 @@ async fn mem_queue_idle_finalize_and_evict(
     mut upload_total_sig: Signal<u32>,
     now_ms: f64,
 ) {
+    let t_idle = record_now_ms();
+    record_log("mem_queue_idle_finalize_and_evict: begin");
     loop {
         let is_finalize = mem_queue
             .borrow()
@@ -985,7 +1029,9 @@ async fn mem_queue_idle_finalize_and_evict(
     };
     if should_evict_front {
         mem_queue.borrow_mut().pop_front();
+        record_log("mem_queue_idle_finalize_and_evict: evicted front video chunk (age/keyframe policy)");
     }
+    record_log_duration("mem_queue_idle_finalize_and_evict: done (total)", t_idle);
 }
 
 /// JPEG encode helper (quality 0.7 via canvas `toBlob`).
@@ -1180,6 +1226,7 @@ async fn canvas_jpeg_from_video_element(
 async fn capture_preview_frame_from_stream(stream: &web_sys::MediaStream) -> Result<bytes::Bytes, String> {
     use wasm_bindgen::JsCast;
 
+    let t_cap = record_now_ms();
     let tracks = stream.get_video_tracks();
     if tracks.length() == 0 {
         return Err("no video track".to_string());
@@ -1190,24 +1237,46 @@ async fn capture_preview_frame_from_stream(stream: &web_sys::MediaStream) -> Res
         .map_err(|_| "video track")?;
 
     if let Ok(bitmap) = grab_frame_via_image_capture(&track).await {
+        let t_jpeg = record_now_ms();
         let res = canvas_jpeg_from_image_bitmap(&bitmap).await;
         bitmap.close();
+        let jpeg_ms = record_now_ms() - t_jpeg;
+        let total_ms = record_now_ms() - t_cap;
+        record_log(&format!(
+            "preview_frame: path=ImageCapture jpeg_encode={:.2} ms total={:.2} ms",
+            jpeg_ms, total_ms
+        ));
         return res;
     }
 
+    record_log("preview_frame: ImageCapture unavailable or failed; using hidden <video> fallback");
+    let t_vid = record_now_ms();
     let video = ensure_hidden_capture_video(stream).await?;
+    record_log_duration("preview_frame: ensure_hidden_capture_video", t_vid);
+    let t_wait = record_now_ms();
     for _ in 0..60 {
         if video.video_width() > 0 && video.video_height() > 0 {
             break;
         }
         gloo_timers::future::TimeoutFuture::new(100).await;
     }
+    record_log_duration("preview_frame: wait for video dimensions", t_wait);
     let vw = video.video_width();
     let vh = video.video_height();
     if vw == 0 || vh == 0 {
         return Err("video not ready".to_string());
     }
-    canvas_jpeg_from_video_element(&video, vw, vh).await
+    let t_enc = record_now_ms();
+    let out = canvas_jpeg_from_video_element(&video, vw, vh).await;
+    let enc_ms = record_now_ms() - t_enc;
+    let total_ms = record_now_ms() - t_cap;
+    record_log(&format!(
+        "preview_frame: path=hidden_video encode={:.2} ms total={:.2} ms ok={}",
+        enc_ms,
+        total_ms,
+        out.is_ok()
+    ));
+    out
 }
 
 /// Parse a JS number or BigInt (or numeric string) to `f64`. Plain `JsValue::as_f64()` misses BigInt.
@@ -1326,13 +1395,16 @@ async fn run_preview_sender_loop(
     use std::sync::atomic::Ordering;
 
     while !stop_flag.load(Ordering::SeqCst) {
+        let t_cycle = record_now_ms();
         let bytes = match capture_preview_frame_from_stream(&camera_stream).await {
             Ok(b) => b,
             Err(_) => {
+                record_log_duration("preview_sender: capture_preview_frame failed (waiting 500ms)", t_cycle);
                 gloo_timers::future::TimeoutFuture::new(500).await;
                 continue;
             }
         };
+        let t_up = record_now_ms();
         if let Err(_) = api::upload_preview_frame(
             &tournament_url,
             &field,
@@ -1342,10 +1414,15 @@ async fn run_preview_sender_loop(
         )
         .await
         {
+            record_log_duration("preview_sender: upload_preview_frame failed (waiting 500ms)", t_up);
             gloo_timers::future::TimeoutFuture::new(500).await;
             continue;
         }
+        record_log_duration("preview_sender: upload_preview_frame", t_up);
+        let t_meta = record_now_ms();
         let meta = collect_preview_metadata().await;
+        record_log_duration("preview_sender: collect_preview_metadata", t_meta);
+        let t_umeta = record_now_ms();
         let _ = api::upload_preview_metadata(
             &tournament_url,
             &field,
@@ -1354,6 +1431,8 @@ async fn run_preview_sender_loop(
             &meta,
         )
         .await;
+        record_log_duration("preview_sender: upload_preview_metadata", t_umeta);
+        let t_poll = record_now_ms();
         while !stop_flag.load(Ordering::SeqCst) {
             match api::is_preview_frame_consumed(&tournament_url, &field, &camera_name, &camera_key).await {
                 Ok(true) => break,
@@ -1362,7 +1441,9 @@ async fn run_preview_sender_loop(
             }
             gloo_timers::future::TimeoutFuture::new(300).await;
         }
+        record_log_duration("preview_sender: poll until consumed", t_poll);
         gloo_timers::future::TimeoutFuture::new(200).await;
+        record_log_duration("preview_sender: full cycle (until next capture)", t_cycle);
     }
 }
 
@@ -1443,6 +1524,11 @@ async fn run_recording_loop(
             };
             let wall_epoch_ms = blob_event_wall_epoch_ms(&ev);
             let blob_event_timestamp_ms = ev.time_stamp();
+            let sz = blob.size();
+            record_log(&format!(
+                "MediaRecorder ondataavailable: blob_bytes={:.0} wall_epoch_ms={:.1} blob_event_ts_ms={:.1}",
+                sz, wall_epoch_ms, blob_event_timestamp_ms
+            ));
             mq.borrow_mut().push_back(MemQueueItem::Video(MemVideoChunk {
                 blob,
                 blob_event_timestamp_ms,
@@ -1468,6 +1554,8 @@ async fn run_recording_loop(
     let pending_chunks_by_match: Rc<RefCell<HashMap<String, u32>>> =
         Rc::new(RefCell::new(HashMap::new()));
     if let Some(ref db) = *db_holder.borrow() {
+        let t_idb_restore = record_now_ms();
+        record_log("IndexedDB: restore pending upload queue (cursor_entries_ordered)");
         if let Ok(entries) = record_idb::cursor_entries_ordered(db).await {
             for (key, value) in entries {
                 if let Some(match_id) = record_idb::parse_finalize_value(&value) {
@@ -1497,6 +1585,10 @@ async fn run_recording_loop(
             if n > 0 {
                 upload_total_sig.set(upload_total_sig() + n);
             }
+            record_log_duration(
+                &format!("IndexedDB: restore enqueued {} pending item(s)", n),
+                t_idb_restore,
+            );
         }
         let chunk_match_ids: HashSet<String> = upload_queue
             .borrow()
@@ -1607,12 +1699,15 @@ async fn run_recording_loop(
     let mut preview_sender_running = false;
 
     loop {
+        let t_iter = record_now_ms();
+        let t_poll = record_now_ms();
         let poll_result = api::record_match_status(
             &tournament_url,
             &field,
             current_match.as_ref().map(|id| id.as_str()),
         )
         .await;
+        record_log_duration("record_match_status (HTTP poll)", t_poll);
 
         let data = match poll_result {
             Ok(d) => {
@@ -1662,6 +1757,7 @@ async fn run_recording_loop(
         let points = data.points.as_deref().unwrap_or(&[]);
 
         {
+            let t_parse_batch = record_now_ms();
             let indices: Vec<usize> = mem_queue
                 .borrow()
                 .iter()
@@ -1678,11 +1774,18 @@ async fn run_recording_loop(
                     }
                 })
                 .collect();
+            let n_unparsed = indices.len();
             for i in indices {
                 let mut q = mem_queue.borrow_mut();
                 if let Some(MemQueueItem::Video(ref mut ch)) = q.get_mut(i) {
                     parse_mem_video_chunk(ch, &cached_timescale, &cached_init_segment).await;
                 }
+            }
+            if n_unparsed > 0 {
+                record_log_duration(
+                    &format!("mem_queue parse batch (unparsed chunks={})", n_unparsed),
+                    t_parse_batch,
+                );
             }
         }
 
@@ -1702,7 +1805,9 @@ async fn run_recording_loop(
                     } else {
                         sid
                     };
+                    let t_drain = record_now_ms();
                     let drained: Vec<MemQueueItem> = mem_queue.borrow_mut().drain(..).collect();
+                    let drained_n = drained.len();
                     let mut n_added = 0u32;
                     for item in drained {
                         if let MemQueueItem::Video(ch) = item {
@@ -1743,6 +1848,12 @@ async fn run_recording_loop(
                     if n_added > 0 {
                         upload_total_sig.set(upload_total_sig() + n_added);
                     }
+                    record_log(&format!(
+                        "flush mem→IndexedDB (match changed / no longer aligned): drained={} put_ok={} in {:.2} ms",
+                        drained_n,
+                        n_added,
+                        record_now_ms() - t_drain
+                    ));
                 }
                 mem_queue
                     .borrow_mut()
@@ -1793,7 +1904,9 @@ async fn run_recording_loop(
                 sid
             };
             if let Some(ref db) = *db_holder.borrow() {
+                let t_drain = record_now_ms();
                 let drained: Vec<MemQueueItem> = mem_queue.borrow_mut().drain(..).collect();
+                let drained_n = drained.len();
                 let mut n_added = 0u32;
                 for item in drained {
                     match item {
@@ -1847,6 +1960,12 @@ async fn run_recording_loop(
                 if n_added > 0 {
                     upload_total_sig.set(upload_total_sig() + n_added);
                 }
+                record_log(&format!(
+                    "flush mem→IndexedDB (left point recording window): drained={} put_ok={} in {:.2} ms",
+                    drained_n,
+                    n_added,
+                    record_now_ms() - t_drain
+                ));
             }
             *fsm.borrow_mut() = RecordFsm::Idle;
         }
@@ -1878,6 +1997,7 @@ async fn run_recording_loop(
                         _ => None,
                     };
                     if let Some(mut ch) = ch_opt {
+                        let t_trim = record_now_ms();
                         let bytes = blob_to_bytes(&ch.blob).await;
                         let init = cached_init_segment
                             .borrow()
@@ -1892,6 +2012,12 @@ async fn run_recording_loop(
                         ch.blob = bytes_to_blob(&out);
                         ch.parsed = false;
                         parse_mem_video_chunk(&mut ch, &cached_timescale, &cached_init_segment).await;
+                        record_log(&format!(
+                            "point window trim+reparse: sample_idx={} out_bytes={} in {:.2} ms",
+                            sample_idx,
+                            out.len(),
+                            record_now_ms() - t_trim
+                        ));
                         mem_queue
                             .borrow_mut()
                             .push_front(MemQueueItem::Video(ch));
@@ -1914,7 +2040,9 @@ async fn run_recording_loop(
                 sid
             };
             if let Some(ref db) = *db_holder.borrow() {
+                let t_drain = record_now_ms();
                 let drained: Vec<MemQueueItem> = mem_queue.borrow_mut().drain(..).collect();
+                let drained_n = drained.len();
                 let mut n_added = 0u32;
                 for item in drained {
                     match item {
@@ -1968,6 +2096,12 @@ async fn run_recording_loop(
                 if n_added > 0 {
                     upload_total_sig.set(upload_total_sig() + n_added);
                 }
+                record_log(&format!(
+                    "flush mem→IndexedDB (in point window, periodic): drained={} put_ok={} in {:.2} ms",
+                    drained_n,
+                    n_added,
+                    record_now_ms() - t_drain
+                ));
             }
         }
 
@@ -1998,6 +2132,7 @@ async fn run_recording_loop(
         } else {
             match_status_data_sig.set(None);
         }
+        record_log_duration("record loop iteration (total, before 500ms sleep)", t_iter);
         gloo_timers::future::TimeoutFuture::new(500).await;
     }
 }
@@ -2040,14 +2175,43 @@ async fn run_upload_worker(
             is_uploading_sig.set(true);
             let mut success = false;
             let mut payload_too_large = false;
+            let t_item = record_now_ms();
+            let key_short = if key_str.len() > 12 {
+                format!("{}…", &key_str[..12])
+            } else {
+                key_str.clone()
+            };
             match &queue_item {
                 QueueItem::Chunk { .. } => {
+                    let t_idb = record_now_ms();
                     if let Ok(Some(value)) = record_idb::get_entry(&db, &key_str).await {
+                        record_log_duration(
+                            &format!("upload_worker chunk idb get_entry key={}", key_short),
+                            t_idb,
+                        );
                         if let Some((meta, blob)) = record_idb::parse_chunk_value(&value) {
+                            let blob_bytes = blob.size();
+                            record_log(&format!(
+                                "upload_worker chunk: match_id={} blob_bytes={:.0}",
+                                meta.match_id, blob_bytes
+                            ));
                             for attempt in 0..API_RETRY_ATTEMPTS {
+                                let t_up = record_now_ms();
                                 match api::record_upload_chunk(&meta, &blob).await {
                                     Ok(()) => {
+                                        record_log_duration(
+                                            &format!(
+                                                "upload_worker record_upload_chunk attempt {} HTTP",
+                                                attempt + 1
+                                            ),
+                                            t_up,
+                                        );
+                                        let t_del = record_now_ms();
                                         if record_idb::delete_entry(&db, &key_str).await.is_ok() {
+                                            record_log_duration(
+                                                &format!("upload_worker idb delete_entry key={}", key_short),
+                                                t_del,
+                                            );
                                             upload_count_sig.set(upload_count_sig() + 1);
                                             success = true;
                                             let mid = meta.match_id.clone();
@@ -2062,6 +2226,14 @@ async fn run_upload_worker(
                                         break;
                                     }
                                     Err(e) => {
+                                        record_log_duration(
+                                            &format!(
+                                                "upload_worker record_upload_chunk attempt {} FAILED: {}",
+                                                attempt + 1,
+                                                e
+                                            ),
+                                            t_up,
+                                        );
                                         if record_upload_error_is_payload_too_large(&e) {
                                             payload_too_large = true;
                                             storage_warning_sig.set(Some(
@@ -2078,9 +2250,15 @@ async fn run_upload_worker(
                                 }
                             }
                         }
+                    } else {
+                        record_log(&format!(
+                            "upload_worker chunk: get_entry missing or error key={}",
+                            key_short
+                        ));
                     }
                 }
                 QueueItem::FinalizeMatch { match_id } => {
+                    let t_wait = record_now_ms();
                     // Barrier: wait until all chunk uploads for this match are confirmed successful.
                     loop {
                         let remaining = pending_chunks_by_match
@@ -2093,7 +2271,15 @@ async fn run_upload_worker(
                         }
                         gloo_timers::future::TimeoutFuture::new(250).await;
                     }
-                    for _ in 0..API_RETRY_ATTEMPTS {
+                    record_log_duration(
+                        &format!(
+                            "upload_worker finalize wait pending_chunks=0 match_id={}",
+                            match_id
+                        ),
+                        t_wait,
+                    );
+                    for attempt in 0..API_RETRY_ATTEMPTS {
+                        let t_fin = record_now_ms();
                         if api::record_finalize(
                             &tournament_url,
                             &field,
@@ -2104,16 +2290,33 @@ async fn run_upload_worker(
                         .await
                         .is_ok()
                         {
+                            record_log_duration(
+                                &format!("upload_worker record_finalize attempt {}", attempt + 1),
+                                t_fin,
+                            );
+                            let t_del = record_now_ms();
                             if record_idb::delete_entry(&db, &key_str).await.is_ok() {
+                                record_log_duration("upload_worker finalize idb delete_entry", t_del);
                                 upload_count_sig.set(upload_count_sig() + 1);
                                 success = true;
                             }
                             break;
                         }
+                        record_log_duration(
+                            &format!("upload_worker record_finalize attempt {} failed", attempt + 1),
+                            t_fin,
+                        );
                         gloo_timers::future::TimeoutFuture::new(API_RETRY_DELAY_MS).await;
                     }
                 }
             }
+            record_log_duration(
+                &format!(
+                    "upload_worker queue item total (key={} success={})",
+                    key_short, success
+                ),
+                t_item,
+            );
             if !success {
                 let mut q = queue.borrow_mut();
                 q.push_front((key_str, queue_item));
@@ -2122,6 +2325,10 @@ async fn run_upload_worker(
                 } else {
                     RETRY_DELAY_MS
                 };
+                record_log(&format!(
+                    "upload_worker re-queue; backoff {} ms",
+                    wait_ms
+                ));
                 gloo_timers::future::TimeoutFuture::new(wait_ms).await;
             }
             is_uploading_sig.set(false);
