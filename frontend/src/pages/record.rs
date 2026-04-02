@@ -1397,6 +1397,11 @@ async fn run_recording_loop(
         "video/mp4; codecs=avc1.42E01E",
         "video/mp4",
     ];
+    /// Keep each fragment small enough for typical reverse-proxy body limits (often 1–10 MB).
+    const RECORD_VIDEO_BITS_PER_SECOND: u32 = 50_000_000;
+    /// Must match `chunk_length_ms` in `RecordChunkMeta` for every enqueue path.
+    const RECORD_TIMESLICE_MS: i32 = 500;
+    const RECORD_CHUNK_LENGTH_MS: u32 = 500;
 
     fn bytes_to_blob(bytes: &[u8]) -> web_sys::Blob {
         let arr = js_sys::Uint8Array::from(bytes);
@@ -1419,7 +1424,7 @@ async fn run_recording_loop(
     let mq_cb = mem_queue.clone();
     let make_recorder = move |stream: &web_sys::MediaStream| -> Option<MediaRecorder> {
         let mut options = MediaRecorderOptions::new();
-        options.set_video_bits_per_second(50_000_000);
+        options.set_video_bits_per_second(RECORD_VIDEO_BITS_PER_SECOND);
         options.set_audio_bits_per_second(128_000);
         let mut chosen: Option<&str> = None;
         for m in MIME_MP4 {
@@ -1574,6 +1579,7 @@ async fn run_recording_loop(
         let k = key_ref.clone();
         let is_up = is_uploading_sig.to_owned();
         let up_cnt = upload_count_sig.to_owned();
+        let warn_sig = storage_warning_sig.to_owned();
         spawn(async move {
             let db = match record_idb::open_db().await {
                 Ok(d) => d,
@@ -1589,6 +1595,7 @@ async fn run_recording_loop(
                 pending_chunks_by_match_sig,
                 is_up,
                 up_cnt,
+                warn_sig,
             )
             .await;
         });
@@ -1709,7 +1716,7 @@ async fn run_recording_loop(
                                 session_id: session_id.clone(),
                                 chunk_start_timestamp: ch.wall_epoch_ms,
                                 recording_session_start_time: wall,
-                                chunk_length_ms: 1000,
+                                chunk_length_ms: RECORD_CHUNK_LENGTH_MS,
                                 camera_name: camera_name.clone(),
                                 key: key_ref.clone(),
                                 container: container.clone(),
@@ -1754,7 +1761,7 @@ async fn run_recording_loop(
                     *cached_init_segment.borrow_mut() = None;
                     if recorder_holder.borrow().is_none() {
                         if let Some(r) = make_recorder(&stream) {
-                            let _ = r.start_with_time_slice(1000);
+                            let _ = r.start_with_time_slice(RECORD_TIMESLICE_MS);
                             *recorder_holder.borrow_mut() = Some(r);
                         }
                     } else if let Some(r) = recorder_holder.borrow().as_ref() {
@@ -1763,7 +1770,7 @@ async fn run_recording_loop(
                             .and_then(|v| v.as_string())
                             .unwrap_or_default();
                         if state_str != "recording" {
-                            let _ = r.start_with_time_slice(1000);
+                            let _ = r.start_with_time_slice(RECORD_TIMESLICE_MS);
                         }
                     }
                 }
@@ -1801,7 +1808,7 @@ async fn run_recording_loop(
                                 session_id: session_id.clone(),
                                 chunk_start_timestamp: ch.wall_epoch_ms,
                                 recording_session_start_time: wall,
-                                chunk_length_ms: 1000,
+                                chunk_length_ms: RECORD_CHUNK_LENGTH_MS,
                                 camera_name: camera_name.clone(),
                                 key: key_ref.clone(),
                                 container: container.clone(),
@@ -1922,7 +1929,7 @@ async fn run_recording_loop(
                                 session_id: session_id.clone(),
                                 chunk_start_timestamp: ch.wall_epoch_ms,
                                 recording_session_start_time: wall,
-                                chunk_length_ms: 1000,
+                                chunk_length_ms: RECORD_CHUNK_LENGTH_MS,
                                 camera_name: camera_name.clone(),
                                 key: key_ref.clone(),
                                 container: container.clone(),
@@ -1996,6 +2003,15 @@ async fn run_recording_loop(
 }
 
 #[cfg(target_arch = "wasm32")]
+fn record_upload_error_is_payload_too_large(msg: &str) -> bool {
+    let m = msg.to_lowercase();
+    m.contains("413")
+        || m.contains("too large")
+        || m.contains("entity too large")
+        || m.contains("payload too large")
+}
+
+#[cfg(target_arch = "wasm32")]
 async fn run_upload_worker(
     queue: Rc<RefCell<VecDeque<(String, QueueItem)>>>,
     db: idb::Database,
@@ -2006,10 +2022,13 @@ async fn run_upload_worker(
     pending_chunks_by_match: Rc<RefCell<HashMap<String, u32>>>,
     mut is_uploading_sig: Signal<bool>,
     mut upload_count_sig: Signal<u32>,
+    mut storage_warning_sig: Signal<Option<String>>,
 ) {
     /// Delay before retrying a failed upload (connection lost, etc.).
     const RETRY_DELAY_MS: u32 = 3000;
-    /// Number of immediate retries for each upload attempt (any error).
+    /// After HTTP 413, wait longer before re-queuing the same chunk (same blob cannot succeed until the limit is raised).
+    const PAYLOAD_TOO_LARGE_RETRY_MS: u32 = 60_000;
+    /// Number of immediate retries for each upload attempt (transient errors).
     const API_RETRY_ATTEMPTS: u32 = 5;
     /// Delay between API retries (ms).
     const API_RETRY_DELAY_MS: u32 = 1500;
@@ -2020,28 +2039,43 @@ async fn run_upload_worker(
         if let Some((key_str, queue_item)) = item {
             is_uploading_sig.set(true);
             let mut success = false;
+            let mut payload_too_large = false;
             match &queue_item {
                 QueueItem::Chunk { .. } => {
                     if let Ok(Some(value)) = record_idb::get_entry(&db, &key_str).await {
                         if let Some((meta, blob)) = record_idb::parse_chunk_value(&value) {
-                            for _ in 0..API_RETRY_ATTEMPTS {
-                                if api::record_upload_chunk(&meta, &blob).await.is_ok() {
-                                    if record_idb::delete_entry(&db, &key_str).await.is_ok() {
-                                        upload_count_sig.set(upload_count_sig() + 1);
-                                        success = true;
-                                        // Confirmed success: decrement pending chunk count for this match.
-                                        let mid = meta.match_id.clone();
-                                        let mut pending = pending_chunks_by_match.borrow_mut();
-                                        if let Some(v) = pending.get_mut(&mid) {
-                                            *v = v.saturating_sub(1);
-                                            if *v == 0 {
-                                                pending.remove(&mid);
+                            for attempt in 0..API_RETRY_ATTEMPTS {
+                                match api::record_upload_chunk(&meta, &blob).await {
+                                    Ok(()) => {
+                                        if record_idb::delete_entry(&db, &key_str).await.is_ok() {
+                                            upload_count_sig.set(upload_count_sig() + 1);
+                                            success = true;
+                                            let mid = meta.match_id.clone();
+                                            let mut pending = pending_chunks_by_match.borrow_mut();
+                                            if let Some(v) = pending.get_mut(&mid) {
+                                                *v = v.saturating_sub(1);
+                                                if *v == 0 {
+                                                    pending.remove(&mid);
+                                                }
                                             }
                                         }
+                                        break;
                                     }
-                                    break;
+                                    Err(e) => {
+                                        if record_upload_error_is_payload_too_large(&e) {
+                                            payload_too_large = true;
+                                            storage_warning_sig.set(Some(
+                                                "Upload rejected: each chunk is larger than the server allows (HTTP 413). The host should raise the upload limit (e.g. nginx client_max_body_size) or set MAX_CONTENT_LENGTH_BYTES; this page will retry slowly."
+                                                    .to_string(),
+                                            ));
+                                            break;
+                                        }
+                                        if attempt + 1 < API_RETRY_ATTEMPTS {
+                                            gloo_timers::future::TimeoutFuture::new(API_RETRY_DELAY_MS)
+                                                .await;
+                                        }
+                                    }
                                 }
-                                gloo_timers::future::TimeoutFuture::new(API_RETRY_DELAY_MS).await;
                             }
                         }
                     }
@@ -2083,7 +2117,12 @@ async fn run_upload_worker(
             if !success {
                 let mut q = queue.borrow_mut();
                 q.push_front((key_str, queue_item));
-                gloo_timers::future::TimeoutFuture::new(RETRY_DELAY_MS).await;
+                let wait_ms = if payload_too_large {
+                    PAYLOAD_TOO_LARGE_RETRY_MS
+                } else {
+                    RETRY_DELAY_MS
+                };
+                gloo_timers::future::TimeoutFuture::new(wait_ms).await;
             }
             is_uploading_sig.set(false);
         }

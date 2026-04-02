@@ -34,7 +34,11 @@ def create_app(config=None):
         "SQLALCHEMY_DATABASE_URI", "sqlite:///tournament.db"
     )
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-    # No Flask-side max upload size limit; reverse proxy limits (if any) are configured separately.
+    # Record / footage uploads use multi-MB POST bodies; set explicitly so Werkzeug does not reject large chunks.
+    # Reverse proxies (nginx client_max_body_size, etc.) may still need raising in deployment.
+    app.config["MAX_CONTENT_LENGTH"] = int(
+        os.environ.get("MAX_CONTENT_LENGTH_BYTES", str(100 * 1024 * 1024))
+    )
     app.config["SESSION_COOKIE_HTTPONLY"] = True
     # For cross-origin SPA (e.g. dx serve on port 8080, Flask on 5006), set ARCTOS_CORS_DEV=1
     # so the session cookie is sent with credentialed requests. SameSite=None requires Secure

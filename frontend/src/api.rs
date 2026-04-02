@@ -1813,11 +1813,12 @@ pub async fn record_upload_chunk(meta: &RecordChunkMeta, chunk_blob: &web_sys::B
         .map_err(|_| "fetch failed")?;
     let resp: web_sys::Response = resp.dyn_into().map_err(|_| "response cast failed")?;
     if !resp.ok() {
+        let status = resp.status();
         let text = wasm_bindgen_futures::JsFuture::from(resp.text().map_err(|_| "text() failed")?)
             .await
             .map_err(|_| "text await failed")?;
         let msg = text.as_string().unwrap_or_else(|| "Unknown error".to_string());
-        return Err(format!("Upload failed: {}", msg));
+        return Err(format!("Upload failed (HTTP {status}): {msg}"));
     }
     Ok(())
 }
