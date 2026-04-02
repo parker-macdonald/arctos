@@ -743,7 +743,7 @@ def record_preview_frame_get():
 
 @bp.route("/record/upload-chunk", methods=["POST"])
 def record_upload_chunk():
-    """Receive and store a video chunk for point recording. No access key required."""
+    """Receive one fMP4 fragment for point recording (container=mp4). Camera key required."""
     import os
     from flask import current_app
     from datetime import datetime
@@ -759,6 +759,8 @@ def record_upload_chunk():
     recording_session_start_time = request.form.get("recording_session_start_time")
     chunk_duration = request.form.get("chunk_duration")  # Duration in milliseconds
     camera_name = request.form.get("camera_name")
+    blob_event_timestamp_ms_raw = request.form.get("blob_event_timestamp_ms")
+    keyframe_wall_times_json = (request.form.get("keyframe_wall_times_json") or "[]").strip()
 
     # Validate camera access key
     is_valid, error_response = require_camera_key(tournament_url, field_name)
@@ -781,11 +783,11 @@ def record_upload_chunk():
     if chunk_file.filename == "":
         return jsonify({"error": "Empty chunk file"}), 400
 
-    # Container: "mp4" (H.265/HEVC) or "webm". Default webm for backward compatibility.
-    container = (request.form.get("container") or "webm").strip().lower()
-    if container not in ("mp4", "webm"):
-        container = "webm"
-    chunk_ext = container
+    # New record page: fragmented MP4 only (fMP4 from MediaRecorder).
+    container = (request.form.get("container") or "mp4").strip().lower()
+    if container != "mp4":
+        return jsonify({"error": "Only container=mp4 is supported"}), 400
+    chunk_ext = "mp4"
 
     upload_dir = os.path.join(
         current_app.root_path,
@@ -815,6 +817,14 @@ def record_upload_chunk():
             return float(s)
         except ValueError:
             return s
+
+    def parse_float_opt(val):
+        if val is None or val == "":
+            return None
+        try:
+            return float(val)
+        except (TypeError, ValueError):
+            return None
 
     chunk_index = None
     try:
@@ -848,6 +858,8 @@ def record_upload_chunk():
                 "chunk_duration": float(chunk_duration),
                 "camera_name": camera_name,
                 "recording_session_start_time": parse_timestamp(recording_session_start_time),
+                "blob_event_timestamp_ms": parse_float_opt(blob_event_timestamp_ms_raw),
+                "keyframe_wall_times_json": keyframe_wall_times_json,
             }
             chunks_meta[str(chunk_index)] = chunk_meta
 
