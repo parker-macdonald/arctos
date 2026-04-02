@@ -1569,7 +1569,7 @@ async fn run_recording_loop(
             }
         }
     }
-    const NUM_UPLOAD_WORKERS: u32 = 3;
+    const NUM_UPLOAD_WORKERS: u32 = 1;
     for _ in 0..NUM_UPLOAD_WORKERS {
         let q = upload_queue.clone();
         let pending_chunks_by_match_sig = pending_chunks_by_match.clone();
