@@ -166,6 +166,16 @@ fn meta_to_js(meta: &RecordChunkMeta) -> JsValue {
         let _ = Reflect::set(o.as_ref(), &"key".into(), &JsValue::from_str(k));
     }
     let _ = Reflect::set(&o, &"container".into(), &JsValue::from_str(&meta.container));
+    let _ = Reflect::set(
+        o.as_ref(),
+        &"blob_event_timestamp_ms".into(),
+        &JsValue::from_f64(meta.blob_event_timestamp_ms),
+    );
+    let _ = Reflect::set(
+        o.as_ref(),
+        &"keyframe_wall_times_json".into(),
+        &JsValue::from_str(&meta.keyframe_wall_times_json),
+    );
     o.into()
 }
 
@@ -215,5 +225,13 @@ fn js_to_meta(js: &JsValue) -> Option<RecordChunkMeta> {
             .ok()?
             .as_string()
             .unwrap_or_else(|| "webm".to_string()),
+        blob_event_timestamp_ms: Reflect::get(js, &"blob_event_timestamp_ms".into())
+            .ok()
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0),
+        keyframe_wall_times_json: Reflect::get(js, &"keyframe_wall_times_json".into())
+            .ok()
+            .and_then(|v| v.as_string())
+            .unwrap_or_else(|| "[]".to_string()),
     })
 }

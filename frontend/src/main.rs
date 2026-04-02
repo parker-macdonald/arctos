@@ -6,6 +6,8 @@ mod pages;
 
 #[cfg(target_arch = "wasm32")]
 mod record_idb;
+#[cfg(target_arch = "wasm32")]
+mod record_mp4;
 mod stones_filter;
 mod types;
 

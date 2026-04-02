@@ -1,4 +1,4 @@
-//! Point recording page: two media recorders with storage/upload queues, match-status polling.
+//! Point recording page: single MP4 `MediaRecorder`, in-memory chunk queue with keyframe parsing, IndexedDB upload queue, match-status polling.
 
 use crate::api;
 use crate::types::{RecordMatchStatusResponse, RecordPointData};
@@ -15,11 +15,14 @@ use crate::api::RecordChunkMeta;
 use crate::record_idb;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::JsCast;
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::closure::Closure;
+#[cfg(target_arch = "wasm32")]
+use crate::record_mp4;
 
 /// Request screen wake lock and wire `release` to re-acquire (browsers often drop the lock without tab hide).
 #[cfg(target_arch = "wasm32")]
 fn schedule_screen_wake_lock_acquire(mut sentinel_sig: Signal<Option<wasm_bindgen::JsValue>>) {
-    use wasm_bindgen::closure::Closure;
     use wasm_bindgen::JsValue;
     wasm_bindgen_futures::spawn_local(async move {
         let window = match web_sys::window() {
@@ -75,6 +78,43 @@ fn schedule_screen_wake_lock_acquire(mut sentinel_sig: Signal<Option<wasm_bindge
     });
 }
 
+/// Stop a `MediaRecorder` and wait for its `stop` event before returning.
+///
+/// Rationale: creating a new recorder too early can overlap cleanup/final `dataavailable` in some browsers.
+#[cfg(target_arch = "wasm32")]
+async fn stop_media_recorder_fully(rec: web_sys::MediaRecorder) {
+    use wasm_bindgen::JsValue;
+    use wasm_bindgen_futures::JsFuture;
+
+    let resolve_fn: Rc<RefCell<Option<js_sys::Function>>> = Rc::new(RefCell::new(None));
+    let resolve_fn_c = resolve_fn.clone();
+    let promise = js_sys::Promise::new(&mut move |resolve, _reject| {
+        if let Some(f) = resolve.dyn_ref::<js_sys::Function>() {
+            *resolve_fn_c.borrow_mut() = Some(f.clone());
+        }
+    });
+
+    let resolve_fn_for_stop = resolve_fn.clone();
+    let onstop = Closure::wrap(Box::new(move || {
+        if let Some(f) = resolve_fn_for_stop.borrow_mut().take() {
+            let _ = f.call0(&JsValue::UNDEFINED);
+        }
+    }) as Box<dyn FnMut()>);
+    rec.set_onstop(Some(onstop.as_ref().unchecked_ref()));
+    onstop.forget();
+
+    // Best effort: request a final `dataavailable` before stop.
+    let _ = rec.request_data();
+    let _ = rec.stop();
+
+    // Wait for stop event to fire.
+    let _ = JsFuture::from(promise).await;
+
+    // Detach handlers to allow GC and prevent late events calling into stale closures.
+    rec.set_onstop(None);
+    rec.set_ondataavailable(None);
+}
+
 /// Re-request wake lock when the tab becomes visible (lock is released while hidden) and on first pointer (gesture requirement on many phones).
 #[cfg(target_arch = "wasm32")]
 fn register_screen_wake_lock_listeners(sentinel_sig: Signal<Option<wasm_bindgen::JsValue>>) {
@@ -115,21 +155,28 @@ fn register_screen_wake_lock_listeners(sentinel_sig: Signal<Option<wasm_bindgen:
     ptr.forget();
 }
 
+/// In-memory recording FSM: `Recording` while `in_point_recording_window`; chunks flush to IndexedDB only in `Recording`.
 #[cfg(target_arch = "wasm32")]
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum RecorderStatus {
+enum RecordFsm {
     Idle,
     Recording,
 }
 
 #[cfg(target_arch = "wasm32")]
-struct StoredChunk {
+struct MemVideoChunk {
     blob: web_sys::Blob,
-    /// Session ID when this chunk was recorded (set at capture time so drain order can't mix sessions).
-    session_id: String,
-    chunk_start_timestamp: f64,
-    chunk_duration_ms: u32,
-    recording_session_start_time: f64,
+    blob_event_timestamp_ms: f64,
+    wall_epoch_ms: f64,
+    keyframe_wall_times_ms: Vec<f64>,
+    sync_samples: Vec<record_mp4::SyncSampleWall>,
+    parsed: bool,
+}
+
+#[cfg(target_arch = "wasm32")]
+enum MemQueueItem {
+    Video(MemVideoChunk),
+    FinalizeMatch { match_id: String },
 }
 
 /// In-memory queue item: key references chunk or finalize in IndexedDB.
@@ -338,7 +385,7 @@ pub fn Record(url: String, field: ReadSignal<String>, camera_key: ReadSignal<Str
         });
     }
 
-    // When we have stream + field + key, start the two recorders and the monitor/upload loop (wasm only).
+    // When we have stream + field + key, start the MP4 recorder and the monitor/upload loop (wasm only).
     #[cfg(target_arch = "wasm32")]
     {
         let poll_url = url.clone();
@@ -852,39 +899,87 @@ fn parse_iso_ms(s: Option<&str>) -> Option<f64> {
         })
 }
 
-/// Returns true if current time (ms) is between point start and 10s after point end.
+/// True if `now` is during a point or within 3s before start / after end (recording FSM window).
 #[cfg(target_arch = "wasm32")]
-fn point_in_progress(point: &RecordPointData, now_ms: f64) -> bool {
-    let start_ms = match parse_iso_ms(point.stamp.as_deref()) {
-        Some(t) => t,
-        None => return false,
-    };
-    if now_ms < start_ms {
-        web_sys::console::log_1(&format!("point not in progress: now_ms < start_ms: {} < {}", now_ms, start_ms).into());
-        return false;
-    }
-    let end_plus_10 = point
-        .end_stamp
-        .as_deref()
-        .and_then(|s| parse_iso_ms(Some(s)))
-        .map(|end_ms| end_ms + 10_000.0);
-    match end_plus_10 {
-        Some(limit) => now_ms <= limit,
-        None => true, // no end yet, point still in progress
-    }
+fn in_point_recording_window(points: &[RecordPointData], now_ms: f64) -> bool {
+    points.iter().any(|p| {
+        let Some(start_ms) = parse_iso_ms(p.stamp.as_deref()) else {
+            return false;
+        };
+        if now_ms < start_ms - 3000.0 {
+            return false;
+        }
+        match p.end_stamp.as_deref().and_then(|s| parse_iso_ms(Some(s))) {
+            Some(end_ms) => now_ms <= end_ms + 3000.0,
+            None => true,
+        }
+    })
 }
 
-/// Among points that are in progress, return the one that started latest (by stamp).
+/// Minimum point start time among points whose ±3s recording window contains `now_ms`.
 #[cfg(target_arch = "wasm32")]
-fn latest_point_in_progress(points: &[RecordPointData], now_ms: f64) -> Option<&RecordPointData> {
-    points
-        .iter()
-        .filter(|p| point_in_progress(*p, now_ms))
-        .max_by(|a, b| {
-            let ta = parse_iso_ms(a.stamp.as_deref()).unwrap_or(0.0);
-            let tb = parse_iso_ms(b.stamp.as_deref()).unwrap_or(0.0);
-            ta.partial_cmp(&tb).unwrap_or(std::cmp::Ordering::Equal)
-        })
+fn min_point_start_ms_in_recording_window(points: &[RecordPointData], now_ms: f64) -> Option<f64> {
+    let mut min: Option<f64> = None;
+    for p in points {
+        let Some(start_ms) = parse_iso_ms(p.stamp.as_deref()) else {
+            continue;
+        };
+        if now_ms < start_ms - 3000.0 {
+            continue;
+        }
+        match p.end_stamp.as_deref().and_then(|s| parse_iso_ms(Some(s))) {
+            Some(end_ms) if now_ms > end_ms + 3000.0 => continue,
+            _ => {}
+        }
+        min = Some(match min {
+            Some(m) => m.min(start_ms),
+            None => start_ms,
+        });
+    }
+    min
+}
+
+#[cfg(target_arch = "wasm32")]
+fn blob_event_wall_epoch_ms(ev: &web_sys::BlobEvent) -> f64 {
+    web_sys::window()
+        .and_then(|w| w.performance())
+        .map(|p| p.time_origin() + ev.time_stamp())
+        .unwrap_or_else(|| js_sys::Date::now())
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn blob_to_bytes(blob: &web_sys::Blob) -> Vec<u8> {
+    let promise = blob.array_buffer();
+    let ab = wasm_bindgen_futures::JsFuture::from(promise)
+        .await
+        .unwrap_or_else(|_| wasm_bindgen::JsValue::UNDEFINED);
+    let uint8 = js_sys::Uint8Array::new(&ab);
+    let mut out = vec![0u8; uint8.length() as usize];
+    uint8.copy_to(&mut out);
+    out
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn parse_mem_video_chunk(
+    ch: &mut MemVideoChunk,
+    cached_timescale: &Rc<RefCell<Option<u32>>>,
+    cached_init: &Rc<RefCell<Option<Vec<u8>>>>,
+) {
+    if ch.parsed {
+        return;
+    }
+    let bytes = blob_to_bytes(&ch.blob).await;
+    if let Some(init) = record_mp4::extract_ftyp_moov(&bytes) {
+        *cached_init.borrow_mut() = Some(init);
+    }
+    let ts = cached_timescale.borrow().as_ref().copied();
+    let (sync, new_ts) = record_mp4::sync_sample_wall_times(&bytes, ch.wall_epoch_ms, ts);
+    if let Some(t) = new_ts {
+        *cached_timescale.borrow_mut() = Some(t);
+    }
+    ch.sync_samples = sync;
+    ch.keyframe_wall_times_ms = ch.sync_samples.iter().map(|s| s.wall_epoch_ms).collect();
+    ch.parsed = true;
 }
 
 /// Capture one frame from #record-preview video as JPEG (max width 640, quality 0.7). WASM only.
@@ -1134,125 +1229,76 @@ async fn run_recording_loop(
     mut storage_warning_sig: Signal<Option<String>>,
     mut upload_bar_items_sig: Signal<Vec<UploadBarItem>>,
 ) {
-    use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
     use wasm_bindgen::closure::Closure;
     use wasm_bindgen::JsCast;
     use web_sys::{MediaRecorder, MediaRecorderOptions};
 
-    // Prefer H.265/HEVC (mp4), fall back to WebM. Use full codec strings (like avc1.42E01E for H.264).
-    // HEVC: hvc1/hev1 + profile.compat.level.constraint (e.g. 1.6.L93.B0 = Main profile, level 3.1).
-    const MIME_PREFERENCE: &[(&str, &str)] = &[
-        ("video/mp4; codecs=hvc1.1.6.L93.B0", "mp4"),
-        ("video/mp4; codecs=hev1.1.6.L93.B0", "mp4"),
-        ("video/mp4; codecs=hvc1.1.6.L93", "mp4"),
-        ("video/mp4; codecs=hev1.1.6.L93", "mp4"),
-        ("video/mp4; codecs=hvc1", "mp4"),
-        ("video/mp4; codecs=hev1", "mp4"),
-        ("video/mp4; codecs=avc1.42E01E", "mp4"),
-        ("video/mp4", "mp4"),
-        ("video/webm; codecs=vp9", "webm"),
-        ("video/webm", "webm"),
+    const MIME_MP4: &[&str] = &[
+        "video/mp4; codecs=hvc1.1.6.L93.B0",
+        "video/mp4; codecs=hev1.1.6.L93.B0",
+        "video/mp4; codecs=hvc1.1.6.L93",
+        "video/mp4; codecs=hev1.1.6.L93",
+        "video/mp4; codecs=hvc1",
+        "video/mp4; codecs=hev1",
+        "video/mp4; codecs=avc1.42E01E",
+        "video/mp4",
     ];
 
-    let key_ref = key.clone();
-    let container_ref: Rc<RefCell<String>> = Rc::new(RefCell::new("webm".to_string()));
-
-    // Recorder state: recorder, status, started_at (ms), current_session_id (new id each time this recorder is started).
-    struct RecorderState {
-        recorder: Option<MediaRecorder>,
-        status: RecorderStatus,
-        started_at: Option<f64>,
-        current_session_id: String,
+    fn bytes_to_blob(bytes: &[u8]) -> web_sys::Blob {
+        let arr = js_sys::Uint8Array::from(bytes);
+        let parts = js_sys::Array::new();
+        parts.push(&arr);
+        web_sys::Blob::new_with_u8_array_sequence(&parts).expect("Blob::new")
     }
 
-    // Use a persistent chunk_count for chunk_start_timestamp (storage is drained often so queue length is not a valid index).
-    let container_for_recorder = container_ref.clone();
-    let make_recorder = |stream: &web_sys::MediaStream,
-                        storage_queue: Rc<RefCell<Vec<StoredChunk>>>,
-                        session_start: Rc<RefCell<f64>>,
-                        chunk_count: Rc<RefCell<u32>>,
-                        session_id_ref: Rc<RefCell<String>>| {
+    let key_ref = key.clone();
+    let container = "mp4".to_string();
+
+    let mem_queue: Rc<RefCell<VecDeque<MemQueueItem>>> = Rc::new(RefCell::new(VecDeque::new()));
+    let fsm: Rc<RefCell<RecordFsm>> = Rc::new(RefCell::new(RecordFsm::Idle));
+    let recording_session_uuid: Rc<RefCell<String>> = Rc::new(RefCell::new(String::new()));
+    let recording_session_wall_start_ms: Rc<RefCell<f64>> = Rc::new(RefCell::new(0.0));
+    let cached_timescale: Rc<RefCell<Option<u32>>> = Rc::new(RefCell::new(None));
+    let cached_init_segment: Rc<RefCell<Option<Vec<u8>>>> = Rc::new(RefCell::new(None));
+    let recorder_holder: Rc<RefCell<Option<MediaRecorder>>> = Rc::new(RefCell::new(None));
+
+    let mq_cb = mem_queue.clone();
+    let make_recorder = move |stream: &web_sys::MediaStream| -> Option<MediaRecorder> {
         let mut options = MediaRecorderOptions::new();
         options.set_video_bits_per_second(50_000_000);
         options.set_audio_bits_per_second(128_000);
-        let mut chosen_container = "webm";
-        for (mime, container) in MIME_PREFERENCE {
-            if MediaRecorder::is_type_supported(mime) {
-                options.set_mime_type(mime);
-                chosen_container = container;
+        let mut chosen: Option<&str> = None;
+        for m in MIME_MP4 {
+            if MediaRecorder::is_type_supported(m) {
+                options.set_mime_type(m);
+                chosen = Some(*m);
                 break;
             }
         }
-        *container_for_recorder.borrow_mut() = chosen_container.to_string();
-        let r = MediaRecorder::new_with_media_stream_and_media_recorder_options(stream, &options)
-            .ok()?;
-        let sq = storage_queue.clone();
-        let ss = session_start.clone();
-        let cc = chunk_count.clone();
-        let sid_ref = session_id_ref.clone();
+        chosen?;
+        let r = MediaRecorder::new_with_media_stream_and_media_recorder_options(stream, &options).ok()?;
+        let mq = mq_cb.clone();
         let closure = Closure::wrap(Box::new(move |ev: web_sys::BlobEvent| {
-            let blob = match ev.data() {
-                Some(b) => b,
-                None => return,
+            let Some(blob) = ev.data() else {
+                return;
             };
-            let start = *ss.borrow();
-            let chunk_start = start + (*cc.borrow() as f64) * 1000.0;
-            *cc.borrow_mut() += 1;
-            let session_id = sid_ref.borrow().clone();
-            sq.borrow_mut().push(StoredChunk {
+            let wall_epoch_ms = blob_event_wall_epoch_ms(&ev);
+            let blob_event_timestamp_ms = ev.time_stamp();
+            mq.borrow_mut().push_back(MemQueueItem::Video(MemVideoChunk {
                 blob,
-                session_id,
-                chunk_start_timestamp: chunk_start,
-                chunk_duration_ms: 1000,
-                recording_session_start_time: start,
-            });
+                blob_event_timestamp_ms,
+                wall_epoch_ms,
+                keyframe_wall_times_ms: vec![],
+                sync_samples: vec![],
+                parsed: false,
+            }));
         }) as Box<dyn FnMut(web_sys::BlobEvent)>);
         r.set_ondataavailable(Some(closure.as_ref().unchecked_ref()));
         closure.forget();
         Some(r)
     };
-
-    let state1 = Rc::new(RefCell::new(RecorderState {
-        recorder: None,
-        status: RecorderStatus::Idle,
-        started_at: None,
-        current_session_id: String::new(),
-    }));
-    let state2 = Rc::new(RefCell::new(RecorderState {
-        recorder: None,
-        status: RecorderStatus::Idle,
-        started_at: None,
-        current_session_id: String::new(),
-    }));
-
-    let storage1 = Rc::new(RefCell::new(Vec::<StoredChunk>::new()));
-    let session_start1 = Rc::new(RefCell::new(0.0f64));
-    let chunk_count1 = Rc::new(RefCell::new(0u32));
-    let session_id1 = Rc::new(RefCell::new(String::new()));
-    let storage2 = Rc::new(RefCell::new(Vec::<StoredChunk>::new()));
-    let session_start2 = Rc::new(RefCell::new(0.0f64));
-    let chunk_count2 = Rc::new(RefCell::new(0u32));
-    let session_id2 = Rc::new(RefCell::new(String::new()));
-
-    if let Some(r) = make_recorder(
-        &stream,
-        storage1.clone(),
-        session_start1.clone(),
-        chunk_count1.clone(),
-        session_id1.clone(),
-    ) {
-        state1.borrow_mut().recorder = Some(r);
-    }
-    if let Some(r) = make_recorder(
-        &stream,
-        storage2.clone(),
-        session_start2.clone(),
-        chunk_count2.clone(),
-        session_id2.clone(),
-    ) {
-        state2.borrow_mut().recorder = Some(r);
-    }
 
     let db_holder: Rc<RefCell<Option<idb::Database>>> = Rc::new(RefCell::new(None));
     if db_holder.borrow().is_none() {
@@ -1260,11 +1306,10 @@ async fn run_recording_loop(
             *db_holder.borrow_mut() = Some(db);
         }
     }
-    let upload_queue: Rc<RefCell<VecDeque<(String, QueueItem)>>> = Rc::new(RefCell::new(VecDeque::new()));
-    // Barrier tracking for finalize ordering:
-    // For each match_id, keep a count of chunk uploads that have not yet been confirmed successful.
-    // A FinalizeMatch item must not run until this reaches 0.
-    let pending_chunks_by_match: Rc<RefCell<HashMap<String, u32>>> = Rc::new(RefCell::new(HashMap::new()));
+    let upload_queue: Rc<RefCell<VecDeque<(String, QueueItem)>>> =
+        Rc::new(RefCell::new(VecDeque::new()));
+    let pending_chunks_by_match: Rc<RefCell<HashMap<String, u32>>> =
+        Rc::new(RefCell::new(HashMap::new()));
     if let Some(ref db) = *db_holder.borrow() {
         if let Ok(entries) = record_idb::cursor_entries_ordered(db).await {
             for (key, value) in entries {
@@ -1274,7 +1319,10 @@ async fn run_recording_loop(
                         .push_back((key, QueueItem::FinalizeMatch { match_id }));
                 } else if let Some((meta, _blob)) = record_idb::parse_chunk_value(&value) {
                     let match_id = meta.match_id.clone();
-                    *pending_chunks_by_match.borrow_mut().entry(match_id.clone()).or_insert(0) += 1;
+                    *pending_chunks_by_match
+                        .borrow_mut()
+                        .entry(match_id.clone())
+                        .or_insert(0) += 1;
                     upload_queue.borrow_mut().push_back((
                         key,
                         QueueItem::Chunk {
@@ -1294,7 +1342,6 @@ async fn run_recording_loop(
             }
             update_upload_bar_from_queue(&q_ref, upload_bar_items_sig.to_owned());
         }
-        // Reconcile: add FinalizeMatch for matches that have chunks but no finalize in queue and are no longer active
         let chunk_match_ids: HashSet<String> = upload_queue
             .borrow()
             .iter()
@@ -1324,9 +1371,7 @@ async fn run_recording_loop(
         if !need_finalize.is_empty() {
             if let Ok(status) = api::record_match_status(&tournament_url, &field, None).await {
                 let current_match_id = status.match_id.as_deref();
-                need_finalize.retain(|id| {
-                    current_match_id.map(|cur| cur != id.as_str()).unwrap_or(true)
-                });
+                need_finalize.retain(|id| current_match_id.map(|cur| cur != id.as_str()).unwrap_or(true));
                 let mut added = 0u32;
                 for match_id in need_finalize {
                     if let Ok(key) = record_idb::get_next_sequence(db).await {
@@ -1348,7 +1393,6 @@ async fn run_recording_loop(
                 }
             }
         }
-        // Check storage quota; warn if low (e.g. < 100 MB free).
         if let Some(window) = web_sys::window() {
             let storage = window.navigator().storage();
             if let Ok(promise) = storage.estimate() {
@@ -1360,10 +1404,11 @@ async fn run_recording_loop(
                     let usage = effective_storage_usage_bytes(&estimate_js, Some(db))
                         .await
                         .unwrap_or(0.0);
-                    const LOW_STORAGE_BYTES: f64 = 100_000_000.0; // 100 MB
+                    const LOW_STORAGE_BYTES: f64 = 100_000_000.0;
                     if quota > 0.0 && (quota - usage) < LOW_STORAGE_BYTES {
                         storage_warning_sig.set(Some(
-                            "Low device storage for recording buffer; uploads may fail if connection is slow.".to_string(),
+                            "Low device storage for recording buffer; uploads may fail if connection is slow."
+                                .to_string(),
                         ));
                     }
                 }
@@ -1373,7 +1418,7 @@ async fn run_recording_loop(
     const NUM_UPLOAD_WORKERS: u32 = 3;
     for _ in 0..NUM_UPLOAD_WORKERS {
         let q = upload_queue.clone();
-            let pending_chunks_by_match_sig = pending_chunks_by_match.clone();
+        let pending_chunks_by_match_sig = pending_chunks_by_match.clone();
         let tour = tournament_url.clone();
         let f = field.clone();
         let cam = camera_name.clone();
@@ -1386,26 +1431,24 @@ async fn run_recording_loop(
                 Ok(d) => d,
                 Err(_) => return,
             };
-                run_upload_worker(
-                    q,
-                    db,
-                    tour,
-                    f,
-                    cam,
-                    k,
-                    pending_chunks_by_match_sig,
-                    is_up,
-                    up_cnt,
-                    bar_items,
-                )
-                .await;
+            run_upload_worker(
+                q,
+                db,
+                tour,
+                f,
+                cam,
+                k,
+                pending_chunks_by_match_sig,
+                is_up,
+                up_cnt,
+                bar_items,
+            )
+            .await;
         });
     }
 
-    let mut current_match: Option<String> = None; // match_id
+    let mut current_match: Option<String> = None;
     let mut last_poll_data: Option<RecordMatchStatusResponse> = None;
-    let mut point_was_in_progress = false;
-    let chunk_index_global = AtomicU32::new(0);
     let mut preview_stop: Option<Arc<AtomicBool>> = None;
     let mut preview_sender_running = false;
 
@@ -1438,7 +1481,6 @@ async fn run_recording_loop(
             }
         };
 
-        // Start or stop the preview sender task based on data.preview_requested.
         if data.preview_requested && !preview_sender_running {
             if let Some(ref key_str) = key {
                 let stop = Arc::new(AtomicBool::new(false));
@@ -1463,94 +1505,119 @@ async fn run_recording_loop(
 
         let now_ms = js_sys::Date::now();
         let points = data.points.as_deref().unwrap_or(&[]);
-        let point_in_progress_now = points
-            .iter()
-            .any(|p| point_in_progress(p, now_ms));
-        let _latest_point = latest_point_in_progress(points, now_ms);
-        // web_sys::console::log_1(&format!("data match id: {:?}", data.match_id).into());
-        // web_sys::console::log_1(&format!("current match: {:?}", current_match).into());
-        if !data.hasActiveMatch || data.match_id.as_ref().map(|s| s.as_str()) != current_match.as_ref().map(|id| id.as_str()) {
+
+        {
+            let indices: Vec<usize> = mem_queue
+                .borrow()
+                .iter()
+                .enumerate()
+                .filter_map(|(i, it)| {
+                    if let MemQueueItem::Video(ch) = it {
+                        if !ch.parsed {
+                            Some(i)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            for i in indices {
+                let mut q = mem_queue.borrow_mut();
+                if let Some(MemQueueItem::Video(ref mut ch)) = q.get_mut(i) {
+                    parse_mem_video_chunk(ch, &cached_timescale, &cached_init_segment).await;
+                }
+            }
+        }
+
+        let in_window = in_point_recording_window(points, now_ms);
+
+        if !data.hasActiveMatch || data.match_id.as_ref().map(|s| s.as_str()) != current_match.as_ref().map(|id| id.as_str())
+        {
             if let Some(match_id) = current_match.take() {
-                if let Some(r1) = state1.borrow_mut().recorder.take() {
-                    let _ = r1.stop();
+                if let Some(r) = recorder_holder.borrow_mut().take() {
+                    stop_media_recorder_fully(r).await;
                 }
-                if let Some(r2) = state2.borrow_mut().recorder.take() {
-                    let _ = r2.stop();
-                }
-                storage1.borrow_mut().clear();
-                storage2.borrow_mut().clear();
-                state1.borrow_mut().status = RecorderStatus::Idle;
-                state2.borrow_mut().status = RecorderStatus::Idle;
-                state1.borrow_mut().started_at = None;
-                state2.borrow_mut().started_at = None;
                 if let Some(ref db) = *db_holder.borrow() {
-                    if let Ok(key) = record_idb::get_next_sequence(db).await {
-                                match record_idb::put_finalize(db, &key, &match_id).await {
-                            Ok(()) => {
-                                let mut q = upload_queue.borrow_mut();
-                                q.push_back((key, QueueItem::FinalizeMatch { match_id: match_id.clone() }));
-                                update_upload_bar_from_queue(&q, upload_bar_items_sig.to_owned());
-                            }
-                            Err(ref e) => {
-                                if let idb::Error::DomException(ref dom) = e {
-                                    if dom.name() == "QuotaExceededError" {
-                                        storage_warning_sig.set(Some(
-                                            "Recording buffer full. Free device storage or wait for uploads to catch up.".to_string(),
-                                        ));
-                                    }
+                    let sid = recording_session_uuid.borrow().clone();
+                    let wall = *recording_session_wall_start_ms.borrow();
+                    let session_id = if sid.is_empty() {
+                        uuid_style_id()
+                    } else {
+                        sid
+                    };
+                    let drained: Vec<MemQueueItem> = mem_queue.borrow_mut().drain(..).collect();
+                    let mut n_added = 0u32;
+                    for item in drained {
+                        if let MemQueueItem::Video(ch) = item {
+                            let keyframe_wall_times_json =
+                                serde_json::to_string(&ch.keyframe_wall_times_ms)
+                                    .unwrap_or_else(|_| "[]".to_string());
+                            let meta = RecordChunkMeta {
+                                tournament_url: tournament_url.clone(),
+                                field: field.clone(),
+                                match_id: match_id.clone(),
+                                session_id: session_id.clone(),
+                                chunk_start_timestamp: ch.wall_epoch_ms,
+                                recording_session_start_time: wall,
+                                chunk_length_ms: 1000,
+                                camera_name: camera_name.clone(),
+                                key: key_ref.clone(),
+                                container: container.clone(),
+                                blob_event_timestamp_ms: ch.blob_event_timestamp_ms,
+                                keyframe_wall_times_json,
+                            };
+                            if let Ok(k) = record_idb::get_next_sequence(db).await {
+                                if record_idb::put_chunk(db, &k, &meta, &ch.blob).await.is_ok() {
+                                    n_added += 1;
+                                    *pending_chunks_by_match
+                                        .borrow_mut()
+                                        .entry(match_id.clone())
+                                        .or_insert(0) += 1;
+                                    upload_queue.borrow_mut().push_back((
+                                        k,
+                                        QueueItem::Chunk {
+                                            match_id: Some(match_id.clone()),
+                                        },
+                                    ));
                                 }
                             }
                         }
                     }
+                    if n_added > 0 {
+                        upload_total_sig.set(upload_total_sig() + n_added);
+                        let q_ref = upload_queue.borrow();
+                        update_upload_bar_from_queue(&q_ref, upload_bar_items_sig.to_owned());
+                    }
                 }
+                mem_queue
+                    .borrow_mut()
+                    .push_back(MemQueueItem::FinalizeMatch { match_id });
+                *fsm.borrow_mut() = RecordFsm::Idle;
+                recording_session_uuid.borrow_mut().clear();
+                *cached_timescale.borrow_mut() = None;
+                *cached_init_segment.borrow_mut() = None;
                 is_recording_sig.set(false);
             }
             if data.hasActiveMatch {
                 if let Some(ref match_id) = data.match_id {
                     current_match = Some(match_id.clone());
                     is_recording_sig.set(true);
-                    *session_start1.borrow_mut() = now_ms;
-                    *chunk_count1.borrow_mut() = 0;
-                    state1.borrow_mut().started_at = Some(now_ms);
-                    let new_sid = uuid_style_id();
-                    state1.borrow_mut().current_session_id = new_sid.clone();
-                    *session_id1.borrow_mut() = new_sid.clone();
-                    // After a match ends we take and stop both recorders, so they are None for the next match. Recreate if needed.
-                    if state1.borrow().recorder.is_none() {
-                        if let Some(r) = make_recorder(
-                            &stream,
-                            storage1.clone(),
-                            session_start1.clone(),
-                            chunk_count1.clone(),
-                            session_id1.clone(),
-                        ) {
+                    *cached_timescale.borrow_mut() = None;
+                    *cached_init_segment.borrow_mut() = None;
+                    if recorder_holder.borrow().is_none() {
+                        if let Some(r) = make_recorder(&stream) {
                             let _ = r.start_with_time_slice(1000);
-                            state1.borrow_mut().recorder = Some(r);
+                            *recorder_holder.borrow_mut() = Some(r);
                         }
-                    } else if let Some(r) = state1.borrow().recorder.as_ref() {
+                    } else if let Some(r) = recorder_holder.borrow().as_ref() {
                         let state_str: String = js_sys::Reflect::get(r.as_ref(), &"state".into())
                             .ok()
                             .and_then(|v| v.as_string())
                             .unwrap_or_default();
-                        // Start unless already recording (some browsers may not report "inactive")
                         if state_str != "recording" {
                             let _ = r.start_with_time_slice(1000);
-                        }
-                    }
-                    if state2.borrow().recorder.is_none() {
-                        *session_start2.borrow_mut() = now_ms;
-                        *chunk_count2.borrow_mut() = 0;
-                        let sid2 = uuid_style_id();
-                        *session_id2.borrow_mut() = sid2.clone();
-                        state2.borrow_mut().current_session_id = sid2;
-                        if let Some(r) = make_recorder(
-                            &stream,
-                            storage2.clone(),
-                            session_start2.clone(),
-                            chunk_count2.clone(),
-                            session_id2.clone(),
-                        ) {
-                            state2.borrow_mut().recorder = Some(r);
                         }
                     }
                 }
@@ -1558,229 +1625,266 @@ async fn run_recording_loop(
             gloo_timers::future::TimeoutFuture::new(500).await;
             continue;
         }
+
         let match_id = current_match.as_ref().expect("current_match is None").clone();
 
-        // 1. Handle storage queues: if RECORDING, drain storage into upload queue (use this recorder's session_id)
-        let base_meta = RecordChunkMeta {
-            tournament_url: tournament_url.clone(),
-            field: field.clone(),
-            match_id: match_id.clone(),
-            session_id: String::new(), // overridden per state below
-            chunk_start_timestamp: 0.0,
-            recording_session_start_time: 0.0,
-            chunk_length_ms: 1000,
-            camera_name: camera_name.clone(),
-            key: key_ref.clone(),
-            container: container_ref.borrow().clone(),
-        };
-        for (_state, storage_rc) in [
-            (&state1, storage1.clone()),
-            (&state2, storage2.clone()),
-        ] {
-            if _state.borrow().status == RecorderStatus::Recording {
-                let drained: Vec<StoredChunk> = storage_rc.borrow_mut().drain(..).collect();
-                let n = drained.len();
-                if n > 0 {
-                    if let Some(ref db) = *db_holder.borrow() {
-                                for st in drained {
-                            let _idx = chunk_index_global.fetch_add(1, Ordering::Relaxed);
+        if *fsm.borrow() == RecordFsm::Recording && !in_window {
+            let sid = recording_session_uuid.borrow().clone();
+            let wall = *recording_session_wall_start_ms.borrow();
+            let session_id = if sid.is_empty() {
+                uuid_style_id()
+            } else {
+                sid
+            };
+            if let Some(ref db) = *db_holder.borrow() {
+                let drained: Vec<MemQueueItem> = mem_queue.borrow_mut().drain(..).collect();
+                let mut n_added = 0u32;
+                for item in drained {
+                    match item {
+                        MemQueueItem::Video(ch) => {
+                            let keyframe_wall_times_json =
+                                serde_json::to_string(&ch.keyframe_wall_times_ms)
+                                    .unwrap_or_else(|_| "[]".to_string());
                             let meta = RecordChunkMeta {
-                                session_id: st.session_id.clone(),
-                                chunk_start_timestamp: st.chunk_start_timestamp,
-                                recording_session_start_time: st.recording_session_start_time,
-                                chunk_length_ms: st.chunk_duration_ms,
-                                ..base_meta.clone()
+                                tournament_url: tournament_url.clone(),
+                                field: field.clone(),
+                                match_id: match_id.clone(),
+                                session_id: session_id.clone(),
+                                chunk_start_timestamp: ch.wall_epoch_ms,
+                                recording_session_start_time: wall,
+                                chunk_length_ms: 1000,
+                                camera_name: camera_name.clone(),
+                                key: key_ref.clone(),
+                                container: container.clone(),
+                                blob_event_timestamp_ms: ch.blob_event_timestamp_ms,
+                                keyframe_wall_times_json,
                             };
-                            if let Ok(key) = record_idb::get_next_sequence(db).await {
-                                match record_idb::put_chunk(db, &key, &meta, &st.blob).await {
-                                    Ok(()) => {
-                                        let mut q = upload_queue.borrow_mut();
-                                                    *pending_chunks_by_match.borrow_mut().entry(match_id.clone()).or_insert(0) += 1;
-                                        q.push_back((
-                                            key,
-                                            QueueItem::Chunk {
-                                                match_id: Some(match_id.clone()),
-                                            },
-                                        ));
-                                        update_upload_bar_from_queue(&q, upload_bar_items_sig.to_owned());
-                                    }
-                                    Err(ref e) => {
-                                        if let idb::Error::DomException(ref dom) = e {
-                                            if dom.name() == "QuotaExceededError" {
-                                                storage_warning_sig.set(Some(
-                                                    "Recording buffer full. Free device storage or wait for uploads to catch up.".to_string(),
-                                                ));
-                                            }
-                                        }
-                                    }
+                            if let Ok(k) = record_idb::get_next_sequence(db).await {
+                                if record_idb::put_chunk(db, &k, &meta, &ch.blob).await.is_ok() {
+                                    n_added += 1;
+                                    *pending_chunks_by_match
+                                        .borrow_mut()
+                                        .entry(match_id.clone())
+                                        .or_insert(0) += 1;
+                                    upload_queue.borrow_mut().push_back((
+                                        k,
+                                        QueueItem::Chunk {
+                                            match_id: Some(match_id.clone()),
+                                        },
+                                    ));
+                                }
+                            }
+                        }
+                        MemQueueItem::FinalizeMatch { match_id: fid } => {
+                            if let Ok(k) = record_idb::get_next_sequence(db).await {
+                                if record_idb::put_finalize(db, &k, &fid).await.is_ok() {
+                                    n_added += 1;
+                                    upload_queue.borrow_mut().push_back((
+                                        k,
+                                        QueueItem::FinalizeMatch { match_id: fid },
+                                    ));
                                 }
                             }
                         }
                     }
-                    upload_total_sig.set(upload_total_sig() + n as u32);
+                }
+                if n_added > 0 {
+                    upload_total_sig.set(upload_total_sig() + n_added);
+                    let q_ref = upload_queue.borrow();
+                    update_upload_bar_from_queue(&q_ref, upload_bar_items_sig.to_owned());
                 }
             }
+            *fsm.borrow_mut() = RecordFsm::Idle;
         }
 
-        // 2. already computed point_in_progress_now
-
-        // 3. No point in progress: cycle recorders
-        if !point_in_progress_now {
-            let t1 = state1.borrow().started_at.unwrap_or(now_ms);
-            let t2 = state2.borrow().started_at.unwrap_or(now_ms);
-            let (longer, shorter) = if t1 <= t2 {
-                (&state1, &state2)
-            } else {
-                (&state2, &state1)
-            };
-            let longer_run_secs = (now_ms - longer.borrow().started_at.unwrap_or(0.0)) / 1000.0;
-            let shorter_run_secs = (now_ms - shorter.borrow().started_at.unwrap_or(0.0)) / 1000.0;
-
-            if longer_run_secs > 10.0 {
-                web_sys::console::log_1(&format!("longer recorder running for too long: {}s (t1: {}s, t2: {}s)", longer_run_secs, now_ms-t1, now_ms-t2).into());
-                if let Some(r) = longer.borrow_mut().recorder.take() {
-                    let _ = r.stop();
-                }
-                if std::ptr::eq(longer.as_ref(), state1.as_ref()) {
-                    storage1.borrow_mut().clear();
-                } else {
-                    storage2.borrow_mut().clear();
-                }
-                longer.borrow_mut().status = RecorderStatus::Idle;
-                longer.borrow_mut().started_at = None;
-                let session_start_longer = if std::ptr::eq(longer.as_ref(), state1.as_ref()) {
-                    session_start1.clone()
-                } else {
-                    session_start2.clone()
-                };
-                let chunk_count_longer = if std::ptr::eq(longer.as_ref(), state1.as_ref()) {
-                    chunk_count1.clone()
-                } else {
-                    chunk_count2.clone()
-                };
-                let session_id_longer = if std::ptr::eq(longer.as_ref(), state1.as_ref()) {
-                    session_id1.clone()
-                } else {
-                    session_id2.clone()
-                };
-                *session_start_longer.borrow_mut() = now_ms;
-                *chunk_count_longer.borrow_mut() = 0;
-                let new_sid = uuid_style_id();
-                longer.borrow_mut().current_session_id = new_sid.clone();
-                if std::ptr::eq(longer.as_ref(), state1.as_ref()) {
-                    *session_id1.borrow_mut() = new_sid.clone();
-                } else {
-                    *session_id2.borrow_mut() = new_sid.clone();
-                }
-                if let Some(new_r) = make_recorder(
-                    &stream,
-                    if std::ptr::eq(longer.as_ref(), state1.as_ref()) {
-                        storage1.clone()
-                    } else {
-                        storage2.clone()
-                    },
-                    session_start_longer,
-                    chunk_count_longer,
-                    session_id_longer,
-                ) {
-                    let _ = new_r.start_with_time_slice(1000);
-                    longer.borrow_mut().recorder = Some(new_r);
-                    longer.borrow_mut().started_at = Some(now_ms);
-                }
-            } else if longer_run_secs > 5.0 {
-                let is_inactive = shorter
-                    .borrow()
-                    .recorder
-                    .as_ref()
-                    .map(|r| {
-                        js_sys::Reflect::get(r.as_ref(), &"state".into())
-                            .ok()
-                            .and_then(|v| v.as_string())
-                            .as_deref()
-                            == Some("inactive")
-                    })
-                    .unwrap_or(true);
-                if is_inactive {
-                    web_sys::console::log_1(&format!("shorter recorder is inactive, replacing with new recorder for fresh init segment").into());
-                    if let Some(old_r) = shorter.borrow_mut().recorder.take() {
-                        let _ = old_r.stop();
+        if *fsm.borrow() == RecordFsm::Idle && in_window {
+            if let Some(point_start_ms) = min_point_start_ms_in_recording_window(points, now_ms) {
+                let cutoff = point_start_ms - 3000.0;
+                let mut best: Option<(usize, u32)> = None;
+                let mut best_kf_wall = f64::NEG_INFINITY;
+                for (qi, item) in mem_queue.borrow().iter().enumerate() {
+                    if let MemQueueItem::Video(ch) = item {
+                        if !ch.parsed {
+                            continue;
+                        }
+                        for s in &ch.sync_samples {
+                            if s.wall_epoch_ms <= cutoff && s.wall_epoch_ms > best_kf_wall {
+                                best_kf_wall = s.wall_epoch_ms;
+                                best = Some((qi, s.sample_index_in_fragment));
+                            }
+                        }
                     }
-                    if std::ptr::eq(shorter.as_ref(), state1.as_ref()) {
-                        storage1.borrow_mut().clear();
-                    } else {
-                        storage2.borrow_mut().clear();
+                }
+                if let Some((qi, sample_idx)) = best {
+                    for _ in 0..qi {
+                        mem_queue.borrow_mut().pop_front();
                     }
-                    let session_start_shorter = if std::ptr::eq(shorter.as_ref(), state1.as_ref()) {
-                        session_start1.clone()
-                    } else {
-                        session_start2.clone()
+                    let ch_opt = match mem_queue.borrow_mut().pop_front() {
+                        Some(MemQueueItem::Video(ch)) => Some(ch),
+                        _ => None,
                     };
-                    let chunk_count_shorter = if std::ptr::eq(shorter.as_ref(), state1.as_ref()) {
-                        chunk_count1.clone()
-                    } else {
-                        chunk_count2.clone()
-                    };
-                    let session_id_shorter = if std::ptr::eq(shorter.as_ref(), state1.as_ref()) {
-                        session_id1.clone()
-                    } else {
-                        session_id2.clone()
-                    };
-                    *session_start_shorter.borrow_mut() = now_ms;
-                    *chunk_count_shorter.borrow_mut() = 0;
-                    let new_sid = uuid_style_id();
-                    shorter.borrow_mut().current_session_id = new_sid.clone();
-                    if std::ptr::eq(shorter.as_ref(), state1.as_ref()) {
-                        *session_id1.borrow_mut() = new_sid.clone();
-                    } else {
-                        *session_id2.borrow_mut() = new_sid.clone();
-                    }
-                    if let Some(new_r) = make_recorder(
-                        &stream,
-                        if std::ptr::eq(shorter.as_ref(), state1.as_ref()) {
-                            storage1.clone()
+                    if let Some(mut ch) = ch_opt {
+                        let bytes = blob_to_bytes(&ch.blob).await;
+                        let init = cached_init_segment
+                            .borrow()
+                            .clone()
+                            .or_else(|| record_mp4::extract_ftyp_moov(&bytes));
+                        let out = if let Some(ref init) = init {
+                            record_mp4::trim_fragment_with_init(&bytes, init, sample_idx)
+                                .unwrap_or(bytes)
                         } else {
-                            storage2.clone()
-                        },
-                        session_start_shorter,
-                        chunk_count_shorter,
-                        session_id_shorter,
-                    ) {
-                        let _ = new_r.start_with_time_slice(1000);
-                        shorter.borrow_mut().recorder = Some(new_r);
+                            bytes
+                        };
+                        ch.blob = bytes_to_blob(&out);
+                        ch.parsed = false;
+                        parse_mem_video_chunk(&mut ch, &cached_timescale, &cached_init_segment).await;
+                        mem_queue
+                            .borrow_mut()
+                            .push_front(MemQueueItem::Video(ch));
+                        *recording_session_uuid.borrow_mut() = uuid_style_id();
+                        *recording_session_wall_start_ms.borrow_mut() = now_ms;
+                        *fsm.borrow_mut() = RecordFsm::Recording;
+                    } else {
+                        *fsm.borrow_mut() = RecordFsm::Idle;
                     }
-                    shorter.borrow_mut().started_at = Some(now_ms);
                 }
             }
         }
 
-        // 4. Point in progress and new: set longest to RECORDING, stop the other
-        if point_in_progress_now && !point_was_in_progress {
-            let t1 = state1.borrow().started_at.unwrap_or(now_ms);
-            let t2 = state2.borrow().started_at.unwrap_or(now_ms);
-            let (recording_state, other_state) = if t1 <= t2 {
-                (&state1, &state2)
+        if *fsm.borrow() == RecordFsm::Recording && in_window {
+            let sid = recording_session_uuid.borrow().clone();
+            let wall = *recording_session_wall_start_ms.borrow();
+            let session_id = if sid.is_empty() {
+                uuid_style_id()
             } else {
-                (&state2, &state1)
+                sid
             };
-            recording_state.borrow_mut().status = RecorderStatus::Recording;
-            if let Some(r) = other_state.borrow().recorder.as_ref() {
-                let _ = r.stop();
+            if let Some(ref db) = *db_holder.borrow() {
+                let drained: Vec<MemQueueItem> = mem_queue.borrow_mut().drain(..).collect();
+                let mut n_added = 0u32;
+                for item in drained {
+                    match item {
+                        MemQueueItem::Video(ch) => {
+                            let keyframe_wall_times_json =
+                                serde_json::to_string(&ch.keyframe_wall_times_ms)
+                                    .unwrap_or_else(|_| "[]".to_string());
+                            let meta = RecordChunkMeta {
+                                tournament_url: tournament_url.clone(),
+                                field: field.clone(),
+                                match_id: match_id.clone(),
+                                session_id: session_id.clone(),
+                                chunk_start_timestamp: ch.wall_epoch_ms,
+                                recording_session_start_time: wall,
+                                chunk_length_ms: 1000,
+                                camera_name: camera_name.clone(),
+                                key: key_ref.clone(),
+                                container: container.clone(),
+                                blob_event_timestamp_ms: ch.blob_event_timestamp_ms,
+                                keyframe_wall_times_json,
+                            };
+                            if let Ok(k) = record_idb::get_next_sequence(db).await {
+                                if record_idb::put_chunk(db, &k, &meta, &ch.blob).await.is_ok() {
+                                    n_added += 1;
+                                    *pending_chunks_by_match
+                                        .borrow_mut()
+                                        .entry(match_id.clone())
+                                        .or_insert(0) += 1;
+                                    upload_queue.borrow_mut().push_back((
+                                        k,
+                                        QueueItem::Chunk {
+                                            match_id: Some(match_id.clone()),
+                                        },
+                                    ));
+                                }
+                            }
+                        }
+                        MemQueueItem::FinalizeMatch { match_id: fid } => {
+                            if let Ok(k) = record_idb::get_next_sequence(db).await {
+                                if record_idb::put_finalize(db, &k, &fid).await.is_ok() {
+                                    n_added += 1;
+                                    upload_queue.borrow_mut().push_back((
+                                        k,
+                                        QueueItem::FinalizeMatch { match_id: fid },
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
+                if n_added > 0 {
+                    upload_total_sig.set(upload_total_sig() + n_added);
+                    let q_ref = upload_queue.borrow();
+                    update_upload_bar_from_queue(&q_ref, upload_bar_items_sig.to_owned());
+                }
             }
-            if std::ptr::eq(other_state.as_ref(), state1.as_ref()) {
-                storage1.borrow_mut().clear();
-            } else {
-                storage2.borrow_mut().clear();
-            }
-            other_state.borrow_mut().status = RecorderStatus::Idle;
-            other_state.borrow_mut().started_at = None;
         }
 
-        if !point_in_progress_now {
-            state1.borrow_mut().status = RecorderStatus::Idle;
-            state2.borrow_mut().status = RecorderStatus::Idle;
-        }
+        if *fsm.borrow() == RecordFsm::Idle {
+            loop {
+                let is_finalize = mem_queue
+                    .borrow()
+                    .front()
+                    .map(|it| matches!(it, MemQueueItem::FinalizeMatch { .. }))
+                    .unwrap_or(false);
+                if !is_finalize {
+                    break;
+                }
+                let Some(MemQueueItem::FinalizeMatch { match_id: fid }) =
+                    mem_queue.borrow_mut().pop_front()
+                else {
+                    break;
+                };
+                if let Some(ref db) = *db_holder.borrow() {
+                    if let Ok(k) = record_idb::get_next_sequence(db).await {
+                        if record_idb::put_finalize(db, &k, &fid).await.is_ok() {
+                            upload_total_sig.set(upload_total_sig() + 1);
+                            upload_queue.borrow_mut().push_back((
+                                k,
+                                QueueItem::FinalizeMatch { match_id: fid },
+                            ));
+                            let q_ref = upload_queue.borrow();
+                            update_upload_bar_from_queue(&q_ref, upload_bar_items_sig.to_owned());
+                        }
+                    }
+                }
+            }
 
-        point_was_in_progress = point_in_progress_now;
+            let should_evict_front = {
+                let q = mem_queue.borrow();
+                match q.front() {
+                    Some(MemQueueItem::Video(front)) => {
+                        let age_ok = now_ms - front.wall_epoch_ms > 10_000.0;
+                        if !age_ok {
+                            false
+                        } else {
+                            let mut other_has_kf = false;
+                            let mut kf_outside_ge_10s = false;
+                            for (idx, item) in q.iter().enumerate() {
+                                if let MemQueueItem::Video(ch) = item {
+                                    if idx == 0 {
+                                        continue;
+                                    }
+                                    if !ch.keyframe_wall_times_ms.is_empty() {
+                                        other_has_kf = true;
+                                    }
+                                    for t in &ch.keyframe_wall_times_ms {
+                                        if now_ms - *t >= 10_000.0 {
+                                            kf_outside_ge_10s = true;
+                                        }
+                                    }
+                                }
+                            }
+                            let cond2 = other_has_kf;
+                            age_ok && cond2 && kf_outside_ge_10s
+                        }
+                    }
+                    _ => false,
+                }
+            };
+            if should_evict_front {
+                mem_queue.borrow_mut().pop_front();
+            }
+        }
 
         if data.hasActiveMatch {
             match_status_data_sig.set(Some(data));
