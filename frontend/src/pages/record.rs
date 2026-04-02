@@ -211,6 +211,42 @@ enum QueueItem {
     FinalizeMatch { match_id: String },
 }
 
+/// Log queue length and indices of items that contain at least one video keyframe (`sync_samples` after parse).
+#[cfg(target_arch = "wasm32")]
+fn record_log_mem_queue_snapshot(mem_queue: &Rc<RefCell<VecDeque<MemQueueItem>>>) {
+    let q = mem_queue.borrow();
+    let len = q.len();
+    let mut keyframe_indices: Vec<usize> = Vec::new();
+    let mut per_slot: Vec<String> = Vec::new();
+    for (i, item) in q.iter().enumerate() {
+        match item {
+            MemQueueItem::Video(ch) => {
+                let n = ch.sync_samples.len();
+                if n > 0 {
+                    keyframe_indices.push(i);
+                }
+                let tag = if !ch.parsed {
+                    "unparsed"
+                } else if n > 0 {
+                    "keyframes"
+                } else {
+                    "no_keyframes"
+                };
+                per_slot.push(format!("{}:{}({} sync)", i, tag, n));
+            }
+            MemQueueItem::FinalizeMatch { .. } => {
+                per_slot.push(format!("{}:finalize", i));
+            }
+        }
+    }
+    record_log(&format!(
+        "mem_queue: len={} keyframe_chunk_indices={:?} [{}]",
+        len,
+        keyframe_indices,
+        per_slot.join(", ")
+    ));
+}
+
 /// LocalStorage key for the selected camera device ID (wasm only).
 #[cfg(target_arch = "wasm32")]
 const RECORD_CAMERA_DEVICE_ID_KEY: &str = "arctos_record_camera_id";
@@ -1830,6 +1866,7 @@ async fn run_recording_loop(
                     t_parse_batch,
                 );
             }
+            record_log_mem_queue_snapshot(&mem_queue);
         }
 
         let in_window = in_point_recording_window(points, now_ms);
