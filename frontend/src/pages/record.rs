@@ -21,6 +21,10 @@ use wasm_bindgen::closure::Closure;
 #[cfg(target_arch = "wasm32")]
 use crate::record_mp4;
 
+/// Must match MediaRecorder `timeslice` / `RecordChunkMeta.chunk_length_ms` on every enqueue path.
+#[cfg(target_arch = "wasm32")]
+const RECORD_CHUNK_LENGTH_MS: u32 = 500;
+
 /// High-resolution timestamps and structured `[record]` lines for debugging the recording pipeline in DevTools.
 #[cfg(target_arch = "wasm32")]
 fn record_now_ms() -> f64 {
@@ -1043,6 +1047,91 @@ async fn prepare_video_chunk_for_upload(
     }
 }
 
+/// Upload drained mem-queue items to IndexedDB (video chunks + finalize rows). Used while Recording **or** Idle with an active match so the in-memory queue does not grow when the FSM is Idle.
+#[cfg(target_arch = "wasm32")]
+#[allow(clippy::too_many_arguments)]
+async fn process_drained_mem_queue_items(
+    drained: Vec<MemQueueItem>,
+    db: &idb::Database,
+    match_id: &str,
+    session_id: &str,
+    wall: f64,
+    tournament_url: String,
+    field: String,
+    camera_name: String,
+    key: Option<String>,
+    container: String,
+    session_first: &Rc<RefCell<record_mp4::SessionFirstChunkState>>,
+    cached_init: &Rc<RefCell<Option<Vec<u8>>>>,
+    cached_timescale: &Rc<RefCell<Option<u32>>>,
+    pending_chunks_by_match: &Rc<RefCell<HashMap<String, u32>>>,
+    upload_queue: &Rc<RefCell<VecDeque<(String, QueueItem)>>>,
+) -> (usize, u32) {
+    let drained_n = drained.len();
+    let mut n_added = 0u32;
+    for item in drained {
+        match item {
+            MemQueueItem::Video(ch) => {
+                let Some(ch) = prepare_video_chunk_for_upload(
+                    ch,
+                    session_id,
+                    session_first,
+                    cached_init,
+                    cached_timescale,
+                )
+                .await
+                else {
+                    continue;
+                };
+                let keyframe_wall_times_json =
+                    serde_json::to_string(&ch.keyframe_wall_times_ms)
+                        .unwrap_or_else(|_| "[]".to_string());
+                let meta = RecordChunkMeta {
+                    tournament_url: tournament_url.clone(),
+                    field: field.clone(),
+                    match_id: match_id.to_string(),
+                    session_id: session_id.to_string(),
+                    chunk_start_timestamp: ch.wall_epoch_ms,
+                    recording_session_start_time: wall,
+                    chunk_length_ms: RECORD_CHUNK_LENGTH_MS,
+                    camera_name: camera_name.clone(),
+                    key: key.clone(),
+                    container: container.clone(),
+                    blob_event_timestamp_ms: ch.blob_event_timestamp_ms,
+                    keyframe_wall_times_json,
+                };
+                if let Ok(k) = record_idb::get_next_sequence(db).await {
+                    if record_idb::put_chunk(db, &k, &meta, &ch.blob).await.is_ok() {
+                        n_added += 1;
+                        *pending_chunks_by_match
+                            .borrow_mut()
+                            .entry(match_id.to_string())
+                            .or_insert(0) += 1;
+                        upload_queue.borrow_mut().push_back((
+                            k,
+                            QueueItem::Chunk {
+                                match_id: Some(match_id.to_string()),
+                            },
+                        ));
+                    }
+                }
+            }
+            MemQueueItem::FinalizeMatch { match_id: fid } => {
+                if let Ok(k) = record_idb::get_next_sequence(db).await {
+                    if record_idb::put_finalize(db, &k, &fid).await.is_ok() {
+                        n_added += 1;
+                        upload_queue.borrow_mut().push_back((
+                            k,
+                            QueueItem::FinalizeMatch { match_id: fid },
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    (drained_n, n_added)
+}
+
 /// Move `FinalizeMatch` from mem queue to IndexedDB upload queue; evict old video chunks (Idle only).
 #[cfg(target_arch = "wasm32")]
 async fn mem_queue_idle_finalize_and_evict(
@@ -1566,7 +1655,6 @@ async fn run_recording_loop(
     const RECORD_VIDEO_BITS_PER_SECOND: u32 = 50_000_000;
     /// Must match `chunk_length_ms` in `RecordChunkMeta` for every enqueue path.
     const RECORD_TIMESLICE_MS: i32 = 500;
-    const RECORD_CHUNK_LENGTH_MS: u32 = 500;
 
     let key_ref = key.clone();
     let container = "mp4".to_string();
@@ -1887,55 +1975,24 @@ async fn run_recording_loop(
                     };
                     let t_drain = record_now_ms();
                     let drained: Vec<MemQueueItem> = mem_queue.borrow_mut().drain(..).collect();
-                    let drained_n = drained.len();
-                    let mut n_added = 0u32;
-                    for item in drained {
-                        if let MemQueueItem::Video(ch) = item {
-                            let Some(ch) = prepare_video_chunk_for_upload(
-                                ch,
-                                &session_id,
-                                &session_first_chunk_state,
-                                &cached_init_segment,
-                                &cached_timescale,
-                            )
-                            .await
-                            else {
-                                continue;
-                            };
-                            let keyframe_wall_times_json =
-                                serde_json::to_string(&ch.keyframe_wall_times_ms)
-                                    .unwrap_or_else(|_| "[]".to_string());
-                            let meta = RecordChunkMeta {
-                                tournament_url: tournament_url.clone(),
-                                field: field.clone(),
-                                match_id: match_id.clone(),
-                                session_id: session_id.clone(),
-                                chunk_start_timestamp: ch.wall_epoch_ms,
-                                recording_session_start_time: wall,
-                                chunk_length_ms: RECORD_CHUNK_LENGTH_MS,
-                                camera_name: camera_name.clone(),
-                                key: key_ref.clone(),
-                                container: container.clone(),
-                                blob_event_timestamp_ms: ch.blob_event_timestamp_ms,
-                                keyframe_wall_times_json,
-                            };
-                            if let Ok(k) = record_idb::get_next_sequence(db).await {
-                                if record_idb::put_chunk(db, &k, &meta, &ch.blob).await.is_ok() {
-                                    n_added += 1;
-                                    *pending_chunks_by_match
-                                        .borrow_mut()
-                                        .entry(match_id.clone())
-                                        .or_insert(0) += 1;
-                                    upload_queue.borrow_mut().push_back((
-                                        k,
-                                        QueueItem::Chunk {
-                                            match_id: Some(match_id.clone()),
-                                        },
-                                    ));
-                                }
-                            }
-                        }
-                    }
+                    let (drained_n, n_added) = process_drained_mem_queue_items(
+                        drained,
+                        db,
+                        &match_id,
+                        &session_id,
+                        wall,
+                        tournament_url.clone(),
+                        field.clone(),
+                        camera_name.clone(),
+                        key_ref.clone(),
+                        container.clone(),
+                        &session_first_chunk_state,
+                        &cached_init_segment,
+                        &cached_timescale,
+                        &pending_chunks_by_match,
+                        &upload_queue,
+                    )
+                    .await;
                     if n_added > 0 {
                         upload_total_sig.set(upload_total_sig() + n_added);
                     }
@@ -2001,68 +2058,24 @@ async fn run_recording_loop(
             if let Some(ref db) = *db_holder.borrow() {
                 let t_drain = record_now_ms();
                 let drained: Vec<MemQueueItem> = mem_queue.borrow_mut().drain(..).collect();
-                let drained_n = drained.len();
-                let mut n_added = 0u32;
-                for item in drained {
-                    match item {
-                        MemQueueItem::Video(ch) => {
-                            let Some(ch) = prepare_video_chunk_for_upload(
-                                ch,
-                                &session_id,
-                                &session_first_chunk_state,
-                                &cached_init_segment,
-                                &cached_timescale,
-                            )
-                            .await
-                            else {
-                                continue;
-                            };
-                            let keyframe_wall_times_json =
-                                serde_json::to_string(&ch.keyframe_wall_times_ms)
-                                    .unwrap_or_else(|_| "[]".to_string());
-                            let meta = RecordChunkMeta {
-                                tournament_url: tournament_url.clone(),
-                                field: field.clone(),
-                                match_id: match_id.clone(),
-                                session_id: session_id.clone(),
-                                chunk_start_timestamp: ch.wall_epoch_ms,
-                                recording_session_start_time: wall,
-                                chunk_length_ms: RECORD_CHUNK_LENGTH_MS,
-                                camera_name: camera_name.clone(),
-                                key: key_ref.clone(),
-                                container: container.clone(),
-                                blob_event_timestamp_ms: ch.blob_event_timestamp_ms,
-                                keyframe_wall_times_json,
-                            };
-                            if let Ok(k) = record_idb::get_next_sequence(db).await {
-                                if record_idb::put_chunk(db, &k, &meta, &ch.blob).await.is_ok() {
-                                    n_added += 1;
-                                    *pending_chunks_by_match
-                                        .borrow_mut()
-                                        .entry(match_id.clone())
-                                        .or_insert(0) += 1;
-                                    upload_queue.borrow_mut().push_back((
-                                        k,
-                                        QueueItem::Chunk {
-                                            match_id: Some(match_id.clone()),
-                                        },
-                                    ));
-                                }
-                            }
-                        }
-                        MemQueueItem::FinalizeMatch { match_id: fid } => {
-                            if let Ok(k) = record_idb::get_next_sequence(db).await {
-                                if record_idb::put_finalize(db, &k, &fid).await.is_ok() {
-                                    n_added += 1;
-                                    upload_queue.borrow_mut().push_back((
-                                        k,
-                                        QueueItem::FinalizeMatch { match_id: fid },
-                                    ));
-                                }
-                            }
-                        }
-                    }
-                }
+                let (drained_n, n_added) = process_drained_mem_queue_items(
+                    drained,
+                    db,
+                    &match_id,
+                    &session_id,
+                    wall,
+                    tournament_url.clone(),
+                    field.clone(),
+                    camera_name.clone(),
+                    key_ref.clone(),
+                    container.clone(),
+                    &session_first_chunk_state,
+                    &cached_init_segment,
+                    &cached_timescale,
+                    &pending_chunks_by_match,
+                    &upload_queue,
+                )
+                .await;
                 if n_added > 0 {
                     upload_total_sig.set(upload_total_sig() + n_added);
                 }
@@ -2148,68 +2161,24 @@ async fn run_recording_loop(
             if let Some(ref db) = *db_holder.borrow() {
                 let t_drain = record_now_ms();
                 let drained: Vec<MemQueueItem> = mem_queue.borrow_mut().drain(..).collect();
-                let drained_n = drained.len();
-                let mut n_added = 0u32;
-                for item in drained {
-                    match item {
-                        MemQueueItem::Video(ch) => {
-                            let Some(ch) = prepare_video_chunk_for_upload(
-                                ch,
-                                &session_id,
-                                &session_first_chunk_state,
-                                &cached_init_segment,
-                                &cached_timescale,
-                            )
-                            .await
-                            else {
-                                continue;
-                            };
-                            let keyframe_wall_times_json =
-                                serde_json::to_string(&ch.keyframe_wall_times_ms)
-                                    .unwrap_or_else(|_| "[]".to_string());
-                            let meta = RecordChunkMeta {
-                                tournament_url: tournament_url.clone(),
-                                field: field.clone(),
-                                match_id: match_id.clone(),
-                                session_id: session_id.clone(),
-                                chunk_start_timestamp: ch.wall_epoch_ms,
-                                recording_session_start_time: wall,
-                                chunk_length_ms: RECORD_CHUNK_LENGTH_MS,
-                                camera_name: camera_name.clone(),
-                                key: key_ref.clone(),
-                                container: container.clone(),
-                                blob_event_timestamp_ms: ch.blob_event_timestamp_ms,
-                                keyframe_wall_times_json,
-                            };
-                            if let Ok(k) = record_idb::get_next_sequence(db).await {
-                                if record_idb::put_chunk(db, &k, &meta, &ch.blob).await.is_ok() {
-                                    n_added += 1;
-                                    *pending_chunks_by_match
-                                        .borrow_mut()
-                                        .entry(match_id.clone())
-                                        .or_insert(0) += 1;
-                                    upload_queue.borrow_mut().push_back((
-                                        k,
-                                        QueueItem::Chunk {
-                                            match_id: Some(match_id.clone()),
-                                        },
-                                    ));
-                                }
-                            }
-                        }
-                        MemQueueItem::FinalizeMatch { match_id: fid } => {
-                            if let Ok(k) = record_idb::get_next_sequence(db).await {
-                                if record_idb::put_finalize(db, &k, &fid).await.is_ok() {
-                                    n_added += 1;
-                                    upload_queue.borrow_mut().push_back((
-                                        k,
-                                        QueueItem::FinalizeMatch { match_id: fid },
-                                    ));
-                                }
-                            }
-                        }
-                    }
-                }
+                let (drained_n, n_added) = process_drained_mem_queue_items(
+                    drained,
+                    db,
+                    &match_id,
+                    &session_id,
+                    wall,
+                    tournament_url.clone(),
+                    field.clone(),
+                    camera_name.clone(),
+                    key_ref.clone(),
+                    container.clone(),
+                    &session_first_chunk_state,
+                    &cached_init_segment,
+                    &cached_timescale,
+                    &pending_chunks_by_match,
+                    &upload_queue,
+                )
+                .await;
                 if n_added > 0 {
                     upload_total_sig.set(upload_total_sig() + n_added);
                 }
@@ -2219,6 +2188,51 @@ async fn run_recording_loop(
                     n_added,
                     record_now_ms() - t_drain
                 ));
+            }
+        }
+
+        // MediaRecorder keeps emitting while the match is active, but we only entered Recording-based
+        // drains above; while Idle (waiting for keyframe trim, or between windows) chunks must still flush.
+        if poll_aligned_with_match && *fsm.borrow() == RecordFsm::Idle {
+            if let Some(ref db) = *db_holder.borrow() {
+                if !mem_queue.borrow().is_empty() {
+                    let sid = recording_session_uuid.borrow().clone();
+                    let wall = *recording_session_wall_start_ms.borrow();
+                    let session_id = if sid.is_empty() {
+                        uuid_style_id()
+                    } else {
+                        sid
+                    };
+                    let t_drain = record_now_ms();
+                    let drained: Vec<MemQueueItem> = mem_queue.borrow_mut().drain(..).collect();
+                    let (drained_n, n_added) = process_drained_mem_queue_items(
+                        drained,
+                        db,
+                        &match_id,
+                        &session_id,
+                        wall,
+                        tournament_url.clone(),
+                        field.clone(),
+                        camera_name.clone(),
+                        key_ref.clone(),
+                        container.clone(),
+                        &session_first_chunk_state,
+                        &cached_init_segment,
+                        &cached_timescale,
+                        &pending_chunks_by_match,
+                        &upload_queue,
+                    )
+                    .await;
+                    if n_added > 0 {
+                        upload_total_sig.set(upload_total_sig() + n_added);
+                    }
+                    record_log(&format!(
+                        "flush mem→IndexedDB (Idle, active match): drained={} put_ok={} in {:.2} ms",
+                        drained_n,
+                        n_added,
+                        record_now_ms() - t_drain
+                    ));
+                }
             }
         }
 
