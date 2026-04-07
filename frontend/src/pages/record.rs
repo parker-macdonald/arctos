@@ -1,5 +1,6 @@
-//! Point recording page: single MP4 `MediaRecorder`, in-memory chunk queue with keyframe parsing, IndexedDB upload queue, match-status polling.
-//! The first chunk of each recording session is normalized to include `ftyp`+`moov` and to start on a video keyframe (`record_mp4::session_first_chunk`).
+//! Point recording page: single MP4 `MediaRecorder`, in-memory chunk queue, IndexedDB upload queue, match-status polling.
+//! While a match is active, chunks are queued with `BlobEvent.timeStamp` and wall-clock times. MP4 keyframe timing is left to the backend;
+//! here we assume each timeslice chunk aligns with one keyframe at chunk start (`wall_epoch_ms`).
 
 use crate::api;
 use crate::types::{RecordMatchStatusResponse, RecordPointData};
@@ -18,8 +19,6 @@ use crate::record_idb;
 use wasm_bindgen::JsCast;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::closure::Closure;
-#[cfg(target_arch = "wasm32")]
-use crate::record_mp4;
 
 /// Must match MediaRecorder `timeslice` / `RecordChunkMeta.chunk_length_ms` on every enqueue path.
 #[cfg(target_arch = "wasm32")]
@@ -184,7 +183,7 @@ fn register_screen_wake_lock_listeners(sentinel_sig: Signal<Option<wasm_bindgen:
     ptr.forget();
 }
 
-/// In-memory recording FSM: `Recording` while `in_point_recording_window`; chunks flush to IndexedDB only in `Recording`.
+/// In-memory recording FSM: `Recording` while inside the point window (±3s); IndexedDB flush runs only in `Recording`.
 #[cfg(target_arch = "wasm32")]
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum RecordFsm {
@@ -195,11 +194,12 @@ enum RecordFsm {
 #[cfg(target_arch = "wasm32")]
 struct MemVideoChunk {
     blob: web_sys::Blob,
+    /// `BlobEvent.timeStamp` (DOMHighResTimeStamp, ms, relative to `performance.timeOrigin`).
     blob_event_timestamp_ms: f64,
+    /// Wall-clock ms for chunk start: `performance.timeOrigin + blob_event_timestamp_ms`.
     wall_epoch_ms: f64,
+    /// Strict assumption: one keyframe at fragment start → real-world time `wall_epoch_ms` (no MP4 parse).
     keyframe_wall_times_ms: Vec<f64>,
-    sync_samples: Vec<record_mp4::SyncSampleWall>,
-    parsed: bool,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -215,40 +215,17 @@ enum QueueItem {
     FinalizeMatch { match_id: String },
 }
 
-/// Log queue length and indices of items that contain at least one video keyframe (`sync_samples` after parse).
 #[cfg(target_arch = "wasm32")]
 fn record_log_mem_queue_snapshot(mem_queue: &Rc<RefCell<VecDeque<MemQueueItem>>>) {
     let q = mem_queue.borrow();
-    let len = q.len();
-    let mut keyframe_indices: Vec<usize> = Vec::new();
-    let mut per_slot: Vec<String> = Vec::new();
+    let mut parts: Vec<String> = Vec::new();
     for (i, item) in q.iter().enumerate() {
         match item {
-            MemQueueItem::Video(ch) => {
-                let n = ch.sync_samples.len();
-                if n > 0 {
-                    keyframe_indices.push(i);
-                }
-                let tag = if !ch.parsed {
-                    "unparsed"
-                } else if n > 0 {
-                    "keyframes"
-                } else {
-                    "no_keyframes"
-                };
-                per_slot.push(format!("{}:{}({} sync)", i, tag, n));
-            }
-            MemQueueItem::FinalizeMatch { .. } => {
-                per_slot.push(format!("{}:finalize", i));
-            }
+            MemQueueItem::Video(_) => parts.push(format!("{i}:video")),
+            MemQueueItem::FinalizeMatch { .. } => parts.push(format!("{i}:finalize")),
         }
     }
-    record_log(&format!(
-        "mem_queue: len={} keyframe_chunk_indices={:?} [{}]",
-        len,
-        keyframe_indices,
-        per_slot.join(", ")
-    ));
+    record_log(&format!("mem_queue: len={} [{}]", q.len(), parts.join(", ")));
 }
 
 /// LocalStorage key for the selected camera device ID (wasm only).
@@ -920,29 +897,6 @@ fn in_point_recording_window(points: &[RecordPointData], now_ms: f64) -> bool {
     })
 }
 
-/// Minimum point start time among points whose ±3s recording window contains `now_ms`.
-#[cfg(target_arch = "wasm32")]
-fn min_point_start_ms_in_recording_window(points: &[RecordPointData], now_ms: f64) -> Option<f64> {
-    let mut min: Option<f64> = None;
-    for p in points {
-        let Some(start_ms) = parse_iso_ms(p.stamp.as_deref()) else {
-            continue;
-        };
-        if now_ms < start_ms - 3000.0 {
-            continue;
-        }
-        match p.end_stamp.as_deref().and_then(|s| parse_iso_ms(Some(s))) {
-            Some(end_ms) if now_ms > end_ms + 3000.0 => continue,
-            _ => {}
-        }
-        min = Some(match min {
-            Some(m) => m.min(start_ms),
-            None => start_ms,
-        });
-    }
-    min
-}
-
 #[cfg(target_arch = "wasm32")]
 fn blob_event_wall_epoch_ms(ev: &web_sys::BlobEvent) -> f64 {
     web_sys::window()
@@ -951,119 +905,20 @@ fn blob_event_wall_epoch_ms(ev: &web_sys::BlobEvent) -> f64 {
         .unwrap_or_else(|| js_sys::Date::now())
 }
 
-#[cfg(target_arch = "wasm32")]
-async fn blob_to_bytes(blob: &web_sys::Blob) -> Vec<u8> {
-    let promise = blob.array_buffer();
-    let ab = wasm_bindgen_futures::JsFuture::from(promise)
-        .await
-        .unwrap_or_else(|_| wasm_bindgen::JsValue::UNDEFINED);
-    let uint8 = js_sys::Uint8Array::new(&ab);
-    let mut out = vec![0u8; uint8.length() as usize];
-    uint8.copy_to(&mut out);
-    out
-}
-
-#[cfg(target_arch = "wasm32")]
-fn bytes_to_blob(bytes: &[u8]) -> web_sys::Blob {
-    let arr = js_sys::Uint8Array::from(bytes);
-    let parts = js_sys::Array::new();
-    parts.push(&arr);
-    web_sys::Blob::new_with_u8_array_sequence(&parts).expect("Blob::new")
-}
-
-#[cfg(target_arch = "wasm32")]
-async fn parse_mem_video_chunk(
-    ch: &mut MemVideoChunk,
-    cached_timescale: &Rc<RefCell<Option<u32>>>,
-    cached_init: &Rc<RefCell<Option<Vec<u8>>>>,
-) {
-    if ch.parsed {
-        return;
-    }
-    let t_parse = record_now_ms();
-    let t_read = record_now_ms();
-    let bytes = blob_to_bytes(&ch.blob).await;
-    let read_ms = record_now_ms() - t_read;
-    let t_mp4 = record_now_ms();
-    if let Some(init) = record_mp4::extract_ftyp_moov(&bytes) {
-        *cached_init.borrow_mut() = Some(init);
-    }
-    let ts = cached_timescale.borrow().as_ref().copied();
-    let (sync, new_ts) = record_mp4::sync_sample_wall_times(&bytes, ch.wall_epoch_ms, ts);
-    if let Some(t) = new_ts {
-        *cached_timescale.borrow_mut() = Some(t);
-    }
-    ch.sync_samples = sync;
-    ch.keyframe_wall_times_ms = ch.sync_samples.iter().map(|s| s.wall_epoch_ms).collect();
-    ch.parsed = true;
-    let mp4_ms = record_now_ms() - t_mp4;
-    let total_ms = record_now_ms() - t_parse;
-    record_log(&format!(
-        "parse_mem_video_chunk: wall_epoch_ms={:.1} bytes={} blob_read={:.2} ms mp4_sync={:.2} ms total={:.2} ms",
-        ch.wall_epoch_ms,
-        bytes.len(),
-        read_ms,
-        mp4_ms,
-        total_ms
-    ));
-}
-
-/// First chunk per session: ensure `ftyp`+`moov` + fragment starting on a video keyframe (see `record_mp4::session_first_chunk`).
-#[cfg(target_arch = "wasm32")]
-async fn prepare_video_chunk_for_upload(
-    mut ch: MemVideoChunk,
-    session_id: &str,
-    session_first: &Rc<RefCell<record_mp4::SessionFirstChunkState>>,
-    cached_init: &Rc<RefCell<Option<Vec<u8>>>>,
-    cached_timescale: &Rc<RefCell<Option<u32>>>,
-) -> Option<MemVideoChunk> {
-    {
-        let mut s = session_first.borrow_mut();
-        s.sync_session(session_id);
-        if s.first_chunk_done {
-            return Some(ch);
-        }
-    }
-    let bytes = blob_to_bytes(&ch.blob).await;
-    let init_cache = cached_init.borrow();
-    let init_slice = init_cache.as_deref();
-    let mut out: Option<MemVideoChunk> = None;
-    {
-        let mut s = session_first.borrow_mut();
-        match record_mp4::session_first_chunk(&bytes, init_slice, &mut s) {
-            record_mp4::FirstChunkOutcome::Skip => {}
-            record_mp4::FirstChunkOutcome::Emit(v) => {
-                ch.blob = bytes_to_blob(&v);
-                ch.parsed = false;
-                out = Some(ch);
-            }
-        }
-    }
-    if let Some(mut ch) = out {
-        parse_mem_video_chunk(&mut ch, cached_timescale, cached_init).await;
-        Some(ch)
-    } else {
-        None
-    }
-}
-
-/// Upload drained mem-queue items to IndexedDB (video chunks + finalize rows). Used while Recording **or** Idle with an active match so the in-memory queue does not grow when the FSM is Idle.
+/// Write drained queue items to IndexedDB and enqueue upload work (video chunks + finalize rows).
 #[cfg(target_arch = "wasm32")]
 #[allow(clippy::too_many_arguments)]
-async fn process_drained_mem_queue_items(
+async fn flush_mem_queue_items_to_idb(
     drained: Vec<MemQueueItem>,
     db: &idb::Database,
     match_id: &str,
     session_id: &str,
-    wall: f64,
+    recording_session_start_wall_ms: f64,
     tournament_url: String,
     field: String,
     camera_name: String,
     key: Option<String>,
     container: String,
-    session_first: &Rc<RefCell<record_mp4::SessionFirstChunkState>>,
-    cached_init: &Rc<RefCell<Option<Vec<u8>>>>,
-    cached_timescale: &Rc<RefCell<Option<u32>>>,
     pending_chunks_by_match: &Rc<RefCell<HashMap<String, u32>>>,
     upload_queue: &Rc<RefCell<VecDeque<(String, QueueItem)>>>,
 ) -> (usize, u32) {
@@ -1072,17 +927,6 @@ async fn process_drained_mem_queue_items(
     for item in drained {
         match item {
             MemQueueItem::Video(ch) => {
-                let Some(ch) = prepare_video_chunk_for_upload(
-                    ch,
-                    session_id,
-                    session_first,
-                    cached_init,
-                    cached_timescale,
-                )
-                .await
-                else {
-                    continue;
-                };
                 let keyframe_wall_times_json =
                     serde_json::to_string(&ch.keyframe_wall_times_ms)
                         .unwrap_or_else(|_| "[]".to_string());
@@ -1092,7 +936,7 @@ async fn process_drained_mem_queue_items(
                     match_id: match_id.to_string(),
                     session_id: session_id.to_string(),
                     chunk_start_timestamp: ch.wall_epoch_ms,
-                    recording_session_start_time: wall,
+                    recording_session_start_time: recording_session_start_wall_ms,
                     chunk_length_ms: RECORD_CHUNK_LENGTH_MS,
                     camera_name: camera_name.clone(),
                     key: key.clone(),
@@ -1132,7 +976,7 @@ async fn process_drained_mem_queue_items(
     (drained_n, n_added)
 }
 
-/// Move `FinalizeMatch` from mem queue to IndexedDB upload queue; evict old video chunks (Idle only).
+/// Idle: move leading `FinalizeMatch` rows to IndexedDB; drop front video chunks older than 10s (wall clock).
 #[cfg(target_arch = "wasm32")]
 async fn mem_queue_idle_finalize_and_evict(
     mem_queue: &Rc<RefCell<VecDeque<MemQueueItem>>>,
@@ -1168,41 +1012,13 @@ async fn mem_queue_idle_finalize_and_evict(
         }
     }
 
-    let should_evict_front = {
-        let q = mem_queue.borrow();
-        match q.front() {
-            Some(MemQueueItem::Video(front)) => {
-                let age_ok = now_ms - front.wall_epoch_ms > 10_000.0;
-                if !age_ok {
-                    false
-                } else {
-                    let mut other_has_kf = false;
-                    let mut kf_outside_ge_10s = false;
-                    for (idx, item) in q.iter().enumerate() {
-                        if let MemQueueItem::Video(ch) = item {
-                            if idx == 0 {
-                                continue;
-                            }
-                            if !ch.keyframe_wall_times_ms.is_empty() {
-                                other_has_kf = true;
-                            }
-                            for t in &ch.keyframe_wall_times_ms {
-                                if now_ms - *t >= 10_000.0 {
-                                    kf_outside_ge_10s = true;
-                                }
-                            }
-                        }
-                    }
-                    let cond2 = other_has_kf;
-                    age_ok && cond2 && kf_outside_ge_10s
-                }
-            }
-            _ => false,
+    while let Some(MemQueueItem::Video(ch)) = mem_queue.borrow().front() {
+        if now_ms - ch.wall_epoch_ms > 10_000.0 {
+            mem_queue.borrow_mut().pop_front();
+            record_log("mem_queue_idle_finalize_and_evict: evicted old video chunk (>10s)");
+        } else {
+            break;
         }
-    };
-    if should_evict_front {
-        mem_queue.borrow_mut().pop_front();
-        record_log("mem_queue_idle_finalize_and_evict: evicted front video chunk (age/keyframe policy)");
     }
     record_log_duration("mem_queue_idle_finalize_and_evict: done (total)", t_idle);
 }
@@ -1663,10 +1479,6 @@ async fn run_recording_loop(
     let fsm: Rc<RefCell<RecordFsm>> = Rc::new(RefCell::new(RecordFsm::Idle));
     let recording_session_uuid: Rc<RefCell<String>> = Rc::new(RefCell::new(String::new()));
     let recording_session_wall_start_ms: Rc<RefCell<f64>> = Rc::new(RefCell::new(0.0));
-    let cached_timescale: Rc<RefCell<Option<u32>>> = Rc::new(RefCell::new(None));
-    let cached_init_segment: Rc<RefCell<Option<Vec<u8>>>> = Rc::new(RefCell::new(None));
-    let session_first_chunk_state: Rc<RefCell<record_mp4::SessionFirstChunkState>> =
-        Rc::new(RefCell::new(record_mp4::SessionFirstChunkState::default()));
     let recorder_holder: Rc<RefCell<Option<MediaRecorder>>> = Rc::new(RefCell::new(None));
 
     let mq_cb = mem_queue.clone();
@@ -1700,9 +1512,7 @@ async fn run_recording_loop(
                 blob,
                 blob_event_timestamp_ms,
                 wall_epoch_ms,
-                keyframe_wall_times_ms: vec![],
-                sync_samples: vec![],
-                parsed: false,
+                keyframe_wall_times_ms: vec![wall_epoch_ms],
             }));
         }) as Box<dyn FnMut(web_sys::BlobEvent)>);
         r.set_ondataavailable(Some(closure.as_ref().unchecked_ref()));
@@ -1922,42 +1732,8 @@ async fn run_recording_loop(
 
         let now_ms = js_sys::Date::now();
         let points = data.points.as_deref().unwrap_or(&[]);
-
-        {
-            let t_parse_batch = record_now_ms();
-            let indices: Vec<usize> = mem_queue
-                .borrow()
-                .iter()
-                .enumerate()
-                .filter_map(|(i, it)| {
-                    if let MemQueueItem::Video(ch) = it {
-                        if !ch.parsed {
-                            Some(i)
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            let n_unparsed = indices.len();
-            for i in indices {
-                let mut q = mem_queue.borrow_mut();
-                if let Some(MemQueueItem::Video(ref mut ch)) = q.get_mut(i) {
-                    parse_mem_video_chunk(ch, &cached_timescale, &cached_init_segment).await;
-                }
-            }
-            if n_unparsed > 0 {
-                record_log_duration(
-                    &format!("mem_queue parse batch (unparsed chunks={})", n_unparsed),
-                    t_parse_batch,
-                );
-            }
-            record_log_mem_queue_snapshot(&mem_queue);
-        }
-
         let in_window = in_point_recording_window(points, now_ms);
+        record_log_mem_queue_snapshot(&mem_queue);
 
         if !data.hasActiveMatch || data.match_id.as_ref().map(|s| s.as_str()) != current_match.as_ref().map(|id| id.as_str())
         {
@@ -1975,7 +1751,7 @@ async fn run_recording_loop(
                     };
                     let t_drain = record_now_ms();
                     let drained: Vec<MemQueueItem> = mem_queue.borrow_mut().drain(..).collect();
-                    let (drained_n, n_added) = process_drained_mem_queue_items(
+                    let (drained_n, n_added) = flush_mem_queue_items_to_idb(
                         drained,
                         db,
                         &match_id,
@@ -1986,9 +1762,6 @@ async fn run_recording_loop(
                         camera_name.clone(),
                         key_ref.clone(),
                         container.clone(),
-                        &session_first_chunk_state,
-                        &cached_init_segment,
-                        &cached_timescale,
                         &pending_chunks_by_match,
                         &upload_queue,
                     )
@@ -2008,20 +1781,12 @@ async fn run_recording_loop(
                     .push_back(MemQueueItem::FinalizeMatch { match_id });
                 *fsm.borrow_mut() = RecordFsm::Idle;
                 recording_session_uuid.borrow_mut().clear();
-                *cached_timescale.borrow_mut() = None;
-                *cached_init_segment.borrow_mut() = None;
-                *session_first_chunk_state.borrow_mut() =
-                    record_mp4::SessionFirstChunkState::default();
+                *recording_session_wall_start_ms.borrow_mut() = 0.0;
                 is_recording_sig.set(false);
             }
             if data.hasActiveMatch {
                 if let Some(ref match_id) = data.match_id {
                     current_match = Some(match_id.clone());
-                    is_recording_sig.set(true);
-                    *cached_timescale.borrow_mut() = None;
-                    *cached_init_segment.borrow_mut() = None;
-                    *session_first_chunk_state.borrow_mut() =
-                        record_mp4::SessionFirstChunkState::default();
                     if recorder_holder.borrow().is_none() {
                         if let Some(r) = make_recorder(&stream) {
                             let _ = r.start_with_time_slice(RECORD_TIMESLICE_MS);
@@ -2045,217 +1810,82 @@ async fn run_recording_loop(
             && data.match_id.as_ref().map(|s| s.as_str()) == current_match.as_ref().map(|id| id.as_str());
 
         if poll_aligned_with_match {
-        let match_id = current_match.as_ref().expect("current_match is None").clone();
+            let match_id = current_match.as_ref().expect("current_match is None").clone();
 
-        if *fsm.borrow() == RecordFsm::Recording && !in_window {
-            let sid = recording_session_uuid.borrow().clone();
-            let wall = *recording_session_wall_start_ms.borrow();
-            let session_id = if sid.is_empty() {
-                uuid_style_id()
-            } else {
-                sid
-            };
-            if let Some(ref db) = *db_holder.borrow() {
-                let t_drain = record_now_ms();
-                let drained: Vec<MemQueueItem> = mem_queue.borrow_mut().drain(..).collect();
-                let (drained_n, n_added) = process_drained_mem_queue_items(
-                    drained,
-                    db,
-                    &match_id,
-                    &session_id,
-                    wall,
-                    tournament_url.clone(),
-                    field.clone(),
-                    camera_name.clone(),
-                    key_ref.clone(),
-                    container.clone(),
-                    &session_first_chunk_state,
-                    &cached_init_segment,
-                    &cached_timescale,
-                    &pending_chunks_by_match,
-                    &upload_queue,
-                )
-                .await;
-                if n_added > 0 {
-                    upload_total_sig.set(upload_total_sig() + n_added);
-                }
-                record_log(&format!(
-                    "flush mem→IndexedDB (left point recording window): drained={} put_ok={} in {:.2} ms",
-                    drained_n,
-                    n_added,
-                    record_now_ms() - t_drain
-                ));
+            if in_window && *fsm.borrow() == RecordFsm::Idle {
+                *recording_session_uuid.borrow_mut() = uuid_style_id();
+                *recording_session_wall_start_ms.borrow_mut() = now_ms;
+                *fsm.borrow_mut() = RecordFsm::Recording;
             }
-            *fsm.borrow_mut() = RecordFsm::Idle;
-        }
 
-        if *fsm.borrow() == RecordFsm::Idle && in_window {
-            if let Some(point_start_ms) = min_point_start_ms_in_recording_window(points, now_ms) {
-                let cutoff = point_start_ms - 3000.0;
-                let mut best: Option<(usize, u32)> = None;
-                let mut best_kf_wall = f64::NEG_INFINITY;
-                for (qi, item) in mem_queue.borrow().iter().enumerate() {
-                    if let MemQueueItem::Video(ch) = item {
-                        if !ch.parsed {
-                            continue;
-                        }
-                        for s in &ch.sync_samples {
-                            if s.wall_epoch_ms <= cutoff && s.wall_epoch_ms > best_kf_wall {
-                                best_kf_wall = s.wall_epoch_ms;
-                                best = Some((qi, s.sample_index_in_fragment));
-                            }
-                        }
-                    }
-                }
-                if let Some((qi, sample_idx)) = best {
-                    for _ in 0..qi {
-                        mem_queue.borrow_mut().pop_front();
-                    }
-                    let ch_opt = match mem_queue.borrow_mut().pop_front() {
-                        Some(MemQueueItem::Video(ch)) => Some(ch),
-                        _ => None,
-                    };
-                    if let Some(mut ch) = ch_opt {
-                        let t_trim = record_now_ms();
-                        let bytes = blob_to_bytes(&ch.blob).await;
-                        let init = cached_init_segment
-                            .borrow()
-                            .clone()
-                            .or_else(|| record_mp4::extract_ftyp_moov(&bytes));
-                        let out = if let Some(ref init) = init {
-                            record_mp4::trim_fragment_with_init(&bytes, init, sample_idx)
-                                .unwrap_or(bytes)
-                        } else {
-                            bytes
-                        };
-                        ch.blob = bytes_to_blob(&out);
-                        ch.parsed = false;
-                        parse_mem_video_chunk(&mut ch, &cached_timescale, &cached_init_segment).await;
-                        record_log(&format!(
-                            "point window trim+reparse: sample_idx={} out_bytes={} in {:.2} ms",
-                            sample_idx,
-                            out.len(),
-                            record_now_ms() - t_trim
-                        ));
-                        mem_queue
-                            .borrow_mut()
-                            .push_front(MemQueueItem::Video(ch));
-                        *recording_session_uuid.borrow_mut() = uuid_style_id();
-                        *recording_session_wall_start_ms.borrow_mut() = now_ms;
-                        *fsm.borrow_mut() = RecordFsm::Recording;
-                    } else {
-                        *fsm.borrow_mut() = RecordFsm::Idle;
-                    }
-                }
-            }
-        }
-
-        if *fsm.borrow() == RecordFsm::Recording && in_window {
-            let sid = recording_session_uuid.borrow().clone();
-            let wall = *recording_session_wall_start_ms.borrow();
-            let session_id = if sid.is_empty() {
-                uuid_style_id()
-            } else {
-                sid
-            };
-            if let Some(ref db) = *db_holder.borrow() {
-                let t_drain = record_now_ms();
-                let drained: Vec<MemQueueItem> = mem_queue.borrow_mut().drain(..).collect();
-                let (drained_n, n_added) = process_drained_mem_queue_items(
-                    drained,
-                    db,
-                    &match_id,
-                    &session_id,
-                    wall,
-                    tournament_url.clone(),
-                    field.clone(),
-                    camera_name.clone(),
-                    key_ref.clone(),
-                    container.clone(),
-                    &session_first_chunk_state,
-                    &cached_init_segment,
-                    &cached_timescale,
-                    &pending_chunks_by_match,
-                    &upload_queue,
-                )
-                .await;
-                if n_added > 0 {
-                    upload_total_sig.set(upload_total_sig() + n_added);
-                }
-                record_log(&format!(
-                    "flush mem→IndexedDB (in point window, periodic): drained={} put_ok={} in {:.2} ms",
-                    drained_n,
-                    n_added,
-                    record_now_ms() - t_drain
-                ));
-            }
-        }
-
-        // MediaRecorder keeps emitting while the match is active, but we only entered Recording-based
-        // drains above; while Idle (waiting for keyframe trim, or between windows) chunks must still flush.
-        if poll_aligned_with_match && *fsm.borrow() == RecordFsm::Idle {
-            if let Some(ref db) = *db_holder.borrow() {
-                if !mem_queue.borrow().is_empty() {
-                    let sid = recording_session_uuid.borrow().clone();
-                    let wall = *recording_session_wall_start_ms.borrow();
-                    let session_id = if sid.is_empty() {
-                        uuid_style_id()
-                    } else {
-                        sid
-                    };
-                    let t_drain = record_now_ms();
+            if *fsm.borrow() == RecordFsm::Recording {
+                let sid = recording_session_uuid.borrow().clone();
+                let wall = *recording_session_wall_start_ms.borrow();
+                let session_id = if sid.is_empty() {
+                    uuid_style_id()
+                } else {
+                    sid
+                };
+                if let Some(ref db) = *db_holder.borrow() {
                     let drained: Vec<MemQueueItem> = mem_queue.borrow_mut().drain(..).collect();
-                    let (drained_n, n_added) = process_drained_mem_queue_items(
-                        drained,
-                        db,
-                        &match_id,
-                        &session_id,
-                        wall,
-                        tournament_url.clone(),
-                        field.clone(),
-                        camera_name.clone(),
-                        key_ref.clone(),
-                        container.clone(),
-                        &session_first_chunk_state,
-                        &cached_init_segment,
-                        &cached_timescale,
-                        &pending_chunks_by_match,
-                        &upload_queue,
-                    )
-                    .await;
-                    if n_added > 0 {
-                        upload_total_sig.set(upload_total_sig() + n_added);
+                    if !drained.is_empty() {
+                        let t_drain = record_now_ms();
+                        let (drained_n, n_added) = flush_mem_queue_items_to_idb(
+                            drained,
+                            db,
+                            &match_id,
+                            &session_id,
+                            wall,
+                            tournament_url.clone(),
+                            field.clone(),
+                            camera_name.clone(),
+                            key_ref.clone(),
+                            container.clone(),
+                            &pending_chunks_by_match,
+                            &upload_queue,
+                        )
+                        .await;
+                        if n_added > 0 {
+                            upload_total_sig.set(upload_total_sig() + n_added);
+                        }
+                        record_log(&format!(
+                            "flush mem→IndexedDB (Recording FSM): drained={} put_ok={} in {:.2} ms",
+                            drained_n,
+                            n_added,
+                            record_now_ms() - t_drain
+                        ));
                     }
-                    record_log(&format!(
-                        "flush mem→IndexedDB (Idle, active match): drained={} put_ok={} in {:.2} ms",
-                        drained_n,
-                        n_added,
-                        record_now_ms() - t_drain
-                    ));
                 }
             }
-        }
 
-        if *fsm.borrow() == RecordFsm::Idle {
-            mem_queue_idle_finalize_and_evict(
-                &mem_queue,
-                &db_holder,
-                &upload_queue,
-                upload_total_sig.to_owned(),
-                now_ms,
-            )
-            .await;
-        }
+            if !in_window && *fsm.borrow() == RecordFsm::Recording {
+                *fsm.borrow_mut() = RecordFsm::Idle;
+            }
 
-        } else if *fsm.borrow() == RecordFsm::Idle {
-            mem_queue_idle_finalize_and_evict(
-                &mem_queue,
-                &db_holder,
-                &upload_queue,
-                upload_total_sig.to_owned(),
-                now_ms,
-            )
-            .await;
+            if *fsm.borrow() == RecordFsm::Idle {
+                mem_queue_idle_finalize_and_evict(
+                    &mem_queue,
+                    &db_holder,
+                    &upload_queue,
+                    upload_total_sig.to_owned(),
+                    now_ms,
+                )
+                .await;
+            }
+
+            is_recording_sig.set(*fsm.borrow() == RecordFsm::Recording);
+        } else {
+            if *fsm.borrow() == RecordFsm::Idle {
+                mem_queue_idle_finalize_and_evict(
+                    &mem_queue,
+                    &db_holder,
+                    &upload_queue,
+                    upload_total_sig.to_owned(),
+                    now_ms,
+                )
+                .await;
+            }
+            is_recording_sig.set(false);
         }
 
         if data.hasActiveMatch {
