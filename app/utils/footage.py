@@ -1,5 +1,6 @@
 import json
 import logging
+import math
 import re
 from models import Match, Point, Field, Camera, db
 import os
@@ -228,15 +229,346 @@ def _get_media_duration_sec(file_path, cwd=None):
         return None
 
 
+def _epoch_ms_to_iso_utc(ms: float) -> str:
+    """ISO 8601 UTC string from epoch milliseconds."""
+    try:
+        dt = datetime.fromtimestamp(float(ms) / 1000.0, tz=timezone.utc)
+        return dt.isoformat().replace("+00:00", "Z")
+    except (ValueError, OSError, OverflowError, TypeError):
+        return ""
+
+
+def _ffmpeg_repair_concat_for_probe(
+    in_basename: str, out_basename: str, cwd: str, _log
+) -> bool:
+    """
+    Raw browser fMP4 byte-concats are often not a timeline ffprobe can walk. Remux with
+    ffmpeg (-c copy) so streams get a coherent PTS/DTS map; output is suitable for probe + trim.
+    """
+    cmd = [
+        "ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-fflags",
+        "+genpts+igndts",
+        "-i",
+        in_basename,
+        "-c",
+        "copy",
+        "-map",
+        "0",
+        "-avoid_negative_ts",
+        "make_zero",
+        "-y",
+        out_basename,
+    ]
+    result = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+    if result.returncode != 0:
+        _log.warning(
+            "finalize_recording: repair remux failed %s -> %s rc=%s stderr=%s",
+            in_basename,
+            out_basename,
+            result.returncode,
+            (result.stderr or "").strip()[:1500],
+        )
+        return False
+    out_path = path.join(cwd, out_basename)
+    if not path.exists(out_path) or path.getsize(out_path) == 0:
+        return False
+    return True
+
+
+def _parse_ffprobe_keyframe_frames_csv(stdout: str) -> float | None:
+    """First video keyframe time from -show_frames csv (pkt_pts_time, pict_type, key_frame)."""
+    for line in stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) < 2:
+            continue
+        pts_s = parts[0]
+        pict = parts[1] if len(parts) > 1 else ""
+        kf = parts[2] if len(parts) > 2 else ""
+        is_kf = kf == "1"
+        if not is_kf and pict:
+            is_kf = pict.upper() in ("I", "I0", "IDR") or pict == "1"
+        if not is_kf:
+            continue
+        if pts_s in ("", "N/A", "nan"):
+            continue
+        try:
+            t = float(pts_s)
+            if math.isfinite(t) and t >= 0:
+                return t
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _parse_ffprobe_keyframe_packets_csv(stdout: str) -> float | None:
+    """First keyframe packet time from -show_packets (pts_time + flags containing K)."""
+    for line in stdout.splitlines():
+        line = line.strip()
+        if not line or line.startswith(";"):
+            continue
+        parts = [p.strip() for p in line.split(",")]
+        if parts and parts[0] == "packet":
+            parts = parts[1:]
+        if len(parts) < 2:
+            continue
+        pts_s = parts[0]
+        flags = parts[1] if len(parts) > 1 else ""
+        if "K" not in flags and "key" not in flags.lower():
+            continue
+        if pts_s in ("", "N/A", "nan"):
+            continue
+        try:
+            t = float(pts_s)
+            if math.isfinite(t) and t >= 0:
+                return t
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _ffprobe_first_keyframe_pts_sec(rel_path: str, cwd: str | None, _log) -> float | None:
+    """
+    Media timeline position (seconds) of the first video keyframe.
+    Tries frame metadata, then packet flags. Uses read_intervals 0+60 first, then full file.
+    Prefer calling this on a file produced by _ffmpeg_repair_concat_for_probe, not raw cat output.
+    """
+    full = path.join(cwd, rel_path) if cwd else path.abspath(rel_path)
+
+    def run_frames(extra: list) -> float | None:
+        args = [
+            "ffprobe",
+            "-v",
+            "error",
+            *extra,
+            "-select_streams",
+            "v:0",
+            "-show_frames",
+            "-show_entries",
+            "frame=pkt_pts_time,pict_type,key_frame",
+            "-of",
+            "csv=p=0",
+            full,
+        ]
+        result = subprocess.run(
+            args,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0 and result.stdout:
+            return _parse_ffprobe_keyframe_frames_csv(result.stdout)
+        return None
+
+    def run_packets(extra: list) -> float | None:
+        args = [
+            "ffprobe",
+            "-v",
+            "error",
+            *extra,
+            "-select_streams",
+            "v:0",
+            "-show_packets",
+            "-show_entries",
+            "packet=pts_time,flags",
+            "-of",
+            "csv=p=0",
+            full,
+        ]
+        result = subprocess.run(
+            args,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0 and result.stdout:
+            return _parse_ffprobe_keyframe_packets_csv(result.stdout)
+        return None
+
+    for extra in (["-read_intervals", "0+60"], []):
+        t = run_frames(extra)
+        if t is not None:
+            return t
+        t = run_packets(extra)
+        if t is not None:
+            return t
+    return None
+
+
+def _ffmpeg_trim_and_remux_session(
+    joined_basename: str,
+    out_basename: str,
+    cwd: str,
+    trim_start_sec: float,
+    video_codec: str | None,
+    _log,
+) -> bool:
+    """
+    Trim leading samples from a muxed fMP4 (stream copy from first keyframe time) and
+    remux with faststart + codec tag for broad player support.
+    """
+    tag_args: list = []
+    if video_codec == "hevc":
+        tag_args = ["-tag:v", "hvc1"]
+    elif video_codec in ("h264", "avc1"):
+        tag_args = ["-tag:v", "avc1"]
+
+    trim_start_sec = max(0.0, float(trim_start_sec or 0.0))
+    cmd = [
+        "ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+    ]
+    if trim_start_sec > 1e-6:
+        cmd.extend(["-ss", str(trim_start_sec)])
+    cmd.extend(
+        [
+            "-i",
+            joined_basename,
+            "-c",
+            "copy",
+            "-map",
+            "0",
+            "-avoid_negative_ts",
+            "make_zero",
+            *tag_args,
+            "-movflags",
+            "+faststart",
+            "-y",
+            out_basename,
+        ]
+    )
+    result = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+    if result.returncode != 0:
+        _log.warning(
+            "finalize_recording: trim+remux failed returncode=%s stderr=%s",
+            result.returncode,
+            (result.stderr or "").strip()[:2000],
+        )
+        return False
+    out_path = path.join(cwd, out_basename)
+    if not path.exists(out_path) or path.getsize(out_path) == 0:
+        return False
+    return True
+
+
+def _ffmpeg_final_concat_timestamps(
+    chunk_dir: str,
+    concat_list_basename: str,
+    final_basename: str,
+    _log,
+) -> bool:
+    """
+    Concatenate session MP4s with the concat demuxer, then remux so generated PTS
+    and stream alignment are well-behaved for multi-session fMP4 (-c copy).
+    """
+    stage_basename = "final_concat_stage.mp4"
+    stage_path = path.join(chunk_dir, stage_basename)
+    final_path = path.join(chunk_dir, final_basename)
+
+    concat_cmd = [
+        "ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-f",
+        "concat",
+        "-safe",
+        "0",
+        "-i",
+        concat_list_basename,
+        "-c",
+        "copy",
+        "-y",
+        stage_basename,
+    ]
+    result = subprocess.run(
+        concat_cmd,
+        cwd=chunk_dir,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        _log.warning(
+            "finalize_recording: concat demuxer failed returncode=%s stderr=%s",
+            result.returncode,
+            (result.stderr or "").strip()[:2000],
+        )
+        return False
+    if not path.exists(stage_path) or path.getsize(stage_path) == 0:
+        return False
+
+    remux_cmd = [
+        "ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-fflags",
+        "+genpts+igndts",
+        "-i",
+        stage_basename,
+        "-c",
+        "copy",
+        "-map",
+        "0",
+        "-reset_timestamps",
+        "1",
+        "-avoid_negative_ts",
+        "make_zero",
+        "-movflags",
+        "+faststart",
+        "-y",
+        final_basename,
+    ]
+    result = subprocess.run(
+        remux_cmd,
+        cwd=chunk_dir,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode == 0 and path.exists(final_path) and path.getsize(final_path) > 0:
+        try:
+            os.remove(stage_path)
+        except OSError:
+            pass
+        return True
+
+    _log.warning(
+        "finalize_recording: post-concat timestamp remux failed stderr=%s",
+        (result.stderr or "").strip()[:2000],
+    )
+    if path.exists(stage_path) and path.getsize(stage_path) > 0:
+        try:
+            if path.exists(final_path):
+                os.remove(final_path)
+            os.rename(stage_path, final_path)
+            _log.warning(
+                "finalize_recording: using concat-only output (timestamp remux skipped)"
+            )
+            return True
+        except OSError as e:
+            _log.warning("finalize_recording: could not fall back to concat-only: %s", e)
+    return False
+
+
 def finalize_recording_worker(
     logger, tournament_url, field_name, match_id, camera_name, chunk_dir
 ):
     """
-    1. Group chunks by session_id; within each session sort by blob_event_timestamp_ms (else chunk_start).
-       Concatenate chunk files with cat.
-    2. Remux each session cat output with ffmpeg (-c copy, -movflags +faststart for MP4).
-    3. Concatenate session MP4s with ffmpeg concat demuxer (-c copy).
-    4. Compute point_timestamps and stream_start_time (UTC) for the frontend to scrub to points.
+    1. Group chunks by session_id; sort by blob_event_timestamp_ms (else chunk_start).
+    2. Per session: byte-concat fMP4 fragments, ffprobe first video keyframe time, ffmpeg
+       stream-copy trim from that keyframe (+movflags faststart, codec tag) for a playable file.
+    3. Wall-clock segment anchors use first-chunk epoch start + keyframe media offset (trim).
+    4. Concatenate session MP4s with ffmpeg concat demuxer, then remux (genpts, reset_timestamps)
+       for clean multi-session timestamps.
+    5. Compute point_timestamps, stream_start_time, time_world / time_video for scrubbing.
     """
     import sys
     print(f"finalize_recording: worker started match_id={match_id} chunk_dir={chunk_dir}", flush=True)
@@ -290,82 +622,115 @@ def finalize_recording_worker(
     ]
     db.session.remove()
 
-    # list of (session_id, output_basename, segment_start_sec, session_start_iso)
+    # list of (session_id, output_basename, wall_first_kf_sec, session_start_iso)
+    # wall_first_kf_sec = UTC epoch seconds for the first video keyframe kept after trim (for points / interpolation).
     session_outputs = []
-    stream_start_iso = None  # ISO UTC of very first chunk start
+    stream_start_iso = None  # ISO UTC of first keyframe in the first session (whole output timeline)
 
     for session_id, session_chunks in sessions:
-        # Only include chunks that exist on disk, in order
         ordered_chunks = [
-            c for c in session_chunks
+            c
+            for c in session_chunks
             if path.exists(path.join(chunk_dir, c["filename"]))
         ]
         if not ordered_chunks:
-            _log.warning("finalize_recording: session %s has no existing chunk files", session_id)
+            _log.warning(
+                "finalize_recording: session %s has no existing chunk files", session_id
+            )
             continue
 
-        # Chronological first chunk (metadata / points). Concat order may differ (ftyp init first).
         earliest_chunk = min(ordered_chunks, key=_chunk_sort_key)
-
-        if stream_start_iso is None:
-            stream_start_iso = _chunk_timestamp_to_iso_utc(earliest_chunk)
-
-        # Recording session start timestamp (world time alignment) used for interpolation.
-        # If missing, fall back to chunk_start_timestamp.
-        rec_session_start_raw = earliest_chunk.get("recording_session_start_time")
-        if rec_session_start_raw is None:
-            rec_session_start_raw = earliest_chunk.get("chunk_start_timestamp")
-        session_start_iso = _chunk_timestamp_to_iso_utc(
-            {"chunk_start_timestamp": rec_session_start_raw}
-        )
-
-        # Wall-clock segment start for point_timestamps (chunk_start_timestamp is epoch ms; blob_event is not).
-        segment_start_ms = _chunk_timestamp_sort_key(earliest_chunk)
-        segment_start_sec = segment_start_ms / 1000.0
-
         concat_chunks = _reorder_session_chunks_ftyp_first(ordered_chunks, chunk_dir)
-
-        joined_raw = path.join(chunk_dir, f"joined_raw_{session_id}.{ext}")
+        joined_basename = f"joined_raw_{session_id}.{ext}"
+        joined_raw = path.join(chunk_dir, joined_basename)
         if not _cat_session_chunks(concat_chunks, chunk_dir, joined_raw, _log, session_id):
             continue
 
         if not path.exists(joined_raw) or path.getsize(joined_raw) == 0:
-            _log.warning("finalize_recording: session %s joined raw empty or missing", session_id)
+            _log.warning(
+                "finalize_recording: session %s joined raw empty or missing", session_id
+            )
             continue
 
-        # Remux cat output (validates/repairs fMP4; faststart for streaming)
+        # ffprobe on raw byte-concats is unreliable; remux first so timeline / packets exist.
+        repaired_basename = f"joined_repaired_{session_id}.{ext}"
+        repaired_path = path.join(chunk_dir, repaired_basename)
+        trim_source_basename = joined_basename
+        if _ffmpeg_repair_concat_for_probe(
+            joined_basename, repaired_basename, chunk_dir, _log
+        ):
+            trim_source_basename = repaired_basename
+            video_codec = _get_video_codec(repaired_path, chunk_dir)
+            t_kf = _ffprobe_first_keyframe_pts_sec(repaired_basename, chunk_dir, _log)
+        else:
+            _log.warning(
+                "finalize_recording: session %s repair remux failed; probing/trimming raw concat",
+                session_id,
+            )
+            video_codec = _get_video_codec(joined_raw, chunk_dir)
+            t_kf = _ffprobe_first_keyframe_pts_sec(joined_basename, chunk_dir, _log)
+
+        if t_kf is None:
+            _log.info(
+                "finalize_recording: session %s no keyframe time from ffprobe; trim=0",
+                session_id,
+            )
+            t_kf = 0.0
+
+        earliest_ms = _chunk_timestamp_sort_key(earliest_chunk)
+        # Wall time of first retained keyframe: chunk timeline starts at earliest_ms; first KF at +t_kf s.
+        wall_first_kf_sec = earliest_ms / 1000.0 + t_kf
+
+        session_start_iso = _epoch_ms_to_iso_utc(
+            wall_first_kf_sec * 1000.0
+        ) or _chunk_timestamp_to_iso_utc(
+            {"chunk_start_timestamp": wall_first_kf_sec * 1000.0}
+        )
+
+        if stream_start_iso is None:
+            stream_start_iso = session_start_iso
+
         session_basename = f"session_{session_id}.{ext}"
         session_output_path = path.join(chunk_dir, session_basename)
-        video_codec = _get_video_codec(joined_raw, chunk_dir)
-        tag_args = []
-        if video_codec == "hevc":
-            tag_args = ["-tag:v", "hvc1"]
-        elif video_codec in ("h264", "avc1"):
-            tag_args = ["-tag:v", "avc1"]
-        fix_cmd = [
-            "ffmpeg", "-i", path.basename(joined_raw),
-            "-c", "copy", "-map", "0",
-            *tag_args,
-            "-movflags", "+faststart",
-            "-loglevel", "error", "-y", session_basename,
-        ]
-        result = subprocess.run(
-            fix_cmd,
-            cwd=chunk_dir,
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode != 0 or not path.exists(session_output_path) or path.getsize(session_output_path) == 0:
+        if not _ffmpeg_trim_and_remux_session(
+            trim_source_basename,
+            session_basename,
+            chunk_dir,
+            t_kf,
+            video_codec,
+            _log,
+        ):
             _log.warning(
-                "finalize_recording: session %s ffmpeg fix failed returncode=%s stderr=%s",
-                session_id, result.returncode, (result.stderr or "").strip(),
+                "finalize_recording: session %s trim+remux failed", session_id
             )
-            if result.stderr:
-                print(result.stderr.strip(), flush=True)
+            if path.exists(repaired_path):
+                try:
+                    os.remove(repaired_path)
+                except OSError:
+                    pass
+            continue
+
+        if path.exists(repaired_path):
+            try:
+                os.remove(repaired_path)
+            except OSError:
+                pass
+
+        if not path.exists(session_output_path) or path.getsize(session_output_path) == 0:
+            _log.warning(
+                "finalize_recording: session %s output missing or empty", session_id
+            )
             continue
 
         session_outputs.append(
-            (session_id, session_basename, segment_start_sec, session_start_iso)
+            (session_id, session_basename, wall_first_kf_sec, session_start_iso)
+        )
+        _log.info(
+            "finalize_recording: session %s -> %s trim_media_sec=%.4f wall_first_kf=%s",
+            session_id,
+            session_basename,
+            t_kf,
+            session_start_iso,
         )
         print(f"finalize_recording: session {session_id} -> {session_basename}", flush=True)
 
@@ -375,7 +740,6 @@ def finalize_recording_worker(
 
     print(f"finalize_recording: {len(session_outputs)} session(s) for concat", flush=True)
 
-    # 3. Concat all sessions with concat demuxer
     final_basename = f"final_video.{ext}"
     final_path = path.join(chunk_dir, final_basename)
     concat_list_path = path.join(chunk_dir, "concat_sessions.txt")
@@ -383,68 +747,20 @@ def finalize_recording_worker(
         for _sid, basename, _start, _session_start_iso in session_outputs:
             abs_path = path.abspath(path.join(chunk_dir, basename))
             f.write(f"file {repr(abs_path)}\n")
-    _log.info("finalize_recording: wrote concat_sessions.txt with %d entries", len(session_outputs))
-
-    concat_cmd = [
-        "ffmpeg", "-f", "concat", "-safe", "0",
-        "-i", path.basename(concat_list_path),
-        "-c", "copy",
-        "-loglevel", "error", "-y", final_basename,
-    ]
-    result = subprocess.run(
-        concat_cmd,
-        cwd=chunk_dir,
-        capture_output=True,
-        text=True,
+    _log.info(
+        "finalize_recording: wrote concat_sessions.txt with %d entries", len(session_outputs)
     )
-    if result.returncode != 0 or not path.exists(final_path) or path.getsize(final_path) == 0:
-        _log.warning(
-            "finalize_recording: concat failed returncode=%s stderr=%s",
-            result.returncode, (result.stderr or "").strip(),
-        )
-        if result.stderr:
-            print(result.stderr.strip(), flush=True)
+
+    if not _ffmpeg_final_concat_timestamps(
+        chunk_dir, path.basename(concat_list_path), final_basename, _log
+    ):
+        _log.warning("finalize_recording: final concat / timestamp pass failed")
         return
 
-    # Some browser/webm muxers produce streams whose timestamps are not well-behaved when
-    # concatenated via -c copy. YouTube can interpret these incorrectly (e.g. playing too fast).
-    # Fix by remuxing with regenerated PTS and resetting timestamps. This is not a re-encode
-    # (still -c copy); it should only repair container timing metadata.
-    remux_fixed_basename = f"final_video_fixed.{ext}"
-    remux_fixed_path = path.join(chunk_dir, remux_fixed_basename)
-    remux_cmd = [
-        "ffmpeg",
-        "-fflags",
-        "+genpts",
-        "-i",
-        path.basename(final_path),
-        "-c",
-        "copy",
-        "-map",
-        "0",
-        "-reset_timestamps",
-        "1",
-        "-loglevel",
-        "error",
-        "-y",
-        remux_fixed_basename,
-    ]
-    result = subprocess.run(
-        remux_cmd,
-        cwd=chunk_dir,
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode == 0 and path.exists(remux_fixed_path) and path.getsize(remux_fixed_path) > 0:
-        try:
-            os.remove(final_path)
-        except OSError:
-            pass
-        final_basename = remux_fixed_basename
-        final_path = remux_fixed_path
-        print(f"finalize_recording: wrote {final_basename} (timestamp-fixed)", flush=True)
-    else:
-        print(f"finalize_recording: wrote {final_basename} (no timestamp fix); stderr={((result.stderr or '').strip() or 'n/a')}", flush=True)
+    if not path.exists(final_path) or path.getsize(final_path) == 0:
+        _log.warning("finalize_recording: final output missing or empty")
+        return
+    print(f"finalize_recording: wrote {final_basename}", flush=True)
 
     # 4. Compute point_timestamps and stream_start_time for frontend scrubbing
     try:
