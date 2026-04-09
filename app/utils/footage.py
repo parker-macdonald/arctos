@@ -132,15 +132,23 @@ def _cat_session_chunks(ordered_chunks, chunk_dir, joined_raw, _log, session_id)
     `ordered_chunks` must already be ordered with a chunk that starts with ftyp (init) first
     (see _reorder_session_chunks_ftyp_first).
 
-    - Write the first chunk verbatim.
-    - For following chunks, strip leading ftyp+moov when present (duplicate init per
-      MediaRecorder timeslice); keep pure moof+mdat fragments as-is.
+    For WebM (Firefox MediaRecorder): concatenate chunk bytes verbatim — no fMP4 stripping.
+
+    - fMP4: Write the first chunk verbatim; strip duplicate ftyp+moov on following chunks.
+    - WebM: Write all parts verbatim.
     """
     chunk_dir = path.abspath(chunk_dir)
     if not ordered_chunks:
         return False
     try:
         first_fn = ordered_chunks[0]["filename"]
+        if first_fn.lower().endswith(".webm"):
+            with open(joined_raw, "wb") as out:
+                for c in ordered_chunks:
+                    fp = path.join(chunk_dir, c["filename"])
+                    with open(fp, "rb") as f:
+                        out.write(f.read())
+            return True
         if not _chunk_file_starts_with_ftyp(chunk_dir, first_fn):
             _log.warning(
                 "finalize_recording: session %s first chunk %s does not start with "
@@ -439,12 +447,11 @@ def _ffmpeg_trim_and_remux_session(
             "-avoid_negative_ts",
             "make_zero",
             *tag_args,
-            "-movflags",
-            "+faststart",
-            "-y",
-            out_basename,
         ]
     )
+    if out_basename.lower().endswith(".mp4"):
+        cmd.extend(["-movflags", "+faststart"])
+    cmd.extend(["-y", out_basename])
     result = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
     if result.returncode != 0:
         _log.warning(
@@ -466,10 +473,11 @@ def _ffmpeg_final_concat_timestamps(
     _log,
 ) -> bool:
     """
-    Concatenate session MP4s with the concat demuxer, then remux so generated PTS
-    and stream alignment are well-behaved for multi-session fMP4 (-c copy).
+    Concatenate session outputs with the concat demuxer, then remux so generated PTS
+    and stream alignment are well-behaved (-c copy). MP4 gets faststart; WebM skips movflags.
     """
-    stage_basename = "final_concat_stage.mp4"
+    sfx = path.splitext(final_basename)[1].lstrip(".") or "mp4"
+    stage_basename = f"final_concat_stage.{sfx}"
     stage_path = path.join(chunk_dir, stage_basename)
     final_path = path.join(chunk_dir, final_basename)
 
@@ -522,11 +530,10 @@ def _ffmpeg_final_concat_timestamps(
         "1",
         "-avoid_negative_ts",
         "make_zero",
-        "-movflags",
-        "+faststart",
-        "-y",
-        final_basename,
     ]
+    if final_basename.lower().endswith(".mp4"):
+        remux_cmd.extend(["-movflags", "+faststart"])
+    remux_cmd.extend(["-y", final_basename])
     result = subprocess.run(
         remux_cmd,
         cwd=chunk_dir,
@@ -611,8 +618,6 @@ def finalize_recording_worker(
         _log.warning("finalize_recording: no sessions with session_id in chunks_meta")
         return
 
-    ext = "mp4"
-
     pts = Point.query.filter_by(match=match_id).order_by(Point.stamp.asc()).all()
     # Snapshot points and release the ORM session before long ffmpeg work so SQLite is not
     # held open (avoids "database is locked" for concurrent request handlers).
@@ -626,6 +631,7 @@ def finalize_recording_worker(
     # wall_first_kf_sec = UTC epoch seconds for the first video keyframe kept after trim (for points / interpolation).
     session_outputs = []
     stream_start_iso = None  # ISO UTC of first keyframe in the first session (whole output timeline)
+    final_output_ext = "mp4"  # first successful session sets this (mp4 vs webm)
 
     for session_id, session_chunks in sessions:
         ordered_chunks = [
@@ -640,7 +646,12 @@ def finalize_recording_worker(
             continue
 
         earliest_chunk = min(ordered_chunks, key=_chunk_sort_key)
-        concat_chunks = _reorder_session_chunks_ftyp_first(ordered_chunks, chunk_dir)
+        is_webm = ordered_chunks[0]["filename"].lower().endswith(".webm")
+        ext = "webm" if is_webm else "mp4"
+        if is_webm:
+            concat_chunks = sorted(ordered_chunks, key=_chunk_sort_key)
+        else:
+            concat_chunks = _reorder_session_chunks_ftyp_first(ordered_chunks, chunk_dir)
         joined_basename = f"joined_raw_{session_id}.{ext}"
         joined_raw = path.join(chunk_dir, joined_basename)
         if not _cat_session_chunks(concat_chunks, chunk_dir, joined_raw, _log, session_id):
@@ -722,6 +733,9 @@ def finalize_recording_worker(
             )
             continue
 
+        if not session_outputs:
+            final_output_ext = ext
+
         session_outputs.append(
             (session_id, session_basename, wall_first_kf_sec, session_start_iso)
         )
@@ -740,7 +754,7 @@ def finalize_recording_worker(
 
     print(f"finalize_recording: {len(session_outputs)} session(s) for concat", flush=True)
 
-    final_basename = f"final_video.{ext}"
+    final_basename = f"final_video.{final_output_ext}"
     final_path = path.join(chunk_dir, final_basename)
     concat_list_path = path.join(chunk_dir, "concat_sessions.txt")
     with open(concat_list_path, "w") as f:

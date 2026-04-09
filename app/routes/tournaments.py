@@ -783,11 +783,11 @@ def record_upload_chunk():
     if chunk_file.filename == "":
         return jsonify({"error": "Empty chunk file"}), 400
 
-    # New record page: fragmented MP4 only (fMP4 from MediaRecorder).
+    # Record page: fragmented MP4 (most browsers) or WebM (Firefox / some Linux).
     container = (request.form.get("container") or "mp4").strip().lower()
-    if container != "mp4":
-        return jsonify({"error": "Only container=mp4 is supported"}), 400
-    chunk_ext = "mp4"
+    if container not in ("mp4", "webm"):
+        return jsonify({"error": "Only container=mp4 or webm is supported"}), 400
+    chunk_ext = "mp4" if container == "mp4" else "webm"
 
     upload_dir = os.path.join(
         current_app.root_path,
@@ -854,6 +854,7 @@ def record_upload_chunk():
             chunk_meta = {
                 "filename": chunk_filename,
                 "session_id": session_id,
+                "container": container,
                 "chunk_start_timestamp": parse_timestamp(chunk_start_timestamp),
                 "chunk_duration": float(chunk_duration),
                 "camera_name": camera_name,
