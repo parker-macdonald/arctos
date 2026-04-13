@@ -1,6 +1,5 @@
 //! Point recording page: single MP4 `MediaRecorder`, in-memory chunk queue, IndexedDB upload queue, match-status polling.
-//! While a match is active, chunks are queued with `BlobEvent.timeStamp` and wall-clock times. MP4 keyframe timing is left to the backend;
-//! here we assume each timeslice chunk aligns with one keyframe at chunk start (`wall_epoch_ms`).
+//! The frontend records continuously during an active match, keeps recent chunks in memory, and only uploads chunks while the point-window FSM is `Recording`.
 
 use crate::api;
 use crate::types::{RecordMatchStatusResponse, RecordPointData};
@@ -19,7 +18,6 @@ use crate::record_idb;
 use wasm_bindgen::JsCast;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::closure::Closure;
-
 /// Must match MediaRecorder `timeslice` / `RecordChunkMeta.chunk_length_ms` on every enqueue path.
 #[cfg(target_arch = "wasm32")]
 const RECORD_CHUNK_LENGTH_MS: u32 = 500;
@@ -183,7 +181,7 @@ fn register_screen_wake_lock_listeners(sentinel_sig: Signal<Option<wasm_bindgen:
     ptr.forget();
 }
 
-/// In-memory recording FSM: `Recording` while inside the point window (±3s); IndexedDB flush runs only in `Recording`.
+/// In-memory recording FSM: `Recording` while `in_point_recording_window`; chunks flush to IndexedDB only in `Recording`.
 #[cfg(target_arch = "wasm32")]
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum RecordFsm {
@@ -194,12 +192,8 @@ enum RecordFsm {
 #[cfg(target_arch = "wasm32")]
 struct MemVideoChunk {
     blob: web_sys::Blob,
-    /// `BlobEvent.timeStamp` (DOMHighResTimeStamp, ms, relative to `performance.timeOrigin`).
     blob_event_timestamp_ms: f64,
-    /// Wall-clock ms for chunk start: `performance.timeOrigin + blob_event_timestamp_ms`.
     wall_epoch_ms: f64,
-    /// Strict assumption: one keyframe at fragment start → real-world time `wall_epoch_ms` (no MP4 parse).
-    keyframe_wall_times_ms: Vec<f64>,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -215,6 +209,7 @@ enum QueueItem {
     FinalizeMatch { match_id: String },
 }
 
+/// Log queue length and item types.
 #[cfg(target_arch = "wasm32")]
 fn record_log_mem_queue_snapshot(mem_queue: &Rc<RefCell<VecDeque<MemQueueItem>>>) {
     let q = mem_queue.borrow();
@@ -905,15 +900,15 @@ fn blob_event_wall_epoch_ms(ev: &web_sys::BlobEvent) -> f64 {
         .unwrap_or_else(|| js_sys::Date::now())
 }
 
-/// Write drained queue items to IndexedDB and enqueue upload work (video chunks + finalize rows).
+/// Upload drained mem-queue items to IndexedDB (video chunks + finalize rows).
 #[cfg(target_arch = "wasm32")]
 #[allow(clippy::too_many_arguments)]
-async fn flush_mem_queue_items_to_idb(
+async fn process_drained_mem_queue_items(
     drained: Vec<MemQueueItem>,
     db: &idb::Database,
     match_id: &str,
     session_id: &str,
-    recording_session_start_wall_ms: f64,
+    wall: f64,
     tournament_url: String,
     field: String,
     camera_name: String,
@@ -927,57 +922,43 @@ async fn flush_mem_queue_items_to_idb(
     for item in drained {
         match item {
             MemQueueItem::Video(ch) => {
-                let keyframe_wall_times_json =
-                    serde_json::to_string(&ch.keyframe_wall_times_ms)
-                        .unwrap_or_else(|_| "[]".to_string());
                 let meta = RecordChunkMeta {
                     tournament_url: tournament_url.clone(),
                     field: field.clone(),
                     match_id: match_id.to_string(),
                     session_id: session_id.to_string(),
                     chunk_start_timestamp: ch.wall_epoch_ms,
-                    recording_session_start_time: recording_session_start_wall_ms,
+                    recording_session_start_time: wall,
                     chunk_length_ms: RECORD_CHUNK_LENGTH_MS,
                     camera_name: camera_name.clone(),
                     key: key.clone(),
                     container: container.clone(),
                     blob_event_timestamp_ms: ch.blob_event_timestamp_ms,
-                    keyframe_wall_times_json,
                 };
                 if let Ok(k) = record_idb::get_next_sequence(db).await {
-                    match record_idb::put_chunk(db, &k, &meta, &ch.blob).await {
-                        Ok(()) => {
-                            n_added += 1;
-                            *pending_chunks_by_match
-                                .borrow_mut()
-                                .entry(match_id.to_string())
-                                .or_insert(0) += 1;
-                            upload_queue.borrow_mut().push_back((
-                                k,
-                                QueueItem::Chunk {
-                                    match_id: Some(match_id.to_string()),
-                                },
-                            ));
-                        }
-                        Err(e) => {
-                            record_log(&format!("IndexedDB put_chunk failed: {e:?}"));
-                        }
+                    if record_idb::put_chunk(db, &k, &meta, &ch.blob).await.is_ok() {
+                        n_added += 1;
+                        *pending_chunks_by_match
+                            .borrow_mut()
+                            .entry(match_id.to_string())
+                            .or_insert(0) += 1;
+                        upload_queue.borrow_mut().push_back((
+                            k,
+                            QueueItem::Chunk {
+                                match_id: Some(match_id.to_string()),
+                            },
+                        ));
                     }
                 }
             }
             MemQueueItem::FinalizeMatch { match_id: fid } => {
                 if let Ok(k) = record_idb::get_next_sequence(db).await {
-                    match record_idb::put_finalize(db, &k, &fid).await {
-                        Ok(()) => {
-                            n_added += 1;
-                            upload_queue.borrow_mut().push_back((
-                                k,
-                                QueueItem::FinalizeMatch { match_id: fid },
-                            ));
-                        }
-                        Err(e) => {
-                            record_log(&format!("IndexedDB put_finalize failed: {e:?}"));
-                        }
+                    if record_idb::put_finalize(db, &k, &fid).await.is_ok() {
+                        n_added += 1;
+                        upload_queue.borrow_mut().push_back((
+                            k,
+                            QueueItem::FinalizeMatch { match_id: fid },
+                        ));
                     }
                 }
             }
@@ -986,51 +967,51 @@ async fn flush_mem_queue_items_to_idb(
     (drained_n, n_added)
 }
 
-/// Idle: move leading `FinalizeMatch` rows to IndexedDB; drop front video chunks older than 10s (wall clock).
+/// Idle-state queue maintenance: enqueue a front `FinalizeMatch`, otherwise evict one stale front video chunk.
 #[cfg(target_arch = "wasm32")]
-async fn mem_queue_idle_finalize_and_evict(
+async fn mem_queue_idle_step(
     mem_queue: &Rc<RefCell<VecDeque<MemQueueItem>>>,
     db_holder: &Rc<RefCell<Option<idb::Database>>>,
     upload_queue: &Rc<RefCell<VecDeque<(String, QueueItem)>>>,
     mut upload_total_sig: Signal<u32>,
     now_ms: f64,
 ) {
-    let t_idle = record_now_ms();
-    record_log("mem_queue_idle_finalize_and_evict: begin");
-    loop {
-        let is_finalize = mem_queue
-            .borrow()
-            .front()
-            .map(|it| matches!(it, MemQueueItem::FinalizeMatch { .. }))
-            .unwrap_or(false);
-        if !is_finalize {
-            break;
-        }
-        let Some(MemQueueItem::FinalizeMatch { match_id: fid }) = mem_queue.borrow_mut().pop_front() else {
-            break;
-        };
-        if let Some(ref db) = *db_holder.borrow() {
-            if let Ok(k) = record_idb::get_next_sequence(db).await {
-                if record_idb::put_finalize(db, &k, &fid).await.is_ok() {
-                    upload_total_sig.set(upload_total_sig() + 1);
-                    upload_queue.borrow_mut().push_back((
-                        k,
-                        QueueItem::FinalizeMatch { match_id: fid },
-                    ));
+    let front_item = {
+        mem_queue.borrow().front().map(|it| match it {
+            MemQueueItem::Video(ch) => Ok(ch.wall_epoch_ms),
+            MemQueueItem::FinalizeMatch { match_id } => Err(match_id.clone()),
+        })
+    };
+
+    match front_item {
+        Some(Err(front_match_id)) => {
+            let Some(MemQueueItem::FinalizeMatch { match_id }) = mem_queue.borrow_mut().pop_front() else {
+                return;
+            };
+            debug_assert_eq!(front_match_id, match_id);
+            if let Some(ref db) = *db_holder.borrow() {
+                if let Ok(k) = record_idb::get_next_sequence(db).await {
+                    if record_idb::put_finalize(db, &k, &match_id).await.is_ok() {
+                        upload_total_sig.set(upload_total_sig() + 1);
+                        upload_queue.borrow_mut().push_back((
+                            k,
+                            QueueItem::FinalizeMatch {
+                                match_id: match_id.clone(),
+                            },
+                        ));
+                        record_log(&format!("mem_queue_idle_step: queued finalize match_id={}", match_id));
+                    }
                 }
             }
         }
-    }
-
-    while let Some(MemQueueItem::Video(ch)) = mem_queue.borrow().front() {
-        if now_ms - ch.wall_epoch_ms > 10_000.0 {
-            mem_queue.borrow_mut().pop_front();
-            record_log("mem_queue_idle_finalize_and_evict: evicted old video chunk (>10s)");
-        } else {
-            break;
+        Some(Ok(front_wall_epoch_ms)) => {
+            if now_ms - front_wall_epoch_ms > 10_000.0 {
+                mem_queue.borrow_mut().pop_front();
+                record_log("mem_queue_idle_step: evicted stale front video chunk (>10s old)");
+            }
         }
+        None => {}
     }
-    record_log_duration("mem_queue_idle_finalize_and_evict: done (total)", t_idle);
 }
 
 /// JPEG encode helper (quality 0.7 via canvas `toBlob`).
@@ -1456,8 +1437,8 @@ async fn run_recording_loop(
     mut status_sig: Signal<RecordStatus>,
     mut match_status_data_sig: Signal<Option<RecordMatchStatusResponse>>,
     mut is_recording_sig: Signal<bool>,
-    mut is_uploading_sig: Signal<bool>,
-    mut upload_count_sig: Signal<u32>,
+    is_uploading_sig: Signal<bool>,
+    upload_count_sig: Signal<u32>,
     mut upload_total_sig: Signal<u32>,
     mut storage_warning_sig: Signal<Option<String>>,
 ) {
@@ -1477,20 +1458,13 @@ async fn run_recording_loop(
         "video/mp4; codecs=avc1.42E01E",
         "video/mp4",
     ];
-    /// Firefox / many Linux builds: MP4 unavailable; WebM works for MediaRecorder.
-    const MIME_WEBM: &[&str] = &[
-        "video/webm;codecs=vp9,opus",
-        "video/webm;codecs=vp8,opus",
-        "video/webm",
-    ];
     /// Keep each fragment small enough for typical reverse-proxy body limits (often 1–10 MB).
     const RECORD_VIDEO_BITS_PER_SECOND: u32 = 50_000_000;
     /// Must match `chunk_length_ms` in `RecordChunkMeta` for every enqueue path.
     const RECORD_TIMESLICE_MS: i32 = 500;
 
     let key_ref = key.clone();
-    // Upload / finalize container: mp4 or webm (must match what MediaRecorder emits).
-    let record_container: Rc<RefCell<String>> = Rc::new(RefCell::new("mp4".to_string()));
+    let container = "mp4".to_string();
 
     let mem_queue: Rc<RefCell<VecDeque<MemQueueItem>>> = Rc::new(RefCell::new(VecDeque::new()));
     let fsm: Rc<RefCell<RecordFsm>> = Rc::new(RefCell::new(RecordFsm::Idle));
@@ -1499,71 +1473,48 @@ async fn run_recording_loop(
     let recorder_holder: Rc<RefCell<Option<MediaRecorder>>> = Rc::new(RefCell::new(None));
 
     let mq_cb = mem_queue.clone();
-    let make_recorder = move |stream: &web_sys::MediaStream| -> Option<(MediaRecorder, String)> {
-        let try_mime = |mime: &str| -> Option<MediaRecorder> {
-            let mut options = MediaRecorderOptions::new();
-            options.set_video_bits_per_second(RECORD_VIDEO_BITS_PER_SECOND);
-            options.set_audio_bits_per_second(128_000);
-            options.set_mime_type(mime);
-            let r = MediaRecorder::new_with_media_stream_and_media_recorder_options(stream, &options).ok()?;
-            let mq = mq_cb.clone();
-            let closure = Closure::wrap(Box::new(move |ev: web_sys::BlobEvent| {
-                let Some(blob) = ev.data() else {
-                    return;
-                };
-                let wall_epoch_ms = blob_event_wall_epoch_ms(&ev);
-                let blob_event_timestamp_ms = ev.time_stamp();
-                let sz = blob.size();
-                record_log(&format!(
-                    "MediaRecorder ondataavailable: blob_bytes={:.0} wall_epoch_ms={:.1} blob_event_ts_ms={:.1}",
-                    sz, wall_epoch_ms, blob_event_timestamp_ms
-                ));
-                mq.borrow_mut().push_back(MemQueueItem::Video(MemVideoChunk {
-                    blob,
-                    blob_event_timestamp_ms,
-                    wall_epoch_ms,
-                    keyframe_wall_times_ms: vec![wall_epoch_ms],
-                }));
-            }) as Box<dyn FnMut(web_sys::BlobEvent)>);
-            r.set_ondataavailable(Some(closure.as_ref().unchecked_ref()));
-            closure.forget();
-            Some(r)
-        };
-
+    let make_recorder = move |stream: &web_sys::MediaStream| -> Option<MediaRecorder> {
+        let options = MediaRecorderOptions::new();
+        options.set_video_bits_per_second(RECORD_VIDEO_BITS_PER_SECOND);
+        options.set_audio_bits_per_second(128_000);
+        let mut chosen: Option<&str> = None;
         for m in MIME_MP4 {
             if MediaRecorder::is_type_supported(m) {
-                if let Some(r) = try_mime(m) {
-                    record_log(&format!("MediaRecorder using MP4 mime={m}"));
-                    return Some((r, "mp4".to_string()));
-                }
+                options.set_mime_type(m);
+                chosen = Some(*m);
+                break;
             }
         }
-        for m in MIME_WEBM {
-            if MediaRecorder::is_type_supported(m) {
-                if let Some(r) = try_mime(m) {
-                    record_log(&format!("MediaRecorder using WebM mime={m}"));
-                    return Some((r, "webm".to_string()));
-                }
-            }
-        }
-        record_log("MediaRecorder: no supported MP4 or WebM MIME type");
-        None
+        chosen?;
+        let r = MediaRecorder::new_with_media_stream_and_media_recorder_options(stream, &options).ok()?;
+        let mq = mq_cb.clone();
+        let closure = Closure::wrap(Box::new(move |ev: web_sys::BlobEvent| {
+            let Some(blob) = ev.data() else {
+                return;
+            };
+            let wall_epoch_ms = blob_event_wall_epoch_ms(&ev);
+            let blob_event_timestamp_ms = ev.time_stamp();
+            let sz = blob.size();
+            record_log(&format!(
+                "MediaRecorder ondataavailable: blob_bytes={:.0} wall_epoch_ms={:.1} blob_event_ts_ms={:.1}",
+                sz, wall_epoch_ms, blob_event_timestamp_ms
+            ));
+            mq.borrow_mut().push_back(MemQueueItem::Video(MemVideoChunk {
+                blob,
+                blob_event_timestamp_ms,
+                wall_epoch_ms,
+            }));
+        }) as Box<dyn FnMut(web_sys::BlobEvent)>);
+        r.set_ondataavailable(Some(closure.as_ref().unchecked_ref()));
+        closure.forget();
+        Some(r)
     };
 
     let db_holder: Rc<RefCell<Option<idb::Database>>> = Rc::new(RefCell::new(None));
-    for _ in 0..10u32 {
-        if db_holder.borrow().is_some() {
-            break;
-        }
+    if db_holder.borrow().is_none() {
         if let Ok(db) = record_idb::open_db().await {
             *db_holder.borrow_mut() = Some(db);
-            record_log("IndexedDB: open_db ok");
-            break;
         }
-        gloo_timers::future::TimeoutFuture::new(120).await;
-    }
-    if db_holder.borrow().is_none() {
-        record_log("IndexedDB: open_db failed after retries — uploads disabled; private mode often blocks storage");
     }
     let upload_queue: Rc<RefCell<VecDeque<(String, QueueItem)>>> =
         Rc::new(RefCell::new(VecDeque::new()));
@@ -1713,22 +1664,9 @@ async fn run_recording_loop(
     let mut last_poll_data: Option<RecordMatchStatusResponse> = None;
     let mut preview_stop: Option<Arc<AtomicBool>> = None;
     let mut preview_sender_running = false;
-    let mut loop_idx: u32 = 0;
 
     loop {
-        loop_idx = loop_idx.wrapping_add(1);
         let t_iter = record_now_ms();
-        if db_holder.borrow().is_none() {
-            if let Ok(db) = record_idb::open_db().await {
-                *db_holder.borrow_mut() = Some(db);
-                record_log("IndexedDB: open_db succeeded during poll");
-            } else if loop_idx % 40 == 1 {
-                storage_warning_sig.set(Some(
-                    "Local recording storage (IndexedDB) is not available. Clips cannot be saved until storage works — avoid private browsing and check site permissions."
-                        .to_string(),
-                ));
-            }
-        }
         let t_poll = record_now_ms();
         let poll_result = api::record_match_status(
             &tournament_url,
@@ -1784,10 +1722,10 @@ async fn run_recording_loop(
 
         let now_ms = js_sys::Date::now();
         let points = data.points.as_deref().unwrap_or(&[]);
+
+        record_log_mem_queue_snapshot(&mem_queue);
+
         let in_window = in_point_recording_window(points, now_ms);
-        if loop_idx % 12 == 0 {
-            record_log_mem_queue_snapshot(&mem_queue);
-        }
 
         if !data.hasActiveMatch || data.match_id.as_ref().map(|s| s.as_str()) != current_match.as_ref().map(|id| id.as_str())
         {
@@ -1795,41 +1733,12 @@ async fn run_recording_loop(
                 if let Some(r) = recorder_holder.borrow_mut().take() {
                     stop_media_recorder_fully(r).await;
                 }
-                if let Some(ref db) = *db_holder.borrow() {
-                    let sid = recording_session_uuid.borrow().clone();
-                    let wall = *recording_session_wall_start_ms.borrow();
-                    let session_id = if sid.is_empty() {
-                        uuid_style_id()
-                    } else {
-                        sid
-                    };
-                    let t_drain = record_now_ms();
-                    let drained: Vec<MemQueueItem> = mem_queue.borrow_mut().drain(..).collect();
-                    let (drained_n, n_added) = flush_mem_queue_items_to_idb(
-                        drained,
-                        db,
-                        &match_id,
-                        &session_id,
-                        wall,
-                        tournament_url.clone(),
-                        field.clone(),
-                        camera_name.clone(),
-                        key_ref.clone(),
-                        record_container.borrow().clone(),
-                        &pending_chunks_by_match,
-                        &upload_queue,
-                    )
-                    .await;
-                    if n_added > 0 {
-                        upload_total_sig.set(upload_total_sig() + n_added);
-                    }
-                    record_log(&format!(
-                        "flush mem→IndexedDB (match changed / no longer aligned): drained={} put_ok={} in {:.2} ms",
-                        drained_n,
-                        n_added,
-                        record_now_ms() - t_drain
-                    ));
-                }
+                let dropped_video_chunks = {
+                    let mut q = mem_queue.borrow_mut();
+                    let before = q.len();
+                    q.retain(|item| matches!(item, MemQueueItem::FinalizeMatch { .. }));
+                    before.saturating_sub(q.len())
+                };
                 mem_queue
                     .borrow_mut()
                     .push_back(MemQueueItem::FinalizeMatch { match_id });
@@ -1837,19 +1746,21 @@ async fn run_recording_loop(
                 recording_session_uuid.borrow_mut().clear();
                 *recording_session_wall_start_ms.borrow_mut() = 0.0;
                 is_recording_sig.set(false);
+                if dropped_video_chunks > 0 {
+                    record_log(&format!(
+                        "match transition: dropped {} queued video chunk(s) before finalize sentinel",
+                        dropped_video_chunks
+                    ));
+                }
             }
             if data.hasActiveMatch {
                 if let Some(ref match_id) = data.match_id {
                     current_match = Some(match_id.clone());
+                    is_recording_sig.set(false);
                     if recorder_holder.borrow().is_none() {
-                        if let Some((r, cont)) = make_recorder(&stream) {
-                            *record_container.borrow_mut() = cont;
+                        if let Some(r) = make_recorder(&stream) {
                             let _ = r.start_with_time_slice(RECORD_TIMESLICE_MS);
                             *recorder_holder.borrow_mut() = Some(r);
-                        } else {
-                            storage_warning_sig.set(Some(
-                                "This browser cannot record field video (no MP4/WebM MediaRecorder). Try Chrome, Edge, or Safari.".to_string(),
-                            ));
                         }
                     } else if let Some(r) = recorder_holder.borrow().as_ref() {
                         let state_str: String = js_sys::Reflect::get(r.as_ref(), &"state".into())
@@ -1871,69 +1782,55 @@ async fn run_recording_loop(
         if poll_aligned_with_match {
             let match_id = current_match.as_ref().expect("current_match is None").clone();
 
-            if in_window && *fsm.borrow() == RecordFsm::Idle {
-                *recording_session_uuid.borrow_mut() = uuid_style_id();
-                *recording_session_wall_start_ms.borrow_mut() = now_ms;
-                *fsm.borrow_mut() = RecordFsm::Recording;
+            if in_window {
+                if *fsm.borrow() == RecordFsm::Idle {
+                    *recording_session_uuid.borrow_mut() = uuid_style_id();
+                    *recording_session_wall_start_ms.borrow_mut() = now_ms;
+                    *fsm.borrow_mut() = RecordFsm::Recording;
+                    is_recording_sig.set(true);
+                    record_log("FSM: Idle -> Recording");
+                }
+            } else if *fsm.borrow() == RecordFsm::Recording {
+                *fsm.borrow_mut() = RecordFsm::Idle;
+                recording_session_uuid.borrow_mut().clear();
+                *recording_session_wall_start_ms.borrow_mut() = 0.0;
+                is_recording_sig.set(false);
+                record_log("FSM: Recording -> Idle");
             }
 
             if *fsm.borrow() == RecordFsm::Recording {
-                let sid = recording_session_uuid.borrow().clone();
-                let wall = *recording_session_wall_start_ms.borrow();
-                let session_id = if sid.is_empty() {
-                    uuid_style_id()
-                } else {
-                    sid
-                };
                 if let Some(ref db) = *db_holder.borrow() {
+                    let session_id = recording_session_uuid.borrow().clone();
+                    let wall = *recording_session_wall_start_ms.borrow();
+                    let t_drain = record_now_ms();
                     let drained: Vec<MemQueueItem> = mem_queue.borrow_mut().drain(..).collect();
-                    if !drained.is_empty() {
-                        let t_drain = record_now_ms();
-                        let (drained_n, n_added) = flush_mem_queue_items_to_idb(
-                            drained,
-                            db,
-                            &match_id,
-                            &session_id,
-                            wall,
-                            tournament_url.clone(),
-                            field.clone(),
-                            camera_name.clone(),
-                            key_ref.clone(),
-                            record_container.borrow().clone(),
-                            &pending_chunks_by_match,
-                            &upload_queue,
-                        )
-                        .await;
-                        if n_added > 0 {
-                            upload_total_sig.set(upload_total_sig() + n_added);
-                        }
-                        record_log(&format!(
-                            "flush mem→IndexedDB (Recording FSM): drained={} put_ok={} in {:.2} ms",
-                            drained_n,
-                            n_added,
-                            record_now_ms() - t_drain
-                        ));
+                    let (drained_n, n_added) = process_drained_mem_queue_items(
+                        drained,
+                        db,
+                        &match_id,
+                        &session_id,
+                        wall,
+                        tournament_url.clone(),
+                        field.clone(),
+                        camera_name.clone(),
+                        key_ref.clone(),
+                        container.clone(),
+                        &pending_chunks_by_match,
+                        &upload_queue,
+                    )
+                    .await;
+                    if n_added > 0 {
+                        upload_total_sig.set(upload_total_sig() + n_added);
                     }
-                } else {
-                    // Without IDB, chunks would grow forever (mobile OOM / tab freeze).
-                    const MAX_MEM_CHUNKS: usize = 96;
-                    let mut q = mem_queue.borrow_mut();
-                    while q.len() > MAX_MEM_CHUNKS {
-                        if q.pop_front().is_some() {
-                            record_log(
-                                "mem_queue: dropped chunk (IndexedDB unavailable; capped queue)",
-                            );
-                        }
-                    }
+                    record_log(&format!(
+                        "flush mem→IndexedDB (recording): drained={} put_ok={} in {:.2} ms",
+                        drained_n,
+                        n_added,
+                        record_now_ms() - t_drain
+                    ));
                 }
-            }
-
-            if !in_window && *fsm.borrow() == RecordFsm::Recording {
-                *fsm.borrow_mut() = RecordFsm::Idle;
-            }
-
-            if *fsm.borrow() == RecordFsm::Idle {
-                mem_queue_idle_finalize_and_evict(
+            } else {
+                mem_queue_idle_step(
                     &mem_queue,
                     &db_holder,
                     &upload_queue,
@@ -1942,20 +1839,15 @@ async fn run_recording_loop(
                 )
                 .await;
             }
-
-            is_recording_sig.set(*fsm.borrow() == RecordFsm::Recording);
-        } else {
-            if *fsm.borrow() == RecordFsm::Idle {
-                mem_queue_idle_finalize_and_evict(
-                    &mem_queue,
-                    &db_holder,
-                    &upload_queue,
-                    upload_total_sig.to_owned(),
-                    now_ms,
-                )
-                .await;
-            }
-            is_recording_sig.set(false);
+        } else if *fsm.borrow() == RecordFsm::Idle {
+            mem_queue_idle_step(
+                &mem_queue,
+                &db_holder,
+                &upload_queue,
+                upload_total_sig.to_owned(),
+                now_ms,
+            )
+            .await;
         }
 
         if data.hasActiveMatch {

@@ -760,8 +760,6 @@ def record_upload_chunk():
     chunk_duration = request.form.get("chunk_duration")  # Duration in milliseconds
     camera_name = request.form.get("camera_name")
     blob_event_timestamp_ms_raw = request.form.get("blob_event_timestamp_ms")
-    keyframe_wall_times_json = (request.form.get("keyframe_wall_times_json") or "[]").strip()
-
     # Validate camera access key
     is_valid, error_response = require_camera_key(tournament_url, field_name)
     if not is_valid:
@@ -783,11 +781,11 @@ def record_upload_chunk():
     if chunk_file.filename == "":
         return jsonify({"error": "Empty chunk file"}), 400
 
-    # Record page: fragmented MP4 (most browsers) or WebM (Firefox / some Linux).
+    # New record page: fragmented MP4 only (fMP4 from MediaRecorder).
     container = (request.form.get("container") or "mp4").strip().lower()
-    if container not in ("mp4", "webm"):
-        return jsonify({"error": "Only container=mp4 or webm is supported"}), 400
-    chunk_ext = "mp4" if container == "mp4" else "webm"
+    if container != "mp4":
+        return jsonify({"error": "Only container=mp4 is supported"}), 400
+    chunk_ext = "mp4"
 
     upload_dir = os.path.join(
         current_app.root_path,
@@ -854,13 +852,11 @@ def record_upload_chunk():
             chunk_meta = {
                 "filename": chunk_filename,
                 "session_id": session_id,
-                "container": container,
                 "chunk_start_timestamp": parse_timestamp(chunk_start_timestamp),
                 "chunk_duration": float(chunk_duration),
                 "camera_name": camera_name,
                 "recording_session_start_time": parse_timestamp(recording_session_start_time),
                 "blob_event_timestamp_ms": parse_float_opt(blob_event_timestamp_ms_raw),
-                "keyframe_wall_times_json": keyframe_wall_times_json,
             }
             chunks_meta[str(chunk_index)] = chunk_meta
 

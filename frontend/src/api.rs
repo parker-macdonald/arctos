@@ -1747,8 +1747,6 @@ pub struct RecordChunkMeta {
     pub container: String,
     /// `BlobEvent.timeStamp` (DOMHighResTimeStamp, ms).
     pub blob_event_timestamp_ms: f64,
-    /// JSON array of keyframe wall-clock epoch ms (f64), e.g. "[1730000000123.0]".
-    pub keyframe_wall_times_json: String,
 }
 
 /// Convert epoch milliseconds to ISO 8601 UTC string (e.g. "2025-02-23T19:30:00.123Z").
@@ -1794,8 +1792,6 @@ pub async fn record_upload_chunk(meta: &RecordChunkMeta, chunk_blob: &web_sys::B
         &meta.blob_event_timestamp_ms.to_string(),
     )
     .map_err(|_| "append blob_event_timestamp_ms failed")?;
-    form.append_with_str("keyframe_wall_times_json", &meta.keyframe_wall_times_json)
-        .map_err(|_| "append keyframe_wall_times_json failed")?;
     form.append_with_blob("chunk", chunk_blob)
         .map_err(|_| "append chunk failed")?;
 
@@ -1844,7 +1840,6 @@ pub struct RecordChunkMeta {
     pub key: Option<String>,
     pub container: String,
     pub blob_event_timestamp_ms: f64,
-    pub keyframe_wall_times_json: String,
 }
 
 pub async fn record_finalize(
