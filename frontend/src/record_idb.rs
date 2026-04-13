@@ -171,6 +171,11 @@ fn meta_to_js(meta: &RecordChunkMeta) -> JsValue {
         &"blob_event_timestamp_ms".into(),
         &JsValue::from_f64(meta.blob_event_timestamp_ms),
     );
+    let _ = Reflect::set(
+        o.as_ref(),
+        &"is_init_segment".into(),
+        &JsValue::from_bool(meta.is_init_segment),
+    );
     o.into()
 }
 
@@ -224,5 +229,9 @@ fn js_to_meta(js: &JsValue) -> Option<RecordChunkMeta> {
             .ok()
             .and_then(|v| v.as_f64())
             .unwrap_or(0.0),
+        is_init_segment: Reflect::get(js, &"is_init_segment".into())
+            .ok()
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
     })
 }

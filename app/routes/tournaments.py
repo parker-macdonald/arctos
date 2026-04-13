@@ -760,6 +760,7 @@ def record_upload_chunk():
     chunk_duration = request.form.get("chunk_duration")  # Duration in milliseconds
     camera_name = request.form.get("camera_name")
     blob_event_timestamp_ms_raw = request.form.get("blob_event_timestamp_ms")
+    is_init_segment_raw = request.form.get("is_init_segment")
     # Validate camera access key
     is_valid, error_response = require_camera_key(tournament_url, field_name)
     if not is_valid:
@@ -824,6 +825,11 @@ def record_upload_chunk():
         except (TypeError, ValueError):
             return None
 
+    def parse_bool(val):
+        if val is None:
+            return False
+        return str(val).strip().lower() in {"1", "true", "yes", "on"}
+
     chunk_index = None
     try:
         file_mode = "r+" if os.path.exists(chunks_meta_path) else "w+"
@@ -857,6 +863,7 @@ def record_upload_chunk():
                 "camera_name": camera_name,
                 "recording_session_start_time": parse_timestamp(recording_session_start_time),
                 "blob_event_timestamp_ms": parse_float_opt(blob_event_timestamp_ms_raw),
+                "is_init_segment": parse_bool(is_init_segment_raw),
             }
             chunks_meta[str(chunk_index)] = chunk_meta
 

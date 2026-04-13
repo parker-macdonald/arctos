@@ -199,6 +199,7 @@ struct MemVideoChunk {
 #[cfg(target_arch = "wasm32")]
 enum MemQueueItem {
     Video(MemVideoChunk),
+    InitSegment { blob: web_sys::Blob, wall_epoch_ms: f64 },
     FinalizeMatch { match_id: String },
 }
 
@@ -217,6 +218,7 @@ fn record_log_mem_queue_snapshot(mem_queue: &Rc<RefCell<VecDeque<MemQueueItem>>>
     for (i, item) in q.iter().enumerate() {
         match item {
             MemQueueItem::Video(_) => parts.push(format!("{i}:video")),
+            MemQueueItem::InitSegment { .. } => parts.push(format!("{i}:init")),
             MemQueueItem::FinalizeMatch { .. } => parts.push(format!("{i}:finalize")),
         }
     }
@@ -900,6 +902,59 @@ fn blob_event_wall_epoch_ms(ev: &web_sys::BlobEvent) -> f64 {
         .unwrap_or_else(|| js_sys::Date::now())
 }
 
+#[cfg(target_arch = "wasm32")]
+async fn blob_to_bytes(blob: &web_sys::Blob) -> Vec<u8> {
+    let promise = blob.array_buffer();
+    let ab = wasm_bindgen_futures::JsFuture::from(promise)
+        .await
+        .unwrap_or_else(|_| wasm_bindgen::JsValue::UNDEFINED);
+    let uint8 = js_sys::Uint8Array::new(&ab);
+    let mut out = vec![0u8; uint8.length() as usize];
+    uint8.copy_to(&mut out);
+    out
+}
+
+#[cfg(target_arch = "wasm32")]
+fn bytes_to_blob(bytes: &[u8]) -> web_sys::Blob {
+    let arr = js_sys::Uint8Array::from(bytes);
+    let parts = js_sys::Array::new();
+    parts.push(&arr);
+    web_sys::Blob::new_with_u8_array_sequence(&parts).expect("Blob::new")
+}
+
+#[cfg(target_arch = "wasm32")]
+fn extract_ftyp_moov(bytes: &[u8]) -> Option<Vec<u8>> {
+    let mut idx = 0usize;
+    let mut out = Vec::new();
+    let mut saw_ftyp = false;
+    let mut saw_moov = false;
+    while idx + 8 <= bytes.len() {
+        let size = u32::from_be_bytes(bytes[idx..idx + 4].try_into().ok()?) as usize;
+        if size < 8 || idx + size > bytes.len() {
+            break;
+        }
+        let typ = &bytes[idx + 4..idx + 8];
+        if typ == b"ftyp" {
+            out.extend_from_slice(&bytes[idx..idx + size]);
+            saw_ftyp = true;
+        } else if typ == b"moov" {
+            out.extend_from_slice(&bytes[idx..idx + size]);
+            saw_moov = true;
+            if saw_ftyp {
+                break;
+            }
+        } else if saw_ftyp && !saw_moov {
+            // Keep scanning until we find moov after ftyp.
+        }
+        idx += size;
+    }
+    if saw_ftyp && saw_moov {
+        Some(out)
+    } else {
+        None
+    }
+}
+
 /// Upload drained mem-queue items to IndexedDB (video chunks + finalize rows).
 #[cfg(target_arch = "wasm32")]
 #[allow(clippy::too_many_arguments)]
@@ -921,6 +976,37 @@ async fn process_drained_mem_queue_items(
     let mut n_added = 0u32;
     for item in drained {
         match item {
+            MemQueueItem::InitSegment { blob, wall_epoch_ms } => {
+                let meta = RecordChunkMeta {
+                    tournament_url: tournament_url.clone(),
+                    field: field.clone(),
+                    match_id: match_id.to_string(),
+                    session_id: session_id.to_string(),
+                    chunk_start_timestamp: wall_epoch_ms,
+                    recording_session_start_time: wall,
+                    chunk_length_ms: 0,
+                    camera_name: camera_name.clone(),
+                    key: key.clone(),
+                    container: container.clone(),
+                    blob_event_timestamp_ms: 0.0,
+                    is_init_segment: true,
+                };
+                if let Ok(k) = record_idb::get_next_sequence(db).await {
+                    if record_idb::put_chunk(db, &k, &meta, &blob).await.is_ok() {
+                        n_added += 1;
+                        *pending_chunks_by_match
+                            .borrow_mut()
+                            .entry(match_id.to_string())
+                            .or_insert(0) += 1;
+                        upload_queue.borrow_mut().push_back((
+                            k,
+                            QueueItem::Chunk {
+                                match_id: Some(match_id.to_string()),
+                            },
+                        ));
+                    }
+                }
+            }
             MemQueueItem::Video(ch) => {
                 let meta = RecordChunkMeta {
                     tournament_url: tournament_url.clone(),
@@ -934,6 +1020,7 @@ async fn process_drained_mem_queue_items(
                     key: key.clone(),
                     container: container.clone(),
                     blob_event_timestamp_ms: ch.blob_event_timestamp_ms,
+                    is_init_segment: false,
                 };
                 if let Ok(k) = record_idb::get_next_sequence(db).await {
                     if record_idb::put_chunk(db, &k, &meta, &ch.blob).await.is_ok() {
@@ -979,6 +1066,7 @@ async fn mem_queue_idle_step(
     let front_item = {
         mem_queue.borrow().front().map(|it| match it {
             MemQueueItem::Video(ch) => Ok(ch.wall_epoch_ms),
+            MemQueueItem::InitSegment { wall_epoch_ms, .. } => Ok(*wall_epoch_ms),
             MemQueueItem::FinalizeMatch { match_id } => Err(match_id.clone()),
         })
     };
@@ -1470,9 +1558,11 @@ async fn run_recording_loop(
     let fsm: Rc<RefCell<RecordFsm>> = Rc::new(RefCell::new(RecordFsm::Idle));
     let recording_session_uuid: Rc<RefCell<String>> = Rc::new(RefCell::new(String::new()));
     let recording_session_wall_start_ms: Rc<RefCell<f64>> = Rc::new(RefCell::new(0.0));
+    let match_init_segment_blob: Rc<RefCell<Option<web_sys::Blob>>> = Rc::new(RefCell::new(None));
     let recorder_holder: Rc<RefCell<Option<MediaRecorder>>> = Rc::new(RefCell::new(None));
 
     let mq_cb = mem_queue.clone();
+    let init_blob_cb = match_init_segment_blob.clone();
     let make_recorder = move |stream: &web_sys::MediaStream| -> Option<MediaRecorder> {
         let options = MediaRecorderOptions::new();
         options.set_video_bits_per_second(RECORD_VIDEO_BITS_PER_SECOND);
@@ -1488,10 +1578,25 @@ async fn run_recording_loop(
         chosen?;
         let r = MediaRecorder::new_with_media_stream_and_media_recorder_options(stream, &options).ok()?;
         let mq = mq_cb.clone();
+        let init_blob_state = init_blob_cb.clone();
         let closure = Closure::wrap(Box::new(move |ev: web_sys::BlobEvent| {
             let Some(blob) = ev.data() else {
                 return;
             };
+            if init_blob_state.borrow().is_none() {
+                let init_blob_holder = init_blob_state.clone();
+                let blob_for_init = blob.clone();
+                wasm_bindgen_futures::spawn_local(async move {
+                    if init_blob_holder.borrow().is_some() {
+                        return;
+                    }
+                    let bytes = blob_to_bytes(&blob_for_init).await;
+                    if let Some(init_bytes) = extract_ftyp_moov(&bytes) {
+                        *init_blob_holder.borrow_mut() = Some(bytes_to_blob(&init_bytes));
+                        record_log("captured match init segment from recorder chunk");
+                    }
+                });
+            }
             let wall_epoch_ms = blob_event_wall_epoch_ms(&ev);
             let blob_event_timestamp_ms = ev.time_stamp();
             let sz = blob.size();
@@ -1752,6 +1857,7 @@ async fn run_recording_loop(
                         dropped_video_chunks
                     ));
                 }
+                *match_init_segment_blob.borrow_mut() = None;
             }
             if data.hasActiveMatch {
                 if let Some(ref match_id) = data.match_id {
@@ -1786,6 +1892,14 @@ async fn run_recording_loop(
                 if *fsm.borrow() == RecordFsm::Idle {
                     *recording_session_uuid.borrow_mut() = uuid_style_id();
                     *recording_session_wall_start_ms.borrow_mut() = now_ms;
+                    if let Some(init_blob) = match_init_segment_blob.borrow().clone() {
+                        mem_queue.borrow_mut().push_front(MemQueueItem::InitSegment {
+                            blob: init_blob,
+                            wall_epoch_ms: now_ms,
+                        });
+                    } else {
+                        record_log("FSM: no init segment captured yet for this session");
+                    }
                     *fsm.borrow_mut() = RecordFsm::Recording;
                     is_recording_sig.set(true);
                     record_log("FSM: Idle -> Recording");

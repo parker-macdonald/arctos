@@ -1747,6 +1747,7 @@ pub struct RecordChunkMeta {
     pub container: String,
     /// `BlobEvent.timeStamp` (DOMHighResTimeStamp, ms).
     pub blob_event_timestamp_ms: f64,
+    pub is_init_segment: bool,
 }
 
 /// Convert epoch milliseconds to ISO 8601 UTC string (e.g. "2025-02-23T19:30:00.123Z").
@@ -1792,6 +1793,11 @@ pub async fn record_upload_chunk(meta: &RecordChunkMeta, chunk_blob: &web_sys::B
         &meta.blob_event_timestamp_ms.to_string(),
     )
     .map_err(|_| "append blob_event_timestamp_ms failed")?;
+    form.append_with_str(
+        "is_init_segment",
+        if meta.is_init_segment { "1" } else { "0" },
+    )
+    .map_err(|_| "append is_init_segment failed")?;
     form.append_with_blob("chunk", chunk_blob)
         .map_err(|_| "append chunk failed")?;
 
@@ -1840,6 +1846,7 @@ pub struct RecordChunkMeta {
     pub key: Option<String>,
     pub container: String,
     pub blob_event_timestamp_ms: f64,
+    pub is_init_segment: bool,
 }
 
 pub async fn record_finalize(

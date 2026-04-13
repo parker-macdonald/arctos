@@ -63,6 +63,10 @@ def _session_world_start_ms(chunk):
     )
 
 
+def _is_init_segment(chunk):
+    return bool(chunk.get("is_init_segment"))
+
+
 def _top_level_box_spans(data: bytes):
     """Yield (fourcc, start_byte, end_exclusive) for each top-level ISO BMFF box."""
     idx = 0
@@ -101,6 +105,25 @@ def _strip_leading_init_segment(data: bytes) -> bytes:
     return data[spans[idx][1] :]
 
 
+def _extract_ftyp_moov(data: bytes) -> bytes | None:
+    spans = list(_top_level_box_spans(data))
+    out = bytearray()
+    saw_ftyp = False
+    saw_moov = False
+    for typ, start, end in spans:
+        if typ == b"ftyp":
+            out.extend(data[start:end])
+            saw_ftyp = True
+        elif typ == b"moov":
+            out.extend(data[start:end])
+            saw_moov = True
+            if saw_ftyp:
+                break
+    if saw_ftyp and saw_moov:
+        return bytes(out)
+    return None
+
+
 def _chunk_file_starts_with_ftyp(chunk_dir: str, filename: str) -> bool:
     fp = path.join(chunk_dir, filename)
     try:
@@ -121,32 +144,32 @@ def _reorder_session_chunks_ftyp_first(chunks, chunk_dir):
     )
 
 
-def _concat_session_chunks(ordered_chunks, chunk_dir, joined_raw_path, logger, session_id):
+def _concat_session_chunks(
+    ordered_chunks, chunk_dir, joined_raw_path, logger, session_id, init_segment
+):
     """
     Join one session's fragments into a single raw MP4 stream:
-    - first init-bearing chunk is written verbatim
+    - explicit `init_segment` is written first when available
     - later chunks drop repeated init segments
     """
     if not ordered_chunks:
         return False
     try:
-        first_filename = ordered_chunks[0]["filename"]
-        if not _chunk_file_starts_with_ftyp(chunk_dir, first_filename):
-            logger.warning(
-                "finalize_recording: session %s first chunk %s is missing ftyp/moov; "
-                "session may be unreadable",
-                session_id,
-                first_filename,
-            )
         with open(joined_raw_path, "wb") as out:
-            for idx, chunk in enumerate(ordered_chunks):
+            if init_segment:
+                out.write(init_segment)
+            else:
+                first_filename = ordered_chunks[0]["filename"]
+                logger.warning(
+                    "finalize_recording: session %s has no init segment; first media chunk is %s",
+                    session_id,
+                    first_filename,
+                )
+            for chunk in ordered_chunks:
                 chunk_path = path.join(chunk_dir, chunk["filename"])
                 with open(chunk_path, "rb") as handle:
                     data = handle.read()
-                if idx == 0:
-                    out.write(data)
-                else:
-                    out.write(_strip_leading_init_segment(data))
+                out.write(_strip_leading_init_segment(data))
         return path.exists(joined_raw_path) and path.getsize(joined_raw_path) > 0
     except OSError as exc:
         logger.warning(
@@ -371,23 +394,63 @@ def _build_playable_session(session_id, session_chunks, chunk_dir, logger):
     3. locate first video keyframe
     4. clip the session to that keyframe boundary
     """
-    ordered_chunks = [
+    init_chunks = [
         chunk
         for chunk in session_chunks
-        if path.exists(path.join(chunk_dir, chunk["filename"]))
+        if _is_init_segment(chunk) and path.exists(path.join(chunk_dir, chunk["filename"]))
     ]
-    if not ordered_chunks:
+    media_chunks = [
+        chunk
+        for chunk in session_chunks
+        if not _is_init_segment(chunk) and path.exists(path.join(chunk_dir, chunk["filename"]))
+    ]
+    if not media_chunks:
         logger.warning(
-            "finalize_recording: session %s has no chunk files on disk", session_id
+            "finalize_recording: session %s has no media chunk files on disk", session_id
         )
         return None
 
+    ordered_chunks = [
+        chunk
+        for chunk in media_chunks
+        if path.exists(path.join(chunk_dir, chunk["filename"]))
+    ]
     earliest_chunk = min(ordered_chunks, key=_chunk_sort_key)
     concat_chunks = _reorder_session_chunks_ftyp_first(ordered_chunks, chunk_dir)
 
+    init_segment = None
+    for init_chunk in init_chunks:
+        init_path = path.join(chunk_dir, init_chunk["filename"])
+        try:
+            with open(init_path, "rb") as handle:
+                init_data = handle.read()
+            init_segment = _extract_ftyp_moov(init_data) or init_data
+            if init_segment:
+                break
+        except OSError:
+            continue
+    if init_segment is None:
+        for chunk in concat_chunks:
+            chunk_path = path.join(chunk_dir, chunk["filename"])
+            try:
+                with open(chunk_path, "rb") as handle:
+                    maybe_init = _extract_ftyp_moov(handle.read())
+                if maybe_init:
+                    init_segment = maybe_init
+                    logger.info(
+                        "finalize_recording: session %s recovered init segment from media chunk %s",
+                        session_id,
+                        chunk["filename"],
+                    )
+                    break
+            except OSError:
+                continue
+
     joined_raw_basename = f"joined_raw_{session_id}.mp4"
     joined_raw_path = path.join(chunk_dir, joined_raw_basename)
-    if not _concat_session_chunks(concat_chunks, chunk_dir, joined_raw_path, logger, session_id):
+    if not _concat_session_chunks(
+        concat_chunks, chunk_dir, joined_raw_path, logger, session_id, init_segment
+    ):
         return None
 
     codec_name = _get_video_codec(joined_raw_path, cwd=chunk_dir)
