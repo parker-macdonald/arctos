@@ -21,6 +21,9 @@ use wasm_bindgen::closure::Closure;
 /// Must match MediaRecorder `timeslice` / `RecordChunkMeta.chunk_length_ms` on every enqueue path.
 #[cfg(target_arch = "wasm32")]
 const RECORD_CHUNK_LENGTH_MS: u32 = 500;
+/// Keep exactly this much pre-roll and post-roll around each point.
+#[cfg(target_arch = "wasm32")]
+const POINT_RECORD_BUFFER_MS: f64 = 3000.0;
 
 /// High-resolution timestamps and structured `[record]` lines for debugging the recording pipeline in DevTools.
 #[cfg(target_arch = "wasm32")]
@@ -884,11 +887,11 @@ fn in_point_recording_window(points: &[RecordPointData], now_ms: f64) -> bool {
         let Some(start_ms) = parse_iso_ms(p.stamp.as_deref()) else {
             return false;
         };
-        if now_ms < start_ms - 3000.0 {
+        if now_ms < start_ms - POINT_RECORD_BUFFER_MS {
             return false;
         }
         match p.end_stamp.as_deref().and_then(|s| parse_iso_ms(Some(s))) {
-            Some(end_ms) => now_ms <= end_ms + 3000.0,
+            Some(end_ms) => now_ms <= end_ms + POINT_RECORD_BUFFER_MS,
             None => true,
         }
     })
@@ -1093,9 +1096,9 @@ async fn mem_queue_idle_step(
             }
         }
         Some(Ok(front_wall_epoch_ms)) => {
-            if now_ms - front_wall_epoch_ms > 10_000.0 {
+            if now_ms - front_wall_epoch_ms > POINT_RECORD_BUFFER_MS {
                 mem_queue.borrow_mut().pop_front();
-                record_log("mem_queue_idle_step: evicted stale front video chunk (>10s old)");
+                record_log("mem_queue_idle_step: evicted stale front video chunk (>3s old)");
             }
         }
         None => {}
