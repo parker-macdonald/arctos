@@ -335,31 +335,65 @@ def _clip_session_to_first_keyframe(
     session_id,
 ):
     final_path = path.join(chunk_dir, session_basename)
-    if clip_start_sec <= 0.0005:
-        try:
-            os.replace(session_unclipped_path, final_path)
-        except OSError as exc:
+    tag_args = _codec_tag_args(codec_name)
+    clip_source_basename = path.basename(session_unclipped_path)
+    clip_output_basename = f"session_clipped_{session_id}.mp4"
+    clip_output_path = path.join(chunk_dir, clip_output_basename)
+
+    if clip_start_sec > 0.0005:
+        clip_result = _run_subprocess(
+            [
+                "ffmpeg",
+                "-ss",
+                f"{clip_start_sec:.6f}",
+                "-i",
+                clip_source_basename,
+                "-c",
+                "copy",
+                "-map",
+                "0",
+                *tag_args,
+                "-avoid_negative_ts",
+                "make_zero",
+                "-movflags",
+                "+faststart",
+                "-loglevel",
+                "error",
+                "-y",
+                clip_output_basename,
+            ],
+            cwd=chunk_dir,
+        )
+        if (
+            clip_result.returncode != 0
+            or not path.exists(clip_output_path)
+            or path.getsize(clip_output_path) == 0
+        ):
             logger.warning(
-                "finalize_recording: session %s rename after remux failed: %s",
+                "finalize_recording: session %s keyframe clip failed returncode=%s stderr=%s",
                 session_id,
-                exc,
+                clip_result.returncode,
+                (clip_result.stderr or "").strip(),
             )
             return None
-        return final_path
+        clip_source_basename = clip_output_basename
+    else:
+        clip_output_path = session_unclipped_path
 
-    tag_args = _codec_tag_args(codec_name)
-    result = _run_subprocess(
+    normalize_result = _run_subprocess(
         [
             "ffmpeg",
-            "-ss",
-            f"{clip_start_sec:.6f}",
+            "-fflags",
+            "+genpts",
             "-i",
-            path.basename(session_unclipped_path),
+            clip_source_basename,
             "-c",
             "copy",
             "-map",
             "0",
             *tag_args,
+            "-reset_timestamps",
+            "1",
             "-avoid_negative_ts",
             "make_zero",
             "-movflags",
@@ -371,18 +405,27 @@ def _clip_session_to_first_keyframe(
         ],
         cwd=chunk_dir,
     )
-    if result.returncode != 0 or not path.exists(final_path) or path.getsize(final_path) == 0:
+    if (
+        normalize_result.returncode != 0
+        or not path.exists(final_path)
+        or path.getsize(final_path) == 0
+    ):
         logger.warning(
-            "finalize_recording: session %s keyframe clip failed returncode=%s stderr=%s",
+            "finalize_recording: session %s timestamp normalize failed returncode=%s stderr=%s",
             session_id,
-            result.returncode,
-            (result.stderr or "").strip(),
+            normalize_result.returncode,
+            (normalize_result.stderr or "").strip(),
         )
         return None
     try:
         os.remove(session_unclipped_path)
     except OSError:
         pass
+    if clip_output_path != session_unclipped_path:
+        try:
+            os.remove(clip_output_path)
+        except OSError:
+            pass
     return final_path
 
 
