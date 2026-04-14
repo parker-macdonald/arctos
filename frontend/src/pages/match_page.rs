@@ -1,6 +1,7 @@
 use crate::api;
 use crate::components::{all_tokens_known, resolve_value_to_team_ids, PenaltyDisplay};
 use crate::pages::TeamSelectionField;
+use crate::time_format::format_match_display_local;
 use crate::Route;
 use crate::stones_filter::BayesianOffsetFilter;
 use crate::types::{ConflictingMatchInfo, ForceStartMatchRequest, MatchDetailData, PointData, PointTimestamp};
@@ -1782,17 +1783,27 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                                         strong { class: "me-2", "Start:" }
                                         span {
                                             {
-                                                d.match_data
+                                                match d.match_data
                                                     .confirmed_start_time
                                                     .as_deref()
                                                     .or(d.match_data.nominal_start_time.as_deref())
-                                                    .unwrap_or("TBA")
+                                                {
+                                                    None => "TBA".to_string(),
+                                                    Some(t) => format_match_display_local(t),
+                                                }
                                             }
                                         }
                                     }
                                     div { class: "d-flex align-items-center mb-2",
                                         strong { class: "me-2", "End:" }
-                                        span { {d.match_data.completed_time.as_deref().unwrap_or("TBA")} }
+                                        span {
+                                            {
+                                                match d.match_data.completed_time.as_deref() {
+                                                    None => "TBA".to_string(),
+                                                    Some(t) => format_match_display_local(t),
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                                 div { class: "col-md-4" }
