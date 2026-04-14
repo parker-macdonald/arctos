@@ -45,27 +45,61 @@ fn record_log_duration(label: &str, t0: f64) {
     record_log(&format!("{} → {:.2} ms", label, dt));
 }
 
+#[cfg(target_arch = "wasm32")]
+fn record_document_is_visible() -> bool {
+    web_sys::window()
+        .and_then(|w| w.document())
+        .map(|d| !d.hidden())
+        .unwrap_or(false)
+}
+
 /// Request screen wake lock and wire `release` to re-acquire (browsers often drop the lock without tab hide).
 #[cfg(target_arch = "wasm32")]
-fn schedule_screen_wake_lock_acquire(mut sentinel_sig: Signal<Option<wasm_bindgen::JsValue>>) {
+fn schedule_screen_wake_lock_acquire(
+    mut sentinel_sig: Signal<Option<wasm_bindgen::JsValue>>,
+    mut request_in_flight_sig: Signal<bool>,
+) {
     use wasm_bindgen::JsValue;
+    if sentinel_sig().is_some() || request_in_flight_sig() {
+        return;
+    }
+    if !record_document_is_visible() {
+        record_log("wake lock: skipped acquire because document is hidden");
+        return;
+    }
+    request_in_flight_sig.set(true);
     wasm_bindgen_futures::spawn_local(async move {
         let window = match web_sys::window() {
             Some(w) => w,
-            None => return,
+            None => {
+                request_in_flight_sig.set(false);
+                return;
+            }
         };
         let navigator = window.navigator();
         let wake_lock_js = match js_sys::Reflect::get(&navigator, &JsValue::from_str("wakeLock")) {
             Ok(v) if !v.is_undefined() && !v.is_null() => v,
-            _ => return,
+            _ => {
+                request_in_flight_sig.set(false);
+                record_log("wake lock: navigator.wakeLock unavailable");
+                return;
+            }
         };
         let request_js = match js_sys::Reflect::get(&wake_lock_js, &JsValue::from_str("request")) {
             Ok(v) if v.is_function() => v,
-            _ => return,
+            _ => {
+                request_in_flight_sig.set(false);
+                record_log("wake lock: wakeLock.request unavailable");
+                return;
+            }
         };
         let request_fn = match request_js.dyn_ref::<js_sys::Function>() {
             Some(f) => f,
-            None => return,
+            None => {
+                request_in_flight_sig.set(false);
+                record_log("wake lock: wakeLock.request is not callable");
+                return;
+            }
         };
         let promise = match request_fn
             .call1(&wake_lock_js, &JsValue::from_str("screen"))
@@ -73,20 +107,41 @@ fn schedule_screen_wake_lock_acquire(mut sentinel_sig: Signal<Option<wasm_bindge
             .and_then(|v| v.dyn_into::<js_sys::Promise>().ok())
         {
             Some(p) => p,
-            None => return,
+            None => {
+                request_in_flight_sig.set(false);
+                record_log("wake lock: request() did not return a promise");
+                return;
+            }
         };
         let result = wasm_bindgen_futures::JsFuture::from(promise).await;
         let sentinel = match result {
             Ok(s) => s,
-            Err(_) => return,
+            Err(err) => {
+                request_in_flight_sig.set(false);
+                let err_text = js_sys::JSON::stringify(&err)
+                    .ok()
+                    .and_then(|v| v.as_string())
+                    .unwrap_or_else(|| format!("{err:?}"));
+                record_log(&format!("wake lock: request rejected: {err_text}"));
+                return;
+            }
         };
+        request_in_flight_sig.set(false);
         sentinel_sig.set(Some(sentinel.clone()));
+        record_log("wake lock: acquired");
 
         let release_cb = Closure::wrap(Box::new({
             let mut sentinel_sig = sentinel_sig.clone();
+            let mut request_in_flight_sig = request_in_flight_sig.clone();
             move || {
                 sentinel_sig.set(None);
-                schedule_screen_wake_lock_acquire(sentinel_sig.clone());
+                record_log("wake lock: released");
+                if record_document_is_visible() {
+                    schedule_screen_wake_lock_acquire(
+                        sentinel_sig.clone(),
+                        request_in_flight_sig.clone(),
+                    );
+                }
             }
         }) as Box<dyn FnMut()>);
         if let Ok(add) = js_sys::Reflect::get(&sentinel, &JsValue::from_str("addEventListener")) {
@@ -146,7 +201,10 @@ async fn stop_media_recorder_fully(rec: web_sys::MediaRecorder) {
 
 /// Re-request wake lock when the tab becomes visible (lock is released while hidden) and on first pointer (gesture requirement on many phones).
 #[cfg(target_arch = "wasm32")]
-fn register_screen_wake_lock_listeners(sentinel_sig: Signal<Option<wasm_bindgen::JsValue>>) {
+fn register_screen_wake_lock_listeners(
+    sentinel_sig: Signal<Option<wasm_bindgen::JsValue>>,
+    request_in_flight_sig: Signal<bool>,
+) {
     use wasm_bindgen::closure::Closure;
     let Some(window) = web_sys::window() else {
         return;
@@ -157,31 +215,38 @@ fn register_screen_wake_lock_listeners(sentinel_sig: Signal<Option<wasm_bindgen:
 
     let vis = Closure::wrap(Box::new({
         let mut sentinel_sig = sentinel_sig.clone();
+        let mut request_in_flight_sig = request_in_flight_sig.clone();
         move || {
-            if let Some(w) = web_sys::window() {
-                if let Some(d) = w.document() {
-                    if !d.hidden() {
-                        schedule_screen_wake_lock_acquire(sentinel_sig.clone());
-                    }
-                }
+            if record_document_is_visible() {
+                schedule_screen_wake_lock_acquire(
+                    sentinel_sig.clone(),
+                    request_in_flight_sig.clone(),
+                );
             }
         }
     }) as Box<dyn FnMut()>);
     let _ = doc.add_event_listener_with_callback("visibilitychange", vis.as_ref().unchecked_ref());
     vis.forget();
 
-    let bootstrapped = std::cell::Cell::new(false);
     let ptr = Closure::wrap(Box::new({
         let mut sentinel_sig = sentinel_sig.clone();
+        let mut request_in_flight_sig = request_in_flight_sig.clone();
         move || {
-            if bootstrapped.replace(true) {
-                return;
-            }
-            schedule_screen_wake_lock_acquire(sentinel_sig.clone());
+            schedule_screen_wake_lock_acquire(sentinel_sig.clone(), request_in_flight_sig.clone());
         }
     }) as Box<dyn FnMut()>);
     let _ = window.add_event_listener_with_callback("pointerdown", ptr.as_ref().unchecked_ref());
     ptr.forget();
+
+    let focus = Closure::wrap(Box::new({
+        let mut sentinel_sig = sentinel_sig.clone();
+        let mut request_in_flight_sig = request_in_flight_sig.clone();
+        move || {
+            schedule_screen_wake_lock_acquire(sentinel_sig.clone(), request_in_flight_sig.clone());
+        }
+    }) as Box<dyn FnMut()>);
+    let _ = window.add_event_listener_with_callback("focus", focus.as_ref().unchecked_ref());
+    focus.forget();
 }
 
 /// In-memory recording FSM: `Recording` while `in_point_recording_window`; chunks flush to IndexedDB only in `Recording`.
@@ -379,10 +444,12 @@ pub fn Record(url: String, field: ReadSignal<String>, camera_key: ReadSignal<Str
     #[cfg(target_arch = "wasm32")]
     {
         let wake_lock_sentinel = use_signal(|| None::<wasm_bindgen::JsValue>);
+        let wake_lock_request_in_flight = use_signal(|| false);
         use_effect(move || {
             let sentinel_sig = wake_lock_sentinel.to_owned();
-            schedule_screen_wake_lock_acquire(sentinel_sig.clone());
-            register_screen_wake_lock_listeners(sentinel_sig);
+            let request_in_flight_sig = wake_lock_request_in_flight.to_owned();
+            schedule_screen_wake_lock_acquire(sentinel_sig.clone(), request_in_flight_sig.clone());
+            register_screen_wake_lock_listeners(sentinel_sig, request_in_flight_sig);
         });
         let wake_lock_for_drop = wake_lock_sentinel.to_owned();
         use_drop(move || {
