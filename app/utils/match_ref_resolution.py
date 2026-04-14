@@ -51,6 +51,33 @@ def resolve_single_ref_slot(r_str: str, tournament_url: str) -> tuple[str, str]:
     return resolved, initial
 
 
+def resolve_team_slot(
+    raw: str | None,
+    tournament_url: str,
+) -> tuple[str | None, str | None]:
+    """
+    Resolve one team column token while preserving the original token as initial text.
+
+    Returns:
+        (resolved_team_id_or_none, initial_display_token_or_none)
+    """
+    raw_str = str(raw).strip() if raw is not None else ""
+    if not raw_str:
+        return None, None
+
+    team_id, _ = resolve_team_name_to_id(raw_str, tournament_url)
+    if team_id:
+        return team_id, raw_str
+    if is_explicit_team_id(raw_str):
+        return raw_str, raw_str
+
+    resolved_tag = resolve_tag_to_team(raw_str, tournament_url)
+    if resolved_tag:
+        return resolved_tag, raw_str
+
+    return None, raw_str
+
+
 def resolve_refs_slots(
     tokens: list,
     tournament_url: str,
@@ -92,15 +119,8 @@ def resolve_team_column(raw: str | None, tournament_url: str) -> str | None:
 
     Order: confirmed registration (pseudonym/id), explicit bare id, tag:: resolution.
     """
-    if not raw or not str(raw).strip():
-        return None
-    r = str(raw).strip()
-    rid, _ = resolve_team_name_to_id(r, tournament_url)
-    if rid:
-        return rid
-    if is_explicit_team_id(r):
-        return r
-    return resolve_tag_to_team(r, tournament_url)
+    resolved, _ = resolve_team_slot(raw, tournament_url)
+    return resolved
 
 
 def refs_string_to_tokens(refs_value: str | None) -> list[str]:

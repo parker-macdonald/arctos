@@ -10,12 +10,15 @@ Environment variables:
 - GOOGLE_CLIENT_SECRET (re-used if YOUTUBE_UPLOAD_CLIENT_SECRET not set)
 - YOUTUBE_UPLOAD_PRIVACY_STATUS (optional; default: unlisted)
 - YOUTUBE_UPLOAD_CATEGORY_ID (optional; default: 22)
+- RECORDING_ARTIFACTS_AFTER_UPLOAD (optional; `delete` or `s3`, default: `delete`)
 """
 
 from __future__ import annotations
 
 import json
+import mimetypes
 import os
+import shutil
 from dataclasses import dataclass
 from datetime import datetime
 from os import path
@@ -114,6 +117,131 @@ def _video_file_abs_path(camera: Camera) -> str:
     if not camera.file:
         raise RuntimeError("Camera missing file path")
     return path.normpath(path.join(current_app.root_path, "..", camera.file))
+
+
+def _recording_artifact_policy() -> str:
+    return (
+        str(current_app.config.get("RECORDING_ARTIFACTS_AFTER_UPLOAD") or "delete")
+        .strip()
+        .lower()
+    )
+
+
+def _recording_artifact_dir_abs(camera: Camera) -> str:
+    return path.dirname(_video_file_abs_path(camera))
+
+
+def _guess_content_type(file_path_abs: str) -> str:
+    guessed, _encoding = mimetypes.guess_type(file_path_abs)
+    return guessed or "application/octet-stream"
+
+
+def _iter_recording_artifact_files(root_dir_abs: str) -> list[str]:
+    out: list[str] = []
+    for dirpath, _dirnames, filenames in os.walk(root_dir_abs):
+        for filename in filenames:
+            out.append(path.join(dirpath, filename))
+    out.sort()
+    return out
+
+
+def _delete_local_recording_artifacts(camera: Camera) -> None:
+    root_dir_abs = _recording_artifact_dir_abs(camera)
+    if not path.isdir(root_dir_abs):
+        return
+    shutil.rmtree(root_dir_abs)
+    current_app.logger.info(
+        "youtube_upload: deleted local recording artifacts camera uuid=%s dir=%s",
+        camera.uuid,
+        root_dir_abs,
+    )
+
+
+def _upload_recording_artifacts_to_s3(camera: Camera) -> bool:
+    root_dir_abs = _recording_artifact_dir_abs(camera)
+    if not path.isdir(root_dir_abs):
+        current_app.logger.info(
+            "youtube_upload: artifact archive skipped because directory is missing camera uuid=%s dir=%s",
+            camera.uuid,
+            root_dir_abs,
+        )
+        return True
+
+    bucket = current_app.config.get("S3_VIDEO_BUCKET")
+    if not bucket:
+        current_app.logger.warning(
+            "youtube_upload: artifact archive requested but S3_VIDEO_BUCKET is unset camera uuid=%s",
+            camera.uuid,
+        )
+        return False
+
+    region = (current_app.config.get("AWS_REGION") or "us-east-1") or "us-east-1"
+    prefix = (current_app.config.get("S3_VIDEO_PREFIX") or "").strip().strip("/")
+    endpoint_url = current_app.config.get("S3_ENDPOINT_URL")
+
+    from app.utils.s3_video import upload_video
+
+    rel_root = path.dirname(camera.file or "").replace("\\", "/").strip("/")
+    s3_base = f"recording-artifacts/{rel_root}" if rel_root else "recording-artifacts"
+    if prefix:
+        s3_base = f"{prefix}/{s3_base}"
+
+    files = _iter_recording_artifact_files(root_dir_abs)
+    if not files:
+        current_app.logger.info(
+            "youtube_upload: artifact archive found no files camera uuid=%s dir=%s",
+            camera.uuid,
+            root_dir_abs,
+        )
+        return True
+
+    for file_path_abs in files:
+        rel_path = path.relpath(file_path_abs, root_dir_abs).replace("\\", "/")
+        s3_key = f"{s3_base}/{rel_path}"
+        if not upload_video(
+            file_path_abs,
+            bucket,
+            s3_key,
+            _guess_content_type(file_path_abs),
+            region=region,
+            endpoint_url=endpoint_url,
+        ):
+            current_app.logger.warning(
+                "youtube_upload: artifact archive failed camera uuid=%s key=%s",
+                camera.uuid,
+                s3_key,
+            )
+            return False
+
+    current_app.logger.info(
+        "youtube_upload: archived recording artifacts to s3 camera uuid=%s bucket=%s prefix=%s file_count=%s",
+        camera.uuid,
+        bucket,
+        s3_base,
+        len(files),
+    )
+    return True
+
+
+def _cleanup_recording_artifacts_after_success(camera: Camera) -> None:
+    policy = _recording_artifact_policy()
+    if policy == "delete":
+        _delete_local_recording_artifacts(camera)
+        return
+    if policy == "s3":
+        if _upload_recording_artifacts_to_s3(camera):
+            _delete_local_recording_artifacts(camera)
+        else:
+            current_app.logger.warning(
+                "youtube_upload: keeping local recording artifacts because S3 archive did not complete camera uuid=%s",
+                camera.uuid,
+            )
+        return
+    current_app.logger.warning(
+        "youtube_upload: unknown RECORDING_ARTIFACTS_AFTER_UPLOAD=%r; leaving local recording artifacts in place camera uuid=%s",
+        policy,
+        camera.uuid,
+    )
 
 
 def _team_label_for_youtube_title(tournament_url: str, team_id: str | None, fallback: str) -> str:
@@ -288,7 +416,7 @@ def upload_camera_to_youtube(camera_uuid: str) -> None:
     """
     Worker: transitions camera.status UPLOADING -> SUCCESS/FAILED.
 
-    On SUCCESS: delete local video source file.
+    On SUCCESS: delete or archive the full local recording artifact directory.
     On FAILED: keep file for download.
     """
     cfg = _get_config()
@@ -385,14 +513,12 @@ def upload_camera_to_youtube(camera_uuid: str) -> None:
     camera.status = "SUCCESS"
     db.session.commit()
 
-    # Delete local file to save disk.
     try:
-        if path.exists(file_path_abs):
-            os.remove(file_path_abs)
+        _cleanup_recording_artifacts_after_success(camera)
     except OSError:
         current_app.logger.warning(
-            "youtube_upload: could not delete local file camera uuid=%s path=%s",
+            "youtube_upload: could not clean local recording artifacts camera uuid=%s path=%s",
             camera_uuid,
-            file_path_abs,
+            _recording_artifact_dir_abs(camera),
         )
 

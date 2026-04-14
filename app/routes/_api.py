@@ -24,7 +24,11 @@ from app.utils.helpers import (
     get_next_penalty_color,
     get_registrable_config,
 )
-from app.utils.match_ref_resolution import refs_string_to_tokens, resolve_refs_slots
+from app.utils.match_ref_resolution import (
+    refs_string_to_tokens,
+    resolve_refs_slots,
+    resolve_team_slot,
+)
 from app.utils.dependencies import apply_match_dependencies
 from app.serializers.match_note_serializer import MatchNoteSerializer
 from app.error_values import Ok, Err
@@ -4724,8 +4728,8 @@ def force_start_match_api(tournament_url, match_id):
     if not can_head_ref_match(tournament_url, current_user.id, match=match):
         return jsonify({"error": "You are not allowed to head ref this match"}), 403
 
-    team1_input = data.get("team1", "").strip()
-    team2_input = data.get("team2", "").strip()
+    team1_input = str(data.get("team1") or "").strip()
+    team2_input = str(data.get("team2") or "").strip()
     refs_list = data.get("refs") or []
     if not isinstance(refs_list, list):
         refs_list = []
@@ -4771,8 +4775,8 @@ def force_start_match_api(tournament_url, match_id):
         other_match.finalized_at = now
 
     # 2. Update target match
-    t1_id, t1_initial = resolve_team_name_to_id(team1_input, tournament_url)
-    t2_id, t2_initial = resolve_team_name_to_id(team2_input, tournament_url)
+    t1_id, t1_initial = resolve_team_slot(team1_input, tournament_url)
+    t2_id, t2_initial = resolve_team_slot(team2_input, tournament_url)
     if not t1_id or not t2_id:
         return jsonify({"error": "Team 1 and Team 2 are required"}), 400
 

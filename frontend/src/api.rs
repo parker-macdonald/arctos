@@ -322,11 +322,7 @@ where
     on_progress(0, file_size);
 
     let total_chunks = ((file_size + CHUNK_SIZE_BYTES - 1) / CHUNK_SIZE_BYTES).max(1);
-    let upload_id = format!(
-        "u{}{}",
-        js_sys::Date::now() as u64,
-        (js_sys::Math::random() * 1_000_000_000.0) as u64
-    );
+    let upload_id = format!("u{}", uuid::Uuid::new_v4().simple());
     let content_type = file
         .content_type()
         .unwrap_or_else(|| "application/octet-stream".to_string());

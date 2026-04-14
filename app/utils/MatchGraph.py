@@ -342,6 +342,22 @@ def _is_match_resolved(match: Match) -> bool:
     return match.match_winner is not None
 
 
+def _csv_tokens(raw: Optional[str]) -> List[str]:
+    if not raw:
+        return []
+    return [part.strip() for part in str(raw).split(",") if part.strip()]
+
+
+def _match_participant_team_ids(match: Match) -> Set[str]:
+    """Return concrete team IDs currently assigned to team or ref slots."""
+    participants = set()
+    for team_id in (getattr(match, "team1", None), getattr(match, "team2", None)):
+        if team_id and str(team_id).strip():
+            participants.add(str(team_id).strip())
+    participants.update(_csv_tokens(getattr(match, "refs", None)))
+    return participants
+
+
 def build_match_graph(
     tournament_url: str,
     all_matches: Optional[List[Match]] = None,
@@ -369,11 +385,14 @@ def build_match_graph(
     # JOIN matches grouped by name only: one logical node per name across all fields
     joins_by_name: Dict[str, List[Match]] = defaultdict(list)
     matches_by_uuid: Dict[str, Match] = {}
+    matches_by_field: Dict[str, List[Match]] = defaultdict(list)
 
     for match in all_matches:
         key = _node_key(match.name, getattr(match, "field", None))
         matches_by_key[key].append(match)
         matches_by_uuid[match.uuid] = match
+        if getattr(match, "field", None):
+            matches_by_field[match.field].append(match)
         if match.schedule_type == ScheduleType.JOIN:
             joins_by_name[match.name].append(match)
 
@@ -501,6 +520,37 @@ def build_match_graph(
             if prev_match:
                 prev_key = dep_key_for_match(prev_match)
                 graph.add_dependency(dependent_key, prev_key)
+
+        if match.schedule_type in (ScheduleType.SAFE, ScheduleType.FAST):
+            match_start = getattr(match, "nominal_start_time", None)
+            participants = _match_participant_team_ids(match)
+            latest_shared_match = None
+            if match.field and match_start and participants:
+                for candidate in matches_by_field.get(match.field, []):
+                    candidate_start = getattr(candidate, "nominal_start_time", None)
+                    if (
+                        candidate.uuid == match.uuid
+                        or candidate_start is None
+                        or candidate_start >= match_start
+                    ):
+                        continue
+                    if not (
+                        participants & _match_participant_team_ids(candidate)
+                    ):
+                        continue
+                    if latest_shared_match is None or (
+                        candidate_start,
+                        candidate.name,
+                        candidate.uuid,
+                    ) > (
+                        latest_shared_match.nominal_start_time,
+                        latest_shared_match.name,
+                        latest_shared_match.uuid,
+                    ):
+                        latest_shared_match = candidate
+            if latest_shared_match:
+                latest_shared_key = dep_key_for_match(latest_shared_match)
+                graph.add_dependency(dependent_key, latest_shared_key)
 
         skip_deps = match.get_skip_condition_dependencies()
         direct_skip_deps = skip_deps.get("direct", set())

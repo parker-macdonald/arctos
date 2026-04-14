@@ -66,6 +66,10 @@ def create_app(config=None):
     app.config["S3_PRESIGNED_EXPIRY_SECONDS"] = int(
         os.environ.get("S3_PRESIGNED_EXPIRY_SECONDS", "3600")
     )
+    app.config["RECORDING_ARTIFACTS_AFTER_UPLOAD"] = (
+        os.environ.get("RECORDING_ARTIFACTS_AFTER_UPLOAD", "delete").strip().lower()
+        or "delete"
+    )
 
     # Handle subpath deployment
     if "SCRIPT_NAME" in os.environ:

@@ -647,6 +647,16 @@ def _concat_session_outputs(session_outputs, chunk_dir, logger):
     }
 
 
+def _sort_session_outputs_chronologically(session_outputs):
+    return sorted(
+        session_outputs,
+        key=lambda session: (
+            float(session.get("world_start_ms") or 0.0),
+            str(session.get("session_id") or ""),
+        ),
+    )
+
+
 def _build_point_timestamps(session_outputs, pts_rows):
     time_world = [session["world_start_iso"] for session in session_outputs]
     time_video = []
@@ -808,6 +818,19 @@ def finalize_recording_worker(
     if not session_outputs:
         _log.warning("finalize_recording: no playable session outputs produced")
         return
+
+    session_outputs = _sort_session_outputs_chronologically(session_outputs)
+    _log.info(
+        "finalize_recording: chronological session order=%s",
+        [
+            {
+                "session_id": session["session_id"],
+                "world_start_iso": session["world_start_iso"],
+                "duration_sec": round(session["duration_sec"], 3),
+            }
+            for session in session_outputs
+        ],
+    )
 
     final_output = _concat_session_outputs(session_outputs, chunk_dir, _log)
     if final_output is None:
