@@ -51,7 +51,10 @@ from app.filters import is_head_ref
 from os import path, listdir
 
 from app.utils.footage import finalize_recording_worker
-from app.utils.user_uploads import register_batch_upload_completion
+from app.utils.user_uploads import (
+    list_batch_manifest_rows,
+    register_batch_upload_completion,
+)
 from app.utils.camera_helpers import (
     generate_camera_key,
     validate_camera_key,
@@ -1409,9 +1412,12 @@ def user_upload_list_cameras(tournament_url: str):
                 "file": cam.file,
                 "uploaded_by_user_id": cam.uploaded_by_user_id,
                 "uploaded_by_user_type": cam.uploaded_by_user_type,
+                "manifest_only": False,
+                "error": None,
             }
         )
 
+    rows.extend(list_batch_manifest_rows(tournament_url))
     return jsonify({"cameras": rows})
 
 

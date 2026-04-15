@@ -830,9 +830,9 @@ pub fn TournamentHome(url: String) -> Element {
                                                                             if let Some(err) = &item.start_world_error {
                                                                                 div { class: "text-danger small mt-1", "{err}" }
                                                                             } else if let Some(s) = &item.start_world_suggested {
-                                                                                div { class: "text-muted small mt-1", "Metadata: {s}" }
+                                                                                div { class: "text-muted small mt-1", "Suggested from file timestamp: {s}" }
                                                                             } else {
-                                                                                div { class: "text-muted small mt-1", "No metadata timestamp found; using manual value." }
+                                                                                div { class: "text-muted small mt-1", "No file timestamp found; enter a manual start time if needed." }
                                                                             }
                                                                         }
                                                                         td {

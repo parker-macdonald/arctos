@@ -77,13 +77,14 @@ pub fn ManageUserUploads(url: String) -> Element {
                                                 return true;
                                             }
                                             let hay = format!(
-                                                "{} {} {} {} {} {}",
+                                                "{} {} {} {} {} {} {}",
                                                 cam.match_name,
                                                 cam.field_name,
                                                 cam.camera_name,
                                                 cam.status,
                                                 cam.user.clone().unwrap_or_default(),
                                                 cam.world_start_timestamp.clone().unwrap_or_default(),
+                                                cam.error.clone().unwrap_or_default(),
                                             )
                                             .to_lowercase();
                                             hay.contains(&q)
@@ -92,32 +93,41 @@ pub fn ManageUserUploads(url: String) -> Element {
                                                 td { "{cam.match_name}" }
                                                 td { "{cam.field_name}" }
                                                 td { "{cam.camera_name}" }
-                                                td { "{cam.status}" }
+                                                td {
+                                                    div { "{cam.status}" }
+                                                    if let Some(err) = &cam.error {
+                                                        div { class: "text-danger small", "{err}" }
+                                                    }
+                                                }
                                                 td { "{cam.user.clone().unwrap_or_else(|| \"-\".to_string())}" }
                                                 td { "{cam.world_start_timestamp.clone().unwrap_or_else(|| \"-\".to_string())}" }
                                                 td {
-                                                    button {
-                                                        class: "btn btn-sm btn-outline-danger",
-                                                        onclick: {
-                                                            let u = url.clone();
-                                                            let uuid = cam.uuid.clone();
-                                                            let mut delete_error_sig = delete_error;
-                                                            let mut refresh_sig = refresh;
-                                                            move |_| {
-                                                                delete_error_sig.set(None);
-                                                                let u = u.clone();
-                                                                let uuid = uuid.clone();
-                                                                let mut delete_error_sig = delete_error_sig;
-                                                                let mut refresh_sig = refresh_sig;
-                                                                spawn(async move {
-                                                                    match api::delete_user_uploaded_camera(&u, &uuid).await {
-                                                                        Ok(()) => refresh_sig.set(refresh_sig() + 1),
-                                                                        Err(e) => delete_error_sig.set(Some(e)),
-                                                                    }
-                                                                });
-                                                            }
-                                                        },
-                                                        "Delete"
+                                                    if cam.manifest_only.unwrap_or(false) {
+                                                        span { class: "text-muted small", "Pending batch" }
+                                                    } else {
+                                                        button {
+                                                            class: "btn btn-sm btn-outline-danger",
+                                                            onclick: {
+                                                                let u = url.clone();
+                                                                let uuid = cam.uuid.clone();
+                                                                let mut delete_error_sig = delete_error;
+                                                                let mut refresh_sig = refresh;
+                                                                move |_| {
+                                                                    delete_error_sig.set(None);
+                                                                    let u = u.clone();
+                                                                    let uuid = uuid.clone();
+                                                                    let mut delete_error_sig = delete_error_sig;
+                                                                    let mut refresh_sig = refresh_sig;
+                                                                    spawn(async move {
+                                                                        match api::delete_user_uploaded_camera(&u, &uuid).await {
+                                                                            Ok(()) => refresh_sig.set(refresh_sig() + 1),
+                                                                            Err(e) => delete_error_sig.set(Some(e)),
+                                                                        }
+                                                                    });
+                                                                }
+                                                            },
+                                                            "Delete"
+                                                        }
                                                     }
                                                 }
                                             }

@@ -315,6 +315,99 @@ def _manifest_set_status(manifest_path: str, status: str, error: Optional[str] =
     _manifest_read_write_locked(manifest_path, _m)
 
 
+def _cleanup_batch_processing_artifacts(
+    manifest_path: str,
+    *,
+    logger=None,
+    remove_manifest_dir: bool = False,
+) -> None:
+    """
+    Remove temporary per-upload source files after batch processing is finished.
+    Keeps failed manifests by default so the management UI can still show them.
+    """
+    _log = logger or current_app.logger
+    try:
+        with open(manifest_path, "r", encoding="utf-8") as f:
+            manifest = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        if remove_manifest_dir and path.isdir(path.dirname(manifest_path)):
+            try:
+                shutil.rmtree(path.dirname(manifest_path))
+            except OSError:
+                _log.warning(
+                    "user_autoclips batch: could not remove manifest dir %s",
+                    path.dirname(manifest_path),
+                )
+        return
+
+    static_root = _static_root()
+    tournament_url = str(manifest.get("tournament_url") or "").strip()
+    field_name = str(manifest.get("field_name") or "").strip()
+    files_map: dict[str, Any] = manifest.get("files") or {}
+
+    dirs_to_remove: set[str] = set()
+    for entry in files_map.values():
+        if not isinstance(entry, dict):
+            continue
+        source_relpath = str(entry.get("source_relpath") or "").strip()
+        if source_relpath:
+            source_abs_path = path.normpath(path.join(static_root, source_relpath))
+            dirs_to_remove.add(path.dirname(source_abs_path))
+
+        upload_id = str(entry.get("upload_id") or "").strip()
+        if tournament_url and field_name and upload_id:
+            dirs_to_remove.add(
+                path.join(
+                    static_root,
+                    "uploads",
+                    "videos",
+                    tournament_url,
+                    field_name,
+                    "user_uploads",
+                    "_incoming",
+                    upload_id,
+                )
+            )
+
+    for dir_path in sorted(dirs_to_remove, key=len, reverse=True):
+        if not path.isdir(dir_path):
+            continue
+        try:
+            shutil.rmtree(dir_path)
+        except OSError:
+            _log.warning(
+                "user_autoclips batch: could not remove temp dir %s",
+                dir_path,
+            )
+
+    if remove_manifest_dir:
+        manifest_dir = path.dirname(manifest_path)
+        if path.isdir(manifest_dir):
+            try:
+                shutil.rmtree(manifest_dir)
+            except OSError:
+                _log.warning(
+                    "user_autoclips batch: could not remove manifest dir %s",
+                    manifest_dir,
+                )
+
+
+def _finalize_batch_status(
+    manifest_path: str,
+    *,
+    status: str,
+    error: Optional[str] = None,
+    logger=None,
+    remove_manifest_dir: bool = False,
+) -> None:
+    _manifest_set_status(manifest_path, status, error)
+    _cleanup_batch_processing_artifacts(
+        manifest_path,
+        logger=logger,
+        remove_manifest_dir=remove_manifest_dir,
+    )
+
+
 def register_batch_upload_completion(
     logger,
     app_obj,
@@ -415,11 +508,86 @@ def register_batch_upload_completion(
                 except Exception:
                     _log.exception("user_autoclips batch worker failed")
                     try:
-                        _manifest_set_status(manifest_path, "failed", "worker exception")
+                        _finalize_batch_status(
+                            manifest_path,
+                            status="failed",
+                            error="worker exception",
+                            logger=_log,
+                        )
                     except Exception:
                         pass
 
         threading.Thread(target=_run, daemon=True).start()
+
+
+def list_batch_manifest_rows(tournament_url: str) -> list[dict[str, Any]]:
+    """
+    Return manifest-backed rows for uploads that have not yet produced visible
+    camera rows, so the management page can show pending/failed batches.
+    """
+    tournament_root = path.join(_static_root(), "uploads", "videos", tournament_url)
+    if not path.isdir(tournament_root):
+        return []
+
+    rows: list[dict[str, Any]] = []
+    for field_name in os.listdir(tournament_root):
+        batches_root = path.join(
+            tournament_root, field_name, "user_uploads", "_batches"
+        )
+        if not path.isdir(batches_root):
+            continue
+        for batch_id in os.listdir(batches_root):
+            manifest_path = path.join(batches_root, batch_id, "manifest.json")
+            if not path.exists(manifest_path):
+                continue
+            try:
+                with open(manifest_path, "r", encoding="utf-8") as f:
+                    manifest = json.load(f)
+            except (OSError, json.JSONDecodeError):
+                continue
+
+            status = str(manifest.get("status") or "pending").strip().lower() or "pending"
+            if status == "done":
+                continue
+
+            files_map = manifest.get("files") or {}
+            world_start = None
+            for idx in sorted(files_map.keys(), key=lambda raw: int(raw) if str(raw).isdigit() else raw):
+                entry = files_map.get(idx) or {}
+                sw = (entry.get("start_world_override") or "").strip()
+                if sw:
+                    world_start = sw
+                    break
+
+            uploader = None
+            uploader_user_type = str(manifest.get("uploader_user_type") or "").strip() or None
+            uploader_user_id = str(manifest.get("uploader_user_id") or "").strip() or None
+            if uploader_user_type and uploader_user_id:
+                uploader = f"{uploader_user_type}:{uploader_user_id}"
+            elif uploader_user_id:
+                uploader = uploader_user_id
+
+            error = str(manifest.get("error") or "").strip() or None
+            rows.append(
+                {
+                    "uuid": f"batch:{field_name}:{batch_id}",
+                    "match_uuid": "",
+                    "match_name": "Pending batch",
+                    "field_name": str(manifest.get("field_name") or field_name),
+                    "camera_name": str(manifest.get("camera_name") or "upload"),
+                    "status": status.upper(),
+                    "user": uploader,
+                    "world_start_timestamp": world_start,
+                    "link": None,
+                    "file": None,
+                    "uploaded_by_user_id": uploader_user_id,
+                    "uploaded_by_user_type": uploader_user_type,
+                    "manifest_only": True,
+                    "error": error,
+                }
+            )
+
+    return rows
 
 
 def user_autoclips_from_uploaded_batch_worker(
@@ -455,13 +623,23 @@ def user_autoclips_from_uploaded_batch_worker(
         entry = files_map.get(str(i))
         if not entry:
             _log.error("user_autoclips batch: missing file index %s", i)
-            _manifest_set_status(manifest_path, "failed", "missing file slot")
+            _finalize_batch_status(
+                manifest_path,
+                status="failed",
+                error="missing file slot",
+                logger=_log,
+            )
             return
         rel = entry.get("source_relpath") or ""
         abs_path = path.normpath(path.join(static_root, rel))
         if not path.exists(abs_path):
             _log.error("user_autoclips batch: missing source %s", abs_path)
-            _manifest_set_status(manifest_path, "failed", "source missing")
+            _finalize_batch_status(
+                manifest_path,
+                status="failed",
+                error="source missing",
+                logger=_log,
+            )
             return
         sw = entry.get("start_world_override")
         if isinstance(sw, str) and sw.strip():
@@ -472,13 +650,23 @@ def user_autoclips_from_uploaded_batch_worker(
     field_obj = Field.query.filter_by(event=tournament_url, name=field_name).first()
     if not field_obj:
         _log.error("user_autoclips batch: field not found event=%s field=%s", tournament_url, field_name)
-        _manifest_set_status(manifest_path, "failed", "field not found")
+        _finalize_batch_status(
+            manifest_path,
+            status="failed",
+            error="field not found",
+            logger=_log,
+        )
         return
 
     matches = Match.query.filter_by(event=tournament_url, field=field_name).all()
     if not matches:
         _log.warning("user_autoclips batch: no matches field=%s event=%s", field_name, tournament_url)
-        _manifest_set_status(manifest_path, "done")
+        _finalize_batch_status(
+            manifest_path,
+            status="failed",
+            error="no matches found on selected field",
+            logger=_log,
+        )
         return
 
     uuid_to_match = {m.uuid: m for m in matches}
@@ -490,10 +678,25 @@ def user_autoclips_from_uploaded_batch_worker(
         if not pt.match:
             continue
         points_by_match.setdefault(pt.match, []).append(pt)
+    if not points_by_match:
+        _log.warning(
+            "user_autoclips batch: no recorded points field=%s event=%s",
+            field_name,
+            tournament_url,
+        )
+        _finalize_batch_status(
+            manifest_path,
+            status="failed",
+            error="no recorded points found on selected field",
+            logger=_log,
+        )
+        db.session.remove()
+        return
     # Release DB connection before per-match ffmpeg (same rationale as finalize_recording_worker).
     db.session.remove()
 
     camera_fs_name = _camera_fs_dir_name(batch_id_key, camera_display_name)
+    created_cameras = 0
 
     for match_uuid, pts in points_by_match.items():
         combined: list[tuple[UserUploadClipPlan, str]] = []
@@ -620,6 +823,27 @@ def user_autoclips_from_uploaded_batch_worker(
             match_uuid,
             len(deduped),
         )
+        created_cameras += 1
 
-    _manifest_set_status(manifest_path, "done")
+    if created_cameras == 0:
+        _log.warning(
+            "user_autoclips batch: no clips matched field=%s event=%s batch=%s",
+            field_name,
+            tournament_url,
+            batch_id_key,
+        )
+        _finalize_batch_status(
+            manifest_path,
+            status="failed",
+            error="no clips matched uploaded footage; check file start timestamps",
+            logger=_log,
+        )
+        return
+
+    _finalize_batch_status(
+        manifest_path,
+        status="done",
+        logger=_log,
+        remove_manifest_dir=True,
+    )
 

@@ -550,6 +550,8 @@ pub struct UserUploadedCameraRow {
     pub file: Option<String>,
     pub uploaded_by_user_id: Option<String>,
     pub uploaded_by_user_type: Option<String>,
+    pub manifest_only: Option<bool>,
+    pub error: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
