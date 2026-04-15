@@ -354,8 +354,9 @@ def _cleanup_batch_processing_artifacts(
             source_abs_path = path.normpath(path.join(static_root, source_relpath))
             dirs_to_remove.add(path.dirname(source_abs_path))
 
+        incoming_dir_name = str(entry.get("incoming_dir_name") or "").strip()
         upload_id = str(entry.get("upload_id") or "").strip()
-        if tournament_url and field_name and upload_id:
+        if tournament_url and field_name and (incoming_dir_name or upload_id):
             dirs_to_remove.add(
                 path.join(
                     static_root,
@@ -365,7 +366,7 @@ def _cleanup_batch_processing_artifacts(
                     field_name,
                     "user_uploads",
                     "_incoming",
-                    upload_id,
+                    incoming_dir_name or upload_id,
                 )
             )
 
@@ -421,6 +422,7 @@ def register_batch_upload_completion(
     upload_id: str,
     saved_abs_path: str,
     start_world_override: Optional[str],
+    incoming_dir_name: Optional[str],
     uploader_user_id: str,
     uploader_user_type: str,
 ) -> None:
@@ -477,6 +479,7 @@ def register_batch_upload_completion(
             "upload_id": upload_id,
             "source_relpath": source_relpath,
             "start_world_override": start_world_override,
+            "incoming_dir_name": incoming_dir_name,
         }
         data = dict(data)
         data["files"] = files

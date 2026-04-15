@@ -402,7 +402,10 @@ where
         base(),
         tournament_url
     );
-    let body = serde_json::json!({ "upload_id": upload_id });
+    let body = serde_json::json!({
+        "upload_id": upload_id,
+        "batch_index": batch_index,
+    });
     let c = client();
     let r = with_credentials(c.post(complete_url).json(&body))
         .send()

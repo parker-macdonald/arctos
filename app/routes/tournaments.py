@@ -1047,6 +1047,7 @@ def user_upload_video_footage(tournament_url: str):
             upload_id=upload_group_name,
             saved_abs_path=saved_abs_path,
             start_world_override=start_world_override,
+            incoming_dir_name=None,
             uploader_user_id=uploader_user_id,
             uploader_user_type=uploader_user_type,
         )
@@ -1060,6 +1061,67 @@ def user_upload_video_footage(tournament_url: str):
             "upload_group_name": upload_group_name,
         }
     )
+
+
+def _user_upload_incoming_dir_name(upload_id: str, batch_index: int) -> str:
+    return f"{upload_id}__{batch_index:06d}"
+
+
+def _locate_user_upload_incoming_dir(
+    tournament_url: str, upload_id: str, batch_index: int | None = None
+):
+    incoming_root = path.join(
+        current_app.root_path,
+        "../static/uploads/videos",
+        tournament_url,
+    )
+
+    for field_obj in Field.query.filter_by(event=tournament_url).all():
+        incoming_base = path.join(
+            incoming_root,
+            field_obj.name,
+            "user_uploads",
+            "_incoming",
+        )
+        if not path.isdir(incoming_base):
+            continue
+
+        candidate_names = []
+        if batch_index is not None:
+            candidate_names.append(_user_upload_incoming_dir_name(upload_id, batch_index))
+        candidate_names.append(upload_id)
+
+        for dir_name in candidate_names:
+            candidate = path.join(incoming_base, dir_name)
+            if path.exists(candidate):
+                return candidate, field_obj.name
+
+        for dir_name in listdir(incoming_base):
+            candidate = path.join(incoming_base, dir_name)
+            meta_path = path.join(candidate, "meta.json")
+            if not path.exists(meta_path):
+                continue
+            try:
+                with open(meta_path, "r") as f:
+                    meta = json.load(f)
+            except (OSError, json.JSONDecodeError):
+                continue
+            if str(meta.get("upload_id") or "").strip() != upload_id:
+                continue
+            if batch_index is not None:
+                try:
+                    existing_batch_index = int(
+                        meta.get("batch_index")
+                        if meta.get("batch_index") is not None
+                        else 0
+                    )
+                except (TypeError, ValueError):
+                    existing_batch_index = 0
+                if existing_batch_index != batch_index:
+                    continue
+            return candidate, field_obj.name
+
+    return None, None
 
 
 @bp.route("/tournaments/<tournament_url>/user-upload/chunk", methods=["POST"])
@@ -1126,6 +1188,7 @@ def user_upload_video_footage_chunk(tournament_url: str):
         return jsonify({"error": "Field not found"}), 404
     field_name_resolved = field_obj.name
     db.session.remove()
+    incoming_dir_name = _user_upload_incoming_dir_name(upload_id, batch_index)
 
     incoming_dir = path.join(
         current_app.root_path,
@@ -1134,7 +1197,7 @@ def user_upload_video_footage_chunk(tournament_url: str):
         field_name_resolved,
         "user_uploads",
         "_incoming",
-        upload_id,
+        incoming_dir_name,
     )
     os.makedirs(incoming_dir, exist_ok=True)
 
@@ -1175,6 +1238,7 @@ def user_upload_video_footage_chunk(tournament_url: str):
         "batch_index": batch_index,
         "batch_total": batch_total,
         "batch_camera_name": batch_camera_name,
+        "incoming_dir_name": incoming_dir_name,
         "uploaded_by_user_id": str(current_user.id),
         "uploaded_by_user_type": current_user.__class__.__name__.lower(),
     }
@@ -1203,27 +1267,20 @@ def user_upload_video_footage_complete(tournament_url: str):
     if not upload_id:
         return jsonify({"error": "upload_id is required"}), 400
 
-    incoming_root = path.join(
-        current_app.root_path,
-        "../static/uploads/videos",
-        tournament_url,
-    )
+    batch_index_raw = payload.get("batch_index")
+    if batch_index_raw is None:
+        batch_index_raw = request.form.get("batch_index")
+    if batch_index_raw in (None, ""):
+        batch_index = None
+    else:
+        try:
+            batch_index = int(batch_index_raw)
+        except (TypeError, ValueError):
+            return jsonify({"error": "batch_index must be an integer"}), 400
 
-    # Locate upload directory by scanning fields under this tournament.
-    incoming_dir = None
-    field_name = None
-    for field_obj in Field.query.filter_by(event=tournament_url).all():
-        candidate = path.join(
-            incoming_root,
-            field_obj.name,
-            "user_uploads",
-            "_incoming",
-            upload_id,
-        )
-        if path.exists(candidate):
-            incoming_dir = candidate
-            field_name = field_obj.name
-            break
+    incoming_dir, field_name = _locate_user_upload_incoming_dir(
+        tournament_url, upload_id, batch_index
+    )
     if not incoming_dir or not field_name:
         return jsonify({"error": "Upload not found"}), 404
     db.session.remove()
@@ -1244,13 +1301,16 @@ def user_upload_video_footage_complete(tournament_url: str):
 
     filename = meta.get("filename") or "source.webm"
     ext = path.splitext(path.basename(filename))[1].lower() or ".webm"
+    incoming_dir_name = (
+        (meta.get("incoming_dir_name") or "").strip() or path.basename(incoming_dir)
+    )
     final_dir = path.join(
         current_app.root_path,
         "../static/uploads/videos",
         tournament_url,
         field_name,
         "user_uploads",
-        upload_id,
+        incoming_dir_name,
     )
     os.makedirs(final_dir, exist_ok=True)
     saved_abs_path = path.join(final_dir, f"source{ext}")
@@ -1316,6 +1376,7 @@ def user_upload_video_footage_complete(tournament_url: str):
             upload_id=upload_id,
             saved_abs_path=saved_abs_path,
             start_world_override=start_world_override,
+            incoming_dir_name=incoming_dir_name,
             uploader_user_id=uploader_user_id,
             uploader_user_type=uploader_user_type,
         )
