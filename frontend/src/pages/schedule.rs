@@ -3,6 +3,8 @@ use crate::types::*;
 use crate::Route;
 use dioxus::html::ModifiersInteraction;
 use dioxus::prelude::*;
+#[cfg(target_arch = "wasm32")]
+use gloo_timers::callback::Interval;
 use serde::Serialize;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -13,6 +15,7 @@ use wasm_bindgen::JsCast as _;
 
 /// CSS for schedule page: timeline layout and team-token inputs (used by modals in both table and timeline view).
 const SCHEDULE_PAGE_CSS: &str = include_str!("schedule_timeline.css");
+const SCHEDULE_REFRESH_INTERVAL_MS: u32 = 60_000;
 
 /// Browser timezone offset in minutes (local = utc + offset). Used for table and timeline.
 fn schedule_tz_offset_minutes() -> i64 {
@@ -109,6 +112,8 @@ pub fn Schedule(url: String) -> Element {
     let mut selected_match_id = use_signal(|| "".to_string());
     let mut key_nav = use_signal(|| None::<String>);
     let refresh_trigger = use_signal(|| 0u32);
+    #[cfg(target_arch = "wasm32")]
+    let schedule_refresh_interval = use_signal(|| None as Option<Interval>);
 
     use_effect(move || {
         if let Some(Ok(data)) = setup_data.value().read().as_ref() {
@@ -121,6 +126,22 @@ pub fn Schedule(url: String) -> Element {
             setup_data.restart();
         }
     });
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        let mut refresh_trigger = refresh_trigger;
+        let mut schedule_refresh_interval = schedule_refresh_interval;
+        use_effect(move || {
+            if schedule_refresh_interval.read().is_some() {
+                return;
+            }
+
+            let handle = Interval::new(SCHEDULE_REFRESH_INTERVAL_MS, move || {
+                refresh_trigger.set(refresh_trigger().wrapping_add(1));
+            });
+            schedule_refresh_interval.set(Some(handle));
+        });
+    }
 
     // Refocus the schedule container when a modal closes so keyboard shortcuts work without a click
     use_effect(move || {
