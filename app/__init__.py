@@ -70,6 +70,10 @@ def create_app(config=None):
         os.environ.get("RECORDING_ARTIFACTS_AFTER_UPLOAD", "delete").strip().lower()
         or "delete"
     )
+    app.config["ENABLE_MANUAL_FOOTAGE_UPLOADS"] = (
+        os.environ.get("ENABLE_MANUAL_FOOTAGE_UPLOADS", "").strip().lower()
+        in ("1", "true", "yes", "on")
+    )
 
     # Handle subpath deployment
     if "SCRIPT_NAME" in os.environ:

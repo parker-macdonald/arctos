@@ -170,6 +170,8 @@ pub struct TournamentDetailResponse {
     pub is_current_player_registered: bool,
     #[serde(default)]
     pub penalty_types: Vec<PenaltyType>,
+    #[serde(default)]
+    pub manual_footage_uploads_enabled: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

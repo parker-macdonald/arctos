@@ -1998,6 +1998,9 @@ def tournament_detail(tournament_url):
             "is_current_team_registered": is_current_team_registered,
             "is_current_player_registered": is_current_player_registered,
             "penalty_types": penalty_types_data,
+            "manual_footage_uploads_enabled": bool(
+                current_app.config.get("ENABLE_MANUAL_FOOTAGE_UPLOADS", False)
+            ),
         }
     )
 

@@ -162,7 +162,9 @@ pub fn TournamentHome(url: String) -> Element {
                     if d.tournament.bracket && (d.tournament.schedule_published || is_current_user_to(me_res.read().as_ref(), &d.to_entries)) {
                         Link { to: Route::Bracket { url: url.clone() }, class: "btn btn-outline-primary", "Bracket" }
                     }
-                    if me_res.read().as_ref().and_then(|r| r.as_ref().ok()).is_some() {
+                    if d.manual_footage_uploads_enabled
+                        && me_res.read().as_ref().and_then(|r| r.as_ref().ok()).is_some()
+                    {
                         button {
                             class: "btn btn-outline-secondary",
                             onclick: move |_| {
@@ -503,7 +505,7 @@ pub fn TournamentHome(url: String) -> Element {
                 }
             }
 
-            if upload_modal_open() {
+            if d.manual_footage_uploads_enabled && upload_modal_open() {
                 div {
                     class: "modal show d-block",
                     style: "background: rgba(0,0,0,0.5);",
