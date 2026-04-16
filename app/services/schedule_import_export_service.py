@@ -12,6 +12,11 @@ from typing import TYPE_CHECKING
 from app.error_values import Err, Ok, Result, allow_Q, option
 from app.exceptions import ArctosError, NotFoundError, ValidationError
 from app.serializers.match_schedule_serializer import MatchScheduleSerializer
+from app.utils.match_ref_resolution import (
+    refs_string_to_tokens,
+    resolve_refs_slots,
+    resolve_team_column,
+)
 from app.utils.toml_helpers import parse_toml_schedule, write_toml_schedule
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -384,6 +389,8 @@ class ScheduleImportExportService:
             return Err(ValidationError(error_message))
 
         # All validation passed - proceed with import
+        # Single commit at end keeps tags/fields/matches and deletions atomic (partial import
+        # on failure would leave inconsistent schedule vs file). SQLite WAL reduces lock contention.
         # Wrap in transaction so any error rolls back all changes
         try:
             # Keep track of which objects are present in the uploaded file for this tournament.
@@ -533,50 +540,29 @@ class ScheduleImportExportService:
                             or team1_initial_changed
                             or team2_initial_changed
                         ):
-                            # Helper to check if a value is an explicit team ID
-                            def is_explicit_team_id(val: str) -> bool:
-                                if not val or not val.strip():
-                                    return False
-                                val = val.strip()
-                                if val.lower().startswith("tag::"):
-                                    return False
-                                if (
-                                    "::winner" in val.lower()
-                                    or "::loser" in val.lower()
-                                ):
-                                    return False
-                                return True
-
                             # Handle team1
                             if team1_initial_changed:
-                                if is_explicit_team_id(new_team1_initial):
-                                    match.team1 = new_team1_initial
-                                else:
-                                    match.team1 = None
+                                match.team1 = resolve_team_column(
+                                    new_team1_initial, tournament_url
+                                )
 
                             # Handle team2
                             if team2_initial_changed:
-                                if is_explicit_team_id(new_team2_initial):
-                                    match.team2 = new_team2_initial
-                                else:
-                                    match.team2 = None
+                                match.team2 = resolve_team_column(
+                                    new_team2_initial, tournament_url
+                                )
 
-                            # Handle refs
+                            # Handle refs (parallel with refs_initial)
                             if refs_initial_changed:
                                 if new_refs_initial:
-                                    refs_initial_list = [
-                                        r.strip() for r in new_refs_initial.split(",")
-                                    ]
-                                    refs_list = [""] * len(refs_initial_list)
-                                    has_explicit_ids = False
-                                    for i, initial_ref in enumerate(refs_initial_list):
-                                        if initial_ref and is_explicit_team_id(
-                                            initial_ref
-                                        ):
-                                            refs_list[i] = initial_ref
-                                            has_explicit_ids = True
-                                    if has_explicit_ids:
-                                        match.refs = ", ".join(refs_list)
+                                    r_csv, _ = resolve_refs_slots(
+                                        refs_string_to_tokens(new_refs_initial),
+                                        tournament_url,
+                                    )
+                                    if r_csv and any(
+                                        s.strip() for s in r_csv.split(",")
+                                    ):
+                                        match.refs = r_csv
                                     else:
                                         match.refs = None
                                 else:

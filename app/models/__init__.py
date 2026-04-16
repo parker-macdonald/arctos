@@ -16,6 +16,7 @@ from app.models.match import Match, Point, MatchNote
 from app.models.penalty_type import PenaltyType
 from app.models.records import Injury, HeadRef
 from app.models.sidecomp import SideComp, SideCompResult
+from app.models.camera import Camera
 
 __all__ = [
     "db",
@@ -33,6 +34,7 @@ __all__ = [
     "Match",
     "Point",
     "MatchNote",
+    "Camera",
     "PenaltyType",
     "Injury",
     "HeadRef",

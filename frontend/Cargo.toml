@@ -14,7 +14,7 @@ dioxus-router = { version = "0.7", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 bytes = "1"
-reqwest = { version = "0.12", default-features = false, features = ["json"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "multipart"] }
 pulldown-cmark = "0.9"
 urlencoding = "2"
 uuid = { version = "1", features = ["v4", "js"] }
@@ -30,7 +30,7 @@ web-sys = { version = "0.3", features = [
     "DomException", "Blob", "Response", "Request", "RequestInit", "RequestMode",
     "Headers", "ResponseType", "MouseEvent", "DomRect", "TouchEvent", "Touch", "TouchList", "CustomEvent",
     "Url", "HtmlAnchorElement",
-    "FormData", "HtmlVideoElement", "HtmlMediaElement", "MediaDevices", "MediaStream",
+    "FormData", "HtmlVideoElement", "HtmlMediaElement", "ImageBitmap", "MediaDevices", "MediaStream",
     "MediaRecorder", "MediaRecorderOptions", "MediaStreamConstraints", "BlobEvent",
     "MediaDeviceInfo", "MediaStreamTrack",
     "Storage",

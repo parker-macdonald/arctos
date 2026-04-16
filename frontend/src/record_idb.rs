@@ -92,6 +92,22 @@ pub async fn delete_entry(db: &Database, key: &str) -> Result<(), idb::Error> {
     Ok(())
 }
 
+/// Sum of [`web_sys::Blob::size`] for all chunk entries (finalize rows excluded). Used so preview
+/// metadata reflects the recording queue when `navigator.storage.estimate()` under-reports IDB.
+pub async fn sum_chunk_blob_bytes(db: &Database) -> Result<u64, idb::Error> {
+    let entries = cursor_entries_ordered(db).await?;
+    let mut total: u64 = 0;
+    for (_, value) in entries {
+        if let Some((_, blob)) = parse_chunk_value(&value) {
+            let s = blob.size();
+            if s.is_finite() && s >= 0.0 {
+                total = total.saturating_add(s as u64);
+            }
+        }
+    }
+    Ok(total)
+}
+
 /// Cursor over entries in key order (from "00000000" up to but not including "z_next").
 /// Returns (key, value) pairs for rebuilding the in-memory queue.
 pub async fn cursor_entries_ordered(db: &Database) -> Result<Vec<(String, JsValue)>, idb::Error> {
@@ -150,6 +166,16 @@ fn meta_to_js(meta: &RecordChunkMeta) -> JsValue {
         let _ = Reflect::set(o.as_ref(), &"key".into(), &JsValue::from_str(k));
     }
     let _ = Reflect::set(&o, &"container".into(), &JsValue::from_str(&meta.container));
+    let _ = Reflect::set(
+        o.as_ref(),
+        &"blob_event_timestamp_ms".into(),
+        &JsValue::from_f64(meta.blob_event_timestamp_ms),
+    );
+    let _ = Reflect::set(
+        o.as_ref(),
+        &"is_init_segment".into(),
+        &JsValue::from_bool(meta.is_init_segment),
+    );
     o.into()
 }
 
@@ -199,5 +225,13 @@ fn js_to_meta(js: &JsValue) -> Option<RecordChunkMeta> {
             .ok()?
             .as_string()
             .unwrap_or_else(|| "webm".to_string()),
+        blob_event_timestamp_ms: Reflect::get(js, &"blob_event_timestamp_ms".into())
+            .ok()
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0),
+        is_init_segment: Reflect::get(js, &"is_init_segment".into())
+            .ok()
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
     })
 }

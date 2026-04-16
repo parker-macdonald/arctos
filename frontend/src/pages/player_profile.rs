@@ -317,12 +317,8 @@ pub fn PlayerProfile(id: Signal<String>) -> Element {
                                                         }
                                                     }
                                                     td {
-                                                        if let Some(paid) = r.paid {
-                                                            span { class: if paid { "badge bg-success" } else { "badge bg-warning text-dark" },
-                                                                if paid { "Paid" } else { "Unpaid" }
-                                                            }
-                                                        } else {
-                                                            span { class: "text-muted", "-" }
+                                                        span { class: if r.paid { "badge bg-success" } else { "badge bg-warning text-dark" },
+                                                            if r.paid { "Paid" } else { "Unpaid" }
                                                         }
                                                     }
                                                     td {

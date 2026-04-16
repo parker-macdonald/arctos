@@ -36,10 +36,10 @@ pub struct Tournament {
     pub max_team_size_roster: Option<u32>,
     pub max_team_size_field: Option<u32>,
     pub terms_link: Option<String>,
-    pub waiver_filepath: Option<String>,
-    pub waiver_sha256: Option<String>,
     #[serde(default)]
     pub waiver_required: bool,
+    pub waiver_filepath: Option<String>,
+    pub waiver_sha256: Option<String>,
     pub head_refs_allowed_list: Option<String>,
     #[serde(default)]
     pub head_refs_allow_reffing_teams: bool,
@@ -125,10 +125,10 @@ pub struct LeagueInfo {
     #[serde(default)]
     pub published: bool,
     pub terms_link: Option<String>,
-    pub waiver_filepath: Option<String>,
-    pub waiver_sha256: Option<String>,
     #[serde(default)]
     pub waiver_required: bool,
+    pub waiver_filepath: Option<String>,
+    pub waiver_sha256: Option<String>,
     pub n_max_teams: Option<u32>,
     pub max_team_size_roster: Option<u32>,
     pub max_team_size_field: Option<u32>,
@@ -170,6 +170,8 @@ pub struct TournamentDetailResponse {
     pub is_current_player_registered: bool,
     #[serde(default)]
     pub penalty_types: Vec<PenaltyType>,
+    #[serde(default)]
+    pub manual_footage_uploads_enabled: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -224,12 +226,11 @@ pub struct ManagePlayerRegistrationData {
     pub amount_paid: f64,
     pub registered_at: Option<String>,
     pub paid_at: Option<String>,
-    pub waiver_legal_name_signature: Option<String>,
-    pub waiver_legal_name_signature_sha256: Option<String>,
     #[serde(default)]
     pub waiver_required: bool,
     #[serde(default)]
     pub waiver_status: Option<String>,
+    pub waiver_legal_name_signature: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -462,8 +463,6 @@ pub struct MatchDetailData {
     pub nsets: Option<u32>,
     pub initial_notes: Option<String>,
     pub final_notes: Option<String>,
-    #[serde(default)]
-    pub is_league_event: bool,
 }
 
 /// Per-point in-video start time. Includes point_uuid so cameras can have different point sets.
@@ -521,8 +520,45 @@ pub struct CameraData {
     pub video_path: Option<String>,
     pub camera_id: Option<String>,
     pub session_id: Option<String>,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub source_type: Option<String>,
+    #[serde(default)]
+    pub time_world: Option<Vec<String>>,
+    #[serde(default)]
+    pub time_video: Option<Vec<f64>>,
     #[serde(default, deserialize_with = "deserialize_point_timestamps")]
     pub point_timestamps: Option<Vec<PointTimestamp>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct FieldOption {
+    pub id: u32,
+    pub name: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct UserUploadedCameraRow {
+    pub uuid: String,
+    pub match_uuid: String,
+    pub match_name: String,
+    pub field_name: String,
+    pub camera_name: String,
+    pub status: String,
+    pub user: Option<String>,
+    pub world_start_timestamp: Option<String>,
+    pub link: Option<String>,
+    pub file: Option<String>,
+    pub uploaded_by_user_id: Option<String>,
+    pub uploaded_by_user_type: Option<String>,
+    pub manifest_only: Option<bool>,
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct UserUploadedCamerasResponse {
+    pub cameras: Vec<UserUploadedCameraRow>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -804,7 +840,9 @@ pub struct PlayerRegItem {
     pub jersey_name: Option<String>,
     pub jersey_number: Option<String>,
     #[serde(default)]
-    pub paid: Option<bool>,
+    pub paid: bool,
+    #[serde(default)]
+    pub amount_paid: f64,
     #[serde(default)]
     pub waiver_required: bool,
     #[serde(default)]
@@ -1073,17 +1111,10 @@ pub struct MyPlayerRegistrationResponse {
     #[serde(default)]
     pub waiver_required: bool,
     #[serde(default)]
-    pub waiver_filepath: Option<String>,
-    #[serde(default)]
-    pub waiver_sha256: Option<String>,
-    #[serde(default)]
-    pub waiver_legal_name_signature: Option<String>,
-    #[serde(default)]
-    pub waiver_signature_sha256: Option<String>,
-    #[serde(default)]
-    pub waiver_signature_submitted_at: Option<String>,
-    #[serde(default)]
     pub waiver_signature_valid: bool,
+    pub waiver_filepath: Option<String>,
+    pub waiver_sha256: Option<String>,
+    pub waiver_legal_name_signature: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1091,7 +1122,6 @@ pub struct UpdatePlayerRegistrationRequest {
     pub jersey_name: Option<String>,
     pub jersey_number: Option<String>,
     pub team: Option<String>,
-    #[serde(default)]
     pub waiver_legal_name_signature: Option<String>,
 }
 

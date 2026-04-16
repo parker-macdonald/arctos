@@ -51,14 +51,6 @@ pub struct StatusResponse {
 }
 
 #[derive(serde::Deserialize)]
-pub struct UploadWaiverResponse {
-    pub success: bool,
-    pub waiver_filepath: Option<String>,
-    pub waiver_sha256: Option<String>,
-    pub error: Option<String>,
-}
-
-#[derive(serde::Deserialize)]
 pub struct CreateTournamentResponse {
     pub success: bool,
     #[allow(dead_code)]
@@ -216,6 +208,241 @@ pub async fn tournament_detail(tournament_url: &str) -> Result<TournamentDetailR
     response_json(r).await
 }
 
+pub async fn tournament_fields(tournament_url: &str) -> Result<Vec<FieldOption>, String> {
+    let c = client();
+    let r = with_credentials(
+        c.get(format!("{}/_api/tournaments/{}/fields", base(), tournament_url))
+    )
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let data: Value = response_json(r).await?;
+    let fields_val = data.get("fields").cloned().unwrap_or_else(|| Value::Array(vec![]));
+    serde_json::from_value::<Vec<FieldOption>>(fields_val).map_err(|e| e.to_string())
+}
+
+pub async fn user_uploaded_cameras_list(
+    tournament_url: &str,
+) -> Result<UserUploadedCamerasResponse, String> {
+    let c = client();
+    let r = with_credentials(
+        c.get(format!(
+            "{}/_api/tournaments/{}/user-uploaded-cameras",
+            base(),
+            tournament_url
+        ))
+    )
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    response_json(r).await
+}
+
+pub async fn delete_user_uploaded_camera(
+    tournament_url: &str,
+    camera_uuid: &str,
+) -> Result<(), String> {
+    let c = client();
+    let r = with_credentials(
+        c.delete(format!(
+            "{}/_api/tournaments/{}/user-upload/delete-camera/{}",
+            base(),
+            tournament_url,
+            camera_uuid
+        ))
+    )
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    let data: Value = response_json(r).await?;
+    if data.get("success").and_then(|v| v.as_bool()) == Some(true) {
+        Ok(())
+    } else {
+        Err(data
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Delete failed")
+            .to_string())
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub async fn user_upload_video_footage(
+    tournament_url: &str,
+    field_id: u32,
+    file: dioxus::html::FileData,
+    start_world_override: Option<String>,
+    camera_name: Option<String>,
+    batch_id: &str,
+    batch_index: u32,
+    batch_total: u32,
+) -> Result<String, String> {
+    user_upload_video_footage_with_progress(
+        tournament_url,
+        field_id,
+        file,
+        start_world_override,
+        camera_name,
+        batch_id,
+        batch_index,
+        batch_total,
+        |_, _| {},
+    )
+    .await
+}
+
+/// `on_progress(bytes_sent, total_bytes)` after each chunk succeeds and after finalize completes.
+#[cfg(target_arch = "wasm32")]
+pub async fn user_upload_video_footage_with_progress<F>(
+    tournament_url: &str,
+    field_id: u32,
+    file: dioxus::html::FileData,
+    start_world_override: Option<String>,
+    camera_name: Option<String>,
+    batch_id: &str,
+    batch_index: u32,
+    batch_total: u32,
+    mut on_progress: F,
+) -> Result<String, String>
+where
+    F: FnMut(u64, u64),
+{
+    use gloo_timers::future::TimeoutFuture;
+    use wasm_bindgen::JsCast;
+
+    let window = web_sys::window().ok_or("no window")?;
+    const CHUNK_SIZE_BYTES: u64 = 20 * 1024 * 1024;
+    const CHUNK_UPLOAD_MAX_ATTEMPTS: u32 = 3;
+
+    let web_file = file
+        .inner()
+        .downcast_ref::<web_sys::File>()
+        .cloned()
+        .ok_or_else(|| "Could not access browser file handle".to_string())?;
+    let file_size = web_file.size() as u64;
+    on_progress(0, file_size);
+
+    let total_chunks = ((file_size + CHUNK_SIZE_BYTES - 1) / CHUNK_SIZE_BYTES).max(1);
+    let upload_id = format!("u{}", uuid::Uuid::new_v4().simple());
+    let content_type = file
+        .content_type()
+        .unwrap_or_else(|| "application/octet-stream".to_string());
+    let filename = file.name();
+
+    let chunk_url = format!("{}/_api/tournaments/{}/user-upload/chunk", base(), tournament_url);
+    for idx in 0..total_chunks {
+        let start = idx * CHUNK_SIZE_BYTES;
+        let end = std::cmp::min(start + CHUNK_SIZE_BYTES, file_size);
+        let blob = web_file
+            .slice_with_f64_and_f64(start as f64, end as f64)
+            .map_err(|_| "Failed to slice file chunk")?;
+
+        let form = web_sys::FormData::new().map_err(|_| "FormData::new failed")?;
+        form.append_with_str("field_id", &field_id.to_string())
+            .map_err(|_| "append field_id failed")?;
+        form.append_with_str("upload_id", &upload_id)
+            .map_err(|_| "append upload_id failed")?;
+        form.append_with_str("chunk_index", &idx.to_string())
+            .map_err(|_| "append chunk_index failed")?;
+        form.append_with_str("total_chunks", &total_chunks.to_string())
+            .map_err(|_| "append total_chunks failed")?;
+        form.append_with_str("batch_id", batch_id)
+            .map_err(|_| "append batch_id failed")?;
+        form.append_with_str("batch_index", &batch_index.to_string())
+            .map_err(|_| "append batch_index failed")?;
+        form.append_with_str("batch_total", &batch_total.to_string())
+            .map_err(|_| "append batch_total failed")?;
+        form.append_with_str("filename", &filename)
+            .map_err(|_| "append filename failed")?;
+        form.append_with_str("content_type", &content_type)
+            .map_err(|_| "append content_type failed")?;
+        if let Some(sw) = start_world_override.as_deref() {
+            if !sw.trim().is_empty() {
+                form.append_with_str("start_world", sw.trim())
+                    .map_err(|_| "append start_world failed")?;
+            }
+        }
+        if let Some(name) = camera_name.as_deref() {
+            if !name.trim().is_empty() {
+                form.append_with_str("camera_name", name.trim())
+                    .map_err(|_| "append camera_name failed")?;
+            }
+        }
+        form.append_with_blob("chunk", &blob)
+            .map_err(|_| "append chunk failed")?;
+
+        let opts = web_sys::RequestInit::new();
+        opts.set_method("POST");
+        let form_js = wasm_bindgen::JsValue::from(form);
+        opts.set_body(form_js.as_ref());
+        #[allow(deprecated)]
+        opts.set_credentials(web_sys::RequestCredentials::Include);
+        let request = web_sys::Request::new_with_str_and_init(&chunk_url, &opts)
+            .map_err(|_| "Request::new failed")?;
+        let mut fetch_err: Option<String> = None;
+        let mut resp_opt: Option<web_sys::Response> = None;
+        for attempt in 1..=CHUNK_UPLOAD_MAX_ATTEMPTS {
+            match wasm_bindgen_futures::JsFuture::from(window.fetch_with_request(&request)).await {
+                Ok(resp) => {
+                    let resp: web_sys::Response =
+                        resp.dyn_into().map_err(|_| "response cast failed")?;
+                    resp_opt = Some(resp);
+                    break;
+                }
+                Err(e) => {
+                    fetch_err = Some(format!("{:?}", e));
+                    if attempt < CHUNK_UPLOAD_MAX_ATTEMPTS {
+                        TimeoutFuture::new(750 * attempt).await;
+                    }
+                }
+            }
+        }
+        let resp = resp_opt.ok_or_else(|| {
+            format!(
+                "Chunk upload failed due to a network/load error after {} attempts: {}. This usually means the server or proxy dropped the connection during upload.",
+                CHUNK_UPLOAD_MAX_ATTEMPTS,
+                fetch_err.unwrap_or_else(|| "unknown fetch failure".to_string())
+            )
+        })?;
+        if !resp.ok() {
+            let text = wasm_bindgen_futures::JsFuture::from(
+                resp.text()
+                    .map_err(|e: wasm_bindgen::JsValue| format!("{:?}", e))?,
+            )
+            .await
+            .map_err(|e| format!("{:?}", e))?;
+            let msg = text
+                .as_string()
+                .unwrap_or_else(|| "Unknown error".to_string());
+            return Err(format!("Chunk upload failed: {}", msg));
+        }
+        on_progress(end, file_size);
+    }
+
+    let complete_url = format!(
+        "{}/_api/tournaments/{}/user-upload/complete",
+        base(),
+        tournament_url
+    );
+    let body = serde_json::json!({
+        "upload_id": upload_id,
+        "batch_index": batch_index,
+    });
+    let c = client();
+    let r = with_credentials(c.post(complete_url).json(&body))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    let v: Value = response_json(r).await?;
+    on_progress(file_size, file_size);
+    Ok(v
+        .get("upload_group_name")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string())
+}
+
 pub async fn start_match_data(
     tournament_url: &str,
     match_id: &str,
@@ -302,76 +529,6 @@ pub async fn update_tournament_settings(
 ) -> Result<StatusResponse, String> {
     let url = format!("{}/_api/{}/update-settings", base(), tournament_url);
     post_form_status(&url, params).await
-}
-
-/// Upload the current waiver for a tournament (extensionless + overwrites).
-pub async fn upload_waiver(
-    tournament_url: &str,
-    bytes: bytes::Bytes,
-    filename: &str,
-) -> Result<UploadWaiverResponse, String> {
-    let c = client();
-    let r = with_credentials(
-        c.post(format!("{}/_api/{}/upload-waiver", base(), tournament_url))
-            .header("X-Waiver-Filename", filename)
-            .body(bytes),
-    )
-    .send()
-    .await
-    .map_err(|e| e.to_string())?;
-
-    let data: Value = response_json(r).await?;
-    let success = data.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
-    if success {
-        Ok(UploadWaiverResponse {
-            success,
-            waiver_filepath: data.get("waiver_filepath").and_then(|v| v.as_str()).map(String::from),
-            waiver_sha256: data.get("waiver_sha256").and_then(|v| v.as_str()).map(String::from),
-            error: None,
-        })
-    } else {
-        Err(
-            data.get("error")
-                .and_then(|v| v.as_str())
-                .unwrap_or("Upload failed")
-                .to_string(),
-        )
-    }
-}
-
-/// Upload the current waiver for a league (extensionless + overwrites).
-pub async fn league_upload_waiver(
-    league_url: &str,
-    bytes: bytes::Bytes,
-    filename: &str,
-) -> Result<UploadWaiverResponse, String> {
-    let c = client();
-    let r = with_credentials(
-        c.post(format!("{}/_api/leagues/{}/upload-waiver", base(), league_url))
-            .header("X-Waiver-Filename", filename)
-            .body(bytes),
-    )
-    .send()
-    .await
-    .map_err(|e| e.to_string())?;
-
-    let data: Value = response_json(r).await?;
-    let success = data.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
-    if success {
-        Ok(UploadWaiverResponse {
-            success,
-            waiver_filepath: data.get("waiver_filepath").and_then(|v| v.as_str()).map(String::from),
-            waiver_sha256: data.get("waiver_sha256").and_then(|v| v.as_str()).map(String::from),
-            error: None,
-        })
-    } else {
-        Err(
-            data.get("error")
-                .and_then(|v| v.as_str())
-                .unwrap_or("Upload failed")
-                .to_string(),
-        )
-    }
 }
 
 pub async fn add_tournament_to(
@@ -467,15 +624,15 @@ pub async fn register_player(
     team: &str,
     waiver_legal_name_signature: &str,
 ) -> Result<StatusResponse, String> {
-    let mut params = vec![
+    let params = vec![
         ("jersey_name".into(), jersey_name.to_string()),
         ("jersey_number".into(), jersey_number.to_string()),
         ("team".into(), team.to_string()),
+        (
+            "waiver_legal_name_signature".into(),
+            waiver_legal_name_signature.to_string(),
+        ),
     ];
-    params.push((
-        "waiver_legal_name_signature".into(),
-        waiver_legal_name_signature.to_string(),
-    ));
     let url = format!("{}/_api/{}/register-player", base(), tournament_url);
     post_form_status(&url, &params).await
 }
@@ -646,6 +803,54 @@ pub async fn league_register_player(
     ));
     let url = format!("{}/_api/leagues/{}/register-player", base(), league_url);
     post_form_status(&url, &params).await
+}
+
+/// Upload or replace the tournament waiver PDF (organizers only). Call after saving settings.
+pub async fn upload_waiver(
+    tournament_url: &str,
+    bytes: Vec<u8>,
+    filename: &str,
+) -> Result<(), String> {
+    let form = reqwest::multipart::Form::new().part(
+        "waiver",
+        reqwest::multipart::Part::bytes(bytes).file_name(filename.to_string()),
+    );
+    let c = client();
+    let url = format!("{}/_api/{}/upload-waiver", base(), tournament_url);
+    let r = with_credentials(c.post(url).multipart(form))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !r.status().is_success() {
+        let status = r.status();
+        let text = r.text().await.unwrap_or_default();
+        return Err(format!("{}: {}", status, text));
+    }
+    Ok(())
+}
+
+/// Upload or replace the league waiver PDF (organizers only).
+pub async fn league_upload_waiver(
+    league_url: &str,
+    bytes: Vec<u8>,
+    filename: &str,
+) -> Result<(), String> {
+    let form = reqwest::multipart::Form::new().part(
+        "waiver",
+        reqwest::multipart::Part::bytes(bytes).file_name(filename.to_string()),
+    );
+    let c = client();
+    let url = format!("{}/_api/leagues/{}/upload-waiver", base(), league_url);
+    let r = with_credentials(c.post(url).multipart(form))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !r.status().is_success() {
+        let status = r.status();
+        let text = r.text().await.unwrap_or_default();
+        return Err(format!("{}: {}", status, text));
+    }
+    Ok(())
 }
 
 pub async fn league_deregister_team(
@@ -1562,6 +1767,9 @@ pub struct RecordChunkMeta {
     pub key: Option<String>,
     /// Container for the chunk: "mp4" (H.265/HEVC) or "webm". Backend uses this for file extension and re-encode.
     pub container: String,
+    /// `BlobEvent.timeStamp` (DOMHighResTimeStamp, ms).
+    pub blob_event_timestamp_ms: f64,
+    pub is_init_segment: bool,
 }
 
 /// Convert epoch milliseconds to ISO 8601 UTC string (e.g. "2025-02-23T19:30:00.123Z").
@@ -1602,6 +1810,16 @@ pub async fn record_upload_chunk(meta: &RecordChunkMeta, chunk_blob: &web_sys::B
     }
     form.append_with_str("container", &meta.container)
         .map_err(|_| "append container failed")?;
+    form.append_with_str(
+        "blob_event_timestamp_ms",
+        &meta.blob_event_timestamp_ms.to_string(),
+    )
+    .map_err(|_| "append blob_event_timestamp_ms failed")?;
+    form.append_with_str(
+        "is_init_segment",
+        if meta.is_init_segment { "1" } else { "0" },
+    )
+    .map_err(|_| "append is_init_segment failed")?;
     form.append_with_blob("chunk", chunk_blob)
         .map_err(|_| "append chunk failed")?;
 
@@ -1619,11 +1837,12 @@ pub async fn record_upload_chunk(meta: &RecordChunkMeta, chunk_blob: &web_sys::B
         .map_err(|_| "fetch failed")?;
     let resp: web_sys::Response = resp.dyn_into().map_err(|_| "response cast failed")?;
     if !resp.ok() {
+        let status = resp.status();
         let text = wasm_bindgen_futures::JsFuture::from(resp.text().map_err(|_| "text() failed")?)
             .await
             .map_err(|_| "text await failed")?;
         let msg = text.as_string().unwrap_or_else(|| "Unknown error".to_string());
-        return Err(format!("Upload failed: {}", msg));
+        return Err(format!("Upload failed (HTTP {status}): {msg}"));
     }
     Ok(())
 }
@@ -1648,6 +1867,8 @@ pub struct RecordChunkMeta {
     pub camera_name: String,
     pub key: Option<String>,
     pub container: String,
+    pub blob_event_timestamp_ms: f64,
+    pub is_init_segment: bool,
 }
 
 pub async fn record_finalize(
