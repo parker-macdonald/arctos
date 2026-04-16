@@ -571,7 +571,7 @@ pub fn TournamentSettings(url: String) -> Element {
                                                     if let Some(bytes) = waiver_bytes_for_save {
                                                         let filename =
                                                             waiver_name_for_save.as_deref().unwrap_or("waiver");
-                                                        match api::upload_waiver(&url_submit, bytes, filename).await {
+                                                        match api::upload_waiver(&url_submit, bytes.to_vec(), filename).await {
                                                             Ok(_) => {}
                                                             Err(e) => {
                                                                 waiver_upload_error.set(Some(e));

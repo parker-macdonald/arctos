@@ -22,7 +22,7 @@ pub fn FinalizeMatch(url: String, match_id: String) -> Element {
     let val = data.value();
     let mut match_winner = use_signal(|| None::<String>);
     let mut final_notes = use_signal(String::new);
-    let mut signature_error = use_signal(|| None::<String>);
+    let mut submit_error = use_signal(|| None::<String>);
     let team1_canvas_id = "team1_signature_canvas";
     let team2_canvas_id = "team2_signature_canvas";
     let navigator = use_navigator();
@@ -210,13 +210,19 @@ pub fn FinalizeMatch(url: String, match_id: String) -> Element {
                             form {
                                 onsubmit: move |ev| {
                                     ev.prevent_default();
-                                    signature_error.set(None);
-                                    if !both_canvases_signed(team1_canvas_id, team2_canvas_id) {
-                                        signature_error.set(Some("Both team captains must sign before submitting the match.".to_string()));
-                                        return;
-                                    }
+                                    submit_error.set(None);
                                     let winner = match_winner().clone();
                                     if winner.is_none() {
+                                        submit_error.set(Some(
+                                            "Please select the match winner first.".to_string(),
+                                        ));
+                                        return;
+                                    }
+                                    if !both_canvases_signed(team1_canvas_id, team2_canvas_id) {
+                                        submit_error.set(Some(
+                                            "Both team captains must sign before submitting the match."
+                                                .to_string(),
+                                        ));
                                         return;
                                     }
                                     let winner = winner.unwrap();
@@ -336,7 +342,7 @@ pub fn FinalizeMatch(url: String, match_id: String) -> Element {
                                     }
                                 }
 
-                                if let Some(ref err) = signature_error() {
+                                if let Some(ref err) = submit_error() {
                                     div { class: "alert alert-warning mb-3", "{err}" }
                                 }
                                 div { class: "d-grid",

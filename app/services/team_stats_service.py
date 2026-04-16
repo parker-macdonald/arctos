@@ -5,18 +5,16 @@ Shared logic for computing team stats from matches (tournament or league results
 from __future__ import annotations
 
 from app.domain.enums import ScheduleType
-from app.services.registration_resolver import team_registration_for_tournament
+from app.services.registration_resolver import team_registrations_for_tournament
 
 
-def _pseudonym_and_photo(tournament, team_id):
-    """Return (pseudonym, profile_photo) for a team in tournament/league."""
-    from models import Team
-
+def _pseudonym_and_photo_maps(team_id, reg_by_team, team_by_id):
+    """Resolve display name and photo using preloaded registration and Team maps."""
     if not team_id:
         return None, None
-    reg = team_registration_for_tournament(tournament, team_id)
+    reg = reg_by_team.get(team_id)
     pseudonym = reg.pseudonym if reg and reg.pseudonym else None
-    team = Team.query.get(team_id)
+    team = team_by_id.get(team_id)
     profile_photo = team.profile_photo if team else None
     if not pseudonym and team:
         pseudonym = team.name
@@ -31,7 +29,7 @@ def compute_team_stats(matches, tournament, include_ribbon=False):
     Returns list of dicts: {id, pseudonym, profile_photo, matches_won, matches_lost, points_won, points_lost}.
     tournament is used for pseudonym lookup (any tournament in the league works for league results).
     """
-    from models import Point
+    from models import Point, Team
 
     count_matches = [
         m
@@ -39,6 +37,24 @@ def compute_team_stats(matches, tournament, include_ribbon=False):
         if getattr(m, "schedule_type", None) not in (ScheduleType.BREAK, ScheduleType.JOIN)
         and (include_ribbon or not getattr(m, "ribbon", False))
     ]
+
+    real_team_ids: set[str] = set()
+    for m in count_matches:
+        for tid in (m.team1 or m.team1_initial, m.team2 or m.team2_initial):
+            if not tid or tid == "TBA" or "::" in str(tid):
+                continue
+            if str(tid).startswith("tag::"):
+                continue
+            real_team_ids.add(str(tid))
+
+    regs = team_registrations_for_tournament(tournament)
+    reg_by_team = {r.team: r for r in regs}
+    team_by_id = {}
+    if real_team_ids:
+        team_by_id = {
+            t.id: t for t in Team.query.filter(Team.id.in_(real_team_ids)).all()
+        }
+
     points_by_match = {}
     if count_matches:
         match_ids = [m.uuid for m in count_matches]
@@ -55,7 +71,9 @@ def compute_team_stats(matches, tournament, include_ribbon=False):
                 if str(tid).startswith("tag::") or "::" in str(tid):
                     pseudonym, profile_photo = tid, None
                 else:
-                    pseudonym, profile_photo = _pseudonym_and_photo(tournament, tid)
+                    pseudonym, profile_photo = _pseudonym_and_photo_maps(
+                        tid, reg_by_team, team_by_id
+                    )
                 team_stats[tid] = {
                     "id": tid,
                     "pseudonym": pseudonym or tid,

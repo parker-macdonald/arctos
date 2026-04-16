@@ -6,7 +6,9 @@ Do not use /api/ — that is reserved for a future public API.
 from flask import Blueprint, request, jsonify, session, redirect, current_app
 from datetime import datetime, timezone
 from pathlib import Path
+import hashlib
 import os
+import re
 from flask_login import current_user, login_user, logout_user, login_required
 from sqlalchemy import or_, func
 from sqlalchemy.orm import joinedload
@@ -20,6 +22,12 @@ from app.utils.helpers import (
     resolve_tag_to_team,
     DEFAULT_PENALTY_COLORS,
     get_next_penalty_color,
+    get_registrable_config,
+)
+from app.utils.match_ref_resolution import (
+    refs_string_to_tokens,
+    resolve_refs_slots,
+    resolve_team_slot,
 )
 from app.utils.dependencies import apply_match_dependencies
 from app.serializers.match_note_serializer import MatchNoteSerializer
@@ -28,8 +36,11 @@ from app.routes.tournaments import update_match_previous_link
 from app.utils.scheduling import (
     recompute_all_match_times,
     compute_dynamic_match_nominal_start_time,
+    validate_match_input,
 )
+from app.utils.name_validation import match_name_char_error, team_pseudonym_char_error
 from app.utils.datetime_helpers import to_iso_z
+from app.utils.recording_retry import current_user_can_retry_finalization
 from app.domain.enums import (
     RegistrationStatus,
     MatchStatus,
@@ -46,6 +57,7 @@ from models import (
     Match,
     Point,
     Field,
+    Camera,
     Tag,
     Injury,
     MatchNote,
@@ -58,7 +70,6 @@ from models import (
 import json
 
 bp = Blueprint("_api", __name__, url_prefix="/_api")
-MAX_WAIVER_BYTES = 10 * 1024 * 1024
 
 
 @bp.route("/")
@@ -75,19 +86,35 @@ def _dt_iso(dt):
     return str(dt)
 
 
-def _waiver_status_for_registration(cfg, reg):
-    """Return waiver status tuple: (waiver_required, waiver_status)."""
+def _player_reg_waiver_api(reg, cfg):
+    """Waiver fields for API given a PlayerRegistration and RegistrableConfig (or None)."""
     waiver_required = bool(getattr(cfg, "waiver_filepath", None)) if cfg else False
+    fp = getattr(cfg, "waiver_filepath", None) if cfg else None
+    sha = getattr(cfg, "waiver_sha256", None) if cfg else None
+    stored = getattr(reg, "waiver_legal_name_signature_sha256", None) if reg else None
+    legal = getattr(reg, "waiver_legal_name_signature", None) if reg else None
+
     if not waiver_required:
-        return False, None
-    current_waiver_sha256 = getattr(cfg, "waiver_sha256", None)
-    reg_sig_sha256 = getattr(reg, "waiver_legal_name_signature_sha256", None)
-    reg_sig_name = (getattr(reg, "waiver_legal_name_signature", None) or "").strip()
-    if not reg_sig_name:
-        return True, "NOT_SIGNED"
-    if current_waiver_sha256 and reg_sig_sha256 == current_waiver_sha256:
-        return True, "VALID"
-    return True, "OUT_OF_DATE"
+        waiver_status = None
+        signature_valid = True
+    elif not stored:
+        waiver_status = "NOT_SIGNED"
+        signature_valid = False
+    elif sha is not None and stored == sha:
+        waiver_status = "VALID"
+        signature_valid = True
+    else:
+        waiver_status = "OUT_OF_DATE"
+        signature_valid = False
+
+    return {
+        "waiver_required": waiver_required,
+        "waiver_filepath": fp,
+        "waiver_sha256": sha,
+        "waiver_status": waiver_status,
+        "waiver_signature_valid": signature_valid,
+        "waiver_legal_name_signature": legal,
+    }
 
 
 def _user_json():
@@ -345,8 +372,6 @@ def google_complete_profile_api():
 
 
 def _tournament_to_dict(t):
-    from app.utils.helpers import get_registrable_config
-
     cfg = get_registrable_config(t)
     end = t.end_date.isoformat() if t.end_date else None
     start = t.start_date.isoformat() if t.start_date else None
@@ -377,15 +402,21 @@ def _tournament_to_dict(t):
         "max_team_size_roster": getattr(cfg, "max_team_size_roster", None) if cfg else None,
         "max_team_size_field": getattr(cfg, "max_team_size_field", None) if cfg else None,
         "terms_link": cfg.terms_link if cfg else None,
-        "waiver_filepath": getattr(cfg, "waiver_filepath", None) if cfg else None,
-        "waiver_sha256": getattr(cfg, "waiver_sha256", None) if cfg else None,
-        "waiver_required": bool(getattr(cfg, "waiver_filepath", None)) if cfg else False,
         "head_refs_allowed_list": getattr(t, "head_refs_allowed_list", None),
         "head_refs_allow_reffing_teams": bool(
             getattr(t, "head_refs_allow_reffing_teams", False)
         ),
         "head_refs_allow_anyone": bool(getattr(t, "head_refs_allow_anyone", False)),
     }
+    if cfg:
+        wf = getattr(cfg, "waiver_filepath", None)
+        out["waiver_required"] = bool(wf)
+        out["waiver_filepath"] = wf
+        out["waiver_sha256"] = getattr(cfg, "waiver_sha256", None)
+    else:
+        out["waiver_required"] = False
+        out["waiver_filepath"] = None
+        out["waiver_sha256"] = None
     if getattr(t, "league_id", None):
         league = League.query.get(t.league_id)
         if league and league.registrable_config:
@@ -437,6 +468,7 @@ def _league_to_dict(league):
     if rc:
         team_reg_open = getattr(rc, "team_registration_open", rc.registration_open)
         player_reg_open = getattr(rc, "player_registration_open", rc.registration_open)
+    wf = getattr(rc, "waiver_filepath", None) if rc else None
     return {
         "league_url": league.url,
         "name": league.name,
@@ -448,118 +480,19 @@ def _league_to_dict(league):
         "player_registration_open": bool(player_reg_open),
         "published": getattr(league, "published", False),
         "terms_link": rc.terms_link if rc else None,
-        "waiver_filepath": getattr(rc, "waiver_filepath", None) if rc else None,
-        "waiver_sha256": getattr(rc, "waiver_sha256", None) if rc else None,
-        "waiver_required": bool(getattr(rc, "waiver_filepath", None)) if rc else False,
         "n_max_teams": getattr(rc, "n_max_teams", None) if rc else None,
         "max_team_size_roster": getattr(rc, "max_team_size_roster", None) if rc else None,
         "max_team_size_field": getattr(rc, "max_team_size_field", None) if rc else None,
+        "waiver_required": bool(wf),
+        "waiver_filepath": wf,
+        "waiver_sha256": getattr(rc, "waiver_sha256", None) if rc else None,
     }
-
-
-@bp.route("/leagues/<league_url>/upload-waiver", methods=["POST"])
-@login_required
-def league_upload_waiver(league_url):
-    """TO upload the current waiver for a league (extensionless + overwrites)."""
-    league = League.query.filter_by(url=league_url).first_or_404()
-
-    user_type = current_user.__class__.__name__.lower()
-    is_to = (
-        TO.query.filter_by(
-            user_id=current_user.id,
-            user_type=user_type,
-            league_id=league_url,
-        ).first()
-        is not None
-    )
-    if not is_to:
-        return jsonify({"error": "Forbidden"}), 403
-
-    data = request.get_data() or b""
-    if not data:
-        return jsonify({"error": "No waiver data"}), 400
-    if len(data) > MAX_WAIVER_BYTES:
-        return jsonify({"error": "Waiver file is too large (max 10 MB)"}), 400
-
-    import hashlib
-    import re
-
-    waiver_sha256 = hashlib.sha256(data).hexdigest()
-
-    import os
-
-    upload_dir = os.path.join(
-        current_app.root_path, "../static", "uploads", "waivers", league_url
-    )
-    os.makedirs(upload_dir, exist_ok=True)
-    uploaded_filename = (request.headers.get("X-Waiver-Filename") or "").strip()
-    ext = os.path.splitext(uploaded_filename)[1].lower()
-    if not re.fullmatch(r"\.[a-z0-9]{1,12}", ext or ""):
-        ext = ""
-    stored_name = f"waiver{ext}"
-    file_path = os.path.join(upload_dir, stored_name)
-
-    # Remove previous waiver files (legacy and prior extension variants).
-    for existing_name in os.listdir(upload_dir):
-        if existing_name == "waiver" or existing_name.startswith("waiver."):
-            existing_path = os.path.join(upload_dir, existing_name)
-            try:
-                if os.path.isfile(existing_path):
-                    os.remove(existing_path)
-            except Exception:
-                pass
-
-    try:
-        with open(file_path, "wb") as f:
-            f.write(data)
-    except Exception as e:
-        return jsonify({"error": f"Error saving waiver: {e}"}), 500
-
-    rc = league.registrable_config
-    if not rc:
-        return jsonify({"error": "Registrable config not found"}), 500
-
-    rc.waiver_sha256 = waiver_sha256
-    rc.waiver_filepath = f"/static/uploads/waivers/{league_url}/{stored_name}"
-    db.session.commit()
-
-    return jsonify(
-        {
-            "success": True,
-            "waiver_filepath": rc.waiver_filepath,
-            "waiver_sha256": rc.waiver_sha256,
-        }
-    )
 
 
 @bp.route("/leagues", methods=["GET"])
 def leagues_list():
-    """
-    List leagues for homepage with registration counts and user status.
-
-    Public users only see published leagues.
-    Authenticated users also see leagues they organize (TO), even if not published.
-    """
+    """List published leagues for homepage with registration counts and user status."""
     leagues = League.query.filter(League.published == True).all()
-    leagues_by_url = {l.url: l for l in leagues}
-
-    if current_user.is_authenticated:
-        user_id = current_user.id
-        user_type = current_user.__class__.__name__.lower()
-        to_entries = TO.query.filter(
-            TO.league_id.isnot(None),
-            TO.user_id == user_id,
-            TO.user_type == user_type,
-        ).all()
-        for to_entry in to_entries:
-            if not to_entry.league_id:
-                continue
-            league = League.query.get(to_entry.league_id)
-            if league:
-                leagues_by_url[league.url] = league
-
-    # Deterministic order for stable UI: sort by league name.
-    leagues = sorted(leagues_by_url.values(), key=lambda l: (l.name or "").lower())
 
     # Team counts per league (confirmed registrations only)
     from sqlalchemy import func
@@ -596,31 +529,23 @@ def leagues_list():
                         "status": reg.status.value if hasattr(reg.status, "value") else str(reg.status or ""),
                         "paid": bool(reg.paid),
                         "amount_paid": reg.amount_paid or 0.0,
+                        "waiver_required": False,
+                        "waiver_status": None,
                     }
             elif is_player(current_user):
                 reg = PlayerRegistration.query.filter_by(
                     league_id=l.url, player=current_user.id
                 ).first()
                 if reg:
-                    reg_status_val = (
-                        reg.status.value
-                        if hasattr(reg.status, "value")
-                        else str(reg.status or "")
-                    )
-                    # If a player's registration is cancelled, hide all badges.
-                    if reg_status_val == "CANCELLED":
-                        continue
-
-                    cfg = l.registrable_config
-                    waiver_required, waiver_status = _waiver_status_for_registration(cfg, reg)
-
+                    rc = l.registrable_config
+                    w = _player_reg_waiver_api(reg, rc)
                     user_reg_status[l.url] = {
                         "type": "player",
-                        "status": reg_status_val,
+                        "status": reg.status.value if hasattr(reg.status, "value") else str(reg.status or ""),
                         "paid": bool(reg.paid),
                         "amount_paid": reg.amount_paid or 0.0,
-                        "waiver_required": waiver_required,
-                        "waiver_status": waiver_status,
+                        "waiver_required": w["waiver_required"],
+                        "waiver_status": w["waiver_status"],
                     }
 
     return jsonify({
@@ -841,9 +766,17 @@ def league_results_team_matches(league_url, team_id):
     if match_ids:
         for p in Point.query.filter(Point.match.in_(match_ids)).all():
             points_by_match.setdefault(p.match, []).append(p)
+    if matches:
+        event_urls = {m.event for m in matches}
+        tournaments_by_url = {
+            t.url: t
+            for t in Tournament.query.filter(Tournament.url.in_(event_urls)).all()
+        }
+    else:
+        tournaments_by_url = {}
     match_list = []
     for m in matches:
-        tournament = Tournament.query.get(m.event)
+        tournament = tournaments_by_url.get(m.event)
         if not tournament:
             continue
         team1_name = _team_name_for_match(tournament, m, "team1")
@@ -923,7 +856,9 @@ def league_register_player(league_url):
         team_id,
         jersey_number=request.form.get("jersey_number", ""),
         jersey_name=request.form.get("jersey_name", ""),
-        waiver_legal_name_signature=request.form.get("waiver_legal_name_signature", ""),
+        waiver_legal_name_signature=request.form.get(
+            "waiver_legal_name_signature", ""
+        ),
     )
     match res:
         case Ok(_):
@@ -984,6 +919,9 @@ def league_update_settings(league_url):
             rc.team_reg_fee = float(data["team_reg_fee"]) if data["team_reg_fee"] is not None else 0.0
         if "player_reg_fee" in data:
             rc.player_reg_fee = float(data["player_reg_fee"]) if data["player_reg_fee"] is not None else 0.0
+        if data.get("require_waiver_signature") is False:
+            rc.waiver_filepath = None
+            rc.waiver_sha256 = None
         # Legacy combined flag; if provided, acts as default for team/player when
         # more specific flags are absent.
         legacy_reg_open = data.get("registration_open", None)
@@ -997,31 +935,6 @@ def league_update_settings(league_url):
             rc.player_registration_open = bool(legacy_reg_open)
         if "terms_link" in data:
             rc.terms_link = data["terms_link"] or None
-        # Waiver requirement toggle.
-        if "require_waiver_signature" in data:
-            require_waiver_signature = bool(data.get("require_waiver_signature"))
-            if not require_waiver_signature:
-                rc.waiver_filepath = None
-                rc.waiver_sha256 = None
-                # Best-effort cleanup of the on-disk waiver file.
-                import os
-
-                waiver_dir = os.path.join(
-                    current_app.root_path,
-                    "../static",
-                    "uploads",
-                    "waivers",
-                    league_url,
-                )
-                try:
-                    if os.path.isdir(waiver_dir):
-                        for existing_name in os.listdir(waiver_dir):
-                            if existing_name == "waiver" or existing_name.startswith("waiver."):
-                                existing_path = os.path.join(waiver_dir, existing_name)
-                                if os.path.isfile(existing_path):
-                                    os.remove(existing_path)
-                except Exception:
-                    pass
         if "payment_info" in data:
             rc.payment_info = data["payment_info"] or None
         if "n_max_teams" in data:
@@ -1346,30 +1259,8 @@ def get_my_player_registration_league(league_url):
         if team_reg:
             current_team = {"id": reg.team, "pseudonym": team_reg.pseudonym}
 
-    cfg = league.registrable_config
-    waiver_required = bool(getattr(cfg, "waiver_filepath", None)) if cfg else False
-    waiver_filepath = getattr(cfg, "waiver_filepath", None) if cfg else None
-    waiver_sha256 = getattr(cfg, "waiver_sha256", None) if cfg else None
-
-    stored_signature = (
-        reg.waiver_legal_name_signature if waiver_required else None
-    )
-    stored_signature_sha256 = (
-        reg.waiver_legal_name_signature_sha256 if waiver_required else None
-    )
-    waiver_signature_valid = (
-        waiver_required
-        and stored_signature_sha256 is not None
-        and waiver_sha256 is not None
-        and stored_signature_sha256 == waiver_sha256
-    )
-    # Do not prefill stale signatures in the edit form when re-signing is required.
-    if waiver_required and not waiver_signature_valid:
-        stored_signature = None
-    # Do not prefill stale signatures in the edit form when re-signing is required.
-    if waiver_required and not waiver_signature_valid:
-        stored_signature = None
-
+    rc = league.registrable_config
+    w = _player_reg_waiver_api(reg, rc)
     return jsonify(
         {
             "registration": {
@@ -1384,15 +1275,11 @@ def get_my_player_registration_league(league_url):
                 ),
             },
             "current_team": current_team,
-            "waiver_required": waiver_required,
-            "waiver_filepath": waiver_filepath,
-            "waiver_sha256": waiver_sha256,
-            "waiver_legal_name_signature": stored_signature,
-            "waiver_signature_sha256": stored_signature_sha256,
-            "waiver_signature_submitted_at": _dt_iso(
-                getattr(reg, "waiver_signature_submitted_at", None)
-            ),
-            "waiver_signature_valid": waiver_signature_valid,
+            "waiver_required": w["waiver_required"],
+            "waiver_filepath": w["waiver_filepath"],
+            "waiver_sha256": w["waiver_sha256"],
+            "waiver_signature_valid": w["waiver_signature_valid"],
+            "waiver_legal_name_signature": w["waiver_legal_name_signature"],
         }
     )
 
@@ -1409,7 +1296,13 @@ def update_my_player_registration_league(league_url):
     league, err = _require_league(league_url)
     if err:
         return jsonify({"error": "Not found" if err == 404 else "Forbidden"}), err
-    cfg = league.registrable_config
+
+    if not league.registrable_config or not getattr(
+        league.registrable_config,
+        "player_registration_open",
+        league.registrable_config.registration_open,
+    ):
+        return jsonify({"error": "Registration changes are locked"}), 403
 
     class LeagueContext:
         def __init__(self, league):
@@ -1426,65 +1319,30 @@ def update_my_player_registration_league(league_url):
     if not data:
         return jsonify({"error": "Invalid JSON"}), 400
 
-    player_reg_open = False
-    if cfg:
-        if hasattr(cfg, "player_registration_open"):
-            player_reg_open = bool(cfg.player_registration_open)
-        else:
-            player_reg_open = bool(getattr(cfg, "registration_open", False))
+    if "jersey_name" in data:
+        reg.jersey_name = data["jersey_name"]
+    if "jersey_number" in data:
+        reg.jersey_number = data["jersey_number"]
 
-    waiver_update_requested = "waiver_legal_name_signature" in data
+    if "team" in data:
+        new_team_id = data["team"] or None
+        if reg.team != new_team_id:
+            reg.team = new_team_id
+            if new_team_id:
+                reg.status = RegistrationStatus.PENDING_TEAM_APPROVAL
+            else:
+                reg.status = RegistrationStatus.CONFIRMED
 
-    # Registration edits are locked, except waiver signing itself.
-    if not player_reg_open and not waiver_update_requested:
-        non_waiver_keys = {"jersey_name", "jersey_number", "team"}
-        if any(k in data for k in non_waiver_keys):
-            return jsonify({"error": "Registration changes are locked"}), 403
-
-    if player_reg_open:
-        if "jersey_name" in data:
-            reg.jersey_name = data["jersey_name"]
-        if "jersey_number" in data:
-            reg.jersey_number = data["jersey_number"]
-
-        if "team" in data:
-            new_team_id = data["team"] or None
-            if reg.team != new_team_id:
-                reg.team = new_team_id
-                if new_team_id:
-                    reg.status = RegistrationStatus.PENDING_TEAM_APPROVAL
-                else:
-                    reg.status = RegistrationStatus.CONFIRMED
-
-    # Waiver signing / re-signing (players only).
-    if waiver_update_requested:
-        waiver_filepath = getattr(cfg, "waiver_filepath", None) if cfg else None
-        if not waiver_filepath:
-            return jsonify({"error": "No waiver is configured for this event"}), 400
-
-        current_waiver_sha256 = getattr(cfg, "waiver_sha256", None)
-        current_signature_sha256 = getattr(reg, "waiver_legal_name_signature_sha256", None)
-        current_signature = (getattr(reg, "waiver_legal_name_signature", None) or "").strip()
-        signature_already_valid = (
-            bool(current_signature)
-            and current_waiver_sha256 is not None
-            and current_signature_sha256 == current_waiver_sha256
-        )
-        if signature_already_valid:
-            return jsonify({"error": "Waiver signature is already valid and cannot be edited"}), 400
-
-        signature = (data.get("waiver_legal_name_signature") or "").strip()
-        if not signature:
-            return jsonify({"error": "Waiver signature is required"}), 400
-
-        if not current_waiver_sha256:
-            return jsonify({"error": "Waiver checksum is missing"}), 500
-
-        reg.waiver_legal_name_signature = signature
-        reg.waiver_legal_name_signature_sha256 = current_waiver_sha256
-        reg.waiver_signature_submitted_at = datetime.now(timezone.utc).replace(
-            tzinfo=None
-        )
+    if "waiver_legal_name_signature" in data and data["waiver_legal_name_signature"]:
+        rc = league.registrable_config
+        sig = (data.get("waiver_legal_name_signature") or "").strip()
+        if rc and getattr(rc, "waiver_filepath", None) and sig:
+            sha_cur = getattr(rc, "waiver_sha256", None)
+            if sha_cur:
+                now = datetime.now(timezone.utc).replace(tzinfo=None)
+                reg.waiver_legal_name_signature = sig
+                reg.waiver_legal_name_signature_sha256 = sha_cur
+                reg.waiver_signature_submitted_at = now
 
     db.session.commit()
     return jsonify({"success": True})
@@ -1542,7 +1400,11 @@ def update_my_team_registration_league(league_url):
     if err:
         return jsonify({"error": "Not found" if err == 404 else "Forbidden"}), err
 
-    if not league.registrable_config or not league.registrable_config.registration_open:
+    if not league.registrable_config or not getattr(
+        league.registrable_config,
+        "team_registration_open",
+        league.registrable_config.registration_open,
+    ):
         return jsonify({"error": "Registration changes are locked"}), 403
 
     class LeagueContext:
@@ -1562,8 +1424,9 @@ def update_my_team_registration_league(league_url):
 
     if "pseudonym" in data:
         pseudonym = data["pseudonym"].strip()
-        if "::" in pseudonym:
-            return jsonify({"error": 'Team pseudonyms cannot contain "::"'}), 400
+        pn_err = team_pseudonym_char_error(pseudonym)
+        if pn_err:
+            return jsonify({"error": pn_err}), 400
         if not pseudonym:
             return jsonify({"error": "Team name is required"}), 400
         reg.pseudonym = pseudonym
@@ -1596,7 +1459,6 @@ def league_manage_api(league_url):
         league_id = league_url
 
     fake_t = LeagueTournament()
-    cfg = league.registrable_config
     search_query = (request.args.get("search") or "").strip()
     search_type = (request.args.get("type") or "both").lower()
 
@@ -1647,15 +1509,13 @@ def league_manage_api(league_url):
                 if (
                     (p["player"].name or "").lower().find(q) != -1
                     or (p["registration"].jersey_name or "").lower().find(q) != -1
-                    or (p["registration"].waiver_legal_name_signature or "")
-                    .lower()
-                    .find(q)
-                    != -1
                 )
             ]
         else:
             players_with_registrations = []
 
+    lrc = league.registrable_config
+    wf = getattr(lrc, "waiver_filepath", None) if lrc else None
     tournament_dict = {
         "url": league.url,
         "name": league.name,
@@ -1664,7 +1524,49 @@ def league_manage_api(league_url):
         "location": None,
         "published": league.published,
         "league": {"league_url": league.url, "name": league.name},
+        "waiver_required": bool(wf),
+        "waiver_filepath": wf,
+        "waiver_sha256": getattr(lrc, "waiver_sha256", None) if lrc else None,
     }
+    league_manage_player_rows = []
+    for pr in players_with_registrations:
+        w = _player_reg_waiver_api(pr["registration"], lrc)
+        league_manage_player_rows.append(
+            {
+                "registration": {
+                    "id": pr["registration"].id,
+                    "player": pr["registration"].player,
+                    "team": pr["registration"].team,
+                    "jersey_name": pr["registration"].jersey_name,
+                    "jersey_number": pr["registration"].jersey_number,
+                    "status": (
+                        pr["registration"].status.value
+                        if hasattr(pr["registration"].status, "value")
+                        else str(pr["registration"].status)
+                    ),
+                    "paid": bool(pr["registration"].paid),
+                    "amount_paid": pr["registration"].amount_paid or 0.0,
+                    "registered_at": _dt_iso(pr["registration"].registered_at),
+                    "paid_at": _dt_iso(pr["registration"].paid_at),
+                    "waiver_required": w["waiver_required"],
+                    "waiver_status": w["waiver_status"],
+                    "waiver_legal_name_signature": w["waiver_legal_name_signature"],
+                },
+                "player": {
+                    "id": pr["player"].id,
+                    "name": pr["player"].name,
+                },
+                "team": (
+                    {
+                        "id": pr["team"].id,
+                        "name": pr["team"].name,
+                    }
+                    if pr["team"]
+                    else None
+                ),
+            }
+        )
+
     return jsonify(
         {
             "tournament": tournament_dict,
@@ -1693,49 +1595,7 @@ def league_manage_api(league_url):
                 }
                 for tr in teams_with_registrations
             ],
-            "player_registrations": [
-                {
-                    "registration": {
-                        "id": pr["registration"].id,
-                        "player": pr["registration"].player,
-                        "team": pr["registration"].team,
-                        "jersey_name": pr["registration"].jersey_name,
-                        "jersey_number": pr["registration"].jersey_number,
-                        "status": (
-                            pr["registration"].status.value
-                            if hasattr(pr["registration"].status, "value")
-                            else str(pr["registration"].status)
-                        ),
-                        "paid": bool(pr["registration"].paid),
-                        "amount_paid": pr["registration"].amount_paid or 0.0,
-                        "registered_at": _dt_iso(pr["registration"].registered_at),
-                        "paid_at": _dt_iso(pr["registration"].paid_at),
-                        "waiver_legal_name_signature": pr["registration"].waiver_legal_name_signature,
-                        "waiver_legal_name_signature_sha256": pr[
-                            "registration"
-                        ].waiver_legal_name_signature_sha256,
-                        "waiver_required": _waiver_status_for_registration(
-                            cfg, pr["registration"]
-                        )[0],
-                        "waiver_status": _waiver_status_for_registration(
-                            cfg, pr["registration"]
-                        )[1],
-                    },
-                    "player": {
-                        "id": pr["player"].id,
-                        "name": pr["player"].name,
-                    },
-                    "team": (
-                        {
-                            "id": pr["team"].id,
-                            "name": pr["team"].name,
-                        }
-                        if pr["team"]
-                        else None
-                    ),
-                }
-                for pr in players_with_registrations
-            ],
+            "player_registrations": league_manage_player_rows,
         }
     )
 
@@ -2139,6 +1999,9 @@ def tournament_detail(tournament_url):
             "is_current_team_registered": is_current_team_registered,
             "is_current_player_registered": is_current_player_registered,
             "penalty_types": penalty_types_data,
+            "manual_footage_uploads_enabled": bool(
+                current_app.config.get("ENABLE_MANUAL_FOOTAGE_UPLOADS", False)
+            ),
         }
     )
 
@@ -2161,8 +2024,6 @@ def tournament_manage_api(tournament_url):
         }), 403
     search_query = (request.args.get("search") or "").strip()
     search_type = (request.args.get("type") or "both").lower()
-    from app.utils.helpers import get_registrable_config
-    cfg = get_registrable_config(tournament)
 
     team_registrations = team_registrations_for_tournament(
         tournament, exclude_cancelled=True
@@ -2211,14 +2072,50 @@ def tournament_manage_api(tournament_url):
                 if (
                     (p["player"].name or "").lower().find(q) != -1
                     or (p["registration"].jersey_name or "").lower().find(q) != -1
-                    or (p["registration"].waiver_legal_name_signature or "")
-                    .lower()
-                    .find(q)
-                    != -1
                 )
             ]
         else:
             players_with_registrations = []
+
+    manage_cfg = get_registrable_config(tournament)
+    manage_player_rows = []
+    for pr in players_with_registrations:
+        w = _player_reg_waiver_api(pr["registration"], manage_cfg)
+        manage_player_rows.append(
+            {
+                "registration": {
+                    "id": pr["registration"].id,
+                    "player": pr["registration"].player,
+                    "team": pr["registration"].team,
+                    "jersey_name": pr["registration"].jersey_name,
+                    "jersey_number": pr["registration"].jersey_number,
+                    "status": (
+                        pr["registration"].status.value
+                        if hasattr(pr["registration"].status, "value")
+                        else str(pr["registration"].status)
+                    ),
+                    "paid": bool(pr["registration"].paid),
+                    "amount_paid": pr["registration"].amount_paid or 0.0,
+                    "registered_at": _dt_iso(pr["registration"].registered_at),
+                    "paid_at": _dt_iso(pr["registration"].paid_at),
+                    "waiver_required": w["waiver_required"],
+                    "waiver_status": w["waiver_status"],
+                    "waiver_legal_name_signature": w["waiver_legal_name_signature"],
+                },
+                "player": {
+                    "id": pr["player"].id,
+                    "name": pr["player"].name,
+                },
+                "team": (
+                    {
+                        "id": pr["team"].id,
+                        "name": pr["team"].name,
+                    }
+                    if pr["team"]
+                    else None
+                ),
+            }
+        )
 
     return jsonify(
         {
@@ -2248,51 +2145,7 @@ def tournament_manage_api(tournament_url):
                 }
                 for tr in teams_with_registrations
             ],
-            "player_registrations": [
-                {
-                    "registration": {
-                        "id": pr["registration"].id,
-                        "player": pr["registration"].player,
-                        "team": pr["registration"].team,
-                        "jersey_name": pr["registration"].jersey_name,
-                        "jersey_number": pr["registration"].jersey_number,
-                        "status": (
-                            pr["registration"].status.value
-                            if hasattr(pr["registration"].status, "value")
-                            else str(pr["registration"].status)
-                        ),
-                        "paid": bool(pr["registration"].paid),
-                        "amount_paid": pr["registration"].amount_paid or 0.0,
-                        "registered_at": _dt_iso(pr["registration"].registered_at),
-                        "paid_at": _dt_iso(pr["registration"].paid_at),
-                        "waiver_legal_name_signature": pr[
-                            "registration"
-                        ].waiver_legal_name_signature,
-                        "waiver_legal_name_signature_sha256": pr[
-                            "registration"
-                        ].waiver_legal_name_signature_sha256,
-                        "waiver_required": _waiver_status_for_registration(
-                            cfg, pr["registration"]
-                        )[0],
-                        "waiver_status": _waiver_status_for_registration(
-                            cfg, pr["registration"]
-                        )[1],
-                    },
-                    "player": {
-                        "id": pr["player"].id,
-                        "name": pr["player"].name,
-                    },
-                    "team": (
-                        {
-                            "id": pr["team"].id,
-                            "name": pr["team"].name,
-                        }
-                        if pr["team"]
-                        else None
-                    ),
-                }
-                for pr in players_with_registrations
-            ],
+            "player_registrations": manage_player_rows,
         }
     )
 
@@ -2494,7 +2347,8 @@ def tournament_bracket_upload_bytes_api(tournament_url):
     if not _check_to(tournament_url):
         return jsonify({"error": "Forbidden"}), 403
 
-    tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
+    Tournament.query.filter_by(url=tournament_url).first_or_404()
+    db.session.remove()
 
     from flask import current_app
     import os
@@ -3369,135 +3223,123 @@ def tournament_match_detail(tournament_url):
         for p in points
     ]
 
-    # Get camera data (same logic as match_page route)
+    # Get camera data. New sources come from the `Camera` table; legacy
+    # recorded point timestamps are read from `Match.camera_stream_starts`.
     available_cameras = []
     camera_url = None
     from app.utils.camera_helpers import parse_camera_urls
     import os
-    from flask import current_app
 
-    stream_starts = {}
-    recorded_videos = []
-    camera_urls = []
-
+    legacy_point_timestamps_by_camera_name = {}
     if match.camera_stream_starts:
         try:
-            stream_starts_data = json.loads(match.camera_stream_starts)
-            for camera_id, recording_data in stream_starts_data.items():
-                recordings = (
-                    recording_data
-                    if isinstance(recording_data, list)
-                    else [recording_data]
-                )
-                for recording in recordings:
-                    if isinstance(recording, dict) and "video_path" in recording:
-                        video_path = recording.get("video_path", "")
-                        if video_path:
-                            # S3: video_path is the object key; resolve to presigned URL
-                            if recording.get("storage") == "s3":
-                                bucket = current_app.config.get("S3_VIDEO_BUCKET")
-                                if bucket:
-                                    from app.utils.s3_video import get_presigned_url
-                                    region = current_app.config.get("AWS_REGION") or "us-east-1"
-                                    expiry = current_app.config.get(
-                                        "S3_PRESIGNED_EXPIRY_SECONDS", 3600
-                                    )
-                                    endpoint_url = current_app.config.get("S3_ENDPOINT_URL")
-                                    playable_url = get_presigned_url(
-                                        bucket, video_path, region=region,
-                                        expiry_seconds=expiry, endpoint_url=endpoint_url
-                                    )
-                                    if playable_url:
-                                        recorded_videos.append(
-                                            {
-                                                "camera_id": camera_id,
-                                                "video_path": playable_url,
-                                                "point_timestamps": recording.get(
-                                                    "point_timestamps"
-                                                ),
-                                                "type": "recorded",
-                                                "start_time": recording.get("start_time"),
-                                                "start_timestamp": recording.get(
-                                                    "start_timestamp"
-                                                ),
-                                                "session_id": recording.get("session_id"),
-                                            }
-                                        )
-                            else:
-                                # Local: resolve to full path and check file exists
-                                if video_path.startswith("static/"):
-                                    video_full_path = os.path.join(
-                                        current_app.root_path, "..", video_path
-                                    )
-                                else:
-                                    video_full_path = os.path.join(
-                                        current_app.root_path, "../static", video_path
-                                    )
-                                if os.path.exists(video_full_path):
-                                    recorded_videos.append(
-                                        {
-                                            "camera_id": camera_id,
-                                            "video_path": video_path,
-                                            "point_timestamps": recording.get(
-                                                "point_timestamps"
-                                            ),
-                                            "type": "recorded",
-                                            "start_time": recording.get("start_time"),
-                                            "start_timestamp": recording.get(
-                                                "start_timestamp"
-                                            ),
-                                            "session_id": recording.get("session_id"),
-                                        }
-                                    )
+            legacy_data = json.loads(match.camera_stream_starts) or {}
+            if isinstance(legacy_data, dict):
+                for cam_name, recording_data in legacy_data.items():
+                    if isinstance(recording_data, dict):
+                        pts = recording_data.get("point_timestamps")
+                        if pts is not None:
+                            legacy_point_timestamps_by_camera_name[cam_name] = pts
         except (json.JSONDecodeError, TypeError):
             pass
 
-    # Get YouTube cameras from field configuration
+    # 1) YouTube livestream cameras from Field configuration (source of truth initially).
+    camera_urls: list[str] = []
     if match.field:
         field_obj = Field.query.filter_by(
             event=tournament_url, name=match.field
         ).first()
         if field_obj and field_obj.camera:
             camera_urls = parse_camera_urls(field_obj.camera)
-            if camera_urls:
-                for idx, url in enumerate(camera_urls):
-                    stream_start_str = stream_starts.get(str(idx))
-                    available_cameras.append(
-                        {
-                            "index": idx,
-                            "url": url,
-                            "stream_start_time": (
-                                stream_start_str if stream_start_str else None
-                            ),
-                            "type": "youtube",
-                        }
-                    )
+            for idx, url in enumerate(camera_urls):
+                available_cameras.append(
+                    {
+                        "index": idx,
+                        "url": url,
+                        "stream_start_time": None,
+                        "type": "youtube",
+                        "status": "SUCCESS",
+                    }
+                )
 
-    # Add recorded videos whenever we have them (match may be in progress, completed, or not yet started)
-    if recorded_videos:
-        for idx, recording in enumerate(recorded_videos):
-            start_time = recording.get("start_time")
-            if not start_time and recording.get("start_timestamp"):
-                start_time = datetime.fromtimestamp(
-                    int(recording["start_timestamp"]) / 1000, tz=timezone.utc
-                ).isoformat()
-            available_cameras.append(
-                {
-                    "index": len(camera_urls) + idx,
-                    "url": None,
-                    "stream_start_time": start_time,
-                    "type": "recorded",
-                    "video_path": recording["video_path"],
-                    "camera_id": recording.get("camera_id", "unknown"),
-                    "session_id": recording.get("session_id", ""),
-                    "point_timestamps": recording.get("point_timestamps"),
-                }
-            )
+    # 2) Match-scoped cameras from the new Camera table.
+    camera_rows = (
+        Camera.query.filter_by(match_uuid=match.uuid)
+        .filter_by(event=tournament_url)
+        .order_by(Camera.name.asc())
+        .all()
+    )
+    for idx, cam in enumerate(camera_rows):
+        cam_type = (
+            "youtube"
+            if (cam.source_type or "").strip() == "youtube_livestream"
+            else "recorded"
+        )
+        time_world = None
+        time_video = None
+        try:
+            time_world = json.loads(cam.time_world) if cam.time_world else None
+        except (json.JSONDecodeError, TypeError):
+            time_world = None
+        try:
+            time_video = json.loads(cam.time_video) if cam.time_video else None
+        except (json.JSONDecodeError, TypeError):
+            time_video = None
+
+        # Only provide YouTube URL/id once upload succeeded.
+        url = cam.link if cam.status == "SUCCESS" else None
+
+        # FAILED downloads:
+        # - if `file` is a local static/ path, frontend can link directly
+        # - if `file` looks like an S3 key, return a presigned URL instead
+        video_path = cam.file
+        if cam.status == "FAILED" and video_path and not video_path.startswith(
+            "static/"
+        ):
+            bucket = current_app.config.get("S3_VIDEO_BUCKET")
+            if bucket:
+                from app.utils.s3_video import get_presigned_url
+
+                region = (current_app.config.get("AWS_REGION") or "us-east-1") or "us-east-1"
+                expiry = current_app.config.get(
+                    "S3_PRESIGNED_EXPIRY_SECONDS", 3600
+                )
+                endpoint_url = current_app.config.get("S3_ENDPOINT_URL")
+                playable_url = get_presigned_url(
+                    bucket,
+                    video_path,
+                    region=region,
+                    expiry_seconds=expiry,
+                    endpoint_url=endpoint_url,
+                )
+                if playable_url:
+                    video_path = playable_url
+
+        available_cameras.append(
+            {
+                "index": len(camera_urls) + idx,
+                "url": url,
+                "stream_start_time": None,
+                "type": cam_type,
+                "video_path": video_path,
+                "camera_id": cam.name,
+                "session_id": None,
+                "point_timestamps": legacy_point_timestamps_by_camera_name.get(
+                    cam.name
+                ),
+                "status": cam.status,
+                "source_type": cam.source_type,
+                "time_world": time_world,
+                "time_video": time_video,
+            }
+        )
 
     if available_cameras:
         first_cam = available_cameras[0]
         if first_cam.get("type") == "youtube":
-            camera_url = first_cam["url"]
+            camera_url = first_cam.get("url")
+
+    can_retry_finalization = current_user_can_retry_finalization(current_user)
 
     # Get match notes
     initial_notes = match.initial_notes or ""
@@ -3814,7 +3656,6 @@ def tournament_match_detail(tournament_url):
                 "nsets": match.nsets,
                 "initial_notes": initial_notes,
                 "final_notes": final_notes,
-                "is_league_event": bool(getattr(tournament, "league_id", None)),
             },
             "points": points_data,
             "available_cameras": available_cameras,
@@ -3822,6 +3663,7 @@ def tournament_match_detail(tournament_url):
             "match_notes": match_notes,
             "point_notes_map": point_notes_map,
             "is_head_ref": is_head_ref,
+            "can_retry_finalization": can_retry_finalization,
             "can_start": can_start,
             "block_reasons": block_reasons,
             "why_sections": why_sections_to_dict(why_sections),
@@ -4056,46 +3898,38 @@ def player_profile(player_id):
         reg = TeamRegistration.query.filter_by(event=event_or_league_key, team=team_id).first()
         return reg.pseudonym if reg else None
 
-    can_view_private_reg_badges = (
-        current_user.is_authenticated and current_user.id == player_id
-    )
-    registrations_payload = []
+    registration_rows = []
     for r in regs:
-        status_val = r.status.value if hasattr(r.status, "value") else str(r.status)
-        if status_val == "CANCELLED":
-            continue
-        event_key = r.event or (f"league:{r.league_id}" if r.league_id else "")
-        item = {
-            "event": event_key,
-            "team": r.team,
-            "team_pseudonym": _team_pseudonym(
-                event_key,
-                r.team,
-                r.league_id,
-            ),
-            "status": status_val,
-            "jersey_name": r.jersey_name,
-            "jersey_number": r.jersey_number,
-            "paid": None,
-            "waiver_required": False,
-            "waiver_status": None,
-        }
-        if can_view_private_reg_badges:
-            cfg = None
-            if r.league_id:
-                league_for_reg = League.query.filter_by(url=r.league_id).first()
-                cfg = league_for_reg.registrable_config if league_for_reg else None
-            elif r.event:
-                tournament_for_reg = Tournament.query.filter_by(url=r.event).first()
-                if tournament_for_reg:
-                    from app.utils.helpers import get_registrable_config
-
-                    cfg = get_registrable_config(tournament_for_reg)
-            waiver_required, waiver_status = _waiver_status_for_registration(cfg, r)
-            item["paid"] = bool(r.paid)
-            item["waiver_required"] = waiver_required
-            item["waiver_status"] = waiver_status
-        registrations_payload.append(item)
+        rcfg = None
+        if r.event:
+            te = Tournament.query.filter_by(url=r.event).first()
+            if te:
+                rcfg = get_registrable_config(te)
+        elif r.league_id:
+            lg = League.query.get(r.league_id)
+            if lg:
+                rcfg = lg.registrable_config
+        w = _player_reg_waiver_api(r, rcfg)
+        registration_rows.append(
+            {
+                "event": r.event or (f"league:{r.league_id}" if r.league_id else ""),
+                "team": r.team,
+                "team_pseudonym": _team_pseudonym(
+                    r.event or (f"league:{r.league_id}" if r.league_id else ""),
+                    r.team,
+                    r.league_id,
+                ),
+                "status": (
+                    r.status.value if hasattr(r.status, "value") else str(r.status)
+                ),
+                "jersey_name": r.jersey_name,
+                "jersey_number": r.jersey_number,
+                "paid": bool(r.paid),
+                "amount_paid": r.amount_paid or 0.0,
+                "waiver_required": w["waiver_required"],
+                "waiver_status": w["waiver_status"],
+            }
+        )
 
     return jsonify(
         {
@@ -4111,7 +3945,7 @@ def player_profile(player_id):
                 "location": player.location,
                 "bio": player.bio,
             },
-            "registrations": registrations_payload,
+            "registrations": registration_rows,
             "injuries": [
                 {
                     "id": inj.id,
@@ -4649,6 +4483,9 @@ def update_match_api(tournament_url, match_id):
 
     # Validate inputs
     if name:
+        mn_err = match_name_char_error(name.strip())
+        if mn_err:
+            return jsonify({"error": mn_err}), 400
         match.name = name
     if field is not None:  # field can be empty string/null
         match.field = field
@@ -4746,25 +4583,17 @@ def update_match_api(tournament_url, match_id):
                 match.team2 = final_team2
                 match.team2_initial = team2_name
 
-        # Refs
+        # Refs: parallel refs / refs_initial (same slot count)
         if refs is not None:
             if isinstance(refs, list):
-                # Process refs list
-                final_refs = []
-                final_refs_initial = []
-                for r in refs:
-                    rid, rinit = resolve_team_name_to_id(r, tournament_url)
-                    if rid:
-                        final_refs.append(rid)
-                    if rinit:
-                        final_refs_initial.append(rinit)
-                match.refs = ",".join(final_refs) if final_refs else None
-                match.refs_initial = (
-                    ",".join(final_refs_initial) if final_refs_initial else None
-                )
+                r_csv, i_csv = resolve_refs_slots(refs, tournament_url)
+                match.refs = r_csv
+                match.refs_initial = i_csv
             else:
-                # Assume string input if not list
-                match.refs_initial = refs
+                toks = refs_string_to_tokens(refs)
+                r_csv, i_csv = resolve_refs_slots(toks, tournament_url)
+                match.refs = r_csv
+                match.refs_initial = i_csv
 
     # Set Type
     if set_type_str:
@@ -4885,6 +4714,11 @@ def update_match_api(tournament_url, match_id):
         else:
             match.previous_match = None
 
+    ok, err = validate_match_input(match, tournament_url)
+    if not ok:
+        db.session.rollback()
+        return jsonify({"error": err}), 400
+
     db.session.flush()  # Emit UPDATE for previous_match etc. before commit
     db.session.commit()
 
@@ -4918,8 +4752,8 @@ def force_start_match_api(tournament_url, match_id):
     if not can_head_ref_match(tournament_url, current_user.id, match=match):
         return jsonify({"error": "You are not allowed to head ref this match"}), 403
 
-    team1_input = data.get("team1", "").strip()
-    team2_input = data.get("team2", "").strip()
+    team1_input = str(data.get("team1") or "").strip()
+    team2_input = str(data.get("team2") or "").strip()
     refs_list = data.get("refs") or []
     if not isinstance(refs_list, list):
         refs_list = []
@@ -4965,8 +4799,8 @@ def force_start_match_api(tournament_url, match_id):
         other_match.finalized_at = now
 
     # 2. Update target match
-    t1_id, t1_initial = resolve_team_name_to_id(team1_input, tournament_url)
-    t2_id, t2_initial = resolve_team_name_to_id(team2_input, tournament_url)
+    t1_id, t1_initial = resolve_team_slot(team1_input, tournament_url)
+    t2_id, t2_initial = resolve_team_slot(team2_input, tournament_url)
     if not t1_id or not t2_id:
         return jsonify({"error": "Team 1 and Team 2 are required"}), 400
 
@@ -4975,16 +4809,10 @@ def force_start_match_api(tournament_url, match_id):
     match.team2 = t2_id
     match.team2_initial = t2_initial or team2_input
 
-    # Refs: preserve slot count
-    final_refs = []
-    final_refs_initial = []
-    for r in refs_list:
-        r_str = (r or "").strip() if isinstance(r, str) else ""
-        rid, rinit = resolve_team_name_to_id(r_str, tournament_url)
-        final_refs.append(rid or "")
-        final_refs_initial.append(rinit or r_str)
-    match.refs = ",".join(final_refs) if final_refs else None
-    match.refs_initial = ",".join(final_refs_initial) if final_refs_initial else None
+    # Refs: preserve slot count (registration, explicit id, tag)
+    r_csv, i_csv = resolve_refs_slots(refs_list, tournament_url)
+    match.refs = r_csv
+    match.refs_initial = i_csv
 
     # Convert to static
     match.schedule_type = ScheduleType.STATIC
@@ -5241,6 +5069,9 @@ def create_match_api(tournament_url):
     name = data.get("name")
     if not name:
         return jsonify({"error": "Match name is required"}), 400
+    mn_err = match_name_char_error(name.strip())
+    if mn_err:
+        return jsonify({"error": mn_err}), 400
 
     # Parse schedule type and field for name-uniqueness scope (BREAK/JOIN are unique per field)
     schedule_type_str = data.get("schedule_type")
@@ -5377,21 +5208,12 @@ def create_match_api(tournament_url):
         match.team1_initial = team1_name or None
         match.team2_initial = team2_name or None
 
-    # Refs
+    # Refs: parallel refs / refs_initial (same slot count)
     refs = data.get("refs")
     if refs and isinstance(refs, list):
-        final_refs = []
-        final_refs_initial = []
-        for r in refs:
-            rid, rinit = resolve_team_name_to_id(r, tournament_url)
-            if rid:
-                final_refs.append(rid)
-            if rinit:
-                final_refs_initial.append(rinit)
-        match.refs = ",".join(final_refs) if final_refs else None
-        match.refs_initial = (
-            ",".join(final_refs_initial) if final_refs_initial else None
-        )
+        r_csv, i_csv = resolve_refs_slots(refs, tournament_url)
+        match.refs = r_csv
+        match.refs_initial = i_csv
 
     # Format
     set_type_str = data.get("set_type")
@@ -5413,6 +5235,7 @@ def create_match_api(tournament_url):
     match.skip_condition = data.get("skip_condition")
 
     db.session.add(match)
+    db.session.flush()  # Ensure uuid exists before link updates and validation.
 
     # Handle linked list insert
     prev_match_id = (
@@ -5435,6 +5258,11 @@ def create_match_api(tournament_url):
         match.nominal_start_time = compute_dynamic_match_nominal_start_time(
             match, tournament_url
         )
+
+    ok, err = validate_match_input(match, tournament_url)
+    if not ok:
+        db.session.rollback()
+        return jsonify({"error": err}), 400
 
     db.session.commit()
 
@@ -5914,26 +5742,8 @@ def get_my_player_registration(tournament_url):
         if team_reg:
             current_team = {"id": reg.team, "pseudonym": team_reg.pseudonym}
 
-    from app.utils.helpers import get_registrable_config
-
     cfg = get_registrable_config(tournament)
-    waiver_required = bool(getattr(cfg, "waiver_filepath", None)) if cfg else False
-    waiver_filepath = getattr(cfg, "waiver_filepath", None) if cfg else None
-    waiver_sha256 = getattr(cfg, "waiver_sha256", None) if cfg else None
-
-    stored_signature = (
-        reg.waiver_legal_name_signature if waiver_required else None
-    )
-    stored_signature_sha256 = (
-        reg.waiver_legal_name_signature_sha256 if waiver_required else None
-    )
-    waiver_signature_valid = (
-        waiver_required
-        and stored_signature_sha256 is not None
-        and waiver_sha256 is not None
-        and stored_signature_sha256 == waiver_sha256
-    )
-
+    w = _player_reg_waiver_api(reg, cfg)
     return jsonify(
         {
             "registration": {
@@ -5948,15 +5758,11 @@ def get_my_player_registration(tournament_url):
                 ),
             },
             "current_team": current_team,
-            "waiver_required": waiver_required,
-            "waiver_filepath": waiver_filepath,
-            "waiver_sha256": waiver_sha256,
-            "waiver_legal_name_signature": stored_signature,
-            "waiver_signature_sha256": stored_signature_sha256,
-            "waiver_signature_submitted_at": _dt_iso(
-                getattr(reg, "waiver_signature_submitted_at", None)
-            ),
-            "waiver_signature_valid": waiver_signature_valid,
+            "waiver_required": w["waiver_required"],
+            "waiver_filepath": w["waiver_filepath"],
+            "waiver_sha256": w["waiver_sha256"],
+            "waiver_signature_valid": w["waiver_signature_valid"],
+            "waiver_legal_name_signature": w["waiver_legal_name_signature"],
         }
     )
 
@@ -5971,8 +5777,11 @@ def update_my_player_registration(tournament_url):
         return jsonify({"error": "Only players can edit their registration"}), 400
 
     tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
-    from app.utils.helpers import get_registrable_config
     cfg = get_registrable_config(tournament)
+    reg_open = getattr(cfg, "player_registration_open", cfg.registration_open) if cfg else False
+    if not reg_open:
+        return jsonify({"error": "Registration changes are locked"}), 403
+
     reg = player_registration_for_tournament(tournament, current_user.id)
 
     if not reg:
@@ -5982,66 +5791,31 @@ def update_my_player_registration(tournament_url):
     if not data:
         return jsonify({"error": "Invalid JSON"}), 400
 
-    player_reg_open = False
-    if cfg:
-        if hasattr(cfg, "player_registration_open"):
-            player_reg_open = bool(cfg.player_registration_open)
-        else:
-            player_reg_open = bool(getattr(cfg, "registration_open", False))
+    if "jersey_name" in data:
+        reg.jersey_name = data["jersey_name"]
+    if "jersey_number" in data:
+        reg.jersey_number = data["jersey_number"]
 
-    waiver_update_requested = "waiver_legal_name_signature" in data
+    # Team change logic
+    if "team" in data:
+        new_team_id = data["team"] or None
+        if reg.team != new_team_id:
+            reg.team = new_team_id
+            if new_team_id:
+                reg.status = RegistrationStatus.PENDING_TEAM_APPROVAL
+            else:
+                reg.status = RegistrationStatus.CONFIRMED
 
-    # Registration edits are locked, except waiver signing itself.
-    if not player_reg_open and not waiver_update_requested:
-        non_waiver_keys = {"jersey_name", "jersey_number", "team"}
-        if any(k in data for k in non_waiver_keys):
-            return jsonify({"error": "Registration changes are locked"}), 403
-
-    if player_reg_open:
-        if "jersey_name" in data:
-            reg.jersey_name = data["jersey_name"]
-        if "jersey_number" in data:
-            reg.jersey_number = data["jersey_number"]
-
-        # Team change logic
-        if "team" in data:
-            new_team_id = data["team"] or None
-            if reg.team != new_team_id:
-                reg.team = new_team_id
-                if new_team_id:
-                    reg.status = RegistrationStatus.PENDING_TEAM_APPROVAL
-                else:
-                    reg.status = RegistrationStatus.CONFIRMED
-
-    # Waiver signing / re-signing (players only).
-    if waiver_update_requested:
-        waiver_filepath = getattr(cfg, "waiver_filepath", None) if cfg else None
-        if not waiver_filepath:
-            return jsonify({"error": "No waiver is configured for this event"}), 400
-
-        current_waiver_sha256 = getattr(cfg, "waiver_sha256", None)
-        current_signature_sha256 = getattr(reg, "waiver_legal_name_signature_sha256", None)
-        current_signature = (getattr(reg, "waiver_legal_name_signature", None) or "").strip()
-        signature_already_valid = (
-            bool(current_signature)
-            and current_waiver_sha256 is not None
-            and current_signature_sha256 == current_waiver_sha256
-        )
-        if signature_already_valid:
-            return jsonify({"error": "Waiver signature is already valid and cannot be edited"}), 400
-
-        signature = (data.get("waiver_legal_name_signature") or "").strip()
-        if not signature:
-            return jsonify({"error": "Waiver signature is required"}), 400
-
-        if not current_waiver_sha256:
-            return jsonify({"error": "Waiver checksum is missing"}), 500
-
-        reg.waiver_legal_name_signature = signature
-        reg.waiver_legal_name_signature_sha256 = current_waiver_sha256
-        reg.waiver_signature_submitted_at = datetime.now(timezone.utc).replace(
-            tzinfo=None
-        )
+    if "waiver_legal_name_signature" in data and data["waiver_legal_name_signature"]:
+        cfg = get_registrable_config(tournament)
+        sig = (data.get("waiver_legal_name_signature") or "").strip()
+        if cfg and getattr(cfg, "waiver_filepath", None) and sig:
+            sha_cur = getattr(cfg, "waiver_sha256", None)
+            if sha_cur:
+                now = datetime.now(timezone.utc).replace(tzinfo=None)
+                reg.waiver_legal_name_signature = sig
+                reg.waiver_legal_name_signature_sha256 = sha_cur
+                reg.waiver_signature_submitted_at = now
 
     db.session.commit()
     return jsonify({"success": True})
@@ -6087,9 +5861,8 @@ def update_my_team_registration(tournament_url):
         return jsonify({"error": "Only teams can edit their registration"}), 400
 
     tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
-    from app.utils.helpers import get_registrable_config
     cfg = get_registrable_config(tournament)
-    reg_open = cfg.registration_open if cfg else False
+    reg_open = getattr(cfg, "team_registration_open", cfg.registration_open) if cfg else False
     if not reg_open:
         return jsonify({"error": "Registration changes are locked"}), 403
 
@@ -6104,8 +5877,9 @@ def update_my_team_registration(tournament_url):
 
     if "pseudonym" in data:
         pseudonym = data["pseudonym"].strip()
-        if "::" in pseudonym:
-            return jsonify({"error": 'Team pseudonyms cannot contain "::"'}), 400
+        pn_err = team_pseudonym_char_error(pseudonym)
+        if pn_err:
+            return jsonify({"error": pn_err}), 400
         if not pseudonym:
             return jsonify({"error": "Team name is required"}), 400
         reg.pseudonym = pseudonym
@@ -6261,6 +6035,110 @@ def import_schedule_api(tournament_url):
         case Err(err):
             status_code = err.status_code if hasattr(err, "status_code") else 400
             return json_error(public_error_message(err), status_code=status_code)
+
+
+@bp.route("/<tournament_url>/upload-waiver", methods=["POST"])
+@login_required
+def tournament_upload_waiver(tournament_url):
+    """Store waiver PDF for this event's registrable config (TO only)."""
+    if not _check_to(tournament_url):
+        return jsonify({"error": "Forbidden"}), 403
+
+    tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
+    cfg = get_registrable_config(tournament)
+    if not cfg:
+        return jsonify({"error": "Registration is not configured for this event"}), 400
+
+    f = request.files.get("waiver")
+    if not f or not f.filename:
+        return jsonify({"error": "No file (field name 'waiver')"}), 400
+
+    data = f.read()
+    if not data:
+        return jsonify({"error": "Empty file"}), 400
+
+    sha256_hex = hashlib.sha256(data).hexdigest()
+
+    orig = f.filename or "waiver.pdf"
+    base_name = os.path.basename(orig)
+    safe_slug = re.sub(r"[^a-zA-Z0-9._-]+", "_", base_name)[:120] or "waiver.pdf"
+
+    upload_dir = os.path.join(
+        current_app.root_path, "..", "static", "uploads", "waivers", tournament_url
+    )
+    os.makedirs(upload_dir, exist_ok=True)
+
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    fname = f"{stamp}_{safe_slug}"
+    abs_path = os.path.join(upload_dir, fname)
+    try:
+        with open(abs_path, "wb") as out:
+            out.write(data)
+    except OSError as e:
+        return jsonify({"error": f"Could not save file: {e}"}), 500
+
+    rel_path = f"uploads/waivers/{tournament_url}/{fname}"
+    cfg.waiver_filepath = rel_path
+    cfg.waiver_sha256 = sha256_hex
+    db.session.commit()
+    return jsonify(
+        {"success": True, "waiver_filepath": rel_path, "waiver_sha256": sha256_hex}
+    )
+
+
+@bp.route("/leagues/<league_url>/upload-waiver", methods=["POST"])
+@login_required
+def league_upload_waiver_api(league_url):
+    """Store waiver PDF on the league registrable config (league TO only)."""
+    league, err = _require_league(league_url)
+    if err:
+        return jsonify({"error": "Not found" if err == 404 else "Forbidden"}), err
+    is_to = TO.query.filter_by(
+        user_id=current_user.id,
+        user_type=current_user.__class__.__name__.lower(),
+        league_id=league_url,
+    ).first()
+    if not is_to:
+        return jsonify({"error": "Only league organizers can upload waivers"}), 403
+
+    rc = league.registrable_config
+    if not rc:
+        return jsonify({"error": "Registration is not configured"}), 400
+
+    f = request.files.get("waiver")
+    if not f or not f.filename:
+        return jsonify({"error": "No file (field name 'waiver')"}), 400
+
+    data = f.read()
+    if not data:
+        return jsonify({"error": "Empty file"}), 400
+
+    sha256_hex = hashlib.sha256(data).hexdigest()
+
+    base_name = os.path.basename(f.filename or "waiver.pdf")
+    safe_slug = re.sub(r"[^a-zA-Z0-9._-]+", "_", base_name)[:120] or "waiver.pdf"
+
+    upload_dir = os.path.join(
+        current_app.root_path, "..", "static", "uploads", "waivers", "leagues", league_url
+    )
+    os.makedirs(upload_dir, exist_ok=True)
+
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    fname = f"{stamp}_{safe_slug}"
+    abs_path = os.path.join(upload_dir, fname)
+    try:
+        with open(abs_path, "wb") as out:
+            out.write(data)
+    except OSError as e:
+        return jsonify({"error": f"Could not save file: {e}"}), 500
+
+    rel_path = f"uploads/waivers/leagues/{league_url}/{fname}"
+    rc.waiver_filepath = rel_path
+    rc.waiver_sha256 = sha256_hex
+    db.session.commit()
+    return jsonify(
+        {"success": True, "waiver_filepath": rel_path, "waiver_sha256": sha256_hex}
+    )
 
 
 @bp.route("/<tournament_url>/penalty-types", methods=["GET"])
@@ -6423,7 +6301,7 @@ def get_player_penalty_history(tournament_url, player_id):
             pt_map.get(note.penalty_type_id) if note.penalty_type_id else (note.text or "Other")
         )
         point_label = f"Set {set_number}" if set_number else "-"
-        date_str = to_iso_z(created_at).unwrap_or(None) if created_at else None
+        date_str = created_at.strftime("%m/%d") if created_at else "-"
         is_current = str(note.match) == current_match_id if current_match_id else False
         is_current_point = (
             str(note.point_id) == current_point_id if current_point_id and note.point_id else False
@@ -6433,7 +6311,7 @@ def get_player_penalty_history(tournament_url, player_id):
                 "penalty_type_name": pt_name,
                 "match_name": match_name or "-",
                 "point_label": point_label,
-                "date": date_str or "-",
+                "date": date_str,
                 "is_current_match": is_current,
                 "is_current_point": is_current_point,
                 "note_uuid": note.uuid,

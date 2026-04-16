@@ -3,6 +3,7 @@
 mod api;
 mod components;
 mod pages;
+mod time_format;
 
 #[cfg(target_arch = "wasm32")]
 mod record_idb;
@@ -90,6 +91,9 @@ enum Route {
 
     #[route("/:url/manage")]
     Manage { url: String },
+
+    #[route("/:url/manage-user-uploads")]
+    ManageUserUploads { url: String },
 
     #[route("/:url/invitations")]
     Invitations { url: String },

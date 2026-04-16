@@ -15,6 +15,8 @@ from flask_executor import Executor
 from datetime import datetime, timedelta, timezone
 import json
 import time
+import threading
+import uuid
 
 from flask_login.utils import urlencode
 from urllib3.util import url
@@ -23,6 +25,7 @@ from models import (
     Match,
     Field,
     Tag,
+    Camera,
     TeamRegistration,
     PlayerRegistration,
     Team,
@@ -34,7 +37,6 @@ from app.utils.helpers import (
     resolve_team_name_to_id,
     resolve_tag_to_team,
     can_head_ref_match,
-    get_registrable_config,
 )
 from app.utils.scheduling import (
     compute_dynamic_match_nominal_start_time,
@@ -42,17 +44,26 @@ from app.utils.scheduling import (
     recompute_all_match_times,
     detect_match_conflicts,
 )
+from app.utils.name_validation import match_name_char_error
 from app.utils.decorators import require_tournament_organizer
 from app.filters import is_head_ref
 
 from os import path, listdir
 
 from app.utils.footage import finalize_recording_worker
+from app.utils.user_uploads import (
+    list_batch_manifest_rows,
+    register_batch_upload_completion,
+)
 from app.utils.camera_helpers import (
     generate_camera_key,
     validate_camera_key,
     get_camera_key_from_request,
     require_camera_key,
+)
+from app.utils.recording_retry import (
+    RETRY_FINALIZATION_USER_IDS_ENV,
+    current_user_can_retry_finalization,
 )
 from app.utils import preview_store
 
@@ -67,7 +78,6 @@ from app.domain.enums import (
 # only one worker bc ffmpeg does its own parallelism
 # so we only ever want to run one at a time
 executor = Executor()
-MAX_WAIVER_BYTES = 10 * 1024 * 1024
 
 bp = Blueprint("tournaments", __name__, url_prefix="/_api")
 
@@ -288,92 +298,6 @@ def create_league():
     }), 200
 
 
-@bp.route("/<tournament_url>/upload-waiver", methods=["POST"])
-@login_required
-def upload_tournament_waiver(tournament_url):
-    """TO upload the current waiver for a tournament (extensionless + overwrites)."""
-    tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
-
-    user_type = current_user.__class__.__name__.lower()
-    if tournament.league_id:
-        is_to = (
-            TO.query.filter_by(
-                user_id=current_user.id,
-                user_type=user_type,
-                league_id=tournament.league_id,
-            ).first()
-            is not None
-        )
-    else:
-        is_to = (
-            TO.query.filter_by(
-                user_id=current_user.id,
-                user_type=user_type,
-                event=tournament_url,
-            ).first()
-            is not None
-        )
-
-    if not is_to:
-        return jsonify({"error": "Forbidden"}), 403
-
-    data = request.get_data() or b""
-    if not data:
-        return jsonify({"error": "No waiver data"}), 400
-    if len(data) > MAX_WAIVER_BYTES:
-        return jsonify({"error": "Waiver file is too large (max 10 MB)"}), 400
-
-    import hashlib
-    import os
-    import re
-
-    waiver_sha256 = hashlib.sha256(data).hexdigest()
-
-    # Store based on canonical scope (league waiver is shared across its tournaments).
-    scope_url = tournament.league_id or tournament.url
-
-    upload_dir = os.path.join(
-        current_app.root_path, "../static", "uploads", "waivers", scope_url
-    )
-    os.makedirs(upload_dir, exist_ok=True)
-    uploaded_filename = (request.headers.get("X-Waiver-Filename") or "").strip()
-    ext = os.path.splitext(uploaded_filename)[1].lower()
-    if not re.fullmatch(r"\.[a-z0-9]{1,12}", ext or ""):
-        ext = ""
-    stored_name = f"waiver{ext}"
-    file_path = os.path.join(upload_dir, stored_name)
-
-    # Remove previous waiver files (legacy and prior extension variants).
-    for existing_name in os.listdir(upload_dir):
-        if existing_name == "waiver" or existing_name.startswith("waiver."):
-            existing_path = os.path.join(upload_dir, existing_name)
-            try:
-                if os.path.isfile(existing_path):
-                    os.remove(existing_path)
-            except Exception:
-                pass
-
-    try:
-        with open(file_path, "wb") as f:
-            f.write(data)
-    except Exception as e:
-        return jsonify({"error": f"Error saving waiver: {e}"}), 500
-
-    cfg = get_registrable_config(tournament)
-    if not cfg:
-        return jsonify({"error": "Registrable config not found"}), 500
-
-    cfg.waiver_sha256 = waiver_sha256
-    cfg.waiver_filepath = f"/static/uploads/waivers/{scope_url}/{stored_name}"
-    db.session.commit()
-
-    return jsonify(
-        {
-            "success": True,
-            "waiver_filepath": cfg.waiver_filepath,
-            "waiver_sha256": cfg.waiver_sha256,
-        }
-    )
 
 
 @bp.route("/<tournament_url>/recompute-schedule", methods=["POST"])
@@ -826,7 +750,7 @@ def record_preview_frame_get():
 
 @bp.route("/record/upload-chunk", methods=["POST"])
 def record_upload_chunk():
-    """Receive and store a video chunk for point recording. No access key required."""
+    """Receive one fMP4 fragment for point recording (container=mp4). Camera key required."""
     import os
     from flask import current_app
     from datetime import datetime
@@ -842,7 +766,8 @@ def record_upload_chunk():
     recording_session_start_time = request.form.get("recording_session_start_time")
     chunk_duration = request.form.get("chunk_duration")  # Duration in milliseconds
     camera_name = request.form.get("camera_name")
-
+    blob_event_timestamp_ms_raw = request.form.get("blob_event_timestamp_ms")
+    is_init_segment_raw = request.form.get("is_init_segment")
     # Validate camera access key
     is_valid, error_response = require_camera_key(tournament_url, field_name)
     if not is_valid:
@@ -855,6 +780,7 @@ def record_upload_chunk():
     field = Field.query.filter_by(event=tournament_url, name=field_name).first()
     if not field:
         return jsonify({"error": "Field not found"}), 404
+    db.session.remove()
 
     if "chunk" not in request.files:
         return jsonify({"error": "No chunk file provided"}), 400
@@ -863,11 +789,11 @@ def record_upload_chunk():
     if chunk_file.filename == "":
         return jsonify({"error": "Empty chunk file"}), 400
 
-    # Container: "mp4" (H.265/HEVC) or "webm". Default webm for backward compatibility.
-    container = (request.form.get("container") or "webm").strip().lower()
-    if container not in ("mp4", "webm"):
-        container = "webm"
-    chunk_ext = container
+    # New record page: fragmented MP4 only (fMP4 from MediaRecorder).
+    container = (request.form.get("container") or "mp4").strip().lower()
+    if container != "mp4":
+        return jsonify({"error": "Only container=mp4 is supported"}), 400
+    chunk_ext = "mp4"
 
     upload_dir = os.path.join(
         current_app.root_path,
@@ -897,6 +823,19 @@ def record_upload_chunk():
             return float(s)
         except ValueError:
             return s
+
+    def parse_float_opt(val):
+        if val is None or val == "":
+            return None
+        try:
+            return float(val)
+        except (TypeError, ValueError):
+            return None
+
+    def parse_bool(val):
+        if val is None:
+            return False
+        return str(val).strip().lower() in {"1", "true", "yes", "on"}
 
     chunk_index = None
     try:
@@ -930,6 +869,8 @@ def record_upload_chunk():
                 "chunk_duration": float(chunk_duration),
                 "camera_name": camera_name,
                 "recording_session_start_time": parse_timestamp(recording_session_start_time),
+                "blob_event_timestamp_ms": parse_float_opt(blob_event_timestamp_ms_raw),
+                "is_init_segment": parse_bool(is_init_segment_raw),
             }
             chunks_meta[str(chunk_index)] = chunk_meta
 
@@ -1025,6 +966,637 @@ def record_finalize():
     )
 
 
+@bp.route(
+    "/tournaments/<tournament_url>/matches/<match_id>/retry-finalization",
+    methods=["POST"],
+)
+@login_required
+def retry_match_finalization(tournament_url: str, match_id: str):
+    import os
+
+    if not current_user_can_retry_finalization(current_user):
+        return (
+            jsonify(
+                {
+                    "success": False,
+                    "error": (
+                        f"Forbidden. Add your user id to {RETRY_FINALIZATION_USER_IDS_ENV} "
+                        "to enable retry finalization."
+                    ),
+                }
+            ),
+            403,
+        )
+
+    match = Match.query.filter_by(uuid=match_id, event=tournament_url).first()
+    if not match:
+        return jsonify({"success": False, "error": "Match not found"}), 404
+    if not match.field:
+        return jsonify({"success": False, "error": "Match has no field"}), 400
+    field_name = match.field
+
+    root_dir = os.path.join(
+        current_app.root_path,
+        "../static/uploads/videos",
+        tournament_url,
+        field_name,
+        match_id,
+    )
+    if not os.path.isdir(root_dir):
+        return jsonify({"success": False, "error": "No recording artifacts found for this match"}), 404
+
+    chunk_dirs: list[tuple[str, str]] = []
+    for camera_name in sorted(os.listdir(root_dir)):
+        chunk_dir = os.path.join(root_dir, camera_name)
+        if not os.path.isdir(chunk_dir):
+            continue
+        if not os.path.exists(os.path.join(chunk_dir, "chunks_meta.json")):
+            continue
+        chunk_dirs.append((camera_name, chunk_dir))
+
+    if not chunk_dirs:
+        return jsonify({"success": False, "error": "No chunk metadata found for this match"}), 404
+
+    app = current_app._get_current_object()
+    logger = current_app.logger
+    for camera_name, chunk_dir in chunk_dirs:
+        logger.info(
+            "retry_match_finalization: submitting worker for match_id=%s camera_name=%s chunk_dir=%s requested_by=%s",
+            match_id,
+            camera_name,
+            chunk_dir,
+            getattr(current_user, "id", None),
+        )
+
+        def run_finalize_with_app_context(
+            chunk_dir: str = chunk_dir, camera_name: str = camera_name
+        ):
+            with app.app_context():
+                finalize_recording_worker(
+                    logger,
+                    tournament_url,
+                    field_name,
+                    match_id,
+                    camera_name,
+                    chunk_dir,
+                )
+
+        _ = executor.submit(run_finalize_with_app_context)
+
+    return jsonify(
+        {
+            "success": True,
+            "message": f"Requeued finalization for {len(chunk_dirs)} recording(s).",
+        }
+    )
+
+
+@bp.route("/tournaments/<tournament_url>/user-upload", methods=["POST"])
+@login_required
+def user_upload_video_footage(tournament_url: str):
+    """Authenticated endpoint: upload a user-recorded video and auto-generate match highlights."""
+    import os
+    from datetime import datetime, timezone
+
+    field_id_raw = request.form.get("field_id") or request.form.get("field")
+    if not tournament_url or not field_id_raw:
+        return jsonify({"error": "tournament and field_id are required"}), 400
+
+    try:
+        field_id = int(field_id_raw)
+    except ValueError:
+        return jsonify({"error": "field_id must be an integer"}), 400
+
+    video_file = request.files.get("video") or request.files.get("file")
+    if not video_file or video_file.filename == "":
+        return jsonify({"error": "video file is required"}), 400
+
+    start_world_override = request.form.get("start_world") or request.form.get(
+        "start_timestamp"
+    )
+    try:
+        start_world_override = _normalize_user_upload_start_world(start_world_override)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+    camera_name_override = (request.form.get("camera_name") or "").strip()
+
+    field_obj = Field.query.filter_by(event=tournament_url, id=field_id).first()
+    if not field_obj:
+        return jsonify({"error": "Field not found"}), 404
+    field_name_resolved = field_obj.name
+    db.session.remove()
+
+    upload_group_name = uuid.uuid4().hex[:12]
+    original_filename = video_file.filename
+    orig_stem = path.splitext(path.basename(original_filename))[0] or "upload"
+    if camera_name_override:
+        orig_stem = camera_name_override
+    ext = path.splitext(original_filename)[1].lower()
+    if not ext:
+        ext = ".webm"
+
+    upload_dir = path.join(
+        current_app.root_path,
+        "../static/uploads/videos",
+        tournament_url,
+        field_name_resolved,
+        "user_uploads",
+        upload_group_name,
+    )
+    os.makedirs(upload_dir, exist_ok=True)
+
+    saved_name = f"source{ext}"
+    saved_abs_path = path.join(upload_dir, saved_name)
+    video_file.save(saved_abs_path)
+
+    uploader_user_id = str(current_user.id)
+    uploader_user_type = current_user.__class__.__name__.lower()
+
+    app_obj = current_app._get_current_object()  # type: ignore[attr-defined]
+    logger = current_app.logger
+
+    batch_camera_name = camera_name_override or orig_stem
+    try:
+        register_batch_upload_completion(
+            logger,
+            app_obj,
+            tournament_url=tournament_url,
+            field_name=field_name_resolved,
+            batch_id=upload_group_name,
+            batch_index=0,
+            batch_total=1,
+            camera_name=batch_camera_name,
+            upload_id=upload_group_name,
+            saved_abs_path=saved_abs_path,
+            start_world_override=start_world_override,
+            incoming_dir_name=None,
+            uploader_user_id=uploader_user_id,
+            uploader_user_type=uploader_user_type,
+        )
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+    return jsonify(
+        {
+            "success": True,
+            "message": "Upload received; processing has begun.",
+            "upload_group_name": upload_group_name,
+        }
+    )
+
+
+def _user_upload_incoming_dir_name(upload_id: str, batch_index: int) -> str:
+    return f"{upload_id}__{batch_index:06d}"
+
+
+def _locate_user_upload_incoming_dir(
+    tournament_url: str, upload_id: str, batch_index: int | None = None
+):
+    incoming_root = path.join(
+        current_app.root_path,
+        "../static/uploads/videos",
+        tournament_url,
+    )
+
+    for field_obj in Field.query.filter_by(event=tournament_url).all():
+        incoming_base = path.join(
+            incoming_root,
+            field_obj.name,
+            "user_uploads",
+            "_incoming",
+        )
+        if not path.isdir(incoming_base):
+            continue
+
+        candidate_names = []
+        if batch_index is not None:
+            candidate_names.append(_user_upload_incoming_dir_name(upload_id, batch_index))
+        candidate_names.append(upload_id)
+
+        for dir_name in candidate_names:
+            candidate = path.join(incoming_base, dir_name)
+            if path.exists(candidate):
+                return candidate, field_obj.name
+
+        for dir_name in listdir(incoming_base):
+            candidate = path.join(incoming_base, dir_name)
+            meta_path = path.join(candidate, "meta.json")
+            if not path.exists(meta_path):
+                continue
+            try:
+                with open(meta_path, "r") as f:
+                    meta = json.load(f)
+            except (OSError, json.JSONDecodeError):
+                continue
+            if str(meta.get("upload_id") or "").strip() != upload_id:
+                continue
+            if batch_index is not None:
+                try:
+                    existing_batch_index = int(
+                        meta.get("batch_index")
+                        if meta.get("batch_index") is not None
+                        else 0
+                    )
+                except (TypeError, ValueError):
+                    existing_batch_index = 0
+                if existing_batch_index != batch_index:
+                    continue
+            return candidate, field_obj.name
+
+    return None, None
+
+
+def _normalize_user_upload_start_world(raw_value: str | None) -> str | None:
+    if raw_value is None:
+        return None
+    s = raw_value.strip()
+    if not s:
+        return None
+    if s.endswith("Z"):
+        s = s.replace("Z", "+00:00")
+    try:
+        dt = datetime.fromisoformat(s)
+    except ValueError as exc:
+        raise ValueError(
+            "start_world must be an ISO timestamp with timezone, e.g. 2026-03-18T01:23:45Z"
+        ) from exc
+    if dt.tzinfo is None:
+        raise ValueError(
+            "start_world must include timezone, e.g. 2026-03-18T01:23:45Z or 2026-03-17T18:23:45-07:00"
+        )
+    return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+@bp.route("/tournaments/<tournament_url>/user-upload/chunk", methods=["POST"])
+@login_required
+def user_upload_video_footage_chunk(tournament_url: str):
+    """
+    Chunked upload endpoint for large user footage files.
+    Each request contains one chunk (<100MB from frontend).
+    """
+    import os
+    import re
+
+    field_id_raw = request.form.get("field_id") or request.form.get("field")
+    upload_id = (request.form.get("upload_id") or "").strip()
+    chunk_index_raw = (request.form.get("chunk_index") or "").strip()
+    total_chunks_raw = (request.form.get("total_chunks") or "").strip()
+    filename = (request.form.get("filename") or "source.webm").strip()
+    content_type = (request.form.get("content_type") or "").strip()
+    start_world_override = (request.form.get("start_world") or "").strip() or None
+    camera_name_override = (request.form.get("camera_name") or "").strip() or None
+    chunk_file = request.files.get("chunk")
+
+    batch_id_raw = (request.form.get("batch_id") or "").strip()
+    batch_index_raw = (request.form.get("batch_index") or "").strip()
+    batch_total_raw = (request.form.get("batch_total") or "").strip()
+
+    if not field_id_raw or not upload_id or chunk_file is None:
+        return jsonify({"error": "field_id, upload_id, and chunk are required"}), 400
+    if not re.fullmatch(r"[A-Za-z0-9_-]{6,80}", upload_id):
+        return jsonify({"error": "Invalid upload_id"}), 400
+
+    try:
+        field_id = int(field_id_raw)
+        chunk_index = int(chunk_index_raw)
+        total_chunks = int(total_chunks_raw)
+    except ValueError:
+        return jsonify({"error": "chunk_index/total_chunks/field_id must be integers"}), 400
+    if chunk_index < 0 or total_chunks <= 0 or chunk_index >= total_chunks:
+        return jsonify({"error": "Invalid chunk_index/total_chunks"}), 400
+
+    try:
+        batch_total = int(batch_total_raw) if batch_total_raw != "" else 1
+    except ValueError:
+        return jsonify({"error": "batch_total must be an integer"}), 400
+    try:
+        batch_index = int(batch_index_raw) if batch_index_raw != "" else 0
+    except ValueError:
+        return jsonify({"error": "batch_index must be an integer"}), 400
+    if batch_total < 1 or batch_index < 0 or batch_index >= batch_total:
+        return jsonify({"error": "Invalid batch_index/batch_total"}), 400
+
+    if batch_total > 1:
+        if not batch_id_raw or not re.fullmatch(r"[A-Za-z0-9_-]{6,80}", batch_id_raw):
+            return jsonify({"error": "batch_id is required when batch_total > 1"}), 400
+        batch_id = batch_id_raw
+    else:
+        batch_id = batch_id_raw or upload_id
+    try:
+        start_world_override = _normalize_user_upload_start_world(start_world_override)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+    filename_stem = path.splitext(path.basename(filename))[0] or "upload"
+    batch_camera_name = (camera_name_override or "").strip() or filename_stem
+
+    field_obj = Field.query.filter_by(event=tournament_url, id=field_id).first()
+    if not field_obj:
+        return jsonify({"error": "Field not found"}), 404
+    field_name_resolved = field_obj.name
+    db.session.remove()
+    incoming_dir_name = _user_upload_incoming_dir_name(upload_id, batch_index)
+
+    incoming_dir = path.join(
+        current_app.root_path,
+        "../static/uploads/videos",
+        tournament_url,
+        field_name_resolved,
+        "user_uploads",
+        "_incoming",
+        incoming_dir_name,
+    )
+    os.makedirs(incoming_dir, exist_ok=True)
+
+    meta_path = path.join(incoming_dir, "meta.json")
+    if path.exists(meta_path):
+        with open(meta_path, "r") as f:
+            existing = json.load(f)
+        if existing.get("upload_id") != upload_id:
+            return jsonify({"error": "upload_id mismatch"}), 400
+        if int(existing.get("total_chunks") or 0) != total_chunks:
+            return jsonify({"error": "total_chunks mismatch"}), 400
+        if existing.get("batch_id") != batch_id:
+            return jsonify({"error": "batch_id mismatch"}), 400
+        if int(existing.get("batch_total") or 0) != batch_total:
+            return jsonify({"error": "batch_total mismatch"}), 400
+        existing_batch_index = existing.get("batch_index")
+        try:
+            existing_batch_index = (
+                int(existing_batch_index) if existing_batch_index is not None else -1
+            )
+        except (TypeError, ValueError):
+            existing_batch_index = -1
+        if existing_batch_index != batch_index:
+            current_app.logger.warning(
+                "user_upload chunk batch_index mismatch: upload_id=%s incoming_dir=%s existing_batch_index=%s request_batch_index=%s batch_id=%s existing_meta=%s",
+                upload_id,
+                incoming_dir,
+                existing_batch_index,
+                batch_index,
+                batch_id,
+                meta_path,
+            )
+            return jsonify({"error": "batch_index mismatch"}), 400
+        if existing.get("batch_camera_name") != batch_camera_name:
+            return jsonify({"error": "camera_name mismatch"}), 400
+        if int(existing.get("field_id") or 0) != field_id:
+            return jsonify({"error": "field_id mismatch"}), 400
+
+    chunk_filename = f"chunk_{chunk_index:06d}.part"
+    chunk_abs_path = path.join(incoming_dir, chunk_filename)
+    chunk_file.save(chunk_abs_path)
+
+    meta = {
+        "upload_id": upload_id,
+        "tournament_url": tournament_url,
+        "field_id": field_id,
+        "field_name": field_name_resolved,
+        "filename": filename,
+        "content_type": content_type,
+        "total_chunks": total_chunks,
+        "start_world_override": start_world_override,
+        "camera_name_override": camera_name_override,
+        "batch_id": batch_id,
+        "batch_index": batch_index,
+        "batch_total": batch_total,
+        "batch_camera_name": batch_camera_name,
+        "incoming_dir_name": incoming_dir_name,
+        "uploaded_by_user_id": str(current_user.id),
+        "uploaded_by_user_type": current_user.__class__.__name__.lower(),
+    }
+    with open(meta_path, "w") as f:
+        json.dump(meta, f)
+
+    return jsonify(
+        {
+            "success": True,
+            "upload_id": upload_id,
+            "chunk_index": chunk_index,
+            "total_chunks": total_chunks,
+        }
+    )
+
+
+@bp.route("/tournaments/<tournament_url>/user-upload/complete", methods=["POST"])
+@login_required
+def user_upload_video_footage_complete(tournament_url: str):
+    """Finalize a chunked upload, assemble source file on disk, then start processing worker."""
+    import os
+    from datetime import datetime, timezone
+
+    payload = request.get_json(silent=True) or {}
+    upload_id = (payload.get("upload_id") or request.form.get("upload_id") or "").strip()
+    if not upload_id:
+        return jsonify({"error": "upload_id is required"}), 400
+
+    batch_index_raw = payload.get("batch_index")
+    if batch_index_raw is None:
+        batch_index_raw = request.form.get("batch_index")
+    if batch_index_raw in (None, ""):
+        batch_index = None
+    else:
+        try:
+            batch_index = int(batch_index_raw)
+        except (TypeError, ValueError):
+            return jsonify({"error": "batch_index must be an integer"}), 400
+
+    incoming_dir, field_name = _locate_user_upload_incoming_dir(
+        tournament_url, upload_id, batch_index
+    )
+    if not incoming_dir or not field_name:
+        return jsonify({"error": "Upload not found"}), 404
+    db.session.remove()
+
+    meta_path = path.join(incoming_dir, "meta.json")
+    if not path.exists(meta_path):
+        return jsonify({"error": "Upload metadata missing"}), 400
+
+    with open(meta_path, "r") as f:
+        meta = json.load(f)
+
+    if str(meta.get("uploaded_by_user_id")) != str(current_user.id):
+        return jsonify({"error": "You cannot complete another user's upload"}), 403
+
+    total_chunks = int(meta.get("total_chunks") or 0)
+    if total_chunks <= 0:
+        return jsonify({"error": "Invalid total_chunks metadata"}), 400
+
+    filename = meta.get("filename") or "source.webm"
+    ext = path.splitext(path.basename(filename))[1].lower() or ".webm"
+    incoming_dir_name = (
+        (meta.get("incoming_dir_name") or "").strip() or path.basename(incoming_dir)
+    )
+    final_dir = path.join(
+        current_app.root_path,
+        "../static/uploads/videos",
+        tournament_url,
+        field_name,
+        "user_uploads",
+        incoming_dir_name,
+    )
+    os.makedirs(final_dir, exist_ok=True)
+    saved_abs_path = path.join(final_dir, f"source{ext}")
+
+    # Assemble chunk files in order without loading entire upload into RAM.
+    with open(saved_abs_path, "wb") as out:
+        for i in range(total_chunks):
+            part_path = path.join(incoming_dir, f"chunk_{i:06d}.part")
+            if not path.exists(part_path):
+                return jsonify({"error": f"Missing chunk {i}"}), 400
+            with open(part_path, "rb") as inp:
+                while True:
+                    buf = inp.read(1024 * 1024)
+                    if not buf:
+                        break
+                    out.write(buf)
+
+    start_world_override = meta.get("start_world_override")
+    try:
+        start_world_override = _normalize_user_upload_start_world(start_world_override)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+    batch_id = (meta.get("batch_id") or "").strip() or upload_id
+    try:
+        batch_index = int(meta.get("batch_index") if meta.get("batch_index") is not None else 0)
+    except (TypeError, ValueError):
+        batch_index = 0
+    try:
+        batch_total = int(meta.get("batch_total") if meta.get("batch_total") is not None else 1)
+    except (TypeError, ValueError):
+        batch_total = 1
+    batch_camera_name = (meta.get("batch_camera_name") or "").strip()
+    if not batch_camera_name:
+        co = (meta.get("camera_name_override") or "").strip()
+        batch_camera_name = co or path.splitext(path.basename(filename))[0] or "upload"
+
+    uploader_user_id = str(current_user.id)
+    uploader_user_type = current_user.__class__.__name__.lower()
+
+    app_obj = current_app._get_current_object()  # type: ignore[attr-defined]
+    logger = current_app.logger
+
+    try:
+        register_batch_upload_completion(
+            logger,
+            app_obj,
+            tournament_url=tournament_url,
+            field_name=field_name,
+            batch_id=batch_id,
+            batch_index=batch_index,
+            batch_total=batch_total,
+            camera_name=batch_camera_name,
+            upload_id=upload_id,
+            saved_abs_path=saved_abs_path,
+            start_world_override=start_world_override,
+            incoming_dir_name=incoming_dir_name,
+            uploader_user_id=uploader_user_id,
+            uploader_user_type=uploader_user_type,
+        )
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+    # Best-effort cleanup of chunk parts after assembly.
+    try:
+        for i in range(total_chunks):
+            part_path = path.join(incoming_dir, f"chunk_{i:06d}.part")
+            if path.exists(part_path):
+                os.remove(part_path)
+    except Exception:
+        pass
+
+    return jsonify(
+        {
+            "success": True,
+            "message": "Upload received; processing has begun.",
+            "upload_group_name": upload_id,
+        }
+    )
+
+
+@bp.route(
+    "/tournaments/<tournament_url>/user-upload/delete-camera/<camera_uuid>",
+    methods=["DELETE"],
+)
+@require_tournament_organizer()
+def user_upload_delete_camera(tournament_url: str, camera_uuid: str):
+    """TO-only: delete a user-uploaded camera highlight."""
+    import os
+
+    cam = (
+        Camera.query.filter_by(uuid=camera_uuid, event=tournament_url)
+        .filter_by(source_type="user_upload")
+        .first()
+    )
+    if not cam:
+        return jsonify({"error": "Camera not found"}), 404
+
+    # Best-effort local file cleanup.
+    if cam.file:
+        try:
+            abs_fp = path.join(current_app.root_path, "..", cam.file)
+            if os.path.exists(abs_fp):
+                os.remove(abs_fp)
+        except Exception:
+            pass
+
+    db.session.delete(cam)
+    db.session.commit()
+    return jsonify({"success": True})
+
+
+@bp.route("/tournaments/<tournament_url>/user-uploaded-cameras", methods=["GET"])
+@require_tournament_organizer()
+def user_upload_list_cameras(tournament_url: str):
+    """TO-only: list user-uploaded cameras so TOs can moderate/delete them."""
+    cams = (
+        Camera.query.filter_by(event=tournament_url, source_type="user_upload")
+        .order_by(Camera.match_uuid.asc(), Camera.name.asc())
+        .all()
+    )
+
+    rows = []
+    for cam in cams:
+        m = Match.query.filter_by(uuid=cam.match_uuid).first()
+        f = Field.query.filter_by(id=cam.field).first()
+        world_start = None
+        if cam.time_world:
+            try:
+                tw = json.loads(cam.time_world)
+                if isinstance(tw, list) and tw:
+                    world_start = str(tw[0])
+            except Exception:
+                world_start = None
+        uploader = None
+        if cam.uploaded_by_user_type and cam.uploaded_by_user_id:
+            uploader = f"{cam.uploaded_by_user_type}:{cam.uploaded_by_user_id}"
+        elif cam.uploaded_by_user_id:
+            uploader = str(cam.uploaded_by_user_id)
+        rows.append(
+            {
+                "uuid": cam.uuid,
+                "match_uuid": cam.match_uuid,
+                "match_name": m.name if m else cam.match_uuid,
+                "field_name": f.name if f else str(cam.field),
+                "camera_name": cam.name,
+                "status": cam.status,
+                "user": uploader,
+                "world_start_timestamp": world_start,
+                "link": cam.link,
+                "file": cam.file,
+                "uploaded_by_user_id": cam.uploaded_by_user_id,
+                "uploaded_by_user_type": cam.uploaded_by_user_type,
+                "manifest_only": False,
+                "error": None,
+            }
+        )
+
+    rows.extend(list_batch_manifest_rows(tournament_url))
+    return jsonify({"cameras": rows})
+
+
 @bp.route("/<tournament_url>/update-settings", methods=["POST"])
 @login_required
 def update_tournament_settings(tournament_url):
@@ -1058,38 +1630,15 @@ def update_tournament_settings(tournament_url):
         rc.player_registration_open = (
             "player_registration_open" in request.form or legacy_reg_open
         )
-        # Waiver requirement toggle.
-        # If unchecked, clear the waiver config so players don't have to sign.
-        require_waiver_signature = "require_waiver_signature" in request.form
-        if not require_waiver_signature:
-            rc.waiver_filepath = None
-            rc.waiver_sha256 = None
-            # Best-effort cleanup of the on-disk waiver file.
-            import os
-
-            scope_url = tournament.url
-            waiver_dir = os.path.join(
-                current_app.root_path,
-                "../static",
-                "uploads",
-                "waivers",
-                scope_url,
-            )
-            try:
-                if os.path.isdir(waiver_dir):
-                    for existing_name in os.listdir(waiver_dir):
-                        if existing_name == "waiver" or existing_name.startswith("waiver."):
-                            existing_path = os.path.join(waiver_dir, existing_name)
-                            if os.path.isfile(existing_path):
-                                os.remove(existing_path)
-            except Exception:
-                pass
         n_max = request.form.get("n_max_teams", "").strip()
         rc.n_max_teams = int(n_max) if n_max else None
         roster = request.form.get("max_team_size_roster", "").strip()
         rc.max_team_size_roster = int(roster) if roster else None
         field = request.form.get("max_team_size_field", "").strip()
         rc.max_team_size_field = int(field) if field else None
+        if "require_waiver_signature" not in request.form:
+            rc.waiver_filepath = None
+            rc.waiver_sha256 = None
 
     if request.form.get("start_date"):
         tournament.start_date = datetime.strptime(
@@ -1152,10 +1701,10 @@ def add_match(tournament_url):
 
     ribbon = request.form.get("ribbon", "") == "on"  # Checkbox value
 
-    # Validate match name doesn't contain "::"
     match_name = request.form["match_name"]
-    if "::" in match_name:
-        return jsonify({"success": False, "error": 'Match names cannot contain "::"'}), 400
+    mn_err = match_name_char_error(match_name)
+    if mn_err:
+        return jsonify({"success": False, "error": mn_err}), 400
 
     # Validate match name uniqueness
     # BREAK and JOIN matches can have duplicate names on different fields
@@ -1670,10 +2219,10 @@ def update_match(tournament_url):
         team2_id, _ = resolve_team_name_to_id(team2_name, tournament_url)
         refs_initial = request.form.get("refs", "")
 
-    # Validate match name doesn't contain "::"
     new_match_name = request.form.get("match_name", match.name)
-    if "::" in new_match_name:
-        return jsonify({"success": False, "error": 'Match names cannot contain "::"'}), 400
+    mn_err = match_name_char_error(new_match_name)
+    if mn_err:
+        return jsonify({"success": False, "error": mn_err}), 400
 
     # Validate match name uniqueness (excluding current match)
     # BREAK and JOIN matches can have duplicate names on different fields
@@ -1898,6 +2447,7 @@ def update_match(tournament_url):
     # Validate inputs and constraints
     ok, err = validate_match_input(match, tournament_url)
     if not ok:
+        db.session.rollback()
         return jsonify({"success": False, "error": err}), 400
 
     db.session.flush()  # Flush before updating sequence

@@ -288,6 +288,38 @@ fn tokens_to_value(tokens: &[Token], multiple: bool) -> String {
     }
 }
 
+/// Merge pending text into the field value and return normalized token string (if any change).
+fn commit_pending_text(
+    pending: &str,
+    current_value: &str,
+    multiple: bool,
+    team_options: &[TeamOption],
+    tags: &[TagSetupData],
+    matches: &[MatchSetupData],
+) -> Option<String> {
+    let pending = pending.trim();
+    if pending.is_empty() {
+        return None;
+    }
+    let combined = if multiple {
+        let base = current_value.trim();
+        if base.is_empty() {
+            pending.to_string()
+        } else {
+            format!("{},{}", base, pending)
+        }
+    } else {
+        pending.to_string()
+    };
+    let tokens = parse_value_into_tokens(&combined, multiple, team_options, tags, matches);
+    let new_val = tokens_to_value(&tokens, multiple);
+    if new_val == current_value.trim() {
+        None
+    } else {
+        Some(new_val)
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct AutocompleteOption {
     pub kind: TokenKind,
@@ -476,6 +508,7 @@ pub fn TeamTokenInput(
 
     let on_change_remove = on_change.clone();
 
+    let value_rc_add = value_rc.clone();
     let value_rc2 = value_rc.clone();
     let team_options_rc2 = team_options_rc.clone();
     let team_options_rc3 = team_options_rc.clone();
@@ -485,7 +518,7 @@ pub fn TeamTokenInput(
     let matches_rc_add = matches_rc.clone();
     let add_token_rc: Rc<RefCell<Box<dyn FnMut(Token)>>> = Rc::new(RefCell::new(Box::new(move |t: Token| {
         let mut new_tokens = parse_value_into_tokens(
-            value_rc.as_ref(),
+            value_rc_add.as_ref(),
             multiple,
             team_options_rc3.as_ref(),
             tags_rc_add.as_ref(),
@@ -515,6 +548,32 @@ pub fn TeamTokenInput(
             on_change_remove.call(tokens_to_value(&new_tokens, multiple));
         }
         focused_chip.set(None);
+    })));
+
+    let mut input_text_blur = input_text.clone();
+    let value_for_commit = value_rc.clone();
+    let on_change_blur = on_change.clone();
+    let toc_blur = team_options_rc.clone();
+    let tgc_blur = tags_rc.clone();
+    let matc_blur = matches_rc.clone();
+    let mult_blur = multiple;
+    let commit_blur_rc: Rc<RefCell<Box<dyn FnMut()>>> = Rc::new(RefCell::new(Box::new(move || {
+        let pending = input_text_blur();
+        if pending.trim().is_empty() {
+            input_text_blur.set(String::new());
+            return;
+        }
+        if let Some(new_val) = commit_pending_text(
+            pending.as_str(),
+            value_for_commit.as_ref(),
+            mult_blur,
+            toc_blur.as_ref(),
+            tgc_blur.as_ref(),
+            matc_blur.as_ref(),
+        ) {
+            on_change_blur.call(new_val);
+        }
+        input_text_blur.set(String::new());
     })));
 
     rsx! {
@@ -769,6 +828,7 @@ pub fn TeamTokenInput(
                         show_autocomplete.set(true);
                     },
                     onblur: move |_| {
+                        commit_blur_rc.borrow_mut()();
                         #[cfg(target_arch = "wasm32")]
                         {
                             let mut show_ac = show_autocomplete.clone();

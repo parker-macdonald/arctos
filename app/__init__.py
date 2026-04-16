@@ -3,7 +3,7 @@ Tournament site Flask application factory.
 """
 
 from flask import Flask
-from flask_login import LoginManager  # type: ignore[import-untyped]
+from flask_login import LoginManager
 import os
 
 # Initialize extensions (will be initialized in create_app)
@@ -34,7 +34,11 @@ def create_app(config=None):
         "SQLALCHEMY_DATABASE_URI", "sqlite:///tournament.db"
     )
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-    app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024  # 10MB max file size
+    # Record / footage uploads use multi-MB POST bodies; set explicitly so Werkzeug does not reject large chunks.
+    # Reverse proxies (nginx client_max_body_size, etc.) may still need raising in deployment.
+    app.config["MAX_CONTENT_LENGTH"] = int(
+        os.environ.get("MAX_CONTENT_LENGTH_BYTES", str(100 * 1024 * 1024))
+    )
     app.config["SESSION_COOKIE_HTTPONLY"] = True
     # For cross-origin SPA (e.g. dx serve on port 8080, Flask on 5006), set ARCTOS_CORS_DEV=1
     # so the session cookie is sent with credentialed requests. SameSite=None requires Secure
@@ -62,6 +66,14 @@ def create_app(config=None):
     app.config["S3_PRESIGNED_EXPIRY_SECONDS"] = int(
         os.environ.get("S3_PRESIGNED_EXPIRY_SECONDS", "3600")
     )
+    app.config["RECORDING_ARTIFACTS_AFTER_UPLOAD"] = (
+        os.environ.get("RECORDING_ARTIFACTS_AFTER_UPLOAD", "delete").strip().lower()
+        or "delete"
+    )
+    app.config["ENABLE_MANUAL_FOOTAGE_UPLOADS"] = (
+        os.environ.get("ENABLE_MANUAL_FOOTAGE_UPLOADS", "").strip().lower()
+        in ("1", "true", "yes", "on")
+    )
 
     # Handle subpath deployment
     if "SCRIPT_NAME" in os.environ:
@@ -70,6 +82,15 @@ def create_app(config=None):
     # Override with custom config if provided
     if config:
         app.config.update(config)
+
+    # SQLite: increase busy timeout; finalize workers and HTTP handlers share one file.
+    uri = app.config.get("SQLALCHEMY_DATABASE_URI") or ""
+    if isinstance(uri, str) and uri.startswith("sqlite"):
+        opts = dict(app.config.get("SQLALCHEMY_ENGINE_OPTIONS") or {})
+        conn_args = dict(opts.get("connect_args") or {})
+        conn_args.setdefault("timeout", 30)
+        opts["connect_args"] = conn_args
+        app.config["SQLALCHEMY_ENGINE_OPTIONS"] = opts
 
     # Initialize OAuth and Executor (after config is finalized)
     from app.routes.auth import oauth
@@ -94,6 +115,23 @@ def create_app(config=None):
     db = db_instance
     db.init_app(app)
     init_db(db)
+    # WAL + busy_timeout: readers/writers interleave better than default rollback journal.
+    try:
+        with app.app_context():
+            eng = db.engine
+            if eng.dialect.name == "sqlite":
+                from sqlalchemy import event
+
+                @event.listens_for(eng, "connect")
+                def _sqlite_pragma(dbapi_connection, _connection_record):
+                    cur = dbapi_connection.cursor()
+                    try:
+                        cur.execute("PRAGMA journal_mode=WAL")
+                        cur.execute("PRAGMA busy_timeout=30000")
+                    finally:
+                        cur.close()
+    except Exception:
+        pass
     # Ensure tables exist (safe to call on startup)
     try:
         with app.app_context():
@@ -132,13 +170,11 @@ def create_app(config=None):
     from app.routes.matches import bp as matches_bp
     from app.routes.notes import bp as notes_bp
     from app.routes.registration import bp as registration_bp
-    from app.routes.waivers import bp as waivers_bp
     from app.routes._api import bp as _api_bp
 
     app.register_blueprint(_api_bp)
     app.register_blueprint(auth_bp)
     app.register_blueprint(tournaments_bp)
-    app.register_blueprint(waivers_bp)
     app.register_blueprint(matches_bp)
     app.register_blueprint(notes_bp)
     app.register_blueprint(registration_bp)
@@ -257,13 +293,45 @@ def create_app(config=None):
                         recompute_all_match_times(t.url)
                     except Exception:
                         pass
+                    db.session.remove()
     except Exception:
+        pass
+
+    # On boot: resume any YouTube uploads that were left in-progress before a restart.
+    # This is best-effort and only runs outside of tests.
+    try:
+        if not app.config.get("TESTING", False):
+            from models import Camera
+            import threading
+
+            # If YouTube upload is not configured, uploading would immediately mark them FAILED.
+            # Guard early to avoid churn.
+            if os.environ.get("YOUTUBE_UPLOAD_REFRESH_TOKEN", "").strip():
+                from app.utils.youtube_upload import upload_camera_to_youtube
+
+                with app.app_context():
+                    in_progress = Camera.query.filter_by(status="UPLOADING").all()
+                    if in_progress:
+                        app_obj = app._get_current_object()
+
+                        def _resume(uuid: str) -> None:
+                            with app_obj.app_context():
+                                upload_camera_to_youtube(uuid)
+
+                        for cam in in_progress:
+                            threading.Thread(
+                                target=_resume,
+                                args=(str(cam.uuid),),
+                                daemon=True,
+                            ).start()
+    except Exception:
+        # Never block app startup due to background upload resume failures.
         pass
 
     @app.errorhandler(413)
     def too_large(e):
         from flask import jsonify
 
-        return jsonify({"success": False, "error": "File too large. Maximum size is 10MB."}), 413
+        return jsonify({"success": False, "error": "File too large."}), 413
 
     return app

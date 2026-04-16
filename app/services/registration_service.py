@@ -19,6 +19,7 @@ from app.exceptions import (
     TournamentNotFoundError,
     ValidationError,
 )
+from app.utils.name_validation import team_pseudonym_char_error
 
 if TYPE_CHECKING:  # pragma: no cover
     from models import PlayerRegistration, TeamRegistration, Tournament
@@ -113,8 +114,9 @@ class RegistrationService:
         pseudonym = (pseudonym or "").strip()
         if not pseudonym:
             return Err(ValidationError("Team pseudonym is required"))
-        if "::" in pseudonym:
-            return Err(ValidationError('Team pseudonyms cannot contain "::"'))
+        pn_err = team_pseudonym_char_error(pseudonym)
+        if pn_err:
+            return Err(ValidationError(pn_err))
 
         existing_reg = TeamRegistration.query.filter_by(
             event=tournament_url, team=team_id, status="CONFIRMED"
@@ -352,8 +354,9 @@ class RegistrationService:
         pseudonym = (pseudonym or "").strip()
         if not pseudonym:
             return Err(ValidationError("Team pseudonym is required"))
-        if "::" in pseudonym:
-            return Err(ValidationError('Team pseudonyms cannot contain "::"'))
+        pn_err = team_pseudonym_char_error(pseudonym)
+        if pn_err:
+            return Err(ValidationError(pn_err))
 
         existing_reg = TeamRegistration.query.filter_by(
             league_id=league_id, team=team_id, status="CONFIRMED"

@@ -1,4 +1,5 @@
-//! Point recording page: two media recorders with storage/upload queues, match-status polling.
+//! Point recording page: single MP4 `MediaRecorder`, in-memory chunk queue, IndexedDB upload queue, match-status polling.
+//! The frontend records continuously during an active match, keeps recent chunks in memory, and only uploads chunks while the point-window FSM is `Recording`.
 
 use crate::api;
 use crate::types::{RecordMatchStatusResponse, RecordPointData};
@@ -6,7 +7,7 @@ use crate::Route;
 use dioxus::core::use_drop;
 use dioxus::prelude::*;
 use std::cell::RefCell;
-use std::collections::{VecDeque, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
 
 #[cfg(target_arch = "wasm32")]
@@ -15,22 +16,259 @@ use crate::api::RecordChunkMeta;
 use crate::record_idb;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::JsCast;
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::closure::Closure;
+/// Must match MediaRecorder `timeslice` / `RecordChunkMeta.chunk_length_ms` on every enqueue path.
+#[cfg(target_arch = "wasm32")]
+const RECORD_CHUNK_LENGTH_MS: u32 = 500;
+/// Keep exactly this much pre-roll and post-roll around each point.
+#[cfg(target_arch = "wasm32")]
+const POINT_RECORD_BUFFER_MS: f64 = 3000.0;
+
+/// High-resolution timestamps and structured `[record]` lines for debugging the recording pipeline in DevTools.
+#[cfg(target_arch = "wasm32")]
+fn record_now_ms() -> f64 {
+    web_sys::window()
+        .and_then(|w| w.performance())
+        .map(|p| p.now())
+        .unwrap_or_else(js_sys::Date::now)
+}
 
 #[cfg(target_arch = "wasm32")]
+fn record_log(msg: &str) {
+    web_sys::console::log_1(&format!("[record] {}", msg).into());
+}
+
+#[cfg(target_arch = "wasm32")]
+fn record_log_duration(label: &str, t0: f64) {
+    let dt = record_now_ms() - t0;
+    record_log(&format!("{} → {:.2} ms", label, dt));
+}
+
+#[cfg(target_arch = "wasm32")]
+fn record_document_is_visible() -> bool {
+    web_sys::window()
+        .and_then(|w| w.document())
+        .map(|d| !d.hidden())
+        .unwrap_or(false)
+}
+
+/// Request screen wake lock and wire `release` to re-acquire (browsers often drop the lock without tab hide).
+#[cfg(target_arch = "wasm32")]
+fn schedule_screen_wake_lock_acquire(
+    mut sentinel_sig: Signal<Option<wasm_bindgen::JsValue>>,
+    mut request_in_flight_sig: Signal<bool>,
+) {
+    use wasm_bindgen::JsValue;
+    if sentinel_sig().is_some() || request_in_flight_sig() {
+        return;
+    }
+    if !record_document_is_visible() {
+        record_log("wake lock: skipped acquire because document is hidden");
+        return;
+    }
+    request_in_flight_sig.set(true);
+    wasm_bindgen_futures::spawn_local(async move {
+        let window = match web_sys::window() {
+            Some(w) => w,
+            None => {
+                request_in_flight_sig.set(false);
+                return;
+            }
+        };
+        let navigator = window.navigator();
+        let wake_lock_js = match js_sys::Reflect::get(&navigator, &JsValue::from_str("wakeLock")) {
+            Ok(v) if !v.is_undefined() && !v.is_null() => v,
+            _ => {
+                request_in_flight_sig.set(false);
+                record_log("wake lock: navigator.wakeLock unavailable");
+                return;
+            }
+        };
+        let request_js = match js_sys::Reflect::get(&wake_lock_js, &JsValue::from_str("request")) {
+            Ok(v) if v.is_function() => v,
+            _ => {
+                request_in_flight_sig.set(false);
+                record_log("wake lock: wakeLock.request unavailable");
+                return;
+            }
+        };
+        let request_fn = match request_js.dyn_ref::<js_sys::Function>() {
+            Some(f) => f,
+            None => {
+                request_in_flight_sig.set(false);
+                record_log("wake lock: wakeLock.request is not callable");
+                return;
+            }
+        };
+        let promise = match request_fn
+            .call1(&wake_lock_js, &JsValue::from_str("screen"))
+            .ok()
+            .and_then(|v| v.dyn_into::<js_sys::Promise>().ok())
+        {
+            Some(p) => p,
+            None => {
+                request_in_flight_sig.set(false);
+                record_log("wake lock: request() did not return a promise");
+                return;
+            }
+        };
+        let result = wasm_bindgen_futures::JsFuture::from(promise).await;
+        let sentinel = match result {
+            Ok(s) => s,
+            Err(err) => {
+                request_in_flight_sig.set(false);
+                let err_text = js_sys::JSON::stringify(&err)
+                    .ok()
+                    .and_then(|v| v.as_string())
+                    .unwrap_or_else(|| format!("{err:?}"));
+                record_log(&format!("wake lock: request rejected: {err_text}"));
+                return;
+            }
+        };
+        request_in_flight_sig.set(false);
+        sentinel_sig.set(Some(sentinel.clone()));
+        record_log("wake lock: acquired");
+
+        let release_cb = Closure::wrap(Box::new({
+            let mut sentinel_sig = sentinel_sig.clone();
+            let mut request_in_flight_sig = request_in_flight_sig.clone();
+            move || {
+                sentinel_sig.set(None);
+                record_log("wake lock: released");
+                if record_document_is_visible() {
+                    schedule_screen_wake_lock_acquire(
+                        sentinel_sig.clone(),
+                        request_in_flight_sig.clone(),
+                    );
+                }
+            }
+        }) as Box<dyn FnMut()>);
+        if let Ok(add) = js_sys::Reflect::get(&sentinel, &JsValue::from_str("addEventListener")) {
+            if let Some(f) = add.dyn_ref::<js_sys::Function>() {
+                let _ = f.call3(
+                    &sentinel,
+                    &JsValue::from_str("release"),
+                    release_cb.as_ref().unchecked_ref(),
+                    &JsValue::UNDEFINED,
+                );
+            }
+        }
+        release_cb.forget();
+    });
+}
+
+/// Stop a `MediaRecorder` and wait for its `stop` event before returning.
+///
+/// Rationale: creating a new recorder too early can overlap cleanup/final `dataavailable` in some browsers.
+#[cfg(target_arch = "wasm32")]
+async fn stop_media_recorder_fully(rec: web_sys::MediaRecorder) {
+    use wasm_bindgen::JsValue;
+    use wasm_bindgen_futures::JsFuture;
+
+    let t_stop = record_now_ms();
+    record_log("MediaRecorder: stop_media_recorder_fully → begin (requestData + stop + await onstop)");
+
+    let resolve_fn: Rc<RefCell<Option<js_sys::Function>>> = Rc::new(RefCell::new(None));
+    let resolve_fn_c = resolve_fn.clone();
+    let promise = js_sys::Promise::new(&mut move |resolve, _reject| {
+        if let Some(f) = resolve.dyn_ref::<js_sys::Function>() {
+            *resolve_fn_c.borrow_mut() = Some(f.clone());
+        }
+    });
+
+    let resolve_fn_for_stop = resolve_fn.clone();
+    let onstop = Closure::wrap(Box::new(move || {
+        if let Some(f) = resolve_fn_for_stop.borrow_mut().take() {
+            let _ = f.call0(&JsValue::UNDEFINED);
+        }
+    }) as Box<dyn FnMut()>);
+    rec.set_onstop(Some(onstop.as_ref().unchecked_ref()));
+    onstop.forget();
+
+    // Best effort: request a final `dataavailable` before stop.
+    let _ = rec.request_data();
+    let _ = rec.stop();
+
+    // Wait for stop event to fire.
+    let _ = JsFuture::from(promise).await;
+
+    // Detach handlers to allow GC and prevent late events calling into stale closures.
+    rec.set_onstop(None);
+    rec.set_ondataavailable(None);
+    record_log_duration("MediaRecorder: stop_media_recorder_fully (total)", t_stop);
+}
+
+/// Re-request wake lock when the tab becomes visible (lock is released while hidden) and on first pointer (gesture requirement on many phones).
+#[cfg(target_arch = "wasm32")]
+fn register_screen_wake_lock_listeners(
+    sentinel_sig: Signal<Option<wasm_bindgen::JsValue>>,
+    request_in_flight_sig: Signal<bool>,
+) {
+    use wasm_bindgen::closure::Closure;
+    let Some(window) = web_sys::window() else {
+        return;
+    };
+    let Some(doc) = window.document() else {
+        return;
+    };
+
+    let vis = Closure::wrap(Box::new({
+        let mut sentinel_sig = sentinel_sig.clone();
+        let mut request_in_flight_sig = request_in_flight_sig.clone();
+        move || {
+            if record_document_is_visible() {
+                schedule_screen_wake_lock_acquire(
+                    sentinel_sig.clone(),
+                    request_in_flight_sig.clone(),
+                );
+            }
+        }
+    }) as Box<dyn FnMut()>);
+    let _ = doc.add_event_listener_with_callback("visibilitychange", vis.as_ref().unchecked_ref());
+    vis.forget();
+
+    let ptr = Closure::wrap(Box::new({
+        let mut sentinel_sig = sentinel_sig.clone();
+        let mut request_in_flight_sig = request_in_flight_sig.clone();
+        move || {
+            schedule_screen_wake_lock_acquire(sentinel_sig.clone(), request_in_flight_sig.clone());
+        }
+    }) as Box<dyn FnMut()>);
+    let _ = window.add_event_listener_with_callback("pointerdown", ptr.as_ref().unchecked_ref());
+    ptr.forget();
+
+    let focus = Closure::wrap(Box::new({
+        let mut sentinel_sig = sentinel_sig.clone();
+        let mut request_in_flight_sig = request_in_flight_sig.clone();
+        move || {
+            schedule_screen_wake_lock_acquire(sentinel_sig.clone(), request_in_flight_sig.clone());
+        }
+    }) as Box<dyn FnMut()>);
+    let _ = window.add_event_listener_with_callback("focus", focus.as_ref().unchecked_ref());
+    focus.forget();
+}
+
+/// In-memory recording FSM: `Recording` while `in_point_recording_window`; chunks flush to IndexedDB only in `Recording`.
+#[cfg(target_arch = "wasm32")]
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum RecorderStatus {
+enum RecordFsm {
     Idle,
     Recording,
 }
 
 #[cfg(target_arch = "wasm32")]
-struct StoredChunk {
+struct MemVideoChunk {
     blob: web_sys::Blob,
-    /// Session ID when this chunk was recorded (set at capture time so drain order can't mix sessions).
-    session_id: String,
-    chunk_start_timestamp: f64,
-    chunk_duration_ms: u32,
-    recording_session_start_time: f64,
+    blob_event_timestamp_ms: f64,
+    wall_epoch_ms: f64,
+}
+
+#[cfg(target_arch = "wasm32")]
+enum MemQueueItem {
+    Video(MemVideoChunk),
+    InitSegment { blob: web_sys::Blob, wall_epoch_ms: f64 },
+    FinalizeMatch { match_id: String },
 }
 
 /// In-memory queue item: key references chunk or finalize in IndexedDB.
@@ -40,11 +278,19 @@ enum QueueItem {
     FinalizeMatch { match_id: String },
 }
 
+/// Log queue length and item types.
 #[cfg(target_arch = "wasm32")]
-#[derive(Clone)]
-struct UploadBarItem {
-    match_id: Option<String>,
-    is_finalize: bool,
+fn record_log_mem_queue_snapshot(mem_queue: &Rc<RefCell<VecDeque<MemQueueItem>>>) {
+    let q = mem_queue.borrow();
+    let mut parts: Vec<String> = Vec::new();
+    for (i, item) in q.iter().enumerate() {
+        match item {
+            MemQueueItem::Video(_) => parts.push(format!("{i}:video")),
+            MemQueueItem::InitSegment { .. } => parts.push(format!("{i}:init")),
+            MemQueueItem::FinalizeMatch { .. } => parts.push(format!("{i}:finalize")),
+        }
+    }
+    record_log(&format!("mem_queue: len={} [{}]", q.len(), parts.join(", ")));
 }
 
 /// LocalStorage key for the selected camera device ID (wasm only).
@@ -173,8 +419,6 @@ pub fn Record(url: String, field: ReadSignal<String>, camera_key: ReadSignal<Str
     let mut selected_camera_id = use_signal(|| None::<String>);
     let mut preview_stream = use_signal(|| None::<web_sys::MediaStream>);
     let mut storage_warning = use_signal(|| None::<String>);
-    #[cfg(target_arch = "wasm32")]
-    let mut upload_bar_items = use_signal(|| Vec::<UploadBarItem>::new());
 
     #[cfg(target_arch = "wasm32")]
     {
@@ -195,41 +439,17 @@ pub fn Record(url: String, field: ReadSignal<String>, camera_key: ReadSignal<Str
         });
     }
 
-    // Screen wake lock: keep the device awake while the record page is open (wasm only).
+    // Screen wake lock: keep the device awake the entire time this page is open (wasm only).
+    // Initial request may fail without a user gesture; first pointerdown + visibility + release re-acquire.
     #[cfg(target_arch = "wasm32")]
     {
         let wake_lock_sentinel = use_signal(|| None::<wasm_bindgen::JsValue>);
+        let wake_lock_request_in_flight = use_signal(|| false);
         use_effect(move || {
-            let mut sentinel_sig = wake_lock_sentinel.to_owned();
-            wasm_bindgen_futures::spawn_local(async move {
-                let window = match web_sys::window() {
-                    Some(w) => w,
-                    None => return,
-                };
-                let navigator = window.navigator();
-                let wake_lock_js = match js_sys::Reflect::get(&navigator, &wasm_bindgen::JsValue::from_str("wakeLock")) {
-                    Ok(v) if !v.is_undefined() && !v.is_null() => v,
-                    _ => return,
-                };
-                let request_js = match js_sys::Reflect::get(&wake_lock_js, &wasm_bindgen::JsValue::from_str("request")) {
-                    Ok(v) if v.is_function() => v,
-                    _ => return,
-                };
-                let request_fn = match request_js.dyn_ref::<js_sys::Function>() {
-                    Some(f) => f,
-                    None => return,
-                };
-                let type_arg = wasm_bindgen::JsValue::from_str("screen");
-                let promise = request_fn.call1(&wake_lock_js, &type_arg).ok().and_then(|v| v.dyn_into::<js_sys::Promise>().ok());
-                let promise = match promise {
-                    Some(p) => p,
-                    None => return,
-                };
-                let result = wasm_bindgen_futures::JsFuture::from(promise).await;
-                if let Ok(sentinel) = result {
-                    sentinel_sig.set(Some(sentinel));
-                }
-            });
+            let sentinel_sig = wake_lock_sentinel.to_owned();
+            let request_in_flight_sig = wake_lock_request_in_flight.to_owned();
+            schedule_screen_wake_lock_acquire(sentinel_sig.clone(), request_in_flight_sig.clone());
+            register_screen_wake_lock_listeners(sentinel_sig, request_in_flight_sig);
         });
         let wake_lock_for_drop = wake_lock_sentinel.to_owned();
         use_drop(move || {
@@ -257,15 +477,18 @@ pub fn Record(url: String, field: ReadSignal<String>, camera_key: ReadSignal<Str
             }
             if let Some(window) = web_sys::window() {
                 if let Some(doc) = window.document() {
-                    if let Some(el) = doc.get_element_by_id("record-preview") {
-                        let _ = el.dyn_into::<web_sys::HtmlMediaElement>().map(|media| media.set_src_object(None));
-                    }
+            if let Some(el) = doc.get_element_by_id("record-preview-capture") {
+                let _ = el.dyn_into::<web_sys::HtmlMediaElement>().map(|media| {
+                    let _ = media.pause();
+                    media.set_src_object(None);
+                });
+            }
                 }
             }
         });
     }
 
-    // When we have stream + field + key, start the two recorders and the monitor/upload loop (wasm only).
+    // When we have stream + field + key, start the MP4 recorder and the monitor/upload loop (wasm only).
     #[cfg(target_arch = "wasm32")]
     {
         let poll_url = url.clone();
@@ -279,7 +502,6 @@ pub fn Record(url: String, field: ReadSignal<String>, camera_key: ReadSignal<Str
         let upload_count_sig = upload_count.to_owned();
         let upload_total_sig = upload_total.to_owned();
         let storage_warning_sig = storage_warning.to_owned();
-        let upload_bar_items_sig = upload_bar_items.to_owned();
         let preview_stream_sig = preview_stream.to_owned();
         use_effect(move || {
             let stream_opt = preview_stream_sig();
@@ -308,7 +530,6 @@ pub fn Record(url: String, field: ReadSignal<String>, camera_key: ReadSignal<Str
                     upload_count_sig,
                     upload_total_sig,
                     storage_warning_sig,
-                    upload_bar_items_sig,
                 )
                 .await;
             });
@@ -367,8 +588,11 @@ pub fn Record(url: String, field: ReadSignal<String>, camera_key: ReadSignal<Str
                                                 class: "btn btn-success", 
                                                 onclick: move |_| {
                                                     let new_name = temp_name();
-                                                    if let Route::Record { url, field, camera_key, .. } = route.clone() {
-                                                        reload_record_page_with_camera_name(&url, &field, &camera_key, &new_name);
+                                                    // Full navigation reloads the app — only when the name actually changes (avoids accidental mobile reloads).
+                                                    if new_name.trim() != camera_name().trim() {
+                                                        if let Route::Record { url, field, camera_key, .. } = route.clone() {
+                                                            reload_record_page_with_camera_name(&url, &field, &camera_key, &new_name.trim());
+                                                        }
                                                     }
                                                     is_editing_name.set(false);
                                                 },
@@ -437,24 +661,9 @@ pub fn Record(url: String, field: ReadSignal<String>, camera_key: ReadSignal<Str
                                     is_uploading,
                                     upload_count,
                                     upload_total,
-                                    upload_bar_items,
                                 }
                                 if let Some(ref msg) = storage_warning() {
                                     div { class: "alert alert-warning", "{msg}" }
-                                }
-                                div {
-                                    id: "record-video-container",
-                                    style: format!("display: {};", if matches!(status(), RecordStatus::Connected) { "block" } else { "none" }),
-                                    div { class: "mb-2",
-                                        video {
-                                            id: "record-preview",
-                                            autoplay: true,
-                                            muted: true,
-                                            playsinline: true,
-                                            style: "width: 100%; max-width: 640px; border: 2px solid #333; background: #000;",
-                                        }
-                                    }
-                                    // Recording indicator is now part of the match header above.
                                 }
                                 if matches!(status(), RecordStatus::NoMatch) && !is_recording() {
                                     div { class: "alert alert-secondary", id: "record-no-match",
@@ -475,20 +684,29 @@ fn upload_progress_section(
     is_uploading: Signal<bool>,
     upload_count: Signal<u32>,
     upload_total: Signal<u32>,
-    upload_bar_items: Signal<Vec<UploadBarItem>>,
 ) -> Element {
-    let remaining = {
-        let total = upload_total();
-        let done = upload_count();
-        total.saturating_sub(done)
+    let total = upload_total();
+    let done = upload_count();
+    let remaining = total.saturating_sub(done);
+    let pct = if total > 0 {
+        (100.0_f64 * f64::from(done) / f64::from(total.max(1))).min(100.0)
+    } else {
+        0.0
     };
-    let status_text = if remaining == 0 {
+    let status_text = if total == 0 {
+        "No uploads queued".to_string()
+    } else if remaining == 0 {
         "All data uploaded".to_string()
     } else {
-        format!("{remaining} chunks remaining to be uploaded")
+        format!(
+            "{done} of {total} finished uploading ({remaining} remaining){}",
+            if is_uploading() {
+                " — working…"
+            } else {
+                ""
+            }
+        )
     };
-
-    let items = upload_bar_items();
 
     rsx! {
         div { class: "mt-3",
@@ -497,60 +715,19 @@ fn upload_progress_section(
                 class: "mb-1 small text-muted",
                 "{status_text}"
             }
-            if !items.is_empty() {
-                div {
-                    class: "d-flex",
-                    style: "height: 10px; border-radius: 4px; overflow: hidden; background: #e9ecef;",
-                    for (idx, item) in items.iter().enumerate() {
-                        div {
-                            key: "{idx}",
-                            style: format!(
-                                "flex: 0 0 {}; background: {}; position: relative;{}",
-                                upload_bar_width(items.len()),
-                                upload_bar_color(item.match_id.as_deref()),
-                                if idx < items.len().saturating_sub(1) {
-                                    " border-right: 1px solid rgba(0,0,0,0.25);"
-                                } else {
-                                    ""
-                                }
-                            ),
-                            if item.is_finalize {
-                                span {
-                                    style: "position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 9px; color: #fff;",
-                                    "F"
-                                }
-                            }
-                        }
-                    }
-                }
-            } else {
+            if total > 0 {
                 div {
                     class: "progress",
-                    style: "height: 6px;",
+                    style: "height: 12px;",
                     div {
                         class: "progress-bar bg-success",
-                        style: "width: 100%;",
+                        role: "progressbar",
+                        style: format!("width: {pct:.2}%;"),
                     }
                 }
             }
         }
     }
-}
-
-fn upload_bar_width(count: usize) -> String {
-    format!("{:.4}%", 100.0 / (count.max(1) as f32))
-}
-
-fn upload_bar_color(match_id: Option<&str>) -> String {
-    if let Some(id) = match_id {
-        if id.len() >= 6 {
-            if let Ok(val) = u32::from_str_radix(&id[..6].replace('-', ""), 16) {
-                let h = (val % 360) as i32;
-                return format!("hsl({h}, 70%, 55%)");
-            }
-        }
-    }
-    "#0d6efd".to_string()
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -587,6 +764,9 @@ async fn initialize_camera_and_enumerate(
     use wasm_bindgen::JsCast;
     use wasm_bindgen_futures::JsFuture;
     use web_sys::MediaStreamConstraints;
+
+    let t_cam = record_now_ms();
+    record_log("initialize_camera: start (getUserMedia + enumerate + device-specific stream)");
 
     let window = match web_sys::window() {
         Some(w) => w,
@@ -747,19 +927,7 @@ async fn initialize_camera_and_enumerate(
     };
 
     preview_stream.set(Some(stream.clone()));
-
-    if let Some(doc) = window.document() {
-        if let Some(video_el) = doc.get_element_by_id("record-preview") {
-            if let Ok(media_el) = video_el.dyn_into::<web_sys::HtmlMediaElement>() {
-                media_el.set_src_object(Some(&stream));
-                // Safari (especially iOS) often won't show the preview until play() is called.
-                let play_promise = media_el.play();
-                if let Ok(p) = play_promise {
-                    let _ = wasm_bindgen_futures::JsFuture::from(p).await;
-                }
-            }
-        }
-    }
+    record_log_duration("initialize_camera: complete (total)", t_cam);
 }
 
 /// Parse ISO timestamp string to milliseconds since epoch.
@@ -779,91 +947,237 @@ fn parse_iso_ms(s: Option<&str>) -> Option<f64> {
         })
 }
 
-/// Returns true if current time (ms) is between point start and 10s after point end.
+/// True if `now` is during a point or within 3s before start / after end (recording FSM window).
 #[cfg(target_arch = "wasm32")]
-fn point_in_progress(point: &RecordPointData, now_ms: f64) -> bool {
-    let start_ms = match parse_iso_ms(point.stamp.as_deref()) {
-        Some(t) => t,
-        None => return false,
-    };
-    if now_ms < start_ms {
-        web_sys::console::log_1(&format!("point not in progress: now_ms < start_ms: {} < {}", now_ms, start_ms).into());
-        return false;
+fn in_point_recording_window(points: &[RecordPointData], now_ms: f64) -> bool {
+    points.iter().any(|p| {
+        let Some(start_ms) = parse_iso_ms(p.stamp.as_deref()) else {
+            return false;
+        };
+        if now_ms < start_ms - POINT_RECORD_BUFFER_MS {
+            return false;
+        }
+        match p.end_stamp.as_deref().and_then(|s| parse_iso_ms(Some(s))) {
+            Some(end_ms) => now_ms <= end_ms + POINT_RECORD_BUFFER_MS,
+            None => true,
+        }
+    })
+}
+
+#[cfg(target_arch = "wasm32")]
+fn blob_event_wall_epoch_ms(ev: &web_sys::BlobEvent) -> f64 {
+    web_sys::window()
+        .and_then(|w| w.performance())
+        .map(|p| p.time_origin() + ev.time_stamp())
+        .unwrap_or_else(|| js_sys::Date::now())
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn blob_to_bytes(blob: &web_sys::Blob) -> Vec<u8> {
+    let promise = blob.array_buffer();
+    let ab = wasm_bindgen_futures::JsFuture::from(promise)
+        .await
+        .unwrap_or_else(|_| wasm_bindgen::JsValue::UNDEFINED);
+    let uint8 = js_sys::Uint8Array::new(&ab);
+    let mut out = vec![0u8; uint8.length() as usize];
+    uint8.copy_to(&mut out);
+    out
+}
+
+#[cfg(target_arch = "wasm32")]
+fn bytes_to_blob(bytes: &[u8]) -> web_sys::Blob {
+    let arr = js_sys::Uint8Array::from(bytes);
+    let parts = js_sys::Array::new();
+    parts.push(&arr);
+    web_sys::Blob::new_with_u8_array_sequence(&parts).expect("Blob::new")
+}
+
+#[cfg(target_arch = "wasm32")]
+fn extract_ftyp_moov(bytes: &[u8]) -> Option<Vec<u8>> {
+    let mut idx = 0usize;
+    let mut out = Vec::new();
+    let mut saw_ftyp = false;
+    let mut saw_moov = false;
+    while idx + 8 <= bytes.len() {
+        let size = u32::from_be_bytes(bytes[idx..idx + 4].try_into().ok()?) as usize;
+        if size < 8 || idx + size > bytes.len() {
+            break;
+        }
+        let typ = &bytes[idx + 4..idx + 8];
+        if typ == b"ftyp" {
+            out.extend_from_slice(&bytes[idx..idx + size]);
+            saw_ftyp = true;
+        } else if typ == b"moov" {
+            out.extend_from_slice(&bytes[idx..idx + size]);
+            saw_moov = true;
+            if saw_ftyp {
+                break;
+            }
+        } else if saw_ftyp && !saw_moov {
+            // Keep scanning until we find moov after ftyp.
+        }
+        idx += size;
     }
-    let end_plus_10 = point
-        .end_stamp
-        .as_deref()
-        .and_then(|s| parse_iso_ms(Some(s)))
-        .map(|end_ms| end_ms + 10_000.0);
-    match end_plus_10 {
-        Some(limit) => now_ms <= limit,
-        None => true, // no end yet, point still in progress
+    if saw_ftyp && saw_moov {
+        Some(out)
+    } else {
+        None
     }
 }
 
-/// Among points that are in progress, return the one that started latest (by stamp).
+/// Upload drained mem-queue items to IndexedDB (video chunks + finalize rows).
 #[cfg(target_arch = "wasm32")]
-fn latest_point_in_progress(points: &[RecordPointData], now_ms: f64) -> Option<&RecordPointData> {
-    points
-        .iter()
-        .filter(|p| point_in_progress(*p, now_ms))
-        .max_by(|a, b| {
-            let ta = parse_iso_ms(a.stamp.as_deref()).unwrap_or(0.0);
-            let tb = parse_iso_ms(b.stamp.as_deref()).unwrap_or(0.0);
-            ta.partial_cmp(&tb).unwrap_or(std::cmp::Ordering::Equal)
+#[allow(clippy::too_many_arguments)]
+async fn process_drained_mem_queue_items(
+    drained: Vec<MemQueueItem>,
+    db: &idb::Database,
+    match_id: &str,
+    session_id: &str,
+    wall: f64,
+    tournament_url: String,
+    field: String,
+    camera_name: String,
+    key: Option<String>,
+    container: String,
+    pending_chunks_by_match: &Rc<RefCell<HashMap<String, u32>>>,
+    upload_queue: &Rc<RefCell<VecDeque<(String, QueueItem)>>>,
+) -> (usize, u32) {
+    let drained_n = drained.len();
+    let mut n_added = 0u32;
+    for item in drained {
+        match item {
+            MemQueueItem::InitSegment { blob, wall_epoch_ms } => {
+                let meta = RecordChunkMeta {
+                    tournament_url: tournament_url.clone(),
+                    field: field.clone(),
+                    match_id: match_id.to_string(),
+                    session_id: session_id.to_string(),
+                    chunk_start_timestamp: wall_epoch_ms,
+                    recording_session_start_time: wall,
+                    chunk_length_ms: 0,
+                    camera_name: camera_name.clone(),
+                    key: key.clone(),
+                    container: container.clone(),
+                    blob_event_timestamp_ms: 0.0,
+                    is_init_segment: true,
+                };
+                if let Ok(k) = record_idb::get_next_sequence(db).await {
+                    if record_idb::put_chunk(db, &k, &meta, &blob).await.is_ok() {
+                        n_added += 1;
+                        *pending_chunks_by_match
+                            .borrow_mut()
+                            .entry(match_id.to_string())
+                            .or_insert(0) += 1;
+                        upload_queue.borrow_mut().push_back((
+                            k,
+                            QueueItem::Chunk {
+                                match_id: Some(match_id.to_string()),
+                            },
+                        ));
+                    }
+                }
+            }
+            MemQueueItem::Video(ch) => {
+                let meta = RecordChunkMeta {
+                    tournament_url: tournament_url.clone(),
+                    field: field.clone(),
+                    match_id: match_id.to_string(),
+                    session_id: session_id.to_string(),
+                    chunk_start_timestamp: ch.wall_epoch_ms,
+                    recording_session_start_time: wall,
+                    chunk_length_ms: RECORD_CHUNK_LENGTH_MS,
+                    camera_name: camera_name.clone(),
+                    key: key.clone(),
+                    container: container.clone(),
+                    blob_event_timestamp_ms: ch.blob_event_timestamp_ms,
+                    is_init_segment: false,
+                };
+                if let Ok(k) = record_idb::get_next_sequence(db).await {
+                    if record_idb::put_chunk(db, &k, &meta, &ch.blob).await.is_ok() {
+                        n_added += 1;
+                        *pending_chunks_by_match
+                            .borrow_mut()
+                            .entry(match_id.to_string())
+                            .or_insert(0) += 1;
+                        upload_queue.borrow_mut().push_back((
+                            k,
+                            QueueItem::Chunk {
+                                match_id: Some(match_id.to_string()),
+                            },
+                        ));
+                    }
+                }
+            }
+            MemQueueItem::FinalizeMatch { match_id: fid } => {
+                if let Ok(k) = record_idb::get_next_sequence(db).await {
+                    if record_idb::put_finalize(db, &k, &fid).await.is_ok() {
+                        n_added += 1;
+                        upload_queue.borrow_mut().push_back((
+                            k,
+                            QueueItem::FinalizeMatch { match_id: fid },
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    (drained_n, n_added)
+}
+
+/// Idle-state queue maintenance: enqueue a front `FinalizeMatch`, otherwise evict one stale front video chunk.
+#[cfg(target_arch = "wasm32")]
+async fn mem_queue_idle_step(
+    mem_queue: &Rc<RefCell<VecDeque<MemQueueItem>>>,
+    db_holder: &Rc<RefCell<Option<idb::Database>>>,
+    upload_queue: &Rc<RefCell<VecDeque<(String, QueueItem)>>>,
+    mut upload_total_sig: Signal<u32>,
+    now_ms: f64,
+) {
+    let front_item = {
+        mem_queue.borrow().front().map(|it| match it {
+            MemQueueItem::Video(ch) => Ok(ch.wall_epoch_ms),
+            MemQueueItem::InitSegment { wall_epoch_ms, .. } => Ok(*wall_epoch_ms),
+            MemQueueItem::FinalizeMatch { match_id } => Err(match_id.clone()),
         })
+    };
+
+    match front_item {
+        Some(Err(front_match_id)) => {
+            let Some(MemQueueItem::FinalizeMatch { match_id }) = mem_queue.borrow_mut().pop_front() else {
+                return;
+            };
+            debug_assert_eq!(front_match_id, match_id);
+            if let Some(ref db) = *db_holder.borrow() {
+                if let Ok(k) = record_idb::get_next_sequence(db).await {
+                    if record_idb::put_finalize(db, &k, &match_id).await.is_ok() {
+                        upload_total_sig.set(upload_total_sig() + 1);
+                        upload_queue.borrow_mut().push_back((
+                            k,
+                            QueueItem::FinalizeMatch {
+                                match_id: match_id.clone(),
+                            },
+                        ));
+                        record_log(&format!("mem_queue_idle_step: queued finalize match_id={}", match_id));
+                    }
+                }
+            }
+        }
+        Some(Ok(front_wall_epoch_ms)) => {
+            if now_ms - front_wall_epoch_ms > POINT_RECORD_BUFFER_MS {
+                mem_queue.borrow_mut().pop_front();
+                record_log("mem_queue_idle_step: evicted stale front video chunk (>3s old)");
+            }
+        }
+        None => {}
+    }
 }
 
-/// Capture one frame from #record-preview video as JPEG (max width 640, quality 0.7). WASM only.
+/// JPEG encode helper (quality 0.7 via canvas `toBlob`).
 #[cfg(target_arch = "wasm32")]
-async fn capture_preview_frame() -> Result<bytes::Bytes, String> {
+async fn canvas_to_jpeg_bytes(canvas: &web_sys::HtmlCanvasElement) -> Result<bytes::Bytes, String> {
     use wasm_bindgen::closure::Closure;
     use wasm_bindgen::JsCast;
 
-    let window = web_sys::window().ok_or("no window")?;
-    let doc = window.document().ok_or("no document")?;
-    let video_el = doc
-        .get_element_by_id("record-preview")
-        .ok_or("no record-preview element")?;
-    let video = video_el
-        .dyn_ref::<web_sys::HtmlVideoElement>()
-        .ok_or("record-preview is not a video")?
-        .clone();
-    let vw = video.video_width();
-    let vh = video.video_height();
-    if vw == 0 || vh == 0 {
-        return Err("video not ready".to_string());
-    }
-    let (canvas_w, canvas_h) = if vw > 640 {
-        (640u32, (vh as u32 * 640 / vw as u32))
-    } else {
-        (vw as u32, vh as u32)
-    };
-    let canvas = doc
-        .create_element("canvas")
-        .map_err(|_| "create canvas")?
-        .dyn_into::<web_sys::HtmlCanvasElement>()
-        .map_err(|_| "canvas")?;
-    canvas.set_width(canvas_w);
-    canvas.set_height(canvas_h);
-    let ctx = canvas
-        .get_context("2d")
-        .map_err(|_| "get context")?
-        .ok_or("no context")?
-        .dyn_into::<web_sys::CanvasRenderingContext2d>()
-        .map_err(|_| "2d")?;
-    ctx.draw_image_with_html_video_element_and_sw_and_sh_and_dx_and_dy_and_dw_and_dh(
-        &video,
-        0.0,
-        0.0,
-        vw as f64,
-        vh as f64,
-        0.0,
-        0.0,
-        canvas_w as f64,
-        canvas_h as f64,
-    )
-    .map_err(|_| "draw".to_string())?;
     let promise = js_sys::Promise::new(&mut |resolve, reject| {
         let resolve = resolve.clone();
         let reject = reject.clone();
@@ -886,8 +1200,285 @@ async fn capture_preview_frame() -> Result<bytes::Bytes, String> {
         .await
         .map_err(|_| "array_buffer".to_string())?;
     let arr = js_sys::Uint8Array::new(&ab);
-    let vec = arr.to_vec();
-    Ok(bytes::Bytes::from(vec))
+    Ok(bytes::Bytes::from(arr.to_vec()))
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn grab_frame_via_image_capture(
+    track: &web_sys::MediaStreamTrack,
+) -> Result<web_sys::ImageBitmap, wasm_bindgen::JsValue> {
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen::JsValue;
+
+    let global = js_sys::global();
+    let ic_ctor = js_sys::Reflect::get(&global, &"ImageCapture".into())?;
+    if ic_ctor.is_undefined() || ic_ctor.is_null() {
+        return Err(JsValue::from_str("no ImageCapture"));
+    }
+    let ctor = ic_ctor
+        .dyn_ref::<js_sys::Function>()
+        .ok_or_else(|| JsValue::from_str("not ImageCapture"))?;
+    let args = js_sys::Array::new();
+    args.push(&JsValue::from(track.clone()));
+    let image_capture = js_sys::Reflect::construct(ctor, &args)?;
+    let grab = js_sys::Reflect::get(&image_capture, &"grabFrame".into())?;
+    let grab_fn = grab
+        .dyn_ref::<js_sys::Function>()
+        .ok_or_else(|| JsValue::from_str("no grabFrame"))?;
+    let p = grab_fn.call0(&image_capture)?;
+    let promise = p.dyn_into::<js_sys::Promise>()?;
+    let result = wasm_bindgen_futures::JsFuture::from(promise).await?;
+    result
+        .dyn_into::<web_sys::ImageBitmap>()
+        .map_err(|_| JsValue::from_str("not ImageBitmap"))
+}
+
+/// Off-screen video used only when `ImageCapture` is unavailable (e.g. some Safari builds). Muted, zero volume, not visible.
+#[cfg(target_arch = "wasm32")]
+async fn ensure_hidden_capture_video(stream: &web_sys::MediaStream) -> Result<web_sys::HtmlVideoElement, String> {
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen_futures::JsFuture;
+
+    let window = web_sys::window().ok_or("no window")?;
+    let doc = window.document().ok_or("no document")?;
+    let body = doc.body().ok_or("no body")?;
+
+    let video: web_sys::HtmlVideoElement = if let Some(el) = doc.get_element_by_id("record-preview-capture") {
+        el.dyn_into().map_err(|_| "record-preview-capture")?
+    } else {
+        let v = doc
+            .create_element("video")
+            .map_err(|_| "create video")?
+            .dyn_into::<web_sys::HtmlVideoElement>()
+            .map_err(|_| "video cast")?;
+        v.set_id("record-preview-capture");
+        v.set_muted(true);
+        v.set_volume(0.0);
+        let _ = v.set_attribute("playsinline", "");
+        let _ = v.set_attribute(
+            "style",
+            "position:fixed;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none;",
+        );
+        body.append_child(&v).map_err(|_| "append")?;
+        v
+    };
+
+    if video.src_object().is_none() {
+        video.set_src_object(Some(stream));
+        if let Ok(p) = video.play() {
+            let _ = JsFuture::from(p).await;
+        }
+    }
+    Ok(video)
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn canvas_jpeg_from_image_bitmap(bitmap: &web_sys::ImageBitmap) -> Result<bytes::Bytes, String> {
+    use wasm_bindgen::JsCast;
+
+    let vw = bitmap.width() as i32;
+    let vh = bitmap.height() as i32;
+    if vw <= 0 || vh <= 0 {
+        return Err("bitmap empty".to_string());
+    }
+    let (canvas_w, canvas_h) = if vw > 640 {
+        (640u32, (vh as u32 * 640 / vw as u32))
+    } else {
+        (vw as u32, vh as u32)
+    };
+    let window = web_sys::window().ok_or("no window")?;
+    let doc = window.document().ok_or("no document")?;
+    let canvas = doc
+        .create_element("canvas")
+        .map_err(|_| "create canvas")?
+        .dyn_into::<web_sys::HtmlCanvasElement>()
+        .map_err(|_| "canvas")?;
+    canvas.set_width(canvas_w);
+    canvas.set_height(canvas_h);
+    let ctx = canvas
+        .get_context("2d")
+        .map_err(|_| "get context")?
+        .ok_or("no context")?
+        .dyn_into::<web_sys::CanvasRenderingContext2d>()
+        .map_err(|_| "2d")?;
+    ctx.draw_image_with_image_bitmap_and_sw_and_sh_and_dx_and_dy_and_dw_and_dh(
+        bitmap,
+        0.0,
+        0.0,
+        vw as f64,
+        vh as f64,
+        0.0,
+        0.0,
+        canvas_w as f64,
+        canvas_h as f64,
+    )
+    .map_err(|_| "draw".to_string())?;
+    canvas_to_jpeg_bytes(&canvas).await
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn canvas_jpeg_from_video_element(
+    video: &web_sys::HtmlVideoElement,
+    vw: u32,
+    vh: u32,
+) -> Result<bytes::Bytes, String> {
+    use wasm_bindgen::JsCast;
+
+    let (canvas_w, canvas_h) = if vw > 640 {
+        (640u32, vh * 640 / vw)
+    } else {
+        (vw, vh)
+    };
+    let window = web_sys::window().ok_or("no window")?;
+    let doc = window.document().ok_or("no document")?;
+    let canvas = doc
+        .create_element("canvas")
+        .map_err(|_| "create canvas")?
+        .dyn_into::<web_sys::HtmlCanvasElement>()
+        .map_err(|_| "canvas")?;
+    canvas.set_width(canvas_w);
+    canvas.set_height(canvas_h);
+    let ctx = canvas
+        .get_context("2d")
+        .map_err(|_| "get context")?
+        .ok_or("no context")?
+        .dyn_into::<web_sys::CanvasRenderingContext2d>()
+        .map_err(|_| "2d")?;
+    ctx.draw_image_with_html_video_element_and_sw_and_sh_and_dx_and_dy_and_dw_and_dh(
+        video,
+        0.0,
+        0.0,
+        f64::from(vw),
+        f64::from(vh),
+        0.0,
+        0.0,
+        canvas_w as f64,
+        canvas_h as f64,
+    )
+    .map_err(|_| "draw".to_string())?;
+    canvas_to_jpeg_bytes(&canvas).await
+}
+
+/// Capture one frame as JPEG (max width 640). Prefers `ImageCapture` (no `<video>` playback); falls back to a hidden muted video element.
+#[cfg(target_arch = "wasm32")]
+async fn capture_preview_frame_from_stream(stream: &web_sys::MediaStream) -> Result<bytes::Bytes, String> {
+    use wasm_bindgen::JsCast;
+
+    let t_cap = record_now_ms();
+    let tracks = stream.get_video_tracks();
+    if tracks.length() == 0 {
+        return Err("no video track".to_string());
+    }
+    let track = tracks
+        .get(0)
+        .dyn_into::<web_sys::MediaStreamTrack>()
+        .map_err(|_| "video track")?;
+
+    if let Ok(bitmap) = grab_frame_via_image_capture(&track).await {
+        let t_jpeg = record_now_ms();
+        let res = canvas_jpeg_from_image_bitmap(&bitmap).await;
+        bitmap.close();
+        let jpeg_ms = record_now_ms() - t_jpeg;
+        let total_ms = record_now_ms() - t_cap;
+        record_log(&format!(
+            "preview_frame: path=ImageCapture jpeg_encode={:.2} ms total={:.2} ms",
+            jpeg_ms, total_ms
+        ));
+        return res;
+    }
+
+    record_log("preview_frame: ImageCapture unavailable or failed; using hidden <video> fallback");
+    let t_vid = record_now_ms();
+    let video = ensure_hidden_capture_video(stream).await?;
+    record_log_duration("preview_frame: ensure_hidden_capture_video", t_vid);
+    let t_wait = record_now_ms();
+    for _ in 0..60 {
+        if video.video_width() > 0 && video.video_height() > 0 {
+            break;
+        }
+        gloo_timers::future::TimeoutFuture::new(100).await;
+    }
+    record_log_duration("preview_frame: wait for video dimensions", t_wait);
+    let vw = video.video_width();
+    let vh = video.video_height();
+    if vw == 0 || vh == 0 {
+        return Err("video not ready".to_string());
+    }
+    let t_enc = record_now_ms();
+    let out = canvas_jpeg_from_video_element(&video, vw, vh).await;
+    let enc_ms = record_now_ms() - t_enc;
+    let total_ms = record_now_ms() - t_cap;
+    record_log(&format!(
+        "preview_frame: path=hidden_video encode={:.2} ms total={:.2} ms ok={}",
+        enc_ms,
+        total_ms,
+        out.is_ok()
+    ));
+    out
+}
+
+/// Parse a JS number or BigInt (or numeric string) to `f64`. Plain `JsValue::as_f64()` misses BigInt.
+#[cfg(target_arch = "wasm32")]
+fn js_value_to_f64(v: &wasm_bindgen::JsValue) -> Option<f64> {
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen::JsValue;
+    if v.is_undefined() || v.is_null() {
+        return None;
+    }
+    if let Some(n) = v.as_f64() {
+        if n.is_finite() {
+            return Some(n);
+        }
+    }
+    let number_ctor = js_sys::Reflect::get(&js_sys::global(), &"Number".into()).ok()?;
+    let number_fn = number_ctor.dyn_ref::<js_sys::Function>()?;
+    let num = number_fn.call1(&JsValue::NULL, v).ok()?;
+    let n = num.as_f64()?;
+    if n.is_finite() {
+        Some(n)
+    } else {
+        None
+    }
+}
+
+/// Best-effort bytes used: max of `estimate.usage`, Chrome `usageDetails.indexedDB`, and our queue blob sum.
+#[cfg(target_arch = "wasm32")]
+async fn effective_storage_usage_bytes(
+    estimate_js: &wasm_bindgen::JsValue,
+    queue_db: Option<&idb::Database>,
+) -> Option<f64> {
+    let mut m = 0.0f64;
+    let mut any = false;
+    if let Ok(u) = js_sys::Reflect::get(estimate_js, &"usage".into()) {
+        if let Some(x) = js_value_to_f64(&u) {
+            m = m.max(x);
+            any = true;
+        }
+    }
+    if let Ok(details) = js_sys::Reflect::get(estimate_js, &"usageDetails".into()) {
+        if let Ok(idb) = js_sys::Reflect::get(&details, &"indexedDB".into()) {
+            if let Some(x) = js_value_to_f64(&idb) {
+                m = m.max(x);
+                any = true;
+            }
+        }
+    }
+    if let Some(db) = queue_db {
+        if let Ok(q) = record_idb::sum_chunk_blob_bytes(db).await {
+            m = m.max(q as f64);
+            any = true;
+        }
+    } else if let Ok(db) = record_idb::open_db().await {
+        if let Ok(q) = record_idb::sum_chunk_blob_bytes(&db).await {
+            m = m.max(q as f64);
+            any = true;
+        }
+    }
+    if any {
+        Some(m)
+    } else {
+        None
+    }
 }
 
 /// Collect device storage (usage/quota in bytes) and battery level (0–1) for preview metadata. Best-effort.
@@ -901,12 +1492,11 @@ async fn collect_preview_metadata() -> api::PreviewMetadata {
         let storage = nav.storage();
         if let Ok(promise) = storage.estimate() {
             if let Ok(estimate_js) = wasm_bindgen_futures::JsFuture::from(promise).await {
-                storage_usage = js_sys::Reflect::get(&estimate_js, &"usage".into())
-                    .ok()
-                    .and_then(|v| v.as_f64());
+                storage_usage =
+                    effective_storage_usage_bytes(&estimate_js, None).await;
                 storage_quota = js_sys::Reflect::get(&estimate_js, &"quota".into())
                     .ok()
-                    .and_then(|v| v.as_f64());
+                    .and_then(|v| js_value_to_f64(&v));
             }
         }
         if let Ok(get_battery) = js_sys::Reflect::get(&nav, &"getBattery".into()) {
@@ -934,6 +1524,7 @@ async fn collect_preview_metadata() -> api::PreviewMetadata {
 #[cfg(target_arch = "wasm32")]
 async fn run_preview_sender_loop(
     stop_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    camera_stream: web_sys::MediaStream,
     tournament_url: String,
     field: String,
     camera_key: String,
@@ -942,13 +1533,16 @@ async fn run_preview_sender_loop(
     use std::sync::atomic::Ordering;
 
     while !stop_flag.load(Ordering::SeqCst) {
-        let bytes = match capture_preview_frame().await {
+        let t_cycle = record_now_ms();
+        let bytes = match capture_preview_frame_from_stream(&camera_stream).await {
             Ok(b) => b,
             Err(_) => {
+                record_log_duration("preview_sender: capture_preview_frame failed (waiting 500ms)", t_cycle);
                 gloo_timers::future::TimeoutFuture::new(500).await;
                 continue;
             }
         };
+        let t_up = record_now_ms();
         if let Err(_) = api::upload_preview_frame(
             &tournament_url,
             &field,
@@ -958,10 +1552,15 @@ async fn run_preview_sender_loop(
         )
         .await
         {
+            record_log_duration("preview_sender: upload_preview_frame failed (waiting 500ms)", t_up);
             gloo_timers::future::TimeoutFuture::new(500).await;
             continue;
         }
+        record_log_duration("preview_sender: upload_preview_frame", t_up);
+        let t_meta = record_now_ms();
         let meta = collect_preview_metadata().await;
+        record_log_duration("preview_sender: collect_preview_metadata", t_meta);
+        let t_umeta = record_now_ms();
         let _ = api::upload_preview_metadata(
             &tournament_url,
             &field,
@@ -970,6 +1569,8 @@ async fn run_preview_sender_loop(
             &meta,
         )
         .await;
+        record_log_duration("preview_sender: upload_preview_metadata", t_umeta);
+        let t_poll = record_now_ms();
         while !stop_flag.load(Ordering::SeqCst) {
             match api::is_preview_frame_consumed(&tournament_url, &field, &camera_name, &camera_key).await {
                 Ok(true) => break,
@@ -978,7 +1579,9 @@ async fn run_preview_sender_loop(
             }
             gloo_timers::future::TimeoutFuture::new(300).await;
         }
+        record_log_duration("preview_sender: poll until consumed", t_poll);
         gloo_timers::future::TimeoutFuture::new(200).await;
+        record_log_duration("preview_sender: full cycle (until next capture)", t_cycle);
     }
 }
 
@@ -992,131 +1595,95 @@ async fn run_recording_loop(
     mut status_sig: Signal<RecordStatus>,
     mut match_status_data_sig: Signal<Option<RecordMatchStatusResponse>>,
     mut is_recording_sig: Signal<bool>,
-    mut is_uploading_sig: Signal<bool>,
-    mut upload_count_sig: Signal<u32>,
+    is_uploading_sig: Signal<bool>,
+    upload_count_sig: Signal<u32>,
     mut upload_total_sig: Signal<u32>,
     mut storage_warning_sig: Signal<Option<String>>,
-    mut upload_bar_items_sig: Signal<Vec<UploadBarItem>>,
 ) {
-    use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
     use wasm_bindgen::closure::Closure;
     use wasm_bindgen::JsCast;
     use web_sys::{MediaRecorder, MediaRecorderOptions};
 
-    // Prefer H.265/HEVC (mp4), fall back to WebM. Use full codec strings (like avc1.42E01E for H.264).
-    // HEVC: hvc1/hev1 + profile.compat.level.constraint (e.g. 1.6.L93.B0 = Main profile, level 3.1).
-    const MIME_PREFERENCE: &[(&str, &str)] = &[
-        ("video/mp4; codecs=hvc1.1.6.L93.B0", "mp4"),
-        ("video/mp4; codecs=hev1.1.6.L93.B0", "mp4"),
-        ("video/mp4; codecs=hvc1.1.6.L93", "mp4"),
-        ("video/mp4; codecs=hev1.1.6.L93", "mp4"),
-        ("video/mp4; codecs=hvc1", "mp4"),
-        ("video/mp4; codecs=hev1", "mp4"),
-        ("video/mp4; codecs=avc1.42E01E", "mp4"),
-        ("video/mp4", "mp4"),
-        ("video/webm; codecs=vp9", "webm"),
-        ("video/webm", "webm"),
+    const MIME_MP4: &[&str] = &[
+        "video/mp4; codecs=hvc1.1.6.L93.B0",
+        "video/mp4; codecs=hev1.1.6.L93.B0",
+        "video/mp4; codecs=hvc1.1.6.L93",
+        "video/mp4; codecs=hev1.1.6.L93",
+        "video/mp4; codecs=hvc1",
+        "video/mp4; codecs=hev1",
+        "video/mp4; codecs=avc1.42E01E",
+        "video/mp4",
     ];
+    /// Keep each fragment small enough for typical reverse-proxy body limits (often 1–10 MB).
+    const RECORD_VIDEO_BITS_PER_SECOND: u32 = 50_000_000;
+    /// Must match `chunk_length_ms` in `RecordChunkMeta` for every enqueue path.
+    const RECORD_TIMESLICE_MS: i32 = 500;
 
     let key_ref = key.clone();
-    let container_ref: Rc<RefCell<String>> = Rc::new(RefCell::new("webm".to_string()));
+    let container = "mp4".to_string();
 
-    // Recorder state: recorder, status, started_at (ms), current_session_id (new id each time this recorder is started).
-    struct RecorderState {
-        recorder: Option<MediaRecorder>,
-        status: RecorderStatus,
-        started_at: Option<f64>,
-        current_session_id: String,
-    }
+    let mem_queue: Rc<RefCell<VecDeque<MemQueueItem>>> = Rc::new(RefCell::new(VecDeque::new()));
+    let fsm: Rc<RefCell<RecordFsm>> = Rc::new(RefCell::new(RecordFsm::Idle));
+    let recording_session_uuid: Rc<RefCell<String>> = Rc::new(RefCell::new(String::new()));
+    let recording_session_wall_start_ms: Rc<RefCell<f64>> = Rc::new(RefCell::new(0.0));
+    let match_init_segment_blob: Rc<RefCell<Option<web_sys::Blob>>> = Rc::new(RefCell::new(None));
+    let recorder_holder: Rc<RefCell<Option<MediaRecorder>>> = Rc::new(RefCell::new(None));
 
-    // Use a persistent chunk_count for chunk_start_timestamp (storage is drained often so queue length is not a valid index).
-    let container_for_recorder = container_ref.clone();
-    let make_recorder = |stream: &web_sys::MediaStream,
-                        storage_queue: Rc<RefCell<Vec<StoredChunk>>>,
-                        session_start: Rc<RefCell<f64>>,
-                        chunk_count: Rc<RefCell<u32>>,
-                        session_id_ref: Rc<RefCell<String>>| {
-        let mut options = MediaRecorderOptions::new();
-        options.set_video_bits_per_second(70_000_000);
+    let mq_cb = mem_queue.clone();
+    let init_blob_cb = match_init_segment_blob.clone();
+    let make_recorder = move |stream: &web_sys::MediaStream| -> Option<MediaRecorder> {
+        let options = MediaRecorderOptions::new();
+        options.set_video_bits_per_second(RECORD_VIDEO_BITS_PER_SECOND);
         options.set_audio_bits_per_second(128_000);
-        let mut chosen_container = "webm";
-        for (mime, container) in MIME_PREFERENCE {
-            if MediaRecorder::is_type_supported(mime) {
-                options.set_mime_type(mime);
-                chosen_container = container;
+        let mut chosen: Option<&str> = None;
+        for m in MIME_MP4 {
+            if MediaRecorder::is_type_supported(m) {
+                options.set_mime_type(m);
+                chosen = Some(*m);
                 break;
             }
         }
-        *container_for_recorder.borrow_mut() = chosen_container.to_string();
-        let r = MediaRecorder::new_with_media_stream_and_media_recorder_options(stream, &options)
-            .ok()?;
-        let sq = storage_queue.clone();
-        let ss = session_start.clone();
-        let cc = chunk_count.clone();
-        let sid_ref = session_id_ref.clone();
+        chosen?;
+        let r = MediaRecorder::new_with_media_stream_and_media_recorder_options(stream, &options).ok()?;
+        let mq = mq_cb.clone();
+        let init_blob_state = init_blob_cb.clone();
         let closure = Closure::wrap(Box::new(move |ev: web_sys::BlobEvent| {
-            let blob = match ev.data() {
-                Some(b) => b,
-                None => return,
+            let Some(blob) = ev.data() else {
+                return;
             };
-            let start = *ss.borrow();
-            let chunk_start = start + (*cc.borrow() as f64) * 1000.0;
-            *cc.borrow_mut() += 1;
-            let session_id = sid_ref.borrow().clone();
-            sq.borrow_mut().push(StoredChunk {
+            if init_blob_state.borrow().is_none() {
+                let init_blob_holder = init_blob_state.clone();
+                let blob_for_init = blob.clone();
+                wasm_bindgen_futures::spawn_local(async move {
+                    if init_blob_holder.borrow().is_some() {
+                        return;
+                    }
+                    let bytes = blob_to_bytes(&blob_for_init).await;
+                    if let Some(init_bytes) = extract_ftyp_moov(&bytes) {
+                        *init_blob_holder.borrow_mut() = Some(bytes_to_blob(&init_bytes));
+                        record_log("captured match init segment from recorder chunk");
+                    }
+                });
+            }
+            let wall_epoch_ms = blob_event_wall_epoch_ms(&ev);
+            let blob_event_timestamp_ms = ev.time_stamp();
+            let sz = blob.size();
+            record_log(&format!(
+                "MediaRecorder ondataavailable: blob_bytes={:.0} wall_epoch_ms={:.1} blob_event_ts_ms={:.1}",
+                sz, wall_epoch_ms, blob_event_timestamp_ms
+            ));
+            mq.borrow_mut().push_back(MemQueueItem::Video(MemVideoChunk {
                 blob,
-                session_id,
-                chunk_start_timestamp: chunk_start,
-                chunk_duration_ms: 1000,
-                recording_session_start_time: start,
-            });
+                blob_event_timestamp_ms,
+                wall_epoch_ms,
+            }));
         }) as Box<dyn FnMut(web_sys::BlobEvent)>);
         r.set_ondataavailable(Some(closure.as_ref().unchecked_ref()));
         closure.forget();
         Some(r)
     };
-
-    let state1 = Rc::new(RefCell::new(RecorderState {
-        recorder: None,
-        status: RecorderStatus::Idle,
-        started_at: None,
-        current_session_id: String::new(),
-    }));
-    let state2 = Rc::new(RefCell::new(RecorderState {
-        recorder: None,
-        status: RecorderStatus::Idle,
-        started_at: None,
-        current_session_id: String::new(),
-    }));
-
-    let storage1 = Rc::new(RefCell::new(Vec::<StoredChunk>::new()));
-    let session_start1 = Rc::new(RefCell::new(0.0f64));
-    let chunk_count1 = Rc::new(RefCell::new(0u32));
-    let session_id1 = Rc::new(RefCell::new(String::new()));
-    let storage2 = Rc::new(RefCell::new(Vec::<StoredChunk>::new()));
-    let session_start2 = Rc::new(RefCell::new(0.0f64));
-    let chunk_count2 = Rc::new(RefCell::new(0u32));
-    let session_id2 = Rc::new(RefCell::new(String::new()));
-
-    if let Some(r) = make_recorder(
-        &stream,
-        storage1.clone(),
-        session_start1.clone(),
-        chunk_count1.clone(),
-        session_id1.clone(),
-    ) {
-        state1.borrow_mut().recorder = Some(r);
-    }
-    if let Some(r) = make_recorder(
-        &stream,
-        storage2.clone(),
-        session_start2.clone(),
-        chunk_count2.clone(),
-        session_id2.clone(),
-    ) {
-        state2.borrow_mut().recorder = Some(r);
-    }
 
     let db_holder: Rc<RefCell<Option<idb::Database>>> = Rc::new(RefCell::new(None));
     if db_holder.borrow().is_none() {
@@ -1124,8 +1691,13 @@ async fn run_recording_loop(
             *db_holder.borrow_mut() = Some(db);
         }
     }
-    let upload_queue: Rc<RefCell<VecDeque<(String, QueueItem)>>> = Rc::new(RefCell::new(VecDeque::new()));
+    let upload_queue: Rc<RefCell<VecDeque<(String, QueueItem)>>> =
+        Rc::new(RefCell::new(VecDeque::new()));
+    let pending_chunks_by_match: Rc<RefCell<HashMap<String, u32>>> =
+        Rc::new(RefCell::new(HashMap::new()));
     if let Some(ref db) = *db_holder.borrow() {
+        let t_idb_restore = record_now_ms();
+        record_log("IndexedDB: restore pending upload queue (cursor_entries_ordered)");
         if let Ok(entries) = record_idb::cursor_entries_ordered(db).await {
             for (key, value) in entries {
                 if let Some(match_id) = record_idb::parse_finalize_value(&value) {
@@ -1133,10 +1705,15 @@ async fn run_recording_loop(
                         .borrow_mut()
                         .push_back((key, QueueItem::FinalizeMatch { match_id }));
                 } else if let Some((meta, _blob)) = record_idb::parse_chunk_value(&value) {
+                    let match_id = meta.match_id.clone();
+                    *pending_chunks_by_match
+                        .borrow_mut()
+                        .entry(match_id.clone())
+                        .or_insert(0) += 1;
                     upload_queue.borrow_mut().push_back((
                         key,
                         QueueItem::Chunk {
-                            match_id: Some(meta.match_id.clone()),
+                            match_id: Some(match_id),
                         },
                     ));
                 } else {
@@ -1150,9 +1727,11 @@ async fn run_recording_loop(
             if n > 0 {
                 upload_total_sig.set(upload_total_sig() + n);
             }
-            update_upload_bar_from_queue(&q_ref, upload_bar_items_sig.to_owned());
+            record_log_duration(
+                &format!("IndexedDB: restore enqueued {} pending item(s)", n),
+                t_idb_restore,
+            );
         }
-        // Reconcile: add FinalizeMatch for matches that have chunks but no finalize in queue and are no longer active
         let chunk_match_ids: HashSet<String> = upload_queue
             .borrow()
             .iter()
@@ -1182,9 +1761,7 @@ async fn run_recording_loop(
         if !need_finalize.is_empty() {
             if let Ok(status) = api::record_match_status(&tournament_url, &field, None).await {
                 let current_match_id = status.match_id.as_deref();
-                need_finalize.retain(|id| {
-                    current_match_id.map(|cur| cur != id.as_str()).unwrap_or(true)
-                });
+                need_finalize.retain(|id| current_match_id.map(|cur| cur != id.as_str()).unwrap_or(true));
                 let mut added = 0u32;
                 for match_id in need_finalize {
                     if let Ok(key) = record_idb::get_next_sequence(db).await {
@@ -1201,63 +1778,78 @@ async fn run_recording_loop(
                 }
                 if added > 0 {
                     upload_total_sig.set(upload_total_sig() + added);
-                    let q_ref = upload_queue.borrow();
-                    update_upload_bar_from_queue(&q_ref, upload_bar_items_sig.to_owned());
                 }
             }
         }
-        // Check storage quota; warn if low (e.g. < 100 MB free).
         if let Some(window) = web_sys::window() {
             let storage = window.navigator().storage();
             if let Ok(promise) = storage.estimate() {
-                    if let Ok(estimate_js) = wasm_bindgen_futures::JsFuture::from(promise).await {
-                        let quota = js_sys::Reflect::get(&estimate_js, &"quota".into())
-                            .ok().and_then(|v| v.as_f64()).unwrap_or(0.0);
-                        let usage = js_sys::Reflect::get(&estimate_js, &"usage".into())
-                            .ok().and_then(|v| v.as_f64()).unwrap_or(0.0);
-                        const LOW_STORAGE_BYTES: f64 = 100_000_000.0; // 100 MB
-                        if quota > 0.0 && (quota - usage) < LOW_STORAGE_BYTES {
-                            storage_warning_sig.set(Some(
-                                "Low device storage for recording buffer; uploads may fail if connection is slow.".to_string(),
-                            ));
-                        }
+                if let Ok(estimate_js) = wasm_bindgen_futures::JsFuture::from(promise).await {
+                    let quota = js_sys::Reflect::get(&estimate_js, &"quota".into())
+                        .ok()
+                        .and_then(|v| js_value_to_f64(&v))
+                        .unwrap_or(0.0);
+                    let usage = effective_storage_usage_bytes(&estimate_js, Some(db))
+                        .await
+                        .unwrap_or(0.0);
+                    const LOW_STORAGE_BYTES: f64 = 100_000_000.0;
+                    if quota > 0.0 && (quota - usage) < LOW_STORAGE_BYTES {
+                        storage_warning_sig.set(Some(
+                            "Low device storage for recording buffer; uploads may fail if connection is slow."
+                                .to_string(),
+                        ));
                     }
                 }
+            }
         }
     }
-    const NUM_UPLOAD_WORKERS: u32 = 3;
+    const NUM_UPLOAD_WORKERS: u32 = 1;
     for _ in 0..NUM_UPLOAD_WORKERS {
         let q = upload_queue.clone();
+        let pending_chunks_by_match_sig = pending_chunks_by_match.clone();
         let tour = tournament_url.clone();
         let f = field.clone();
         let cam = camera_name.clone();
         let k = key_ref.clone();
         let is_up = is_uploading_sig.to_owned();
         let up_cnt = upload_count_sig.to_owned();
-        let bar_items = upload_bar_items_sig.to_owned();
+        let warn_sig = storage_warning_sig.to_owned();
         spawn(async move {
             let db = match record_idb::open_db().await {
                 Ok(d) => d,
                 Err(_) => return,
             };
-            run_upload_worker(q, db, tour, f, cam, k, is_up, up_cnt, bar_items).await;
+            run_upload_worker(
+                q,
+                db,
+                tour,
+                f,
+                cam,
+                k,
+                pending_chunks_by_match_sig,
+                is_up,
+                up_cnt,
+                warn_sig,
+            )
+            .await;
         });
     }
 
-    let mut current_match: Option<String> = None; // match_id
+    let mut current_match: Option<String> = None;
     let mut last_poll_data: Option<RecordMatchStatusResponse> = None;
-    let mut point_was_in_progress = false;
-    let chunk_index_global = AtomicU32::new(0);
     let mut preview_stop: Option<Arc<AtomicBool>> = None;
     let mut preview_sender_running = false;
 
     loop {
+        let t_iter = record_now_ms();
+        let t_poll = record_now_ms();
         let poll_result = api::record_match_status(
             &tournament_url,
             &field,
             current_match.as_ref().map(|id| id.as_str()),
         )
         .await;
+        record_log_duration("record_match_status (HTTP poll)", t_poll);
 
         let data = match poll_result {
             Ok(d) => {
@@ -1280,17 +1872,17 @@ async fn run_recording_loop(
             }
         };
 
-        // Start or stop the preview sender task based on data.preview_requested.
         if data.preview_requested && !preview_sender_running {
             if let Some(ref key_str) = key {
                 let stop = Arc::new(AtomicBool::new(false));
                 let stop_c = stop.clone();
+                let stream_for_preview = stream.clone();
                 let tour = tournament_url.clone();
                 let f = field.clone();
                 let k = key_str.clone();
                 let cam = camera_name.clone();
                 dioxus::prelude::spawn(async move {
-                    run_preview_sender_loop(stop_c, tour, f, k, cam).await;
+                    run_preview_sender_loop(stop_c, stream_for_preview, tour, f, k, cam).await;
                 });
                 preview_stop = Some(stop);
                 preview_sender_running = true;
@@ -1305,331 +1897,160 @@ async fn run_recording_loop(
 
         let now_ms = js_sys::Date::now();
         let points = data.points.as_deref().unwrap_or(&[]);
-        let point_in_progress_now = points
-            .iter()
-            .any(|p| point_in_progress(p, now_ms));
-        let _latest_point = latest_point_in_progress(points, now_ms);
-        // web_sys::console::log_1(&format!("data match id: {:?}", data.match_id).into());
-        // web_sys::console::log_1(&format!("current match: {:?}", current_match).into());
-        if !data.hasActiveMatch || data.match_id.as_ref().map(|s| s.as_str()) != current_match.as_ref().map(|id| id.as_str()) {
+
+        record_log_mem_queue_snapshot(&mem_queue);
+
+        let in_window = in_point_recording_window(points, now_ms);
+
+        if !data.hasActiveMatch || data.match_id.as_ref().map(|s| s.as_str()) != current_match.as_ref().map(|id| id.as_str())
+        {
             if let Some(match_id) = current_match.take() {
-                if let Some(r1) = state1.borrow_mut().recorder.take() {
-                    let _ = r1.stop();
+                if let Some(r) = recorder_holder.borrow_mut().take() {
+                    stop_media_recorder_fully(r).await;
                 }
-                if let Some(r2) = state2.borrow_mut().recorder.take() {
-                    let _ = r2.stop();
-                }
-                storage1.borrow_mut().clear();
-                storage2.borrow_mut().clear();
-                state1.borrow_mut().status = RecorderStatus::Idle;
-                state2.borrow_mut().status = RecorderStatus::Idle;
-                state1.borrow_mut().started_at = None;
-                state2.borrow_mut().started_at = None;
-                if let Some(ref db) = *db_holder.borrow() {
-                    if let Ok(key) = record_idb::get_next_sequence(db).await {
-                                match record_idb::put_finalize(db, &key, &match_id).await {
-                            Ok(()) => {
-                                let mut q = upload_queue.borrow_mut();
-                                q.push_back((key, QueueItem::FinalizeMatch { match_id: match_id.clone() }));
-                                update_upload_bar_from_queue(&q, upload_bar_items_sig.to_owned());
-                            }
-                            Err(ref e) => {
-                                if let idb::Error::DomException(ref dom) = e {
-                                    if dom.name() == "QuotaExceededError" {
-                                        storage_warning_sig.set(Some(
-                                            "Recording buffer full. Free device storage or wait for uploads to catch up.".to_string(),
-                                        ));
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+                let dropped_video_chunks = {
+                    let mut q = mem_queue.borrow_mut();
+                    let before = q.len();
+                    q.retain(|item| matches!(item, MemQueueItem::FinalizeMatch { .. }));
+                    before.saturating_sub(q.len())
+                };
+                mem_queue
+                    .borrow_mut()
+                    .push_back(MemQueueItem::FinalizeMatch { match_id });
+                *fsm.borrow_mut() = RecordFsm::Idle;
+                recording_session_uuid.borrow_mut().clear();
+                *recording_session_wall_start_ms.borrow_mut() = 0.0;
                 is_recording_sig.set(false);
+                if dropped_video_chunks > 0 {
+                    record_log(&format!(
+                        "match transition: dropped {} queued video chunk(s) before finalize sentinel",
+                        dropped_video_chunks
+                    ));
+                }
+                *match_init_segment_blob.borrow_mut() = None;
             }
             if data.hasActiveMatch {
                 if let Some(ref match_id) = data.match_id {
                     current_match = Some(match_id.clone());
-                    is_recording_sig.set(true);
-                    *session_start1.borrow_mut() = now_ms;
-                    *chunk_count1.borrow_mut() = 0;
-                    state1.borrow_mut().started_at = Some(now_ms);
-                    let new_sid = uuid_style_id();
-                    state1.borrow_mut().current_session_id = new_sid.clone();
-                    *session_id1.borrow_mut() = new_sid.clone();
-                    // After a match ends we take and stop both recorders, so they are None for the next match. Recreate if needed.
-                    if state1.borrow().recorder.is_none() {
-                        if let Some(r) = make_recorder(
-                            &stream,
-                            storage1.clone(),
-                            session_start1.clone(),
-                            chunk_count1.clone(),
-                            session_id1.clone(),
-                        ) {
-                            let _ = r.start_with_time_slice(1000);
-                            state1.borrow_mut().recorder = Some(r);
+                    is_recording_sig.set(false);
+                    if recorder_holder.borrow().is_none() {
+                        if let Some(r) = make_recorder(&stream) {
+                            let _ = r.start_with_time_slice(RECORD_TIMESLICE_MS);
+                            *recorder_holder.borrow_mut() = Some(r);
                         }
-                    } else if let Some(r) = state1.borrow().recorder.as_ref() {
+                    } else if let Some(r) = recorder_holder.borrow().as_ref() {
                         let state_str: String = js_sys::Reflect::get(r.as_ref(), &"state".into())
                             .ok()
                             .and_then(|v| v.as_string())
                             .unwrap_or_default();
-                        // Start unless already recording (some browsers may not report "inactive")
                         if state_str != "recording" {
-                            let _ = r.start_with_time_slice(1000);
-                        }
-                    }
-                    if state2.borrow().recorder.is_none() {
-                        *session_start2.borrow_mut() = now_ms;
-                        *chunk_count2.borrow_mut() = 0;
-                        let sid2 = uuid_style_id();
-                        *session_id2.borrow_mut() = sid2.clone();
-                        state2.borrow_mut().current_session_id = sid2;
-                        if let Some(r) = make_recorder(
-                            &stream,
-                            storage2.clone(),
-                            session_start2.clone(),
-                            chunk_count2.clone(),
-                            session_id2.clone(),
-                        ) {
-                            state2.borrow_mut().recorder = Some(r);
+                            let _ = r.start_with_time_slice(RECORD_TIMESLICE_MS);
                         }
                     }
                 }
             }
-            gloo_timers::future::TimeoutFuture::new(500).await;
-            continue;
         }
-        let match_id = current_match.as_ref().expect("current_match is None").clone();
 
-        // 1. Handle storage queues: if RECORDING, drain storage into upload queue (use this recorder's session_id)
-        let base_meta = RecordChunkMeta {
-            tournament_url: tournament_url.clone(),
-            field: field.clone(),
-            match_id: match_id.clone(),
-            session_id: String::new(), // overridden per state below
-            chunk_start_timestamp: 0.0,
-            recording_session_start_time: 0.0,
-            chunk_length_ms: 1000,
-            camera_name: camera_name.clone(),
-            key: key_ref.clone(),
-            container: container_ref.borrow().clone(),
-        };
-        for (_state, storage_rc) in [
-            (&state1, storage1.clone()),
-            (&state2, storage2.clone()),
-        ] {
-            if _state.borrow().status == RecorderStatus::Recording {
-                let drained: Vec<StoredChunk> = storage_rc.borrow_mut().drain(..).collect();
-                let n = drained.len();
-                if n > 0 {
-                    if let Some(ref db) = *db_holder.borrow() {
-                                for st in drained {
-                            let _idx = chunk_index_global.fetch_add(1, Ordering::Relaxed);
-                            let meta = RecordChunkMeta {
-                                session_id: st.session_id.clone(),
-                                chunk_start_timestamp: st.chunk_start_timestamp,
-                                recording_session_start_time: st.recording_session_start_time,
-                                chunk_length_ms: st.chunk_duration_ms,
-                                ..base_meta.clone()
-                            };
-                            if let Ok(key) = record_idb::get_next_sequence(db).await {
-                                match record_idb::put_chunk(db, &key, &meta, &st.blob).await {
-                                    Ok(()) => {
-                                        let mut q = upload_queue.borrow_mut();
-                                        q.push_back((
-                                            key,
-                                            QueueItem::Chunk {
-                                                match_id: Some(match_id.clone()),
-                                            },
-                                        ));
-                                        update_upload_bar_from_queue(&q, upload_bar_items_sig.to_owned());
-                                    }
-                                    Err(ref e) => {
-                                        if let idb::Error::DomException(ref dom) = e {
-                                            if dom.name() == "QuotaExceededError" {
-                                                storage_warning_sig.set(Some(
-                                                    "Recording buffer full. Free device storage or wait for uploads to catch up.".to_string(),
-                                                ));
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
+        let poll_aligned_with_match = data.hasActiveMatch
+            && current_match.is_some()
+            && data.match_id.as_ref().map(|s| s.as_str()) == current_match.as_ref().map(|id| id.as_str());
+
+        if poll_aligned_with_match {
+            let match_id = current_match.as_ref().expect("current_match is None").clone();
+
+            if in_window {
+                if *fsm.borrow() == RecordFsm::Idle {
+                    *recording_session_uuid.borrow_mut() = uuid_style_id();
+                    *recording_session_wall_start_ms.borrow_mut() = now_ms;
+                    if let Some(init_blob) = match_init_segment_blob.borrow().clone() {
+                        mem_queue.borrow_mut().push_front(MemQueueItem::InitSegment {
+                            blob: init_blob,
+                            wall_epoch_ms: now_ms,
+                        });
+                    } else {
+                        record_log("FSM: no init segment captured yet for this session");
                     }
-                    upload_total_sig.set(upload_total_sig() + n as u32);
+                    *fsm.borrow_mut() = RecordFsm::Recording;
+                    is_recording_sig.set(true);
+                    record_log("FSM: Idle -> Recording");
                 }
+            } else if *fsm.borrow() == RecordFsm::Recording {
+                *fsm.borrow_mut() = RecordFsm::Idle;
+                recording_session_uuid.borrow_mut().clear();
+                *recording_session_wall_start_ms.borrow_mut() = 0.0;
+                is_recording_sig.set(false);
+                record_log("FSM: Recording -> Idle");
             }
-        }
 
-        // 2. already computed point_in_progress_now
-
-        // 3. No point in progress: cycle recorders
-        if !point_in_progress_now {
-            let t1 = state1.borrow().started_at.unwrap_or(now_ms);
-            let t2 = state2.borrow().started_at.unwrap_or(now_ms);
-            let (longer, shorter) = if t1 <= t2 {
-                (&state1, &state2)
+            if *fsm.borrow() == RecordFsm::Recording {
+                if let Some(ref db) = *db_holder.borrow() {
+                    let session_id = recording_session_uuid.borrow().clone();
+                    let wall = *recording_session_wall_start_ms.borrow();
+                    let t_drain = record_now_ms();
+                    let drained: Vec<MemQueueItem> = mem_queue.borrow_mut().drain(..).collect();
+                    let (drained_n, n_added) = process_drained_mem_queue_items(
+                        drained,
+                        db,
+                        &match_id,
+                        &session_id,
+                        wall,
+                        tournament_url.clone(),
+                        field.clone(),
+                        camera_name.clone(),
+                        key_ref.clone(),
+                        container.clone(),
+                        &pending_chunks_by_match,
+                        &upload_queue,
+                    )
+                    .await;
+                    if n_added > 0 {
+                        upload_total_sig.set(upload_total_sig() + n_added);
+                    }
+                    record_log(&format!(
+                        "flush mem→IndexedDB (recording): drained={} put_ok={} in {:.2} ms",
+                        drained_n,
+                        n_added,
+                        record_now_ms() - t_drain
+                    ));
+                }
             } else {
-                (&state2, &state1)
-            };
-            let longer_run_secs = (now_ms - longer.borrow().started_at.unwrap_or(0.0)) / 1000.0;
-            let shorter_run_secs = (now_ms - shorter.borrow().started_at.unwrap_or(0.0)) / 1000.0;
-
-            if longer_run_secs > 10.0 {
-                web_sys::console::log_1(&format!("longer recorder running for too long: {}s (t1: {}s, t2: {}s)", longer_run_secs, now_ms-t1, now_ms-t2).into());
-                if let Some(r) = longer.borrow_mut().recorder.take() {
-                    let _ = r.stop();
-                }
-                if std::ptr::eq(longer.as_ref(), state1.as_ref()) {
-                    storage1.borrow_mut().clear();
-                } else {
-                    storage2.borrow_mut().clear();
-                }
-                longer.borrow_mut().status = RecorderStatus::Idle;
-                longer.borrow_mut().started_at = None;
-                let session_start_longer = if std::ptr::eq(longer.as_ref(), state1.as_ref()) {
-                    session_start1.clone()
-                } else {
-                    session_start2.clone()
-                };
-                let chunk_count_longer = if std::ptr::eq(longer.as_ref(), state1.as_ref()) {
-                    chunk_count1.clone()
-                } else {
-                    chunk_count2.clone()
-                };
-                let session_id_longer = if std::ptr::eq(longer.as_ref(), state1.as_ref()) {
-                    session_id1.clone()
-                } else {
-                    session_id2.clone()
-                };
-                *session_start_longer.borrow_mut() = now_ms;
-                *chunk_count_longer.borrow_mut() = 0;
-                let new_sid = uuid_style_id();
-                longer.borrow_mut().current_session_id = new_sid.clone();
-                if std::ptr::eq(longer.as_ref(), state1.as_ref()) {
-                    *session_id1.borrow_mut() = new_sid.clone();
-                } else {
-                    *session_id2.borrow_mut() = new_sid.clone();
-                }
-                if let Some(new_r) = make_recorder(
-                    &stream,
-                    if std::ptr::eq(longer.as_ref(), state1.as_ref()) {
-                        storage1.clone()
-                    } else {
-                        storage2.clone()
-                    },
-                    session_start_longer,
-                    chunk_count_longer,
-                    session_id_longer,
-                ) {
-                    let _ = new_r.start_with_time_slice(1000);
-                    longer.borrow_mut().recorder = Some(new_r);
-                    longer.borrow_mut().started_at = Some(now_ms);
-                }
-            } else if longer_run_secs > 5.0 {
-                let is_inactive = shorter
-                    .borrow()
-                    .recorder
-                    .as_ref()
-                    .map(|r| {
-                        js_sys::Reflect::get(r.as_ref(), &"state".into())
-                            .ok()
-                            .and_then(|v| v.as_string())
-                            .as_deref()
-                            == Some("inactive")
-                    })
-                    .unwrap_or(true);
-                if is_inactive {
-                    web_sys::console::log_1(&format!("shorter recorder is inactive, replacing with new recorder for fresh init segment").into());
-                    if let Some(old_r) = shorter.borrow_mut().recorder.take() {
-                        let _ = old_r.stop();
-                    }
-                    if std::ptr::eq(shorter.as_ref(), state1.as_ref()) {
-                        storage1.borrow_mut().clear();
-                    } else {
-                        storage2.borrow_mut().clear();
-                    }
-                    let session_start_shorter = if std::ptr::eq(shorter.as_ref(), state1.as_ref()) {
-                        session_start1.clone()
-                    } else {
-                        session_start2.clone()
-                    };
-                    let chunk_count_shorter = if std::ptr::eq(shorter.as_ref(), state1.as_ref()) {
-                        chunk_count1.clone()
-                    } else {
-                        chunk_count2.clone()
-                    };
-                    let session_id_shorter = if std::ptr::eq(shorter.as_ref(), state1.as_ref()) {
-                        session_id1.clone()
-                    } else {
-                        session_id2.clone()
-                    };
-                    *session_start_shorter.borrow_mut() = now_ms;
-                    *chunk_count_shorter.borrow_mut() = 0;
-                    let new_sid = uuid_style_id();
-                    shorter.borrow_mut().current_session_id = new_sid.clone();
-                    if std::ptr::eq(shorter.as_ref(), state1.as_ref()) {
-                        *session_id1.borrow_mut() = new_sid.clone();
-                    } else {
-                        *session_id2.borrow_mut() = new_sid.clone();
-                    }
-                    if let Some(new_r) = make_recorder(
-                        &stream,
-                        if std::ptr::eq(shorter.as_ref(), state1.as_ref()) {
-                            storage1.clone()
-                        } else {
-                            storage2.clone()
-                        },
-                        session_start_shorter,
-                        chunk_count_shorter,
-                        session_id_shorter,
-                    ) {
-                        let _ = new_r.start_with_time_slice(1000);
-                        shorter.borrow_mut().recorder = Some(new_r);
-                    }
-                    shorter.borrow_mut().started_at = Some(now_ms);
-                }
+                mem_queue_idle_step(
+                    &mem_queue,
+                    &db_holder,
+                    &upload_queue,
+                    upload_total_sig.to_owned(),
+                    now_ms,
+                )
+                .await;
             }
+        } else if *fsm.borrow() == RecordFsm::Idle {
+            mem_queue_idle_step(
+                &mem_queue,
+                &db_holder,
+                &upload_queue,
+                upload_total_sig.to_owned(),
+                now_ms,
+            )
+            .await;
         }
-
-        // 4. Point in progress and new: set longest to RECORDING, stop the other
-        if point_in_progress_now && !point_was_in_progress {
-            let t1 = state1.borrow().started_at.unwrap_or(now_ms);
-            let t2 = state2.borrow().started_at.unwrap_or(now_ms);
-            let (recording_state, other_state) = if t1 <= t2 {
-                (&state1, &state2)
-            } else {
-                (&state2, &state1)
-            };
-            recording_state.borrow_mut().status = RecorderStatus::Recording;
-            if let Some(r) = other_state.borrow().recorder.as_ref() {
-                let _ = r.stop();
-            }
-            if std::ptr::eq(other_state.as_ref(), state1.as_ref()) {
-                storage1.borrow_mut().clear();
-            } else {
-                storage2.borrow_mut().clear();
-            }
-            other_state.borrow_mut().status = RecorderStatus::Idle;
-            other_state.borrow_mut().started_at = None;
-        }
-
-        if !point_in_progress_now {
-            state1.borrow_mut().status = RecorderStatus::Idle;
-            state2.borrow_mut().status = RecorderStatus::Idle;
-        }
-
-        point_was_in_progress = point_in_progress_now;
 
         if data.hasActiveMatch {
             match_status_data_sig.set(Some(data));
         } else {
             match_status_data_sig.set(None);
         }
+        record_log_duration("record loop iteration (total, before 500ms sleep)", t_iter);
         gloo_timers::future::TimeoutFuture::new(500).await;
     }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn record_upload_error_is_payload_too_large(msg: &str) -> bool {
+    let m = msg.to_lowercase();
+    m.contains("413")
+        || m.contains("too large")
+        || m.contains("entity too large")
+        || m.contains("payload too large")
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -1640,13 +2061,16 @@ async fn run_upload_worker(
     field: String,
     camera_name: String,
     key: Option<String>,
+    pending_chunks_by_match: Rc<RefCell<HashMap<String, u32>>>,
     mut is_uploading_sig: Signal<bool>,
     mut upload_count_sig: Signal<u32>,
-    mut upload_bar_items_sig: Signal<Vec<UploadBarItem>>,
+    mut storage_warning_sig: Signal<Option<String>>,
 ) {
     /// Delay before retrying a failed upload (connection lost, etc.).
     const RETRY_DELAY_MS: u32 = 3000;
-    /// Number of immediate retries for each upload attempt (any error).
+    /// After HTTP 413, wait longer before re-queuing the same chunk (same blob cannot succeed until the limit is raised).
+    const PAYLOAD_TOO_LARGE_RETRY_MS: u32 = 60_000;
+    /// Number of immediate retries for each upload attempt (transient errors).
     const API_RETRY_ATTEMPTS: u32 = 5;
     /// Delay between API retries (ms).
     const API_RETRY_DELAY_MS: u32 = 1500;
@@ -1657,25 +2081,112 @@ async fn run_upload_worker(
         if let Some((key_str, queue_item)) = item {
             is_uploading_sig.set(true);
             let mut success = false;
+            let mut payload_too_large = false;
+            let t_item = record_now_ms();
+            let key_short = if key_str.len() > 12 {
+                format!("{}…", &key_str[..12])
+            } else {
+                key_str.clone()
+            };
             match &queue_item {
                 QueueItem::Chunk { .. } => {
+                    let t_idb = record_now_ms();
                     if let Ok(Some(value)) = record_idb::get_entry(&db, &key_str).await {
+                        record_log_duration(
+                            &format!("upload_worker chunk idb get_entry key={}", key_short),
+                            t_idb,
+                        );
                         if let Some((meta, blob)) = record_idb::parse_chunk_value(&value) {
-                            for _ in 0..API_RETRY_ATTEMPTS {
-                                if api::record_upload_chunk(&meta, &blob).await.is_ok() {
-                                    if record_idb::delete_entry(&db, &key_str).await.is_ok() {
-                                        upload_count_sig.set(upload_count_sig() + 1);
-                                        success = true;
+                            let blob_bytes = blob.size();
+                            record_log(&format!(
+                                "upload_worker chunk: match_id={} blob_bytes={:.0}",
+                                meta.match_id, blob_bytes
+                            ));
+                            for attempt in 0..API_RETRY_ATTEMPTS {
+                                let t_up = record_now_ms();
+                                match api::record_upload_chunk(&meta, &blob).await {
+                                    Ok(()) => {
+                                        record_log_duration(
+                                            &format!(
+                                                "upload_worker record_upload_chunk attempt {} HTTP",
+                                                attempt + 1
+                                            ),
+                                            t_up,
+                                        );
+                                        let t_del = record_now_ms();
+                                        if record_idb::delete_entry(&db, &key_str).await.is_ok() {
+                                            record_log_duration(
+                                                &format!("upload_worker idb delete_entry key={}", key_short),
+                                                t_del,
+                                            );
+                                            upload_count_sig.set(upload_count_sig() + 1);
+                                            success = true;
+                                            let mid = meta.match_id.clone();
+                                            let mut pending = pending_chunks_by_match.borrow_mut();
+                                            if let Some(v) = pending.get_mut(&mid) {
+                                                *v = v.saturating_sub(1);
+                                                if *v == 0 {
+                                                    pending.remove(&mid);
+                                                }
+                                            }
+                                        }
+                                        break;
                                     }
-                                    break;
+                                    Err(e) => {
+                                        record_log_duration(
+                                            &format!(
+                                                "upload_worker record_upload_chunk attempt {} FAILED: {}",
+                                                attempt + 1,
+                                                e
+                                            ),
+                                            t_up,
+                                        );
+                                        if record_upload_error_is_payload_too_large(&e) {
+                                            payload_too_large = true;
+                                            storage_warning_sig.set(Some(
+                                                "Upload rejected: each chunk is larger than the server allows (HTTP 413). The host should raise the upload limit (e.g. nginx client_max_body_size) or set MAX_CONTENT_LENGTH_BYTES; this page will retry slowly."
+                                                    .to_string(),
+                                            ));
+                                            break;
+                                        }
+                                        if attempt + 1 < API_RETRY_ATTEMPTS {
+                                            gloo_timers::future::TimeoutFuture::new(API_RETRY_DELAY_MS)
+                                                .await;
+                                        }
+                                    }
                                 }
-                                gloo_timers::future::TimeoutFuture::new(API_RETRY_DELAY_MS).await;
                             }
                         }
+                    } else {
+                        record_log(&format!(
+                            "upload_worker chunk: get_entry missing or error key={}",
+                            key_short
+                        ));
                     }
                 }
                 QueueItem::FinalizeMatch { match_id } => {
-                    for _ in 0..API_RETRY_ATTEMPTS {
+                    let t_wait = record_now_ms();
+                    // Barrier: wait until all chunk uploads for this match are confirmed successful.
+                    loop {
+                        let remaining = pending_chunks_by_match
+                            .borrow()
+                            .get(match_id)
+                            .copied()
+                            .unwrap_or(0);
+                        if remaining == 0 {
+                            break;
+                        }
+                        gloo_timers::future::TimeoutFuture::new(250).await;
+                    }
+                    record_log_duration(
+                        &format!(
+                            "upload_worker finalize wait pending_chunks=0 match_id={}",
+                            match_id
+                        ),
+                        t_wait,
+                    );
+                    for attempt in 0..API_RETRY_ATTEMPTS {
+                        let t_fin = record_now_ms();
                         if api::record_finalize(
                             &tournament_url,
                             &field,
@@ -1686,46 +2197,50 @@ async fn run_upload_worker(
                         .await
                         .is_ok()
                         {
-                            let _ = record_idb::delete_entry(&db, &key_str).await;
-                            success = true;
+                            record_log_duration(
+                                &format!("upload_worker record_finalize attempt {}", attempt + 1),
+                                t_fin,
+                            );
+                            let t_del = record_now_ms();
+                            if record_idb::delete_entry(&db, &key_str).await.is_ok() {
+                                record_log_duration("upload_worker finalize idb delete_entry", t_del);
+                                upload_count_sig.set(upload_count_sig() + 1);
+                                success = true;
+                            }
                             break;
                         }
+                        record_log_duration(
+                            &format!("upload_worker record_finalize attempt {} failed", attempt + 1),
+                            t_fin,
+                        );
                         gloo_timers::future::TimeoutFuture::new(API_RETRY_DELAY_MS).await;
                     }
                 }
             }
+            record_log_duration(
+                &format!(
+                    "upload_worker queue item total (key={} success={})",
+                    key_short, success
+                ),
+                t_item,
+            );
             if !success {
                 let mut q = queue.borrow_mut();
                 q.push_front((key_str, queue_item));
-                update_upload_bar_from_queue(&q, upload_bar_items_sig.to_owned());
-                gloo_timers::future::TimeoutFuture::new(RETRY_DELAY_MS).await;
-            } else {
-                let q = queue.borrow();
-                update_upload_bar_from_queue(&q, upload_bar_items_sig.to_owned());
+                let wait_ms = if payload_too_large {
+                    PAYLOAD_TOO_LARGE_RETRY_MS
+                } else {
+                    RETRY_DELAY_MS
+                };
+                record_log(&format!(
+                    "upload_worker re-queue; backoff {} ms",
+                    wait_ms
+                ));
+                gloo_timers::future::TimeoutFuture::new(wait_ms).await;
             }
             is_uploading_sig.set(false);
         }
     }
-}
-
-fn update_upload_bar_from_queue(
-    queue: &VecDeque<(String, QueueItem)>,
-    mut items_sig: Signal<Vec<UploadBarItem>>,
-) {
-    let mut items = Vec::with_capacity(queue.len());
-    for (_key, qitem) in queue.iter() {
-        match qitem {
-            QueueItem::Chunk { match_id } => items.push(UploadBarItem {
-                match_id: match_id.clone(),
-                is_finalize: false,
-            }),
-            QueueItem::FinalizeMatch { match_id } => items.push(UploadBarItem {
-                match_id: Some(match_id.clone()),
-                is_finalize: true,
-            }),
-        }
-    }
-    items_sig.set(items);
 }
 
 fn uuid_style_id() -> String {

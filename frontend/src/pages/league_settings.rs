@@ -194,7 +194,7 @@ pub fn LeagueSettings(league_url: String) -> Element {
                                         if let Some(bytes) = waiver_bytes_for_save {
                                             let filename =
                                                 waiver_name_for_save.as_deref().unwrap_or("waiver");
-                                            match api::league_upload_waiver(&lu, bytes, filename).await {
+                                            match api::league_upload_waiver(&lu, bytes.to_vec(), filename).await {
                                                 Ok(_) => {}
                                                 Err(e) => {
                                                     save_error.set(Some(e));

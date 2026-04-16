@@ -25,6 +25,7 @@ fn page_title_for_route(route: &Route) -> String {
         Route::TournamentSettings { url } => format!("{url} Settings"),
         Route::TournamentRegister { url } => format!("{url} Register"),
         Route::Manage { url } => format!("{url} Manage"),
+        Route::ManageUserUploads { url } => format!("{url} Uploaded Videos"),
         Route::Invitations { url } => format!("{url} Roster"),
         Route::StartMatch { .. } => format!("Start Match").into(),
         Route::RunMatch { .. } => format!("Run Match").into(),

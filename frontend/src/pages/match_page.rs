@@ -1,6 +1,7 @@
 use crate::api;
 use crate::components::{all_tokens_known, resolve_value_to_team_ids, PenaltyDisplay};
 use crate::pages::TeamSelectionField;
+use crate::time_format::format_match_display_local;
 use crate::Route;
 use crate::stones_filter::BayesianOffsetFilter;
 use crate::types::{ConflictingMatchInfo, ForceStartMatchRequest, MatchDetailData, PointData, PointTimestamp};
@@ -210,6 +211,73 @@ fn youtube_seek_seconds(point_stamp: Option<&str>, stream_start_time: Option<&st
     let diff = point_parsed.signed_duration_since(stream_parsed);
     let secs = diff.num_milliseconds() as f64 / 1000.0;
     web_sys::console::log_1(&format!("point_parsed: {:?}, stream_parsed: {:?}, diff: {:?}, secs: {:?}", point_parsed, stream_parsed, diff, secs).into());
+    Some(secs.max(0.0))
+}
+
+/// Map an absolute world timestamp (point stamp) to in-video seconds using
+/// piecewise linear interpolation over `(time_world, time_video)` session boundaries.
+///
+/// If interpolation arrays are missing, falls back to YouTube seek logic using `stream_start_time`.
+fn in_video_start_for_world_stamp_interpolated(
+    point_stamp: Option<&str>,
+    time_world: Option<&Vec<String>>,
+    time_video: Option<&Vec<f64>>,
+    stream_start_time: Option<&str>,
+) -> Option<f64> {
+    let point_stamp = point_stamp?.trim();
+    if point_stamp.is_empty() {
+        return None;
+    }
+
+    let world_secs = parse_iso_to_secs(point_stamp)?;
+
+    let (tw, tv) = match (time_world, time_video) {
+        (Some(tw), Some(tv)) if !tw.is_empty() && tw.len() == tv.len() => (tw, tv),
+        _ => {
+            return youtube_seek_seconds(Some(point_stamp), stream_start_time);
+        }
+    };
+
+    if tv.is_empty() {
+        return None;
+    }
+
+    if tv.len() == 1 {
+        // Best-effort: if we only have a single boundary, assume slope 1 in time.
+        let t0_world = parse_iso_to_secs(&tw[0])?;
+        return Some((world_secs - t0_world + tv[0]).max(0.0));
+    }
+
+    // Parse boundaries to seconds since epoch.
+    let tw_secs: Option<Vec<f64>> = tw
+        .iter()
+        .map(|s| parse_iso_to_secs(s))
+        .collect();
+    let tw_secs = tw_secs?;
+
+    // Find segment for interpolation / extrapolation.
+    let n = tv.len();
+    let (i0, i1) = if world_secs <= tw_secs[0] {
+        (0usize, 1usize)
+    } else if world_secs >= tw_secs[n - 1] {
+        (n - 2, n - 1)
+    } else {
+        let mut found = None;
+        for i in 0..(n - 1) {
+            if tw_secs[i] <= world_secs && world_secs <= tw_secs[i + 1] {
+                found = Some((i, i + 1));
+                break;
+            }
+        }
+        found?
+    };
+
+    let denom = tw_secs[i1] - tw_secs[i0];
+    if denom.abs() < f64::EPSILON {
+        return Some(tv[i0].max(0.0));
+    }
+    let slope = (tv[i1] - tv[i0]) / denom;
+    let secs = tv[i0] + (world_secs - tw_secs[i0]) * slope;
     Some(secs.max(0.0))
 }
 
@@ -865,6 +933,9 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
     let mut penalty_desc_modal = use_signal(|| None::<String>);
     let mut why_modal_show = use_signal(|| false);
     let mut force_start_modal_show = use_signal(|| false);
+    let retry_finalization_pending = use_signal(|| false);
+    let retry_finalization_message = use_signal(|| None::<String>);
+    let retry_finalization_error = use_signal(|| None::<String>);
 
     use_effect(move || {
         let _ = (val.read().as_ref(), selected_camera_idx(), live_points_signal());
@@ -948,21 +1019,11 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
             if let Some(secs) = pending {
                 let mut set_pending = pending_seek_time_eff;
                 spawn(async move {
-                    const HAVE_CURRENT_DATA: u16 = 2;
-                    for _ in 0..100 {
-                        gloo_timers::future::TimeoutFuture::new(100).await;
-                        if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
-                            if let Some(el) = doc.get_element_by_id("local-video-player") {
-                                if let Ok(media) = el.dyn_into::<web_sys::HtmlMediaElement>() {
-                                    if media.ready_state() >= HAVE_CURRENT_DATA {
-                                        media.set_current_time(secs);
-                                        set_pending.set(None);
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    // Local video element may not exist anymore (we now scrub YouTube).
+                    // Just issue a seek and clear the pending value.
+                    gloo_timers::future::TimeoutFuture::new(300).await;
+                    seek_youtube_to(secs);
+                    set_pending.set(None);
                 });
             }
         });
@@ -975,13 +1036,13 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
         use_effect(move || {
             let _ = selected_camera_idx();
             let binding = val_yt.read();
-            let camera_url: Option<String> = binding
+                    let camera_url: Option<String> = binding
                 .as_ref()
                 .and_then(|r| r.as_ref().ok())
                 .and_then(|d| {
                     let idx = selected_camera_idx().min(d.available_cameras.len().saturating_sub(1));
                     let cam = d.available_cameras.get(idx)?;
-                    if cam.camera_type != "recorded" {
+                    if cam.status.as_deref() == Some("SUCCESS") {
                         cam.url.clone()
                     } else {
                         None
@@ -1044,7 +1105,7 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                 }
                 let idx = selected_camera_idx().min(d.available_cameras.len().saturating_sub(1));
                 let cam = match d.available_cameras.get(idx) {
-                    Some(c) if c.camera_type != "recorded" => c,
+                    Some(c) if c.camera_type == "youtube" => c,
                     _ => return,
                 };
                 let stream_start = cam
@@ -1128,14 +1189,21 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                     let pi = selected_point_index().min(d.points.len().saturating_sub(1));
                     let idx = selected_camera_idx().min(d.available_cameras.len().saturating_sub(1));
                     let cam = d.available_cameras.get(idx);
-                    if cam.map(|c| c.camera_type == "recorded").unwrap_or(false) {
-                        let ts = point_timestamps_for_keys();
-                        if let Some(t) = in_video_start_for_point(&ts, &d.points, pi) {
-                            seek_video_to(t);
+                    if let Some(cam) = cam {
+                        if cam.status.as_deref() != Some("SUCCESS") {
+                            return;
                         }
-                    } else if let Some(cam) = cam {
                         let stamp = d.points.get(pi).and_then(|p| p.stamp.as_deref());
-                        if let Some(secs) = youtube_seek_seconds(stamp, cam.stream_start_time.as_deref()) {
+                        let stream_start_time: Option<String> = cam
+                            .stream_start_time
+                            .clone()
+                            .or_else(|| fetched_stream_starts().get(idx).cloned().flatten());
+                        if let Some(secs) = in_video_start_for_world_stamp_interpolated(
+                            stamp,
+                            cam.time_world.as_ref(),
+                            cam.time_video.as_ref(),
+                            stream_start_time.as_deref(),
+                        ) {
                             seek_youtube_to(secs);
                         }
                     }
@@ -1148,14 +1216,21 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                 if let Some(Ok(d)) = val.read().as_ref() {
                     let idx = selected_camera_idx().min(d.available_cameras.len().saturating_sub(1));
                     let cam = d.available_cameras.get(idx);
-                    if cam.map(|c| c.camera_type == "recorded").unwrap_or(false) {
-                        let ts = point_timestamps_for_keys();
-                        if let Some(t) = in_video_start_for_point(&ts, &d.points, new_idx) {
-                            seek_video_to(t);
+                    if let Some(cam) = cam {
+                        if cam.status.as_deref() != Some("SUCCESS") {
+                            return;
                         }
-                    } else if let Some(cam) = cam {
                         let stamp = d.points.get(new_idx).and_then(|p| p.stamp.as_deref());
-                        if let Some(secs) = youtube_seek_seconds(stamp, cam.stream_start_time.as_deref()) {
+                        let stream_start_time: Option<String> = cam
+                            .stream_start_time
+                            .clone()
+                            .or_else(|| fetched_stream_starts().get(idx).cloned().flatten());
+                        if let Some(secs) = in_video_start_for_world_stamp_interpolated(
+                            stamp,
+                            cam.time_world.as_ref(),
+                            cam.time_video.as_ref(),
+                            stream_start_time.as_deref(),
+                        ) {
                             seek_youtube_to(secs);
                         }
                     }
@@ -1169,14 +1244,21 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                 if let Some(Ok(d)) = val.read().as_ref() {
                     let idx = selected_camera_idx().min(d.available_cameras.len().saturating_sub(1));
                     let cam = d.available_cameras.get(idx);
-                    if cam.map(|c| c.camera_type == "recorded").unwrap_or(false) {
-                        let ts = point_timestamps_for_keys();
-                        if let Some(t) = in_video_start_for_point(&ts, &d.points, new_idx) {
-                            seek_video_to(t);
+                    if let Some(cam) = cam {
+                        if cam.status.as_deref() != Some("SUCCESS") {
+                            return;
                         }
-                    } else if let Some(cam) = cam {
                         let stamp = d.points.get(new_idx).and_then(|p| p.stamp.as_deref());
-                        if let Some(secs) = youtube_seek_seconds(stamp, cam.stream_start_time.as_deref()) {
+                        let stream_start_time: Option<String> = cam
+                            .stream_start_time
+                            .clone()
+                            .or_else(|| fetched_stream_starts().get(idx).cloned().flatten());
+                        if let Some(secs) = in_video_start_for_world_stamp_interpolated(
+                            stamp,
+                            cam.time_world.as_ref(),
+                            cam.time_video.as_ref(),
+                            stream_start_time.as_deref(),
+                        ) {
                             seek_youtube_to(secs);
                         }
                     }
@@ -1268,23 +1350,34 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                     let points_next = points.clone();
                     let idx = selected_camera_idx().min(cameras.len().saturating_sub(1));
                     let current = cameras.get(idx);
-                    let is_recorded = current.map(|c| c.camera_type == "recorded").unwrap_or(false);
+                    let status = current
+                        .and_then(|c| c.status.clone())
+                        .unwrap_or_else(|| "SUCCESS".to_string());
                     let stream_start_time = current
                         .and_then(|c| c.stream_start_time.clone())
                         .or_else(|| fetched_stream_starts().get(idx).cloned().flatten());
                     let stream_start_go = stream_start_time.clone();
                     let stream_start_prev = stream_start_time.clone();
                     let stream_start_next = stream_start_time.clone();
-                    let video_src = current.and_then(|c| c.video_path.as_ref()).map(|p| {
-                        let p = p.as_str();
-                        if p.starts_with("http://") || p.starts_with("https://") {
-                            p.to_string()
-                        } else {
-                            let base = base_url_footage.trim_end_matches('/');
-                            let path = p.trim_start_matches('/');
-                            format!("{}/{}", base, path)
-                        }
-                    });
+                    let time_world_go = current.and_then(|c| c.time_world.clone());
+                    let time_video_go = current.and_then(|c| c.time_video.clone());
+                    let time_world_prev = time_world_go.clone();
+                    let time_video_prev = time_video_go.clone();
+                    let time_world_next = time_world_go.clone();
+                    let time_video_next = time_video_go.clone();
+
+                    let failed_download_url = current
+                        .and_then(|c| c.video_path.clone())
+                        .and_then(|p| {
+                            let p = p.as_str().to_string();
+                            if p.starts_with("http://") || p.starts_with("https://") {
+                                Some(p)
+                            } else {
+                                let base = base_url_footage.trim_end_matches('/');
+                                let p = p.trim_start_matches('/');
+                                Some(format!("{}/{}", base, p))
+                            }
+                        });
                     rsx! {
                         div { class: "card mt-3",
                         div { class: "card-header d-flex justify-content-between align-items-center",
@@ -1330,16 +1423,6 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                                                                         ev.prevent_default();
                                                                         let current_idx = selected_camera_idx();
                                                                         if idx != current_idx {
-                                                                            #[cfg(target_arch = "wasm32")]
-                                                                            {
-                                                                                let current_ts = point_timestamps_for_keys();
-                                                                                let new_ts_ref = new_ts.as_deref();
-                                                                                if let Some(t) = get_video_current_time()
-                                                                                    .and_then(|now| same_time_seek_target(&current_ts, new_ts_ref, now))
-                                                                                {
-                                                                                    pending_seek_time.set(Some(t));
-                                                                                }
-                                                                            }
                                                                             selected_camera_idx.set(idx);
                                                                         }
                                                                         camera_dropdown_open.set(false);
@@ -1374,20 +1457,12 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                         }
                         div { class: "card-body",
                             div { id: "video-stream-container",
-                                if is_recorded {
-                                    if let Some(ref src) = video_src {
-                                        div {
-                                            id: "local-video-container",
-                                            video {
-                                                id: "local-video-player",
-                                                src: "{src}",
-                                                controls: true,
-                                                style: "width: 100%; max-width: 100%; aspect-ratio: 16/9;",
-                                                "Your browser does not support the video tag."
-                                            }
-                                        }
-                                    } else {
-                                        p { class: "text-muted", "No video path" }
+                                if status == "UPLOADING" {
+                                    p { class: "text-muted", "Video is still processing." }
+                                } else if status == "FAILED" {
+                                    p { class: "text-danger", "error processing video. click here to download source." }
+                                    if let Some(ref href) = failed_download_url {
+                                        a { href: "{href}", class: "btn btn-sm btn-outline-danger ms-2", "Download source" }
                                     }
                                 } else {
                                     div {
@@ -1399,112 +1474,121 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                                             "Loading YouTube player…"
                                         }
                                     }
-                                }
-                                div { class: "mt-3 d-flex align-items-center flex-wrap gap-2",
-                                    span { "Seek to point:" }
-                                    select {
-                                        id: "points-dropdown",
-                                        class: "form-select form-select-sm",
-                                        style: "width: auto;",
-                                        value: "{selected_point_index().min(points.len().saturating_sub(1))}",
-                                        onchange: move |ev| {
-                                            if let Ok(i) = ev.value().parse::<usize>() {
-                                                selected_point_index.set(i);
+                                    div { class: "mt-3 d-flex align-items-center flex-wrap gap-2",
+                                        span { "Seek to point:" }
+                                        select {
+                                            id: "points-dropdown",
+                                            class: "form-select form-select-sm",
+                                            style: "width: auto;",
+                                            value: "{selected_point_index().min(points.len().saturating_sub(1))}",
+                                            onchange: move |ev| {
+                                                if let Ok(i) = ev.value().parse::<usize>() {
+                                                    selected_point_index.set(i);
+                                                }
+                                            },
+                                            option { value: "", "Select point..." }
+                                            {
+                                                points
+                                                    .iter()
+                                                    .enumerate()
+                                                    .map(|(idx, pt)| {
+                                                        rsx! {
+                                                            option { key: "{pt.uuid}", value: "{idx}", "Point {idx + 1}" }
+                                                        }
+                                                    })
                                             }
-                                        },
-                                        option { value: "", "Select point..." }
-                                        {
-                                            points
-                                                .iter()
-                                                .enumerate()
-                                                .map(|(idx, pt)| {
-                                                    rsx! {
-                                                        option { key: "{pt.uuid}", value: "{idx}", "Point {idx + 1}" }
-                                                    }
-                                                })
                                         }
-                                    }
-                                    button {
-                                        id: "seek-go-btn",
-                                        class: "btn btn-sm btn-primary",
-                                        onclick: move |_| {
-                                            let pi = selected_point_index().min(points_go.len().saturating_sub(1));
-                                            if is_recorded {
-                                                let ts = point_timestamps_for_keys();
-                                                if let Some(t) = in_video_start_for_point(&ts, &points_go, pi) {
-                                                    seek_video_to(t);
-                                                }
-                                            } else {
-                                                let stamp = points_go.get(pi).and_then(|p| p.stamp.as_deref());
-                                                if let Some(secs) = youtube_seek_seconds(stamp, stream_start_go.as_deref()) {
+                                        button {
+                                            id: "seek-go-btn",
+                                            class: "btn btn-sm btn-primary",
+                                            onclick: move |_| {
+                                                let pi = selected_point_index()
+                                                    .min(points_go.len().saturating_sub(1));
+                                                let stamp = points_go
+                                                    .get(pi)
+                                                    .and_then(|p| p.stamp.as_deref());
+                                                if let Some(secs) =
+                                                    in_video_start_for_world_stamp_interpolated(
+                                                        stamp,
+                                                        time_world_go.as_ref(),
+                                                        time_video_go.as_ref(),
+                                                        stream_start_go.as_deref(),
+                                                    )
+                                                {
                                                     seek_youtube_to(secs);
                                                 }
-                                            }
-                                        },
-                                        "Go (g)"
-                                    }
-                                    button {
-                                        id: "seek-prev-btn",
-                                        class: "btn btn-sm btn-secondary",
-                                        onclick: move |_| {
-                                            let new_idx = selected_point_index().saturating_sub(1);
-                                            selected_point_index.set(new_idx);
-                                            if is_recorded {
-                                                let ts = point_timestamps_for_keys();
-                                                if let Some(t) = in_video_start_for_point(&ts, &points_prev, new_idx) {
-                                                    seek_video_to(t);
-                                                }
-                                            } else {
-                                                let stamp = points_prev.get(new_idx).and_then(|p| p.stamp.as_deref());
-                                                if let Some(secs) = youtube_seek_seconds(stamp, stream_start_prev.as_deref()) {
+                                            },
+                                            "Go (g)"
+                                        }
+                                        button {
+                                            id: "seek-prev-btn",
+                                            class: "btn btn-sm btn-secondary",
+                                            onclick: move |_| {
+                                                let new_idx =
+                                                    selected_point_index().saturating_sub(1);
+                                                selected_point_index.set(new_idx);
+                                                let stamp = points_prev
+                                                    .get(new_idx)
+                                                    .and_then(|p| p.stamp.as_deref());
+                                                if let Some(secs) =
+                                                    in_video_start_for_world_stamp_interpolated(
+                                                        stamp,
+                                                        time_world_prev.as_ref(),
+                                                        time_video_prev.as_ref(),
+                                                        stream_start_prev.as_deref(),
+                                                    )
+                                                {
                                                     seek_youtube_to(secs);
                                                 }
-                                            }
-                                        },
-                                        "Previous Point (p)"
-                                    }
-                                    button {
-                                        id: "seek-next-btn",
-                                        class: "btn btn-sm btn-secondary",
-                                        onclick: move |_| {
-                                            let n = n_points_for_keys();
-                                            let new_idx = (selected_point_index() + 1).min(n.saturating_sub(1));
-                                            selected_point_index.set(new_idx);
-                                            if is_recorded {
-                                                let ts = point_timestamps_for_keys();
-                                                if let Some(t) = in_video_start_for_point(&ts, &points_next, new_idx) {
-                                                    seek_video_to(t);
-                                                }
-                                            } else {
-                                                let stamp = points_next.get(new_idx).and_then(|p| p.stamp.as_deref());
-                                                if let Some(secs) = youtube_seek_seconds(stamp, stream_start_next.as_deref()) {
+                                            },
+                                            "Previous Point (p)"
+                                        }
+                                        button {
+                                            id: "seek-next-btn",
+                                            class: "btn btn-sm btn-secondary",
+                                            onclick: move |_| {
+                                                let n = n_points_for_keys();
+                                                let new_idx = (selected_point_index() + 1)
+                                                    .min(n.saturating_sub(1));
+                                                selected_point_index.set(new_idx);
+                                                let stamp = points_next
+                                                    .get(new_idx)
+                                                    .and_then(|p| p.stamp.as_deref());
+                                                if let Some(secs) =
+                                                    in_video_start_for_world_stamp_interpolated(
+                                                        stamp,
+                                                        time_world_next.as_ref(),
+                                                        time_video_next.as_ref(),
+                                                        stream_start_next.as_deref(),
+                                                    )
+                                                {
                                                     seek_youtube_to(secs);
                                                 }
-                                            }
-                                        },
-                                        "Next Point (n)"
-                                    }
-                                    span { class: "ms-2", "Speed:" }
-                                    select {
-                                        id: "playback-speed",
-                                        class: "form-select form-select-sm",
-                                        style: "width: auto;",
-                                        value: "{playback_speed()}",
-                                        onchange: move |ev| {
-                                            let v = ev.value();
-                                            playback_speed.set(v.clone());
-                                            if let Ok(rate) = v.parse::<f64>() {
-                                                set_video_playback_speed(rate);
-                                            }
-                                        },
-                                        option { value: "0.25", "0.25x" }
-                                        option { value: "0.5", "0.5x" }
-                                        option { value: "0.75", "0.75x" }
-                                        option { value: "1", "1x" }
-                                        option { value: "1.25", "1.25x" }
-                                        option { value: "1.5", "1.5x" }
-                                        option { value: "1.75", "1.75x" }
-                                        option { value: "2", "2x" }
+                                            },
+                                            "Next Point (n)"
+                                        }
+                                        span { class: "ms-2", "Speed:" }
+                                        select {
+                                            id: "playback-speed",
+                                            class: "form-select form-select-sm",
+                                            style: "width: auto;",
+                                            value: "{playback_speed()}",
+                                            onchange: move |ev| {
+                                                let v = ev.value();
+                                                playback_speed.set(v.clone());
+                                                if let Ok(rate) = v.parse::<f64>() {
+                                                    set_video_playback_speed(rate);
+                                                }
+                                            },
+                                            option { value: "0.25", "0.25x" }
+                                            option { value: "0.5", "0.5x" }
+                                            option { value: "0.75", "0.75x" }
+                                            option { value: "1", "1x" }
+                                            option { value: "1.25", "1.25x" }
+                                            option { value: "1.5", "1.5x" }
+                                            option { value: "1.75", "1.75x" }
+                                            option { value: "2", "2x" }
+                                        }
                                     }
                                 }
                             }
@@ -1702,17 +1786,27 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                                         strong { class: "me-2", "Start:" }
                                         span {
                                             {
-                                                d.match_data
+                                                match d.match_data
                                                     .confirmed_start_time
                                                     .as_deref()
                                                     .or(d.match_data.nominal_start_time.as_deref())
-                                                    .unwrap_or("TBA")
+                                                {
+                                                    None => "TBA".to_string(),
+                                                    Some(t) => format_match_display_local(t),
+                                                }
                                             }
                                         }
                                     }
                                     div { class: "d-flex align-items-center mb-2",
                                         strong { class: "me-2", "End:" }
-                                        span { {d.match_data.completed_time.as_deref().unwrap_or("TBA")} }
+                                        span {
+                                            {
+                                                match d.match_data.completed_time.as_deref() {
+                                                    None => "TBA".to_string(),
+                                                    Some(t) => format_match_display_local(t),
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                                 div { class: "col-md-4" }
@@ -1773,6 +1867,58 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                                                 class: "text-muted small text-decoration-none",
                                                 onclick: move |ev: Event<MouseData>| { ev.prevent_default(); why_modal_show.set(true); },
                                                 "Why can't I start this match?"
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            if d.can_retry_finalization {
+                                div { class: "row mt-3",
+                                    div { class: "col-12",
+                                        div { class: "d-flex gap-2 align-items-center flex-wrap",
+                                            button {
+                                                class: "btn btn-outline-secondary",
+                                                disabled: retry_finalization_pending(),
+                                                onclick: {
+                                                    let url = url.clone();
+                                                    let match_id = d.match_data.uuid.clone();
+                                                    let mut retry_finalization_pending = retry_finalization_pending;
+                                                    let mut retry_finalization_message = retry_finalization_message;
+                                                    let mut retry_finalization_error = retry_finalization_error;
+                                                    let mut data = data.clone();
+                                                    move |_| {
+                                                        if retry_finalization_pending() {
+                                                            return;
+                                                        }
+                                                        let url = url.clone();
+                                                        let match_id = match_id.clone();
+                                                        retry_finalization_pending.set(true);
+                                                        retry_finalization_message.set(None);
+                                                        retry_finalization_error.set(None);
+                                                        spawn(async move {
+                                                            match api::retry_match_finalization(&url, &match_id).await {
+                                                                Ok(msg) => {
+                                                                    retry_finalization_message.set(Some(msg));
+                                                                    data.restart();
+                                                                }
+                                                                Err(err) => retry_finalization_error.set(Some(err)),
+                                                            }
+                                                            retry_finalization_pending.set(false);
+                                                        });
+                                                    }
+                                                },
+                                                if retry_finalization_pending() {
+                                                    "Retrying..."
+                                                } else {
+                                                    "Retry Finalization"
+                                                }
+                                            }
+                                            if let Some(msg) = retry_finalization_message() {
+                                                span { class: "text-success small", "{msg}" }
+                                            }
+                                            if let Some(err) = retry_finalization_error() {
+                                                span { class: "text-danger small", "{err}" }
                                             }
                                         }
                                     }
