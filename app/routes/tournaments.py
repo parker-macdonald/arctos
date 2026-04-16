@@ -1530,6 +1530,9 @@ def update_tournament_settings(tournament_url):
         rc.max_team_size_roster = int(roster) if roster else None
         field = request.form.get("max_team_size_field", "").strip()
         rc.max_team_size_field = int(field) if field else None
+        if "require_waiver_signature" not in request.form:
+            rc.waiver_filepath = None
+            rc.waiver_sha256 = None
 
     if request.form.get("start_date"):
         tournament.start_date = datetime.strptime(
