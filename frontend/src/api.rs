@@ -308,10 +308,12 @@ pub async fn user_upload_video_footage_with_progress<F>(
 where
     F: FnMut(u64, u64),
 {
+    use gloo_timers::future::TimeoutFuture;
     use wasm_bindgen::JsCast;
 
     let window = web_sys::window().ok_or("no window")?;
-    const CHUNK_SIZE_BYTES: u64 = 90 * 1024 * 1024; // must remain < 100MB
+    const CHUNK_SIZE_BYTES: u64 = 20 * 1024 * 1024;
+    const CHUNK_UPLOAD_MAX_ATTEMPTS: u32 = 3;
 
     let web_file = file
         .inner()
@@ -378,10 +380,31 @@ where
         opts.set_credentials(web_sys::RequestCredentials::Include);
         let request = web_sys::Request::new_with_str_and_init(&chunk_url, &opts)
             .map_err(|_| "Request::new failed")?;
-        let resp = wasm_bindgen_futures::JsFuture::from(window.fetch_with_request(&request))
-            .await
-            .map_err(|e| format!("{:?}", e))?;
-        let resp: web_sys::Response = resp.dyn_into().map_err(|_| "response cast failed")?;
+        let mut fetch_err: Option<String> = None;
+        let mut resp_opt: Option<web_sys::Response> = None;
+        for attempt in 1..=CHUNK_UPLOAD_MAX_ATTEMPTS {
+            match wasm_bindgen_futures::JsFuture::from(window.fetch_with_request(&request)).await {
+                Ok(resp) => {
+                    let resp: web_sys::Response =
+                        resp.dyn_into().map_err(|_| "response cast failed")?;
+                    resp_opt = Some(resp);
+                    break;
+                }
+                Err(e) => {
+                    fetch_err = Some(format!("{:?}", e));
+                    if attempt < CHUNK_UPLOAD_MAX_ATTEMPTS {
+                        TimeoutFuture::new(750 * attempt).await;
+                    }
+                }
+            }
+        }
+        let resp = resp_opt.ok_or_else(|| {
+            format!(
+                "Chunk upload failed due to a network/load error after {} attempts: {}. This usually means the server or proxy dropped the connection during upload.",
+                CHUNK_UPLOAD_MAX_ATTEMPTS,
+                fetch_err.unwrap_or_else(|| "unknown fetch failure".to_string())
+            )
+        })?;
         if !resp.ok() {
             let text = wasm_bindgen_futures::JsFuture::from(
                 resp.text()

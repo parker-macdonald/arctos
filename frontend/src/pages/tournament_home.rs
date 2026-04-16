@@ -535,10 +535,10 @@ pub fn TournamentHome(url: String) -> Element {
                                             let default_field_id = fields[0].id;
                                             rsx! {
                                                 p { class: "text-muted mb-2",
-                                                    "All videos in this upload are treated as one camera on the field you choose below. For each match, we take every recorded point that falls in your footage (±3s), merge clips from all files in time order, and publish one highlight video with the camera name you set."
+                                                    "All videos in this upload are treated as one camera on the field you choose below. Points will be clipped out of the video, concatenated together, and published as a single video. Do not upload videos with pauses/skips in the middle; this will not work."
                                                 }
                                                 p { class: "text-muted mb-2 small",
-                                                    "If you split a session across multiple files, set the start timestamp per file so each lines up with real time. Large files upload in chunks; nothing is loaded whole into memory."
+                                                    "Be sure that the start timestamp is set correctly - I try to guess based on the file metadata, but that may not be accurate, especially if you've ever edited the file."
                                                 }
                                                 input {
                                                     class: "form-control",
@@ -566,7 +566,7 @@ pub fn TournamentHome(url: String) -> Element {
                                                                     filename,
                                                                     file: f,
                                                                     start_world_suggested: guessed_start.clone(),
-                                                                    start_world_value: guessed_start.unwrap_or_default(),
+                                                                    start_world_value: String::new(),
                                                                     start_world_error: None,
                                                                 });
                                                             }
@@ -626,7 +626,7 @@ pub fn TournamentHome(url: String) -> Element {
                                                                 tr {
                                                                     th { "File" }
                                                                     th { "Progress" }
-                                                                    th { "Start timestamp (ISO with timezone)" }
+                                                                    th { "Start timestamp override (ISO with timezone)" }
                                                                     th { "" }
                                                                 }
                                                             }
@@ -690,9 +690,9 @@ pub fn TournamentHome(url: String) -> Element {
                                                                             if let Some(err) = &item.start_world_error {
                                                                                 div { class: "text-danger small mt-1", "{err}" }
                                                                             } else if let Some(s) = &item.start_world_suggested {
-                                                                                div { class: "text-muted small mt-1", "Suggested from file timestamp: {s}" }
+                                                                                div { class: "text-muted small mt-1", "File modified time only, not recording start: {s}" }
                                                                             } else {
-                                                                                div { class: "text-muted small mt-1", "No file timestamp found; enter a manual start time with timezone if needed." }
+                                                                                div { class: "text-muted small mt-1", "Leave blank to let the server read recording metadata from the uploaded file. Enter a manual value with timezone only if you need to override it." }
                                                                             }
                                                                         }
                                                                         td {
