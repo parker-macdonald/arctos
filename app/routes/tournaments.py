@@ -982,19 +982,13 @@ def user_upload_video_footage(tournament_url: str):
     if not video_file or video_file.filename == "":
         return jsonify({"error": "video file is required"}), 400
 
-    start_world_override = request.form.get("start_world") or request.form.get("start_timestamp")
-    if start_world_override:
-        # validate early; allow either ISO with Z or datetime-local style
-        s = start_world_override.strip()
-        if s.endswith("Z"):
-            s = s.replace("Z", "+00:00")
-        try:
-            dt = datetime.fromisoformat(s)
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
-            start_world_override = dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
-        except ValueError:
-            return jsonify({"error": "start_world must be an ISO timestamp"}), 400
+    start_world_override = request.form.get("start_world") or request.form.get(
+        "start_timestamp"
+    )
+    try:
+        start_world_override = _normalize_user_upload_start_world(start_world_override)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
 
     camera_name_override = (request.form.get("camera_name") or "").strip()
 
@@ -1124,6 +1118,27 @@ def _locate_user_upload_incoming_dir(
     return None, None
 
 
+def _normalize_user_upload_start_world(raw_value: str | None) -> str | None:
+    if raw_value is None:
+        return None
+    s = raw_value.strip()
+    if not s:
+        return None
+    if s.endswith("Z"):
+        s = s.replace("Z", "+00:00")
+    try:
+        dt = datetime.fromisoformat(s)
+    except ValueError as exc:
+        raise ValueError(
+            "start_world must be an ISO timestamp with timezone, e.g. 2026-03-18T01:23:45Z"
+        ) from exc
+    if dt.tzinfo is None:
+        raise ValueError(
+            "start_world must include timezone, e.g. 2026-03-18T01:23:45Z or 2026-03-17T18:23:45-07:00"
+        )
+    return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
 @bp.route("/tournaments/<tournament_url>/user-upload/chunk", methods=["POST"])
 @login_required
 def user_upload_video_footage_chunk(tournament_url: str):
@@ -1179,6 +1194,10 @@ def user_upload_video_footage_chunk(tournament_url: str):
         batch_id = batch_id_raw
     else:
         batch_id = batch_id_raw or upload_id
+    try:
+        start_world_override = _normalize_user_upload_start_world(start_world_override)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
 
     filename_stem = path.splitext(path.basename(filename))[0] or "upload"
     batch_camera_name = (camera_name_override or "").strip() or filename_stem
@@ -1345,19 +1364,10 @@ def user_upload_video_footage_complete(tournament_url: str):
                     out.write(buf)
 
     start_world_override = meta.get("start_world_override")
-    if start_world_override:
-        s = start_world_override.strip()
-        if s.endswith("Z"):
-            s = s.replace("Z", "+00:00")
-        try:
-            dt = datetime.fromisoformat(s)
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
-            start_world_override = dt.astimezone(timezone.utc).isoformat().replace(
-                "+00:00", "Z"
-            )
-        except ValueError:
-            return jsonify({"error": "start_world must be an ISO timestamp"}), 400
+    try:
+        start_world_override = _normalize_user_upload_start_world(start_world_override)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
 
     batch_id = (meta.get("batch_id") or "").strip() or upload_id
     try:

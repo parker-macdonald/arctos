@@ -26,6 +26,17 @@ fn infer_start_world_from_file(file: &dioxus::html::FileData) -> Option<String> 
         .map(|dt| dt.to_rfc3339_opts(SecondsFormat::Secs, true))
 }
 
+fn validate_upload_start_world(raw: &str) -> Result<(), String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Ok(());
+    }
+    chrono::DateTime::parse_from_rfc3339(trimmed).map_err(|_| {
+        "Start timestamp must include timezone, e.g. 2026-03-18T01:23:45Z or 2026-03-17T18:23:45-07:00.".to_string()
+    })?;
+    Ok(())
+}
+
 fn default_camera_name_from_filename(name: &str) -> String {
     let trimmed = name.trim();
     if trimmed.is_empty() {
@@ -615,7 +626,7 @@ pub fn TournamentHome(url: String) -> Element {
                                                                 tr {
                                                                     th { "File" }
                                                                     th { "Progress" }
-                                                                    th { "Start timestamp (UTC)" }
+                                                                    th { "Start timestamp (ISO with timezone)" }
                                                                     th { "" }
                                                                 }
                                                             }
@@ -654,6 +665,7 @@ pub fn TournamentHome(url: String) -> Element {
                                                                                         let mut list = pending_uploads();
                                                                                         if let Some(t) = list.get_mut(idx) {
                                                                                             t.start_world_value = e.value();
+                                                                                            t.start_world_error = None;
                                                                                         }
                                                                                         pending_uploads.set(list);
                                                                                     }
@@ -680,7 +692,7 @@ pub fn TournamentHome(url: String) -> Element {
                                                                             } else if let Some(s) = &item.start_world_suggested {
                                                                                 div { class: "text-muted small mt-1", "Suggested from file timestamp: {s}" }
                                                                             } else {
-                                                                                div { class: "text-muted small mt-1", "No file timestamp found; enter a manual start time if needed." }
+                                                                                div { class: "text-muted small mt-1", "No file timestamp found; enter a manual start time with timezone if needed." }
                                                                             }
                                                                         }
                                                                         td {
@@ -743,6 +755,24 @@ pub fn TournamentHome(url: String) -> Element {
                                                         upload_error.set(Some("Select a field.".into()));
                                                         return;
                                                     };
+                                                    let mut validated_uploads = uploads.clone();
+                                                    let mut has_invalid_start_world = false;
+                                                    for item in validated_uploads.iter_mut() {
+                                                        match validate_upload_start_world(&item.start_world_value) {
+                                                            Ok(()) => item.start_world_error = None,
+                                                            Err(err) => {
+                                                                item.start_world_error = Some(err);
+                                                                has_invalid_start_world = true;
+                                                            }
+                                                        }
+                                                    }
+                                                    if has_invalid_start_world {
+                                                        pending_uploads.set(validated_uploads);
+                                                        upload_error.set(Some(
+                                                            "Fix the highlighted start timestamps before uploading.".into(),
+                                                        ));
+                                                        return;
+                                                    }
                                                     let n = uploads.len();
                                                     let batch_id = format!(
                                                         "b{}",
