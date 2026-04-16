@@ -918,6 +918,9 @@ def league_update_settings(league_url):
             rc.team_reg_fee = float(data["team_reg_fee"]) if data["team_reg_fee"] is not None else 0.0
         if "player_reg_fee" in data:
             rc.player_reg_fee = float(data["player_reg_fee"]) if data["player_reg_fee"] is not None else 0.0
+        if data.get("require_waiver_signature") is False:
+            rc.waiver_filepath = None
+            rc.waiver_sha256 = None
         # Legacy combined flag; if provided, acts as default for team/player when
         # more specific flags are absent.
         legacy_reg_open = data.get("registration_open", None)
