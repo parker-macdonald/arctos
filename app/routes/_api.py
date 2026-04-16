@@ -5217,6 +5217,7 @@ def create_match_api(tournament_url):
     match.skip_condition = data.get("skip_condition")
 
     db.session.add(match)
+    db.session.flush()  # Ensure uuid exists before link updates and validation.
 
     # Handle linked list insert
     prev_match_id = (
