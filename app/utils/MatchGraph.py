@@ -524,31 +524,35 @@ def build_match_graph(
         if match.schedule_type in (ScheduleType.SAFE, ScheduleType.FAST):
             match_start = getattr(match, "nominal_start_time", None)
             participants = _match_participant_team_ids(match)
-            latest_shared_match = None
-            if match.field and match_start and participants:
-                for candidate in matches_by_field.get(match.field, []):
-                    candidate_start = getattr(candidate, "nominal_start_time", None)
-                    if (
-                        candidate.uuid == match.uuid
-                        or candidate_start is None
-                        or candidate_start > match_start
-                    ):
-                        continue
-                    if not (
-                        participants & _match_participant_team_ids(candidate)
-                    ):
-                        continue
-                    if latest_shared_match is None or (
-                        candidate_start,
-                        candidate.name,
-                        candidate.uuid,
-                    ) > (
-                        latest_shared_match.nominal_start_time,
-                        latest_shared_match.name,
-                        latest_shared_match.uuid,
-                    ):
-                        latest_shared_match = candidate
-            if latest_shared_match:
+            latest_shared_matches_by_field: Dict[str, Match] = {}
+            if match_start and participants:
+                for field_name, field_matches in matches_by_field.items():
+                    latest_shared_match = None
+                    for candidate in field_matches:
+                        candidate_start = getattr(candidate, "nominal_start_time", None)
+                        if (
+                            candidate.uuid == match.uuid
+                            or candidate_start is None
+                            or candidate_start >= match_start
+                        ):
+                            continue
+                        if not (
+                            participants & _match_participant_team_ids(candidate)
+                        ):
+                            continue
+                        if latest_shared_match is None or (
+                            candidate_start,
+                            candidate.name,
+                            candidate.uuid,
+                        ) > (
+                            latest_shared_match.nominal_start_time,
+                            latest_shared_match.name,
+                            latest_shared_match.uuid,
+                        ):
+                            latest_shared_match = candidate
+                    if latest_shared_match is not None:
+                        latest_shared_matches_by_field[field_name] = latest_shared_match
+            for latest_shared_match in latest_shared_matches_by_field.values():
                 latest_shared_key = dep_key_for_match(latest_shared_match)
                 graph.add_dependency(dependent_key, latest_shared_key)
 
