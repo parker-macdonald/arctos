@@ -40,6 +40,7 @@ from app.utils.scheduling import (
 )
 from app.utils.name_validation import match_name_char_error, team_pseudonym_char_error
 from app.utils.datetime_helpers import to_iso_z
+from app.utils.recording_retry import current_user_can_retry_finalization
 from app.domain.enums import (
     RegistrationStatus,
     MatchStatus,
@@ -3338,6 +3339,8 @@ def tournament_match_detail(tournament_url):
         if first_cam.get("type") == "youtube":
             camera_url = first_cam.get("url")
 
+    can_retry_finalization = current_user_can_retry_finalization(current_user)
+
     # Get match notes
     initial_notes = match.initial_notes or ""
     final_notes = match.final_notes or ""
@@ -3660,6 +3663,7 @@ def tournament_match_detail(tournament_url):
             "match_notes": match_notes,
             "point_notes_map": point_notes_map,
             "is_head_ref": is_head_ref,
+            "can_retry_finalization": can_retry_finalization,
             "can_start": can_start,
             "block_reasons": block_reasons,
             "why_sections": why_sections_to_dict(why_sections),

@@ -61,6 +61,10 @@ from app.utils.camera_helpers import (
     get_camera_key_from_request,
     require_camera_key,
 )
+from app.utils.recording_retry import (
+    RETRY_FINALIZATION_USER_IDS_ENV,
+    current_user_can_retry_finalization,
+)
 from app.utils import preview_store
 
 from app.domain.enums import (
@@ -958,6 +962,91 @@ def record_finalize():
             "success": True,
             "message": "all recordings uploaded; processing has begun",
             "match_id": match_id,
+        }
+    )
+
+
+@bp.route(
+    "/tournaments/<tournament_url>/matches/<match_id>/retry-finalization",
+    methods=["POST"],
+)
+@login_required
+def retry_match_finalization(tournament_url: str, match_id: str):
+    import os
+
+    if not current_user_can_retry_finalization(current_user):
+        return (
+            jsonify(
+                {
+                    "success": False,
+                    "error": (
+                        f"Forbidden. Add your user id to {RETRY_FINALIZATION_USER_IDS_ENV} "
+                        "to enable retry finalization."
+                    ),
+                }
+            ),
+            403,
+        )
+
+    match = Match.query.filter_by(uuid=match_id, event=tournament_url).first()
+    if not match:
+        return jsonify({"success": False, "error": "Match not found"}), 404
+    if not match.field:
+        return jsonify({"success": False, "error": "Match has no field"}), 400
+    field_name = match.field
+
+    root_dir = os.path.join(
+        current_app.root_path,
+        "../static/uploads/videos",
+        tournament_url,
+        field_name,
+        match_id,
+    )
+    if not os.path.isdir(root_dir):
+        return jsonify({"success": False, "error": "No recording artifacts found for this match"}), 404
+
+    chunk_dirs: list[tuple[str, str]] = []
+    for camera_name in sorted(os.listdir(root_dir)):
+        chunk_dir = os.path.join(root_dir, camera_name)
+        if not os.path.isdir(chunk_dir):
+            continue
+        if not os.path.exists(os.path.join(chunk_dir, "chunks_meta.json")):
+            continue
+        chunk_dirs.append((camera_name, chunk_dir))
+
+    if not chunk_dirs:
+        return jsonify({"success": False, "error": "No chunk metadata found for this match"}), 404
+
+    app = current_app._get_current_object()
+    logger = current_app.logger
+    for camera_name, chunk_dir in chunk_dirs:
+        logger.info(
+            "retry_match_finalization: submitting worker for match_id=%s camera_name=%s chunk_dir=%s requested_by=%s",
+            match_id,
+            camera_name,
+            chunk_dir,
+            getattr(current_user, "id", None),
+        )
+
+        def run_finalize_with_app_context(
+            chunk_dir: str = chunk_dir, camera_name: str = camera_name
+        ):
+            with app.app_context():
+                finalize_recording_worker(
+                    logger,
+                    tournament_url,
+                    field_name,
+                    match_id,
+                    camera_name,
+                    chunk_dir,
+                )
+
+        _ = executor.submit(run_finalize_with_app_context)
+
+    return jsonify(
+        {
+            "success": True,
+            "message": f"Requeued finalization for {len(chunk_dirs)} recording(s).",
         }
     )
 

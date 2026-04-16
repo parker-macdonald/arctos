@@ -738,18 +738,32 @@ def _create_camera_outputs(
         time_video.append(running_offset)
         running_offset += session["duration_sec"]
 
-    camera_row = Camera(
-        match_uuid=match_id,
-        event=tournament_url,
-        field=field_obj.id,
-        name=camera_name,
-        source_type="recording",
-        status="UPLOADING",
-        file=video_path,
-        time_world=json.dumps(time_world),
-        time_video=json.dumps(time_video),
+    camera_row = (
+        Camera.query.filter_by(
+            match_uuid=match_id,
+            event=tournament_url,
+            name=camera_name,
+            source_type="recording",
+        )
+        .order_by(Camera.uuid.asc())
+        .first()
     )
-    db.session.add(camera_row)
+    if camera_row is None:
+        camera_row = Camera(
+            match_uuid=match_id,
+            event=tournament_url,
+            field=field_obj.id,
+            name=camera_name,
+            source_type="recording",
+        )
+        db.session.add(camera_row)
+
+    camera_row.field = field_obj.id
+    camera_row.status = "UPLOADING"
+    camera_row.link = None
+    camera_row.file = video_path
+    camera_row.time_world = json.dumps(time_world)
+    camera_row.time_video = json.dumps(time_video)
     db.session.commit()
     return camera_row
 
