@@ -933,6 +933,9 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
     let mut penalty_desc_modal = use_signal(|| None::<String>);
     let mut why_modal_show = use_signal(|| false);
     let mut force_start_modal_show = use_signal(|| false);
+    let retry_finalization_pending = use_signal(|| false);
+    let retry_finalization_message = use_signal(|| None::<String>);
+    let retry_finalization_error = use_signal(|| None::<String>);
 
     use_effect(move || {
         let _ = (val.read().as_ref(), selected_camera_idx(), live_points_signal());
@@ -1864,6 +1867,58 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                                                 class: "text-muted small text-decoration-none",
                                                 onclick: move |ev: Event<MouseData>| { ev.prevent_default(); why_modal_show.set(true); },
                                                 "Why can't I start this match?"
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            if d.can_retry_finalization {
+                                div { class: "row mt-3",
+                                    div { class: "col-12",
+                                        div { class: "d-flex gap-2 align-items-center flex-wrap",
+                                            button {
+                                                class: "btn btn-outline-secondary",
+                                                disabled: retry_finalization_pending(),
+                                                onclick: {
+                                                    let url = url.clone();
+                                                    let match_id = d.match_data.uuid.clone();
+                                                    let mut retry_finalization_pending = retry_finalization_pending;
+                                                    let mut retry_finalization_message = retry_finalization_message;
+                                                    let mut retry_finalization_error = retry_finalization_error;
+                                                    let mut data = data.clone();
+                                                    move |_| {
+                                                        if retry_finalization_pending() {
+                                                            return;
+                                                        }
+                                                        let url = url.clone();
+                                                        let match_id = match_id.clone();
+                                                        retry_finalization_pending.set(true);
+                                                        retry_finalization_message.set(None);
+                                                        retry_finalization_error.set(None);
+                                                        spawn(async move {
+                                                            match api::retry_match_finalization(&url, &match_id).await {
+                                                                Ok(msg) => {
+                                                                    retry_finalization_message.set(Some(msg));
+                                                                    data.restart();
+                                                                }
+                                                                Err(err) => retry_finalization_error.set(Some(err)),
+                                                            }
+                                                            retry_finalization_pending.set(false);
+                                                        });
+                                                    }
+                                                },
+                                                if retry_finalization_pending() {
+                                                    "Retrying..."
+                                                } else {
+                                                    "Retry Finalization"
+                                                }
+                                            }
+                                            if let Some(msg) = retry_finalization_message() {
+                                                span { class: "text-success small", "{msg}" }
+                                            }
+                                            if let Some(err) = retry_finalization_error() {
+                                                span { class: "text-danger small", "{err}" }
                                             }
                                         }
                                     }

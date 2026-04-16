@@ -1413,6 +1413,32 @@ pub async fn match_detail(
     response_json(r).await
 }
 
+pub async fn retry_match_finalization(
+    tournament_url: &str,
+    match_id: &str,
+) -> Result<String, String> {
+    let c = client();
+    let r = with_credentials(c.post(format!(
+        "{}/_api/tournaments/{}/matches/{}/retry-finalization",
+        base(),
+        tournament_url,
+        match_id
+    )))
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    let data: StatusResponse = response_json(r).await?;
+    if data.success {
+        Ok(data
+            .message
+            .unwrap_or_else(|| "Finalization retry started.".to_string()))
+    } else {
+        Err(data
+            .error
+            .unwrap_or_else(|| "Failed to retry finalization.".to_string()))
+    }
+}
+
 pub async fn players_list(search: &str, page: u32) -> Result<PlayersListResponse, String> {
     let c = client();
     let mut req = c.get(format!("{}/_api/players", base())).query(&[("page", page)]);
