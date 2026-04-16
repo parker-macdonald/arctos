@@ -10,7 +10,7 @@ FAST = finalize when all dependencies are completed.
 from __future__ import annotations
 
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 
 from app.domain.enums import MatchStatus, ScheduleType
@@ -35,6 +35,43 @@ def _get_tournament_lock(tournament_url: str) -> threading.Lock:
 
 def _now_utc() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _csv_tokens(raw: Optional[str]) -> List[str]:
+    if not raw:
+        return []
+    return [part.strip() for part in str(raw).split(",") if part.strip()]
+
+
+def _match_participant_team_ids(match: object) -> set[str]:
+    participants = set()
+    for team_id in (getattr(match, "team1", None), getattr(match, "team2", None)):
+        if team_id and str(team_id).strip():
+            participants.add(str(team_id).strip())
+    participants.update(_csv_tokens(getattr(match, "refs", None)))
+    return participants
+
+
+def _matches_share_any_team(match_a: object, match_b: object) -> bool:
+    return bool(_match_participant_team_ids(match_a) & _match_participant_team_ids(match_b))
+
+
+def _intervals_overlap(
+    start_a: Optional[datetime],
+    length_a: Optional[int],
+    start_b: Optional[datetime],
+    length_b: Optional[int],
+) -> bool:
+    if (
+        start_a is None
+        or start_b is None
+        or length_a is None
+        or length_b is None
+    ):
+        return False
+    end_a = start_a + timedelta(minutes=length_a)
+    end_b = start_b + timedelta(minutes=length_b)
+    return start_a < end_b and end_a > start_b
 
 
 def _evaluate_skip_condition(
@@ -359,6 +396,37 @@ def validate_match_input(match, tournament_url: str) -> Tuple[bool, Optional[str
         existing = existing.filter(Match.uuid != match.uuid)
     if existing.first():
         return False, "A match with this name already exists."
+
+    conflicts = Match.query.filter_by(event=tournament_url)
+    if match.uuid:
+        conflicts = conflicts.filter(Match.uuid != match.uuid)
+    for other in conflicts.all():
+        if not _matches_share_any_team(match, other):
+            continue
+        if (
+            schedule_type in (ScheduleType.SAFE, ScheduleType.FAST)
+            and other.schedule_type in (ScheduleType.SAFE, ScheduleType.FAST)
+            and match.nominal_start_time is not None
+            and match.nominal_start_time == other.nominal_start_time
+        ):
+            return (
+                False,
+                f"FAST/SAFE match shares a team with '{other.name}' and cannot have the same nominal start time.",
+            )
+        if (
+            schedule_type == ScheduleType.STATIC
+            and other.schedule_type == ScheduleType.STATIC
+            and _intervals_overlap(
+                match.nominal_start_time,
+                match.nominal_length,
+                other.nominal_start_time,
+                other.nominal_length,
+            )
+        ):
+            return (
+                False,
+                f"Static match overlaps with '{other.name}' while sharing a team.",
+            )
     return True, None
 
 

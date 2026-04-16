@@ -1214,6 +1214,15 @@ def user_upload_video_footage_chunk(tournament_url: str):
         if int(existing.get("batch_total") or 0) != batch_total:
             return jsonify({"error": "batch_total mismatch"}), 400
         if int(existing.get("batch_index") or -1) != batch_index:
+            current_app.logger.warning(
+                "user_upload chunk batch_index mismatch: upload_id=%s incoming_dir=%s existing_batch_index=%s request_batch_index=%s batch_id=%s existing_meta=%s",
+                upload_id,
+                incoming_dir,
+                existing.get("batch_index"),
+                batch_index,
+                batch_id,
+                meta_path,
+            )
             return jsonify({"error": "batch_index mismatch"}), 400
         if existing.get("batch_camera_name") != batch_camera_name:
             return jsonify({"error": "camera_name mismatch"}), 400
@@ -2329,6 +2338,7 @@ def update_match(tournament_url):
     # Validate inputs and constraints
     ok, err = validate_match_input(match, tournament_url)
     if not ok:
+        db.session.rollback()
         return jsonify({"success": False, "error": err}), 400
 
     db.session.flush()  # Flush before updating sequence

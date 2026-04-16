@@ -36,6 +36,7 @@ from app.routes.tournaments import update_match_previous_link
 from app.utils.scheduling import (
     recompute_all_match_times,
     compute_dynamic_match_nominal_start_time,
+    validate_match_input,
 )
 from app.utils.name_validation import match_name_char_error, team_pseudonym_char_error
 from app.utils.datetime_helpers import to_iso_z
@@ -4695,6 +4696,11 @@ def update_match_api(tournament_url, match_id):
         else:
             match.previous_match = None
 
+    ok, err = validate_match_input(match, tournament_url)
+    if not ok:
+        db.session.rollback()
+        return jsonify({"error": err}), 400
+
     db.session.flush()  # Emit UPDATE for previous_match etc. before commit
     db.session.commit()
 
@@ -5233,6 +5239,11 @@ def create_match_api(tournament_url):
         match.nominal_start_time = compute_dynamic_match_nominal_start_time(
             match, tournament_url
         )
+
+    ok, err = validate_match_input(match, tournament_url)
+    if not ok:
+        db.session.rollback()
+        return jsonify({"error": err}), 400
 
     db.session.commit()
 

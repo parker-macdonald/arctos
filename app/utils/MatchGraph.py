@@ -531,7 +531,7 @@ def build_match_graph(
                     if (
                         candidate.uuid == match.uuid
                         or candidate_start is None
-                        or candidate_start >= match_start
+                        or candidate_start > match_start
                     ):
                         continue
                     if not (
