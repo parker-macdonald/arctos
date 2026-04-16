@@ -270,9 +270,11 @@ def _build_camera_title(camera: Camera) -> str:
     field_name = field_obj.name if field_obj else str(camera.field)
 
     turl = match.event
+    tournament = Tournament.query.filter_by(url=turl).first()
+    event_name = (tournament.name if tournament and tournament.name else turl).strip()
     t1 = _team_label_for_youtube_title(turl, match.team1, "T1")
     t2 = _team_label_for_youtube_title(turl, match.team2, "T2")
-    return f"{match.name}: {t1} vs {t2} ({camera.name} on {field_name})"
+    return f"[{event_name}] {match.name}: {t1} vs {t2} ({camera.name} on {field_name})"
 
 
 def _upload_failed_source_to_s3(
