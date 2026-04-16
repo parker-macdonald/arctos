@@ -1296,7 +1296,11 @@ def update_my_player_registration_league(league_url):
     if err:
         return jsonify({"error": "Not found" if err == 404 else "Forbidden"}), err
 
-    if not league.registrable_config or not league.registrable_config.registration_open:
+    if not league.registrable_config or not getattr(
+        league.registrable_config,
+        "player_registration_open",
+        league.registrable_config.registration_open,
+    ):
         return jsonify({"error": "Registration changes are locked"}), 403
 
     class LeagueContext:
@@ -1395,7 +1399,11 @@ def update_my_team_registration_league(league_url):
     if err:
         return jsonify({"error": "Not found" if err == 404 else "Forbidden"}), err
 
-    if not league.registrable_config or not league.registrable_config.registration_open:
+    if not league.registrable_config or not getattr(
+        league.registrable_config,
+        "team_registration_open",
+        league.registrable_config.registration_open,
+    ):
         return jsonify({"error": "Registration changes are locked"}), 403
 
     class LeagueContext:
@@ -5763,7 +5771,7 @@ def update_my_player_registration(tournament_url):
 
     tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
     cfg = get_registrable_config(tournament)
-    reg_open = cfg.registration_open if cfg else False
+    reg_open = getattr(cfg, "player_registration_open", cfg.registration_open) if cfg else False
     if not reg_open:
         return jsonify({"error": "Registration changes are locked"}), 403
 
@@ -5847,7 +5855,7 @@ def update_my_team_registration(tournament_url):
 
     tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
     cfg = get_registrable_config(tournament)
-    reg_open = cfg.registration_open if cfg else False
+    reg_open = getattr(cfg, "team_registration_open", cfg.registration_open) if cfg else False
     if not reg_open:
         return jsonify({"error": "Registration changes are locked"}), 403
 
