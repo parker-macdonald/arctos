@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import fcntl
+import bisect
 import json
 import os
 import re
@@ -46,6 +47,100 @@ def _get_media_duration_sec(file_path: str) -> float:
         return float(dur)
     except ValueError:
         return 0.0
+
+
+def _get_media_profile(file_path: str) -> Optional[UserUploadMediaProfile]:
+    args = [
+        "-show_entries",
+        (
+            "stream=index,codec_type,codec_name,width,height,pix_fmt,"
+            "sample_rate,channels"
+        ),
+        "-show_streams",
+        file_path,
+    ]
+    data = _run_ffprobe_json(args)
+    streams = data.get("streams") or []
+    video_stream = None
+    audio_stream = None
+    for stream in streams:
+        codec_type = str(stream.get("codec_type") or "").strip().lower()
+        if codec_type == "video" and video_stream is None:
+            video_stream = stream
+        elif codec_type == "audio" and audio_stream is None:
+            audio_stream = stream
+
+    if not video_stream:
+        return None
+
+    video_codec = str(video_stream.get("codec_name") or "").strip()
+    width = int(video_stream.get("width") or 0)
+    height = int(video_stream.get("height") or 0)
+    pix_fmt = str(video_stream.get("pix_fmt") or "").strip()
+    if not video_codec or width <= 0 or height <= 0:
+        return None
+
+    audio_codec = None
+    sample_rate = None
+    channels = None
+    if audio_stream:
+        audio_codec = str(audio_stream.get("codec_name") or "").strip() or None
+        sample_rate = str(audio_stream.get("sample_rate") or "").strip() or None
+        try:
+            channels = int(audio_stream.get("channels") or 0) or None
+        except (TypeError, ValueError):
+            channels = None
+
+    return UserUploadMediaProfile(
+        video_codec=video_codec,
+        width=width,
+        height=height,
+        pix_fmt=pix_fmt,
+        audio_codec=audio_codec,
+        sample_rate=sample_rate,
+        channels=channels,
+    )
+
+
+def _get_video_keyframe_times_sec(file_path: str) -> list[float]:
+    args = [
+        "-select_streams",
+        "v:0",
+        "-skip_frame",
+        "nokey",
+        "-show_entries",
+        "frame=best_effort_timestamp_time,pts_time",
+        "-show_frames",
+        file_path,
+    ]
+    data = _run_ffprobe_json(args)
+    frames = data.get("frames") or []
+    out: list[float] = []
+    for frame in frames:
+        raw = (
+            frame.get("best_effort_timestamp_time")
+            if frame.get("best_effort_timestamp_time") is not None
+            else frame.get("pts_time")
+        )
+        if raw in (None, ""):
+            continue
+        try:
+            out.append(float(raw))
+        except (TypeError, ValueError):
+            continue
+    out.sort()
+    return out
+
+
+def _effective_stream_copy_clip_start_sec(
+    requested_start_sec: float, keyframe_times_sec: list[float]
+) -> float:
+    if requested_start_sec <= 0 or not keyframe_times_sec:
+        return 0.0
+    idx = bisect.bisect_right(keyframe_times_sec, requested_start_sec) - 1
+    if idx < 0:
+        return 0.0
+    return max(0.0, keyframe_times_sec[idx])
 
 
 def _parse_iso_to_datetime_utc(s: str) -> Optional[datetime]:
@@ -117,6 +212,25 @@ class UserUploadClipPlan:
     point_start_in_clip_sec: float
 
 
+@dataclass(frozen=True)
+class UserUploadSourceWindow:
+    source_path: str
+    start_world: datetime
+    end_world: datetime
+    duration_sec: float
+
+
+@dataclass(frozen=True)
+class UserUploadMediaProfile:
+    video_codec: str
+    width: int
+    height: int
+    pix_fmt: str
+    audio_codec: Optional[str]
+    sample_rate: Optional[str]
+    channels: Optional[int]
+
+
 def build_clip_plans_for_points(
     *,
     video_start_world: datetime,
@@ -168,7 +282,82 @@ def build_clip_plans_for_points(
     return plans
 
 
-def _ffmpeg_trim_to_webm(
+def _resolve_user_upload_source_window(
+    *,
+    source_path: str,
+    start_world_override_iso: Optional[str],
+) -> Optional[UserUploadSourceWindow]:
+    duration_sec = _get_media_duration_sec(source_path)
+    if duration_sec <= 0:
+        return None
+
+    if start_world_override_iso:
+        override_dt = _parse_iso_to_datetime_utc(start_world_override_iso)
+        start_world = override_dt or _get_video_start_world_datetime(source_path)
+    else:
+        start_world = _get_video_start_world_datetime(source_path)
+
+    from datetime import timedelta
+
+    end_world = start_world + timedelta(seconds=duration_sec)
+    return UserUploadSourceWindow(
+        source_path=source_path,
+        start_world=start_world,
+        end_world=end_world,
+        duration_sec=duration_sec,
+    )
+
+
+def _validate_non_overlapping_source_windows(
+    source_windows: list[UserUploadSourceWindow],
+) -> Optional[str]:
+    if len(source_windows) < 2:
+        return None
+
+    sorted_windows = sorted(source_windows, key=lambda w: (w.start_world, w.end_world))
+    prev = sorted_windows[0]
+    for current in sorted_windows[1:]:
+        if prev.end_world > current.start_world:
+            prev_name = path.basename(prev.source_path)
+            current_name = path.basename(current.source_path)
+            return (
+                "Uploaded source videos overlap in time and cannot be auto-merged into "
+                f"one highlight camera: {prev_name} overlaps {current_name}. "
+                "Trim the footage so each file covers a distinct time range, or upload "
+                "an edited video instead."
+            )
+        prev = current
+
+    return None
+
+
+def _validate_compatible_source_media_profiles(
+    source_paths: list[str],
+) -> tuple[Optional[UserUploadMediaProfile], Optional[str]]:
+    if not source_paths:
+        return None, "no source videos provided"
+
+    baseline_path = source_paths[0]
+    baseline_profile = _get_media_profile(baseline_path)
+    if baseline_profile is None:
+        return None, f"could not read media streams from {path.basename(baseline_path)}"
+
+    for source_path in source_paths[1:]:
+        profile = _get_media_profile(source_path)
+        if profile is None:
+            return None, f"could not read media streams from {path.basename(source_path)}"
+        if profile != baseline_profile:
+            return (
+                None,
+                "Uploaded source videos must use the same video/audio stream format to "
+                "auto-merge without re-encoding. "
+                f"{path.basename(baseline_path)} is incompatible with {path.basename(source_path)}.",
+            )
+
+    return baseline_profile, None
+
+
+def _ffmpeg_trim_without_reencode(
     *,
     input_path: str,
     start_sec: float,
@@ -182,30 +371,27 @@ def _ffmpeg_trim_to_webm(
         "-loglevel",
         "error",
         "-y",
-        "-i",
-        input_path,
         "-ss",
         str(start_sec),
+        "-i",
+        input_path,
         "-t",
         str(duration),
-        "-c:v",
-        "libvpx-vp9",
-        "-crf",
-        "30",
-        "-b:v",
-        "0",
-        "-row-mt",
-        "1",
-        "-c:a",
-        "libopus",
-        "-b:a",
-        "128k",
+        "-map",
+        "0:v:0",
+        "-map",
+        "0:a?",
+        "-c",
+        "copy",
+        "-copyinkf",
+        "-avoid_negative_ts",
+        "make_zero",
         output_path,
     ]
     subprocess.run(cmd, check=True, capture_output=True, text=True)
 
 
-def _ffmpeg_concat_webm(
+def _ffmpeg_concat_without_reencode(
     *,
     clip_paths: list[str],
     output_path: str,
@@ -234,18 +420,8 @@ def _ffmpeg_concat_webm(
         "0",
         "-i",
         concat_list_abs,
-        "-c:v",
-        "libvpx-vp9",
-        "-crf",
-        "30",
-        "-b:v",
-        "0",
-        "-row-mt",
-        "1",
-        "-c:a",
-        "libopus",
-        "-b:a",
-        "128k",
+        "-c",
+        "copy",
         "-y",
         output_path,
     ]
@@ -650,6 +826,83 @@ def user_autoclips_from_uploaded_batch_worker(
         else:
             sources.append((abs_path, None))
 
+    source_windows: list[UserUploadSourceWindow] = []
+    for user_video_abs_path, video_start_world_override_iso in sources:
+        window = _resolve_user_upload_source_window(
+            source_path=user_video_abs_path,
+            start_world_override_iso=video_start_world_override_iso,
+        )
+        if window is None:
+            _log.error(
+                "user_autoclips batch: bad duration for %s", user_video_abs_path
+            )
+            _finalize_batch_status(
+                manifest_path,
+                status="failed",
+                error=f"bad duration for {path.basename(user_video_abs_path)}",
+                logger=_log,
+            )
+            return
+        source_windows.append(window)
+
+    overlap_error = _validate_non_overlapping_source_windows(source_windows)
+    if overlap_error:
+        _log.warning(
+            "user_autoclips batch: overlapping sources field=%s event=%s batch=%s error=%s",
+            field_name,
+            tournament_url,
+            batch_id_key,
+            overlap_error,
+        )
+        _finalize_batch_status(
+            manifest_path,
+            status="failed",
+            error=overlap_error,
+            logger=_log,
+        )
+        return
+
+    _media_profile, media_profile_error = _validate_compatible_source_media_profiles(
+        [window.source_path for window in source_windows]
+    )
+    if media_profile_error:
+        _log.warning(
+            "user_autoclips batch: incompatible source media field=%s event=%s batch=%s error=%s",
+            field_name,
+            tournament_url,
+            batch_id_key,
+            media_profile_error,
+        )
+        _finalize_batch_status(
+            manifest_path,
+            status="failed",
+            error=media_profile_error,
+            logger=_log,
+        )
+        return
+
+    keyframes_by_source: dict[str, list[float]] = {}
+    for source_window in source_windows:
+        try:
+            keyframes_by_source[source_window.source_path] = _get_video_keyframe_times_sec(
+                source_window.source_path
+            )
+        except Exception:
+            _log.exception(
+                "user_autoclips batch: failed to read keyframes for %s",
+                source_window.source_path,
+            )
+            _finalize_batch_status(
+                manifest_path,
+                status="failed",
+                error=(
+                    "could not inspect uploaded video keyframes for fast trim mode; "
+                    f"source={path.basename(source_window.source_path)}"
+                ),
+                logger=_log,
+            )
+            return
+
     field_obj = Field.query.filter_by(event=tournament_url, name=field_name).first()
     if not field_obj:
         _log.error("user_autoclips batch: field not found event=%s field=%s", tournament_url, field_name)
@@ -703,31 +956,15 @@ def user_autoclips_from_uploaded_batch_worker(
 
     for match_uuid, pts in points_by_match.items():
         combined: list[tuple[UserUploadClipPlan, str]] = []
-        for user_video_abs_path, video_start_world_override_iso in sources:
-            user_video_abs_path = path.abspath(path.normpath(user_video_abs_path))
-            video_duration_sec = _get_media_duration_sec(user_video_abs_path)
-            if video_duration_sec <= 0:
-                _log.error(
-                    "user_autoclips batch: bad duration for %s", user_video_abs_path
-                )
-                continue
-
-            if video_start_world_override_iso:
-                override_dt = _parse_iso_to_datetime_utc(video_start_world_override_iso)
-                video_start_world = override_dt or _get_video_start_world_datetime(
-                    user_video_abs_path
-                )
-            else:
-                video_start_world = _get_video_start_world_datetime(user_video_abs_path)
-
+        for source_window in source_windows:
             plans = build_clip_plans_for_points(
-                video_start_world=video_start_world,
-                video_duration_sec=video_duration_sec,
+                video_start_world=source_window.start_world,
+                video_duration_sec=source_window.duration_sec,
                 points=pts,
                 padding_sec=match_points_padding_sec,
             )
             for p in plans:
-                combined.append((p, user_video_abs_path))
+                combined.append((p, source_window.source_path))
 
         combined.sort(key=lambda x: x[0].point_start_world)
         deduped: list[tuple[UserUploadClipPlan, str]] = []
@@ -766,9 +1003,13 @@ def user_autoclips_from_uploaded_batch_worker(
 
         concat_offset = 0.0
         for i, (plan, user_video_abs_path) in enumerate(deduped):
-            clip_name = f"point_clip_{i}.webm"
+            clip_name = f"point_clip_{i}.mkv"
             clip_abs_path = path.join(src_clips_dir, clip_name)
-            _ffmpeg_trim_to_webm(
+            effective_clip_start_sec = _effective_stream_copy_clip_start_sec(
+                plan.clip_start_file_sec,
+                keyframes_by_source.get(user_video_abs_path, []),
+            )
+            _ffmpeg_trim_without_reencode(
                 input_path=user_video_abs_path,
                 start_sec=plan.clip_start_file_sec,
                 end_sec=plan.clip_end_file_sec,
@@ -776,14 +1017,22 @@ def user_autoclips_from_uploaded_batch_worker(
             )
             clip_paths.append(clip_abs_path)
 
-            point_start_in_highlight = concat_offset + plan.point_start_in_clip_sec
+            point_start_in_clip_sec = max(
+                0.0,
+                plan.clip_start_file_sec
+                + plan.point_start_in_clip_sec
+                - effective_clip_start_sec,
+            )
+            point_start_in_highlight = concat_offset + point_start_in_clip_sec
             time_world.append(_dt_to_iso_z(plan.point_start_world))
             time_video.append(round(point_start_in_highlight, 3))
 
-            concat_offset += max(0.0, plan.clip_end_file_sec - plan.clip_start_file_sec)
+            concat_offset += _get_media_duration_sec(clip_abs_path)
 
-        final_highlight_abs_path = path.join(match_out_dir, "final_video.webm")
-        _ffmpeg_concat_webm(clip_paths=clip_paths, output_path=final_highlight_abs_path)
+        final_highlight_abs_path = path.join(match_out_dir, "final_video.mkv")
+        _ffmpeg_concat_without_reencode(
+            clip_paths=clip_paths, output_path=final_highlight_abs_path
+        )
 
         final_highlight_rel = path.join(
             "static",
@@ -793,7 +1042,7 @@ def user_autoclips_from_uploaded_batch_worker(
             field_name,
             match_uuid,
             camera_fs_name,
-            "final_video.webm",
+            "final_video.mkv",
         ).replace("\\", "/")
 
         camera_row = Camera(
