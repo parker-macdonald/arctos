@@ -782,14 +782,16 @@ pub fn TournamentHome(url: String) -> Element {
                                                 }
                                                 if upload_mode() == UploadMode::RawClips {
                                                     p { class: "text-muted mb-2",
-                                                        "All videos in this upload are treated as one camera on the field you choose below. The frontend previews which points overlap each file using the detected file timestamp and video duration. The backend still recomputes the authoritative clips before publishing."
+                                                        "All videos are treated as one camera on the field you choose below. They may not overlap and may not have pauses. Their start timestamp is used to detect which points are recorded, and Arctos will clip the video to these points and upload them to YouTube. If the detected timestamp is wrong, you may manually override it."
+                                                        br {}
+                                                        "If you have footage of multiple fields, upload each field separately (ie, upload all the footage from one field first, submit it, and only then upload the next field)"
                                                     }
                                                     p { class: "text-muted mb-2 small",
-                                                        "If the detected start timestamp is wrong, enter an override with timezone. Avoid uploads with pauses or jumps in the middle."
+                                                        "Your upload will need some processing before it is ready and visible. If you want a status update, check in with a TO; they can see the status of your upload."
                                                     }
                                                 } else {
                                                     p { class: "text-muted mb-2",
-                                                        "Edited uploads go straight to one selected match page and then to YouTube. No point timestamps or point seek data are generated for these videos."
+                                                        "Edited uploads go straight to one selected match page and YouTube. No point timestamps or point seek data are generated for these videos."
                                                     }
                                                 }
                                                 input {
