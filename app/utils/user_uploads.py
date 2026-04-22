@@ -850,3 +850,107 @@ def user_autoclips_from_uploaded_batch_worker(
         remove_manifest_dir=True,
     )
 
+
+def create_direct_user_upload_camera(
+    logger,
+    app_obj,
+    *,
+    tournament_url: str,
+    match_uuid: str,
+    camera_name: str,
+    upload_key: str,
+    saved_abs_path: str,
+    uploader_user_id: str,
+    uploader_user_type: str,
+) -> str:
+    """
+    Create a single match-scoped camera from a pre-edited upload and start the
+    YouTube upload immediately. No point timing metadata is attached.
+    """
+    _log = logger or current_app.logger
+
+    match_obj = Match.query.filter_by(uuid=match_uuid, event=tournament_url).first()
+    if not match_obj:
+        raise ValueError("Match not found")
+    if not match_obj.field:
+        raise ValueError("Selected match has no field")
+
+    field_obj = Field.query.filter_by(event=tournament_url, name=match_obj.field).first()
+    if not field_obj:
+        raise ValueError("Match field not found")
+
+    display_name = (camera_name or "").strip() or (
+        path.splitext(path.basename(saved_abs_path))[0] or "upload"
+    )
+    if len(display_name) > 200:
+        display_name = display_name[:200]
+
+    ext = path.splitext(path.basename(saved_abs_path))[1].lower() or ".webm"
+    camera_fs_name = _camera_fs_dir_name(upload_key, display_name)
+    match_out_dir = path.join(
+        current_app.root_path,
+        "..",
+        "static",
+        "uploads",
+        "videos",
+        tournament_url,
+        match_obj.field,
+        match_uuid,
+        camera_fs_name,
+    )
+    os.makedirs(match_out_dir, exist_ok=True)
+
+    final_abs_path = path.join(match_out_dir, f"source{ext}")
+    saved_abs_path = path.abspath(path.normpath(saved_abs_path))
+    shutil.move(saved_abs_path, final_abs_path)
+
+    source_dir = path.dirname(saved_abs_path)
+    if path.isdir(source_dir):
+        try:
+            shutil.rmtree(source_dir)
+        except OSError:
+            _log.warning(
+                "direct user upload: could not remove temp dir %s",
+                source_dir,
+            )
+
+    final_rel = path.join(
+        "static",
+        "uploads",
+        "videos",
+        tournament_url,
+        match_obj.field,
+        match_uuid,
+        camera_fs_name,
+        f"source{ext}",
+    ).replace("\\", "/")
+
+    camera_row = Camera(
+        match_uuid=match_uuid,
+        event=tournament_url,
+        field=field_obj.id,
+        name=display_name,
+        source_type="user_upload",
+        uploaded_by_user_id=uploader_user_id,
+        uploaded_by_user_type=uploader_user_type,
+        status="UPLOADING",
+        file=final_rel,
+        time_world=None,
+        time_video=None,
+    )
+    db.session.add(camera_row)
+    db.session.commit()
+
+    def _yt_upload():
+        with app_obj.app_context():
+            upload_camera_to_youtube(str(camera_row.uuid))
+
+    threading.Thread(target=_yt_upload, daemon=True).start()
+
+    _log.info(
+        "direct user upload: created camera uuid=%s match=%s",
+        camera_row.uuid,
+        match_uuid,
+    )
+    return str(camera_row.uuid)
+

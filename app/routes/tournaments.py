@@ -26,6 +26,7 @@ from models import (
     Field,
     Tag,
     Camera,
+    Point,
     TeamRegistration,
     PlayerRegistration,
     Team,
@@ -52,6 +53,7 @@ from os import path, listdir
 
 from app.utils.footage import finalize_recording_worker
 from app.utils.user_uploads import (
+    create_direct_user_upload_camera,
     list_batch_manifest_rows,
     register_batch_upload_completion,
 )
@@ -73,6 +75,7 @@ from app.domain.enums import (
     ScheduleType,
     SetType,
 )
+from app.services.registration_resolver import is_player_registered
 
 # for finalizing recordings which calls ffmpeg
 # only one worker bc ffmpeg does its own parallelism
@@ -1054,18 +1057,19 @@ def retry_match_finalization(tournament_url: str, match_id: str):
 @bp.route("/tournaments/<tournament_url>/user-upload", methods=["POST"])
 @login_required
 def user_upload_video_footage(tournament_url: str):
-    """Authenticated endpoint: upload a user-recorded video and auto-generate match highlights."""
+    """Authenticated endpoint for raw clip generation or direct edited uploads."""
     import os
-    from datetime import datetime, timezone
-
-    field_id_raw = request.form.get("field_id") or request.form.get("field")
-    if not tournament_url or not field_id_raw:
-        return jsonify({"error": "tournament and field_id are required"}), 400
+    _tournament, err = _require_registered_player_for_upload(tournament_url)
+    if err:
+        return err
 
     try:
-        field_id = int(field_id_raw)
-    except ValueError:
-        return jsonify({"error": "field_id must be an integer"}), 400
+        upload_mode = _normalize_user_upload_mode(request.form.get("upload_mode"))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+    field_id_raw = request.form.get("field_id") or request.form.get("field")
+    match_uuid = (request.form.get("match_uuid") or "").strip() or None
 
     video_file = request.files.get("video") or request.files.get("file")
     if not video_file or video_file.filename == "":
@@ -1080,11 +1084,29 @@ def user_upload_video_footage(tournament_url: str):
         return jsonify({"error": str(e)}), 400
 
     camera_name_override = (request.form.get("camera_name") or "").strip()
+    field_obj = None
+    field_name_resolved = None
+    if upload_mode == "raw_clips":
+        if not field_id_raw:
+            return jsonify({"error": "field_id is required for raw clip uploads"}), 400
+        try:
+            field_id = int(field_id_raw)
+        except ValueError:
+            return jsonify({"error": "field_id must be an integer"}), 400
+        field_obj = Field.query.filter_by(event=tournament_url, id=field_id).first()
+        if not field_obj:
+            return jsonify({"error": "Field not found"}), 404
+        field_name_resolved = field_obj.name
+    else:
+        if not match_uuid:
+            return jsonify({"error": "match_uuid is required for edited uploads"}), 400
+        match_obj = Match.query.filter_by(uuid=match_uuid, event=tournament_url).first()
+        if not match_obj:
+            return jsonify({"error": "Match not found"}), 404
+        if not match_obj.field:
+            return jsonify({"error": "Selected match has no field"}), 400
+        field_name_resolved = match_obj.field
 
-    field_obj = Field.query.filter_by(event=tournament_url, id=field_id).first()
-    if not field_obj:
-        return jsonify({"error": "Field not found"}), 404
-    field_name_resolved = field_obj.name
     db.session.remove()
 
     upload_group_name = uuid.uuid4().hex[:12]
@@ -1118,29 +1140,46 @@ def user_upload_video_footage(tournament_url: str):
 
     batch_camera_name = camera_name_override or orig_stem
     try:
-        register_batch_upload_completion(
-            logger,
-            app_obj,
-            tournament_url=tournament_url,
-            field_name=field_name_resolved,
-            batch_id=upload_group_name,
-            batch_index=0,
-            batch_total=1,
-            camera_name=batch_camera_name,
-            upload_id=upload_group_name,
-            saved_abs_path=saved_abs_path,
-            start_world_override=start_world_override,
-            incoming_dir_name=None,
-            uploader_user_id=uploader_user_id,
-            uploader_user_type=uploader_user_type,
-        )
+        if upload_mode == "edited_match":
+            create_direct_user_upload_camera(
+                logger,
+                app_obj,
+                tournament_url=tournament_url,
+                match_uuid=match_uuid or "",
+                camera_name=batch_camera_name,
+                upload_key=upload_group_name,
+                saved_abs_path=saved_abs_path,
+                uploader_user_id=uploader_user_id,
+                uploader_user_type=uploader_user_type,
+            )
+        else:
+            register_batch_upload_completion(
+                logger,
+                app_obj,
+                tournament_url=tournament_url,
+                field_name=field_name_resolved,
+                batch_id=upload_group_name,
+                batch_index=0,
+                batch_total=1,
+                camera_name=batch_camera_name,
+                upload_id=upload_group_name,
+                saved_abs_path=saved_abs_path,
+                start_world_override=start_world_override,
+                incoming_dir_name=None,
+                uploader_user_id=uploader_user_id,
+                uploader_user_type=uploader_user_type,
+            )
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
 
     return jsonify(
         {
             "success": True,
-            "message": "Upload received; processing has begun.",
+            "message": (
+                "Upload received; YouTube upload has begun."
+                if upload_mode == "edited_match"
+                else "Upload received; processing has begun."
+            ),
             "upload_group_name": upload_group_name,
         }
     )
@@ -1228,6 +1267,108 @@ def _normalize_user_upload_start_world(raw_value: str | None) -> str | None:
     return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def _normalize_user_upload_mode(raw_value: str | None) -> str:
+    mode = (raw_value or "raw_clips").strip().lower()
+    if mode in ("raw_clips", "raw", "clips"):
+        return "raw_clips"
+    if mode in ("edited_match", "edited", "direct"):
+        return "edited_match"
+    raise ValueError("upload_mode must be raw_clips or edited_match")
+
+
+def _require_registered_player_for_upload(tournament_url: str):
+    tournament = Tournament.query.filter_by(url=tournament_url).first()
+    if not tournament:
+        return None, (jsonify({"error": "Tournament not found"}), 404)
+    if current_user.__class__.__name__.lower() != "player":
+        return None, (
+            jsonify({"error": "Only registered players can upload footage"}), 403
+        )
+    if not is_player_registered(tournament, str(current_user.id)):
+        return None, (
+            jsonify({"error": "You must be registered for this tournament to upload footage"}),
+            403,
+        )
+    return tournament, None
+
+
+@bp.route("/tournaments/<tournament_url>/user-upload/planning", methods=["GET"])
+@login_required
+def user_upload_planning(tournament_url: str):
+    _, err = _require_registered_player_for_upload(tournament_url)
+    if err:
+        return err
+
+    field_id_raw = (request.args.get("field_id") or request.args.get("field") or "").strip()
+    if not field_id_raw:
+        return jsonify({"error": "field_id is required"}), 400
+    try:
+        field_id = int(field_id_raw)
+    except ValueError:
+        return jsonify({"error": "field_id must be an integer"}), 400
+
+    field_obj = Field.query.filter_by(event=tournament_url, id=field_id).first()
+    if not field_obj:
+        return jsonify({"error": "Field not found"}), 404
+
+    matches = (
+        Match.query.filter_by(event=tournament_url, field=field_obj.name)
+        .order_by(
+            Match.confirmed_start_time.asc(),
+            Match.nominal_start_time.asc(),
+            Match.name.asc(),
+        )
+        .all()
+    )
+    match_ids = [m.uuid for m in matches]
+    points_by_match: dict[str, list[Point]] = {m.uuid: [] for m in matches}
+    if match_ids:
+        points = (
+            Point.query.filter(Point.match.in_(match_ids))
+            .order_by(Point.stamp.asc(), Point.uuid.asc())
+            .all()
+        )
+        for pt in points:
+            if pt.match:
+                points_by_match.setdefault(pt.match, []).append(pt)
+
+    rows = []
+    for match_obj in matches:
+        match_points = []
+        for idx, pt in enumerate(points_by_match.get(match_obj.uuid, []), start=1):
+            match_points.append(
+                {
+                    "uuid": str(pt.uuid),
+                    "index": idx,
+                    "stamp": pt.stamp.replace(tzinfo=timezone.utc)
+                    .isoformat()
+                    .replace("+00:00", "Z")
+                    if pt.stamp
+                    else None,
+                    "end_stamp": pt.end_stamp.replace(tzinfo=timezone.utc)
+                    .isoformat()
+                    .replace("+00:00", "Z")
+                    if pt.end_stamp
+                    else None,
+                }
+            )
+        rows.append(
+            {
+                "uuid": str(match_obj.uuid),
+                "name": match_obj.name,
+                "field_name": field_obj.name,
+                "points": match_points,
+            }
+        )
+
+    return jsonify(
+        {
+            "field": {"id": field_obj.id, "name": field_obj.name},
+            "matches": rows,
+        }
+    )
+
+
 @bp.route("/tournaments/<tournament_url>/user-upload/chunk", methods=["POST"])
 @login_required
 def user_upload_video_footage_chunk(tournament_url: str):
@@ -1237,8 +1378,16 @@ def user_upload_video_footage_chunk(tournament_url: str):
     """
     import os
     import re
+    _tournament, err = _require_registered_player_for_upload(tournament_url)
+    if err:
+        return err
 
     field_id_raw = request.form.get("field_id") or request.form.get("field")
+    match_uuid = (request.form.get("match_uuid") or "").strip() or None
+    try:
+        upload_mode = _normalize_user_upload_mode(request.form.get("upload_mode"))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
     upload_id = (request.form.get("upload_id") or "").strip()
     chunk_index_raw = (request.form.get("chunk_index") or "").strip()
     total_chunks_raw = (request.form.get("total_chunks") or "").strip()
@@ -1252,17 +1401,16 @@ def user_upload_video_footage_chunk(tournament_url: str):
     batch_index_raw = (request.form.get("batch_index") or "").strip()
     batch_total_raw = (request.form.get("batch_total") or "").strip()
 
-    if not field_id_raw or not upload_id or chunk_file is None:
-        return jsonify({"error": "field_id, upload_id, and chunk are required"}), 400
+    if not upload_id or chunk_file is None:
+        return jsonify({"error": "upload_id and chunk are required"}), 400
     if not re.fullmatch(r"[A-Za-z0-9_-]{6,80}", upload_id):
         return jsonify({"error": "Invalid upload_id"}), 400
 
     try:
-        field_id = int(field_id_raw)
         chunk_index = int(chunk_index_raw)
         total_chunks = int(total_chunks_raw)
     except ValueError:
-        return jsonify({"error": "chunk_index/total_chunks/field_id must be integers"}), 400
+        return jsonify({"error": "chunk_index and total_chunks must be integers"}), 400
     if chunk_index < 0 or total_chunks <= 0 or chunk_index >= total_chunks:
         return jsonify({"error": "Invalid chunk_index/total_chunks"}), 400
 
@@ -1291,10 +1439,33 @@ def user_upload_video_footage_chunk(tournament_url: str):
     filename_stem = path.splitext(path.basename(filename))[0] or "upload"
     batch_camera_name = (camera_name_override or "").strip() or filename_stem
 
-    field_obj = Field.query.filter_by(event=tournament_url, id=field_id).first()
-    if not field_obj:
-        return jsonify({"error": "Field not found"}), 404
-    field_name_resolved = field_obj.name
+    field_obj = None
+    field_name_resolved = None
+    if upload_mode == "raw_clips":
+        if not field_id_raw:
+            return jsonify({"error": "field_id is required for raw clip uploads"}), 400
+        try:
+            field_id = int(field_id_raw)
+        except ValueError:
+            return jsonify({"error": "field_id must be an integer"}), 400
+        field_obj = Field.query.filter_by(event=tournament_url, id=field_id).first()
+        if not field_obj:
+            return jsonify({"error": "Field not found"}), 404
+        field_name_resolved = field_obj.name
+    else:
+        if not match_uuid:
+            return jsonify({"error": "match_uuid is required for edited uploads"}), 400
+        match_obj = Match.query.filter_by(uuid=match_uuid, event=tournament_url).first()
+        if not match_obj:
+            return jsonify({"error": "Match not found"}), 404
+        if not match_obj.field:
+            return jsonify({"error": "Selected match has no field"}), 400
+        field_name_resolved = match_obj.field
+        field_obj = Field.query.filter_by(event=tournament_url, name=field_name_resolved).first()
+        if not field_obj:
+            return jsonify({"error": "Match field not found"}), 404
+        field_id = field_obj.id
+
     db.session.remove()
     incoming_dir_name = _user_upload_incoming_dir_name(upload_id, batch_index)
 
@@ -1343,6 +1514,10 @@ def user_upload_video_footage_chunk(tournament_url: str):
             return jsonify({"error": "camera_name mismatch"}), 400
         if int(existing.get("field_id") or 0) != field_id:
             return jsonify({"error": "field_id mismatch"}), 400
+        if str(existing.get("upload_mode") or "raw_clips") != upload_mode:
+            return jsonify({"error": "upload_mode mismatch"}), 400
+        if (str(existing.get("match_uuid") or "").strip() or None) != match_uuid:
+            return jsonify({"error": "match_uuid mismatch"}), 400
 
     chunk_filename = f"chunk_{chunk_index:06d}.part"
     chunk_abs_path = path.join(incoming_dir, chunk_filename)
@@ -1355,6 +1530,8 @@ def user_upload_video_footage_chunk(tournament_url: str):
         "field_name": field_name_resolved,
         "filename": filename,
         "content_type": content_type,
+        "upload_mode": upload_mode,
+        "match_uuid": match_uuid,
         "total_chunks": total_chunks,
         "start_world_override": start_world_override,
         "camera_name_override": camera_name_override,
@@ -1384,7 +1561,9 @@ def user_upload_video_footage_chunk(tournament_url: str):
 def user_upload_video_footage_complete(tournament_url: str):
     """Finalize a chunked upload, assemble source file on disk, then start processing worker."""
     import os
-    from datetime import datetime, timezone
+    _tournament, err = _require_registered_player_for_upload(tournament_url)
+    if err:
+        return err
 
     payload = request.get_json(silent=True) or {}
     upload_id = (payload.get("upload_id") or request.form.get("upload_id") or "").strip()
@@ -1457,6 +1636,11 @@ def user_upload_video_footage_complete(tournament_url: str):
         start_world_override = _normalize_user_upload_start_world(start_world_override)
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
+    try:
+        upload_mode = _normalize_user_upload_mode(meta.get("upload_mode"))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    match_uuid = (meta.get("match_uuid") or "").strip() or None
 
     batch_id = (meta.get("batch_id") or "").strip() or upload_id
     try:
@@ -1479,22 +1663,37 @@ def user_upload_video_footage_complete(tournament_url: str):
     logger = current_app.logger
 
     try:
-        register_batch_upload_completion(
-            logger,
-            app_obj,
-            tournament_url=tournament_url,
-            field_name=field_name,
-            batch_id=batch_id,
-            batch_index=batch_index,
-            batch_total=batch_total,
-            camera_name=batch_camera_name,
-            upload_id=upload_id,
-            saved_abs_path=saved_abs_path,
-            start_world_override=start_world_override,
-            incoming_dir_name=incoming_dir_name,
-            uploader_user_id=uploader_user_id,
-            uploader_user_type=uploader_user_type,
-        )
+        if upload_mode == "edited_match":
+            if not match_uuid:
+                return jsonify({"error": "match_uuid is required for edited uploads"}), 400
+            create_direct_user_upload_camera(
+                logger,
+                app_obj,
+                tournament_url=tournament_url,
+                match_uuid=match_uuid,
+                camera_name=batch_camera_name,
+                upload_key=upload_id,
+                saved_abs_path=saved_abs_path,
+                uploader_user_id=uploader_user_id,
+                uploader_user_type=uploader_user_type,
+            )
+        else:
+            register_batch_upload_completion(
+                logger,
+                app_obj,
+                tournament_url=tournament_url,
+                field_name=field_name,
+                batch_id=batch_id,
+                batch_index=batch_index,
+                batch_total=batch_total,
+                camera_name=batch_camera_name,
+                upload_id=upload_id,
+                saved_abs_path=saved_abs_path,
+                start_world_override=start_world_override,
+                incoming_dir_name=incoming_dir_name,
+                uploader_user_id=uploader_user_id,
+                uploader_user_type=uploader_user_type,
+            )
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
 
@@ -1510,7 +1709,11 @@ def user_upload_video_footage_complete(tournament_url: str):
     return jsonify(
         {
             "success": True,
-            "message": "Upload received; processing has begun.",
+            "message": (
+                "Upload received; YouTube upload has begun."
+                if upload_mode == "edited_match"
+                else "Upload received; processing has begun."
+            ),
             "upload_group_name": upload_id,
         }
     )

@@ -38,7 +38,11 @@ fn truncate_error_body(text: &str, max_len: usize) -> String {
     if t.len() <= max_len {
         t.to_string()
     } else {
-        format!("{}... ({} bytes total). Check server logs for full error.", &t[..max_len], t.len())
+        format!(
+            "{}... ({} bytes total). Check server logs for full error.",
+            &t[..max_len],
+            t.len()
+        )
     }
 }
 
@@ -134,7 +138,8 @@ pub async fn change_password(current_password: &str, new_password: &str) -> Resu
         "new_password": new_password
     });
     let r = with_credentials(
-        c.post(format!("{}/_api/change-password", base())).json(&body)
+        c.post(format!("{}/_api/change-password", base()))
+            .json(&body),
     )
     .send()
     .await
@@ -194,14 +199,10 @@ pub async fn tournaments() -> Result<TournamentsResponse, String> {
 
 pub async fn tournament_detail(tournament_url: &str) -> Result<TournamentDetailResponse, String> {
     let c = client();
-    let r = with_credentials(c.get(format!(
-        "{}/_api/tournaments/{}",
-        base(),
-        tournament_url
-    )))
-    .send()
-    .await
-    .map_err(|e| e.to_string())?;
+    let r = with_credentials(c.get(format!("{}/_api/tournaments/{}", base(), tournament_url)))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
     if r.status().as_u16() == 404 {
         return Err("Not found".to_string());
     }
@@ -210,15 +211,20 @@ pub async fn tournament_detail(tournament_url: &str) -> Result<TournamentDetailR
 
 pub async fn tournament_fields(tournament_url: &str) -> Result<Vec<FieldOption>, String> {
     let c = client();
-    let r = with_credentials(
-        c.get(format!("{}/_api/tournaments/{}/fields", base(), tournament_url))
-    )
+    let r = with_credentials(c.get(format!(
+        "{}/_api/tournaments/{}/fields",
+        base(),
+        tournament_url
+    )))
     .send()
     .await
     .map_err(|e| e.to_string())?;
 
     let data: Value = response_json(r).await?;
-    let fields_val = data.get("fields").cloned().unwrap_or_else(|| Value::Array(vec![]));
+    let fields_val = data
+        .get("fields")
+        .cloned()
+        .unwrap_or_else(|| Value::Array(vec![]));
     serde_json::from_value::<Vec<FieldOption>>(fields_val).map_err(|e| e.to_string())
 }
 
@@ -226,13 +232,11 @@ pub async fn user_uploaded_cameras_list(
     tournament_url: &str,
 ) -> Result<UserUploadedCamerasResponse, String> {
     let c = client();
-    let r = with_credentials(
-        c.get(format!(
-            "{}/_api/tournaments/{}/user-uploaded-cameras",
-            base(),
-            tournament_url
-        ))
-    )
+    let r = with_credentials(c.get(format!(
+        "{}/_api/tournaments/{}/user-uploaded-cameras",
+        base(),
+        tournament_url
+    )))
     .send()
     .await
     .map_err(|e| e.to_string())?;
@@ -244,14 +248,12 @@ pub async fn delete_user_uploaded_camera(
     camera_uuid: &str,
 ) -> Result<(), String> {
     let c = client();
-    let r = with_credentials(
-        c.delete(format!(
-            "{}/_api/tournaments/{}/user-upload/delete-camera/{}",
-            base(),
-            tournament_url,
-            camera_uuid
-        ))
-    )
+    let r = with_credentials(c.delete(format!(
+        "{}/_api/tournaments/{}/user-upload/delete-camera/{}",
+        base(),
+        tournament_url,
+        camera_uuid
+    )))
     .send()
     .await
     .map_err(|e| e.to_string())?;
@@ -267,10 +269,31 @@ pub async fn delete_user_uploaded_camera(
     }
 }
 
+pub async fn user_upload_planning(
+    tournament_url: &str,
+    field_id: u32,
+) -> Result<UserUploadPlanningResponse, String> {
+    let c = client();
+    let r = with_credentials(
+        c.get(format!(
+            "{}/_api/tournaments/{}/user-upload/planning",
+            base(),
+            tournament_url
+        ))
+        .query(&[("field_id", field_id)]),
+    )
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    response_json(r).await
+}
+
 #[cfg(target_arch = "wasm32")]
 pub async fn user_upload_video_footage(
     tournament_url: &str,
-    field_id: u32,
+    upload_mode: &str,
+    field_id: Option<u32>,
+    match_uuid: Option<&str>,
     file: dioxus::html::FileData,
     start_world_override: Option<String>,
     camera_name: Option<String>,
@@ -280,7 +303,9 @@ pub async fn user_upload_video_footage(
 ) -> Result<String, String> {
     user_upload_video_footage_with_progress(
         tournament_url,
+        upload_mode,
         field_id,
+        match_uuid,
         file,
         start_world_override,
         camera_name,
@@ -296,7 +321,9 @@ pub async fn user_upload_video_footage(
 #[cfg(target_arch = "wasm32")]
 pub async fn user_upload_video_footage_with_progress<F>(
     tournament_url: &str,
-    field_id: u32,
+    upload_mode: &str,
+    field_id: Option<u32>,
+    match_uuid: Option<&str>,
     file: dioxus::html::FileData,
     start_world_override: Option<String>,
     camera_name: Option<String>,
@@ -330,7 +357,11 @@ where
         .unwrap_or_else(|| "application/octet-stream".to_string());
     let filename = file.name();
 
-    let chunk_url = format!("{}/_api/tournaments/{}/user-upload/chunk", base(), tournament_url);
+    let chunk_url = format!(
+        "{}/_api/tournaments/{}/user-upload/chunk",
+        base(),
+        tournament_url
+    );
     for idx in 0..total_chunks {
         let start = idx * CHUNK_SIZE_BYTES;
         let end = std::cmp::min(start + CHUNK_SIZE_BYTES, file_size);
@@ -339,8 +370,18 @@ where
             .map_err(|_| "Failed to slice file chunk")?;
 
         let form = web_sys::FormData::new().map_err(|_| "FormData::new failed")?;
-        form.append_with_str("field_id", &field_id.to_string())
-            .map_err(|_| "append field_id failed")?;
+        form.append_with_str("upload_mode", upload_mode)
+            .map_err(|_| "append upload_mode failed")?;
+        if let Some(field_id) = field_id {
+            form.append_with_str("field_id", &field_id.to_string())
+                .map_err(|_| "append field_id failed")?;
+        }
+        if let Some(match_uuid) = match_uuid {
+            if !match_uuid.trim().is_empty() {
+                form.append_with_str("match_uuid", match_uuid.trim())
+                    .map_err(|_| "append match_uuid failed")?;
+            }
+        }
         form.append_with_str("upload_id", &upload_id)
             .map_err(|_| "append upload_id failed")?;
         form.append_with_str("chunk_index", &idx.to_string())
@@ -436,8 +477,7 @@ where
         .map_err(|e| e.to_string())?;
     let v: Value = response_json(r).await?;
     on_progress(file_size, file_size);
-    Ok(v
-        .get("upload_group_name")
+    Ok(v.get("upload_group_name")
         .and_then(|x| x.as_str())
         .unwrap_or("")
         .to_string())
@@ -466,8 +506,12 @@ pub async fn start_match(
 ) -> Result<StartMatchPostResponse, String> {
     let c = client();
     let r = with_credentials(
-        c.post(format!("{}/_api/tournaments/{}/start-match", base(), tournament_url))
-            .json(req),
+        c.post(format!(
+            "{}/_api/tournaments/{}/start-match",
+            base(),
+            tournament_url
+        ))
+        .json(req),
     )
     .send()
     .await
@@ -721,18 +765,12 @@ pub async fn leagues_organized() -> Result<crate::types::LeaguesListResponse, St
     response_json(r).await
 }
 
-pub async fn league_detail(
-    league_url: &str,
-) -> Result<crate::types::LeagueDetailResponse, String> {
+pub async fn league_detail(league_url: &str) -> Result<crate::types::LeagueDetailResponse, String> {
     let c = client();
-    let r = with_credentials(c.get(format!(
-        "{}/_api/leagues/{}",
-        base(),
-        league_url
-    )))
-    .send()
-    .await
-    .map_err(|e| e.to_string())?;
+    let r = with_credentials(c.get(format!("{}/_api/leagues/{}", base(), league_url)))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
     if r.status().as_u16() == 404 {
         return Err("Not found".to_string());
     }
@@ -853,16 +891,12 @@ pub async fn league_upload_waiver(
     Ok(())
 }
 
-pub async fn league_deregister_team(
-    league_url: &str,
-) -> Result<StatusResponse, String> {
+pub async fn league_deregister_team(league_url: &str) -> Result<StatusResponse, String> {
     let url = format!("{}/_api/leagues/{}/deregister-team", base(), league_url);
     post_form_status(&url, &[]).await
 }
 
-pub async fn league_deregister_player(
-    league_url: &str,
-) -> Result<StatusResponse, String> {
+pub async fn league_deregister_player(league_url: &str) -> Result<StatusResponse, String> {
     let url = format!("{}/_api/leagues/{}/deregister-player", base(), league_url);
     post_form_status(&url, &[]).await
 }
@@ -903,7 +937,11 @@ pub async fn update_my_player_registration_league(
     if data.get("success").and_then(|v| v.as_bool()) == Some(true) {
         Ok(())
     } else {
-        Err(data.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown error").to_string())
+        Err(data
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown error")
+            .to_string())
     }
 }
 
@@ -943,7 +981,11 @@ pub async fn update_my_team_registration_league(
     if data.get("success").and_then(|v| v.as_bool()) == Some(true) {
         Ok(())
     } else {
-        Err(data.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown error").to_string())
+        Err(data
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown error")
+            .to_string())
     }
 }
 
@@ -960,10 +1002,7 @@ pub async fn add_league_to(
     post_form_status(&url, &params).await
 }
 
-pub async fn remove_league_to(
-    league_url: &str,
-    to_id: i32,
-) -> Result<StatusResponse, String> {
+pub async fn remove_league_to(league_url: &str, to_id: i32) -> Result<StatusResponse, String> {
     let params = vec![("to_id".into(), to_id.to_string())];
     let url = format!("{}/_api/leagues/{}/remove-to", base(), league_url);
     post_form_status(&url, &params).await
@@ -977,7 +1016,11 @@ pub async fn league_manage(
     let c = client();
     let mut url = format!("{}/_api/leagues/{}/manage", base(), league_url);
     if !search.is_empty() || !search_type.is_empty() {
-        let st = if search_type.is_empty() { "both" } else { search_type };
+        let st = if search_type.is_empty() {
+            "both"
+        } else {
+            search_type
+        };
         url = format!("{}?search={}&type={}", url, urlencoding::encode(search), st);
     }
     let r = with_credentials(c.get(url))
@@ -1062,14 +1105,15 @@ pub async fn league_deregister_any_player(
     player_id: &str,
 ) -> Result<StatusResponse, String> {
     let params = vec![("player_id".into(), player_id.to_string())];
-    let url = format!("{}/_api/leagues/{}/deregister-any-player", base(), league_url);
+    let url = format!(
+        "{}/_api/leagues/{}/deregister-any-player",
+        base(),
+        league_url
+    );
     post_form_status(&url, &params).await
 }
 
-pub async fn league_accept_invitation(
-    league_url: &str,
-    invitation_id: u32,
-) -> Result<(), String> {
+pub async fn league_accept_invitation(league_url: &str, invitation_id: u32) -> Result<(), String> {
     let c = client();
     let url = format!(
         "{}/_api/leagues/{}/invitation/{}/accept",
@@ -1098,10 +1142,7 @@ pub async fn league_accept_invitation(
     Ok(())
 }
 
-pub async fn league_decline_invitation(
-    league_url: &str,
-    invitation_id: u32,
-) -> Result<(), String> {
+pub async fn league_decline_invitation(league_url: &str, invitation_id: u32) -> Result<(), String> {
     let c = client();
     let url = format!(
         "{}/_api/leagues/{}/invitation/{}/decline",
@@ -1135,11 +1176,7 @@ pub async fn league_update_settings(
     params: &std::collections::HashMap<String, serde_json::Value>,
 ) -> Result<StatusResponse, String> {
     let c = client();
-    let url = format!(
-        "{}/_api/leagues/{}/settings",
-        base(),
-        league_url
-    );
+    let url = format!("{}/_api/leagues/{}/settings", base(), league_url);
     let r = with_credentials(c.post(&url).json(params))
         .send()
         .await
@@ -1160,7 +1197,12 @@ pub async fn create_league_penalty_type(
         "desc": desc
     });
     let r = with_credentials(
-        c.post(format!("{}/_api/leagues/{}/penalty-types", base(), league_url)).json(&body)
+        c.post(format!(
+            "{}/_api/leagues/{}/penalty-types",
+            base(),
+            league_url
+        ))
+        .json(&body),
     )
     .send()
     .await
@@ -1187,8 +1229,13 @@ pub async fn update_league_penalty_type(
         body.insert("desc".to_string(), serde_json::json!(d));
     }
     let r = with_credentials(
-        c.patch(format!("{}/_api/leagues/{}/penalty-types/{}", base(), league_url, pt_id))
-            .json(&body)
+        c.patch(format!(
+            "{}/_api/leagues/{}/penalty-types/{}",
+            base(),
+            league_url,
+            pt_id
+        ))
+        .json(&body),
     )
     .send()
     .await
@@ -1196,14 +1243,14 @@ pub async fn update_league_penalty_type(
     response_json(r).await
 }
 
-pub async fn delete_league_penalty_type(
-    league_url: &str,
-    pt_id: i32,
-) -> Result<Value, String> {
+pub async fn delete_league_penalty_type(league_url: &str, pt_id: i32) -> Result<Value, String> {
     let c = client();
-    let r = with_credentials(
-        c.delete(format!("{}/_api/leagues/{}/penalty-types/{}", base(), league_url, pt_id))
-    )
+    let r = with_credentials(c.delete(format!(
+        "{}/_api/leagues/{}/penalty-types/{}",
+        base(),
+        league_url,
+        pt_id
+    )))
     .send()
     .await
     .map_err(|e| e.to_string())?;
@@ -1224,10 +1271,7 @@ pub async fn delete_tournament(
     response_json(r).await
 }
 
-pub async fn delete_league(
-    league_url: &str,
-    confirm_url: &str,
-) -> Result<StatusResponse, String> {
+pub async fn delete_league(league_url: &str, confirm_url: &str) -> Result<StatusResponse, String> {
     let params: Vec<(String, String)> = vec![("confirm_url".into(), confirm_url.to_string())];
     let url = format!("{}/_api/leagues/{}/delete", base(), league_url);
     let c = client();
@@ -1246,7 +1290,11 @@ pub async fn tournament_manage(
     let c = client();
     let mut url = format!("{}/_api/tournaments/{}/manage", base(), tournament_url);
     if !search.is_empty() || !search_type.is_empty() {
-        let st = if search_type.is_empty() { "both" } else { search_type };
+        let st = if search_type.is_empty() {
+            "both"
+        } else {
+            search_type
+        };
         url = format!("{}?search={}&type={}", url, urlencoding::encode(search), st);
     }
     let r = with_credentials(c.get(url))
@@ -1272,10 +1320,7 @@ pub async fn tournament_invitations(
 }
 
 /// Accept a pending player invitation (team only). Uses POST to _api route.
-pub async fn accept_invitation(
-    tournament_url: &str,
-    invitation_id: u32,
-) -> Result<(), String> {
+pub async fn accept_invitation(tournament_url: &str, invitation_id: u32) -> Result<(), String> {
     let c = client();
     let url = format!(
         "{}/_api/{}/invitation/{}/accept",
@@ -1305,10 +1350,7 @@ pub async fn accept_invitation(
 }
 
 /// Decline a pending player invitation (team only). Uses POST to _api route.
-pub async fn decline_invitation(
-    tournament_url: &str,
-    invitation_id: u32,
-) -> Result<(), String> {
+pub async fn decline_invitation(tournament_url: &str, invitation_id: u32) -> Result<(), String> {
     let c = client();
     let url = format!(
         "{}/_api/{}/invitation/{}/decline",
@@ -1398,7 +1440,11 @@ pub async fn match_detail(
     match_name: Option<&str>,
 ) -> Result<MatchDetailResponse, String> {
     let c = client();
-    let mut req = c.get(format!("{}/_api/tournaments/{}/match", base(), tournament_url));
+    let mut req = c.get(format!(
+        "{}/_api/tournaments/{}/match",
+        base(),
+        tournament_url
+    ));
     if let Some(id) = match_id {
         req = req.query(&[("id", id)]);
     } else if let Some(name) = match_name {
@@ -1406,7 +1452,10 @@ pub async fn match_detail(
     } else {
         return Err("id or name required".to_string());
     }
-    let r = with_credentials(req).send().await.map_err(|e| e.to_string())?;
+    let r = with_credentials(req)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
     if r.status().as_u16() == 404 {
         return Err("Match not found".to_string());
     }
@@ -1441,11 +1490,16 @@ pub async fn retry_match_finalization(
 
 pub async fn players_list(search: &str, page: u32) -> Result<PlayersListResponse, String> {
     let c = client();
-    let mut req = c.get(format!("{}/_api/players", base())).query(&[("page", page)]);
+    let mut req = c
+        .get(format!("{}/_api/players", base()))
+        .query(&[("page", page)]);
     if !search.is_empty() {
         req = req.query(&[("search", search)]);
     }
-    let r = with_credentials(req).send().await.map_err(|e| e.to_string())?;
+    let r = with_credentials(req)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
     response_json(r).await
 }
 
@@ -1467,7 +1521,10 @@ pub async fn teams_list(search: &str) -> Result<TeamsListResponse, String> {
     if !search.is_empty() {
         req = req.query(&[("search", search)]);
     }
-    let r = with_credentials(req).send().await.map_err(|e| e.to_string())?;
+    let r = with_credentials(req)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
     response_json(r).await
 }
 
@@ -1567,7 +1624,11 @@ pub async fn request_preview(tournament_url: &str, field_name: &str) -> Result<(
     if data.get("success").and_then(|v| v.as_bool()) == Some(true) {
         Ok(())
     } else {
-        Err(data.get("error").and_then(|v| v.as_str()).unwrap_or("Failed to request preview").to_string())
+        Err(data
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Failed to request preview")
+            .to_string())
     }
 }
 
@@ -1588,7 +1649,11 @@ pub async fn release_preview(tournament_url: &str, field_name: &str) -> Result<(
     if data.get("success").and_then(|v| v.as_bool()) == Some(true) {
         Ok(())
     } else {
-        Err(data.get("error").and_then(|v| v.as_str()).unwrap_or("Failed to release preview").to_string())
+        Err(data
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Failed to release preview")
+            .to_string())
     }
 }
 
@@ -1617,7 +1682,11 @@ pub async fn upload_preview_frame(
     if data.get("success").and_then(|v| v.as_bool()) == Some(true) {
         Ok(())
     } else {
-        Err(data.get("error").and_then(|v| v.as_str()).unwrap_or("Failed to upload preview frame").to_string())
+        Err(data
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Failed to upload preview frame")
+            .to_string())
     }
 }
 
@@ -1727,7 +1796,10 @@ pub async fn list_preview_cameras(
     .await
     .map_err(|e| e.to_string())?;
     let data: Value = response_json(r).await?;
-    let arr = data.get("cameras").and_then(|v| v.as_array()).ok_or("Invalid cameras response")?;
+    let arr = data
+        .get("cameras")
+        .and_then(|v| v.as_array())
+        .ok_or("Invalid cameras response")?;
     let list: Vec<String> = arr
         .iter()
         .filter_map(|v| v.as_str().map(String::from))
@@ -1810,7 +1882,10 @@ fn epoch_ms_to_iso8601_utc(ms: f64) -> String {
 }
 
 #[cfg(target_arch = "wasm32")]
-pub async fn record_upload_chunk(meta: &RecordChunkMeta, chunk_blob: &web_sys::Blob) -> Result<(), String> {
+pub async fn record_upload_chunk(
+    meta: &RecordChunkMeta,
+    chunk_blob: &web_sys::Blob,
+) -> Result<(), String> {
     use wasm_bindgen::JsCast;
     use web_sys::window;
 
@@ -1823,16 +1898,23 @@ pub async fn record_upload_chunk(meta: &RecordChunkMeta, chunk_blob: &web_sys::B
         .map_err(|_| "append match_id failed")?;
     form.append_with_str("session_id", &meta.session_id)
         .map_err(|_| "append session_id failed")?;
-    form.append_with_str("chunk_start_timestamp", &epoch_ms_to_iso8601_utc(meta.chunk_start_timestamp))
-        .map_err(|_| "append chunk_start_timestamp failed")?;
-    form.append_with_str("recording_session_start_time", &epoch_ms_to_iso8601_utc(meta.recording_session_start_time))
-        .map_err(|_| "append recording_session_start_time failed")?;
+    form.append_with_str(
+        "chunk_start_timestamp",
+        &epoch_ms_to_iso8601_utc(meta.chunk_start_timestamp),
+    )
+    .map_err(|_| "append chunk_start_timestamp failed")?;
+    form.append_with_str(
+        "recording_session_start_time",
+        &epoch_ms_to_iso8601_utc(meta.recording_session_start_time),
+    )
+    .map_err(|_| "append recording_session_start_time failed")?;
     form.append_with_str("chunk_duration", &meta.chunk_length_ms.to_string())
         .map_err(|_| "append chunk_duration failed")?;
     form.append_with_str("camera_name", &meta.camera_name)
         .map_err(|_| "append camera_name failed")?;
     if let Some(ref k) = meta.key {
-        form.append_with_str("camera_key", k).map_err(|_| "append key failed")?;
+        form.append_with_str("camera_key", k)
+            .map_err(|_| "append key failed")?;
     }
     form.append_with_str("container", &meta.container)
         .map_err(|_| "append container failed")?;
@@ -1867,7 +1949,9 @@ pub async fn record_upload_chunk(meta: &RecordChunkMeta, chunk_blob: &web_sys::B
         let text = wasm_bindgen_futures::JsFuture::from(resp.text().map_err(|_| "text() failed")?)
             .await
             .map_err(|_| "text await failed")?;
-        let msg = text.as_string().unwrap_or_else(|| "Unknown error".to_string());
+        let msg = text
+            .as_string()
+            .unwrap_or_else(|| "Unknown error".to_string());
         return Err(format!("Upload failed (HTTP {status}): {msg}"));
     }
     Ok(())
@@ -1938,13 +2022,11 @@ pub async fn server_time() -> Result<ServerTimeResponse, String> {
 
 pub async fn bracket_setup_data(url: &str) -> Result<BracketSetupResponse, String> {
     let c = client();
-    let r = with_credentials(
-        c.get(format!(
-            "{}/_api/tournaments/{}/bracket-setup-data",
-            base(),
-            url
-        )),
-    )
+    let r = with_credentials(c.get(format!(
+        "{}/_api/tournaments/{}/bracket-setup-data",
+        base(),
+        url
+    )))
     .send()
     .await
     .map_err(|e| e.to_string())?;
@@ -2005,7 +2087,7 @@ pub async fn create_injury(
     .send()
     .await
     .map_err(|e| e.to_string())?;
-    
+
     response_json(r).await
 }
 
@@ -2016,30 +2098,42 @@ pub async fn update_injury(
 ) -> Result<PlayerInjury, String> {
     let c = client();
     let r = with_credentials(
-        c.put(format!("{}/_api/players/{}/injuries/{}", base(), player_id, injury_id))
-            .json(req),
+        c.put(format!(
+            "{}/_api/players/{}/injuries/{}",
+            base(),
+            player_id,
+            injury_id
+        ))
+        .json(req),
     )
     .send()
     .await
     .map_err(|e| e.to_string())?;
-    
+
     response_json(r).await
 }
 
 pub async fn delete_injury(player_id: &str, injury_id: u32) -> Result<(), String> {
     let c = client();
-    let r = with_credentials(
-        c.delete(format!("{}/_api/players/{}/injuries/{}", base(), player_id, injury_id)),
-    )
+    let r = with_credentials(c.delete(format!(
+        "{}/_api/players/{}/injuries/{}",
+        base(),
+        player_id,
+        injury_id
+    )))
     .send()
     .await
     .map_err(|e| e.to_string())?;
-    
+
     let data: Value = response_json(r).await?;
     if data.get("success").and_then(|v| v.as_bool()) == Some(true) {
         Ok(())
     } else {
-        Err(data.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown error").to_string())
+        Err(data
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown error")
+            .to_string())
     }
 }
 
@@ -2066,20 +2160,27 @@ pub async fn set_match_status(
     let c = client();
     let body = serde_json::json!({ "match_id": match_id, "status": status });
     let r = with_credentials(
-        c.post(format!("{}/_api/{}/match-actions/set-status", base(), tournament_url)).json(&body),
+        c.post(format!(
+            "{}/_api/{}/match-actions/set-status",
+            base(),
+            tournament_url
+        ))
+        .json(&body),
     )
     .send()
     .await
     .map_err(|e| e.to_string())?;
     let data: Value = response_json(r).await?;
-    let success = data.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+    let success = data
+        .get("success")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     if !success {
-        return Err(
-            data.get("error")
-                .and_then(|v| v.as_str())
-                .unwrap_or("Request failed")
-                .to_string(),
-        );
+        return Err(data
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Request failed")
+            .to_string());
     }
     Ok(data)
 }
@@ -2099,20 +2200,27 @@ pub async fn add_point(
         "stones_at_start": stones_at_start,
     });
     let r = with_credentials(
-        c.post(format!("{}/_api/{}/match-actions/add-point", base(), tournament_url)).json(&body),
+        c.post(format!(
+            "{}/_api/{}/match-actions/add-point",
+            base(),
+            tournament_url
+        ))
+        .json(&body),
     )
     .send()
     .await
     .map_err(|e| e.to_string())?;
     let data: Value = response_json(r).await?;
-    let success = data.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+    let success = data
+        .get("success")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     if !success {
-        return Err(
-            data.get("error")
-                .and_then(|v| v.as_str())
-                .unwrap_or("Request failed")
-                .to_string(),
-        );
+        return Err(data
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Request failed")
+            .to_string());
     }
     Ok(data)
 }
@@ -2124,27 +2232,37 @@ pub async fn update_point(
 ) -> Result<Value, String> {
     let c = client();
     let mut body = serde_json::Map::new();
-    body.insert("point_id".to_string(), serde_json::Value::String(point_id.to_string()));
+    body.insert(
+        "point_id".to_string(),
+        serde_json::Value::String(point_id.to_string()),
+    );
     if let Some(obj) = data.as_object() {
         for (k, v) in obj {
             body.insert(k.clone(), v.clone());
         }
     }
     let r = with_credentials(
-        c.post(format!("{}/_api/{}/match-actions/update-point", base(), tournament_url)).json(&body),
+        c.post(format!(
+            "{}/_api/{}/match-actions/update-point",
+            base(),
+            tournament_url
+        ))
+        .json(&body),
     )
     .send()
     .await
     .map_err(|e| e.to_string())?;
     let resp: Value = response_json(r).await?;
-    let success = resp.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+    let success = resp
+        .get("success")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     if !success {
-        return Err(
-            resp.get("error")
-                .and_then(|v| v.as_str())
-                .unwrap_or("Request failed")
-                .to_string(),
-        );
+        return Err(resp
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Request failed")
+            .to_string());
     }
     Ok(resp)
 }
@@ -2229,20 +2347,23 @@ pub async fn add_point_note(
         "penalty_type_id": penalty_type_id,
     });
     let r = with_credentials(
-        c.post(format!("{}/_api/{}/add-point-note", base(), tournament_url)).json(&body),
+        c.post(format!("{}/_api/{}/add-point-note", base(), tournament_url))
+            .json(&body),
     )
     .send()
     .await
     .map_err(|e| e.to_string())?;
     let data: Value = response_json(r).await?;
-    let success = data.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+    let success = data
+        .get("success")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     if !success {
-        return Err(
-            data.get("error")
-                .and_then(|v| v.as_str())
-                .unwrap_or("Request failed")
-                .to_string(),
-        );
+        return Err(data
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Request failed")
+            .to_string());
     }
     Ok(data)
 }
@@ -2261,20 +2382,23 @@ pub async fn set_point_note(
         "text": text,
     });
     let r = with_credentials(
-        c.post(format!("{}/_api/{}/set-point-note", base(), tournament_url)).json(&body),
+        c.post(format!("{}/_api/{}/set-point-note", base(), tournament_url))
+            .json(&body),
     )
     .send()
     .await
     .map_err(|e| e.to_string())?;
     let data: Value = response_json(r).await?;
-    let success = data.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+    let success = data
+        .get("success")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     if !success {
-        return Err(
-            data.get("error")
-                .and_then(|v| v.as_str())
-                .unwrap_or("Request failed")
-                .to_string(),
-        );
+        return Err(data
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Request failed")
+            .to_string());
     }
     Ok(data)
 }
@@ -2301,14 +2425,16 @@ pub async fn update_stones(
     .await
     .map_err(|e| e.to_string())?;
     let data: Value = response_json(r).await?;
-    let success = data.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+    let success = data
+        .get("success")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     if !success {
-        return Err(
-            data.get("error")
-                .and_then(|v| v.as_str())
-                .unwrap_or("Request failed")
-                .to_string(),
-        );
+        return Err(data
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Request failed")
+            .to_string());
     }
     Ok(data)
 }
@@ -2334,7 +2460,8 @@ pub async fn save_bracket_setup(
     if v.get("success").and_then(|v| v.as_bool()).unwrap_or(false) {
         Ok(())
     } else {
-        Err(v.get("error")
+        Err(v
+            .get("error")
             .and_then(|v| v.as_str())
             .unwrap_or("Failed to save bracket configuration")
             .to_string())
@@ -2366,18 +2493,15 @@ pub async fn upload_bracket_image_bytes(
     .await
     .map_err(|e| e.to_string())?;
     let v: serde_json::Value = response_json(r).await?;
-    if v
-        .get("success")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false)
-    {
+    if v.get("success").and_then(|v| v.as_bool()).unwrap_or(false) {
         if let Some(path) = v.get("path").and_then(|v| v.as_str()) {
             Ok(path.to_string())
         } else {
             Err("Upload succeeded but no path returned".to_string())
         }
     } else {
-        Err(v.get("error")
+        Err(v
+            .get("error")
             .and_then(|v| v.as_str())
             .unwrap_or("Failed to upload bracket image")
             .to_string())
@@ -2386,16 +2510,17 @@ pub async fn upload_bracket_image_bytes(
 
 /// Fetch YouTube stream start time (ISO UTC) for a video ID or URL. Returns Ok(None) if not available.
 pub async fn youtube_stream_start(video_id_or_url: &str) -> Result<Option<String>, String> {
-    let video_id = extract_youtube_video_id(video_id_or_url).unwrap_or_else(|| video_id_or_url.to_string());
+    let video_id =
+        extract_youtube_video_id(video_id_or_url).unwrap_or_else(|| video_id_or_url.to_string());
     if video_id.is_empty() {
         return Ok(None);
     }
     let c = client();
     let url = format!("{}/youtube-stream-start", base());
     let r = with_credentials(c.get(&url).query(&[("video_id", video_id.as_str())]))
-    .send()
-    .await
-    .map_err(|e| e.to_string())?;
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
     let data: Value = response_json(r).await?;
     let start = data.get("start_time");
     Ok(start.and_then(|v| v.as_str()).map(String::from))
@@ -2409,13 +2534,21 @@ fn extract_youtube_video_id(s: &str) -> Option<String> {
     // youtu.be/ID
     if let Some(rest) = s.strip_prefix("https://youtu.be/") {
         let id = rest.split(&['?', '&', '#'][..]).next().unwrap_or(rest);
-        if id.len() >= 11 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        if id.len() >= 11
+            && id
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        {
             return Some(id[..11].to_string());
         }
     }
     if let Some(rest) = s.strip_prefix("http://youtu.be/") {
         let id = rest.split(&['?', '&', '#'][..]).next().unwrap_or(rest);
-        if id.len() >= 11 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        if id.len() >= 11
+            && id
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        {
             return Some(id[..11].to_string());
         }
     }
@@ -2424,7 +2557,11 @@ fn extract_youtube_video_id(s: &str) -> Option<String> {
         if let Some(v) = s.find("v=") {
             let after = &s[v + 2..];
             let id = after.split(&['&', '#'][..]).next().unwrap_or(after);
-            if id.len() >= 11 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+            if id.len() >= 11
+                && id
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+            {
                 return Some(id[..11].to_string());
             }
         }
@@ -2432,14 +2569,21 @@ fn extract_youtube_video_id(s: &str) -> Option<String> {
             if let Some(i) = s.find(prefix) {
                 let after = &s[i + prefix.len()..];
                 let id = after.split(&['?', '&', '#'][..]).next().unwrap_or(after);
-                if id.len() >= 11 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+                if id.len() >= 11
+                    && id
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+                {
                     return Some(id[..11].to_string());
                 }
             }
         }
     }
     // Bare 11-char ID
-    if s.len() == 11 && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+    if s.len() == 11
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
         return Some(s.to_string());
     }
     None
@@ -2463,12 +2607,16 @@ pub async fn update_field(
     .send()
     .await
     .map_err(|e| e.to_string())?;
-    
+
     let data: Value = response_json(r).await?;
     if data.get("success").and_then(|v| v.as_bool()) == Some(true) {
         Ok(())
     } else {
-        Err(data.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown error").to_string())
+        Err(data
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown error")
+            .to_string())
     }
 }
 
@@ -2488,21 +2636,18 @@ pub async fn tags_list(tournament_url: &str) -> Result<TagsListResponse, String>
 
 pub async fn markdown_page(slug: &str) -> Result<MarkdownPageResponse, String> {
     let c = client();
-    let r = with_credentials(c.get(format!(
-        "{}/_api/markdown/{}",
-        base(),
-        slug
-    )))
-    .send()
-    .await
-    .map_err(|e| e.to_string())?;
+    let r = with_credentials(c.get(format!("{}/_api/markdown/{}", base(), slug)))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
     response_json(r).await
 }
 
 pub async fn render_markdown(markdown: &str) -> Result<String, String> {
     let c = client();
     let r = with_credentials(
-        c.post(format!("{}/_api/render-markdown", base())).json(&serde_json::json!({ "markdown": markdown }))
+        c.post(format!("{}/_api/render-markdown", base()))
+            .json(&serde_json::json!({ "markdown": markdown })),
     )
     .send()
     .await
@@ -2513,13 +2658,10 @@ pub async fn render_markdown(markdown: &str) -> Result<String, String> {
 
 pub async fn google_choose_account_type_info() -> Result<GoogleChooseAccountTypeResponse, String> {
     let c = client();
-    let r = with_credentials(c.get(format!(
-        "{}/_api/google/choose-account-type",
-        base()
-    )))
-    .send()
-    .await
-    .map_err(|e| e.to_string())?;
+    let r = with_credentials(c.get(format!("{}/_api/google/choose-account-type", base())))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
     response_json(r).await
 }
 
@@ -2538,25 +2680,24 @@ pub async fn google_choose_account_type(
     if data.get("ok").and_then(|v| v.as_bool()) == Some(true) {
         Ok(())
     } else {
-        Err(data.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown error").to_string())
+        Err(data
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown error")
+            .to_string())
     }
 }
 
 pub async fn google_complete_profile_info() -> Result<GoogleCompleteProfileResponse, String> {
     let c = client();
-    let r = with_credentials(c.get(format!(
-        "{}/_api/google/complete-profile",
-        base()
-    )))
-    .send()
-    .await
-    .map_err(|e| e.to_string())?;
+    let r = with_credentials(c.get(format!("{}/_api/google/complete-profile", base())))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
     response_json(r).await
 }
 
-pub async fn google_complete_profile(
-    req: &GoogleCompleteProfileRequest,
-) -> Result<(), String> {
+pub async fn google_complete_profile(req: &GoogleCompleteProfileRequest) -> Result<(), String> {
     let c = client();
     let r = with_credentials(
         c.post(format!("{}/_api/google/complete-profile", base()))
@@ -2569,7 +2710,11 @@ pub async fn google_complete_profile(
     if data.get("ok").and_then(|v| v.as_bool()) == Some(true) {
         Ok(())
     } else {
-        Err(data.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown error").to_string())
+        Err(data
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown error")
+            .to_string())
     }
 }
 
@@ -2591,12 +2736,16 @@ pub async fn update_match(
     .send()
     .await
     .map_err(|e| e.to_string())?;
-    
+
     let data: Value = response_json(r).await?;
     if data.get("success").and_then(|v| v.as_bool()) == Some(true) {
         Ok(())
     } else {
-        Err(data.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown error").to_string())
+        Err(data
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown error")
+            .to_string())
     }
 }
 
@@ -2638,17 +2787,21 @@ pub async fn update_player_profile(
     let c = client();
     let r = with_credentials(
         c.put(format!("{}/_api/players/{}", base(), player_id))
-        .json(req),
+            .json(req),
     )
     .send()
     .await
     .map_err(|e| e.to_string())?;
-    
+
     let data: Value = response_json(r).await?;
     if data.get("success").and_then(|v| v.as_bool()) == Some(true) {
         Ok(())
     } else {
-        Err(data.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown error").to_string())
+        Err(data
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown error")
+            .to_string())
     }
 }
 
@@ -2659,17 +2812,21 @@ pub async fn update_team_profile(
     let c = client();
     let r = with_credentials(
         c.put(format!("{}/_api/teams/{}", base(), team_id))
-        .json(req),
+            .json(req),
     )
     .send()
     .await
     .map_err(|e| e.to_string())?;
-    
+
     let data: Value = response_json(r).await?;
     if data.get("success").and_then(|v| v.as_bool()) == Some(true) {
         Ok(())
     } else {
-        Err(data.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown error").to_string())
+        Err(data
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown error")
+            .to_string())
     }
 }
 
@@ -2680,8 +2837,12 @@ pub async fn upload_player_profile_photo(
 ) -> Result<String, String> {
     let c = client();
     let r = with_credentials(
-        c.post(format!("{}/_api/players/{}/profile-photo", base(), player_id))
-            .body(bytes),
+        c.post(format!(
+            "{}/_api/players/{}/profile-photo",
+            base(),
+            player_id
+        ))
+        .body(bytes),
     )
     .send()
     .await
@@ -2704,9 +2865,11 @@ pub async fn upload_player_profile_photo(
 /// Remove player profile photo.
 pub async fn delete_player_profile_photo(player_id: &str) -> Result<(), String> {
     let c = client();
-    let r = with_credentials(
-        c.delete(format!("{}/_api/players/{}/profile-photo", base(), player_id)),
-    )
+    let r = with_credentials(c.delete(format!(
+        "{}/_api/players/{}/profile-photo",
+        base(),
+        player_id
+    )))
     .send()
     .await
     .map_err(|e| e.to_string())?;
@@ -2753,12 +2916,10 @@ pub async fn upload_team_profile_photo(
 /// Remove team profile photo.
 pub async fn delete_team_profile_photo(team_id: &str) -> Result<(), String> {
     let c = client();
-    let r = with_credentials(
-        c.delete(format!("{}/_api/teams/{}/profile-photo", base(), team_id)),
-    )
-    .send()
-    .await
-    .map_err(|e| e.to_string())?;
+    let r = with_credentials(c.delete(format!("{}/_api/teams/{}/profile-photo", base(), team_id)))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
     let data: Value = response_json(r).await?;
     if data.get("success").and_then(|v| v.as_bool()) == Some(true) {
         Ok(())
@@ -2802,12 +2963,16 @@ pub async fn update_my_player_registration(
     .send()
     .await
     .map_err(|e| e.to_string())?;
-    
+
     let data: Value = response_json(r).await?;
     if data.get("success").and_then(|v| v.as_bool()) == Some(true) {
         Ok(())
     } else {
-        Err(data.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown error").to_string())
+        Err(data
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown error")
+            .to_string())
     }
 }
 
@@ -2842,12 +3007,16 @@ pub async fn update_my_team_registration(
     .send()
     .await
     .map_err(|e| e.to_string())?;
-    
+
     let data: Value = response_json(r).await?;
     if data.get("success").and_then(|v| v.as_bool()) == Some(true) {
         Ok(())
     } else {
-        Err(data.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown error").to_string())
+        Err(data
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown error")
+            .to_string())
     }
 }
 
@@ -2861,7 +3030,7 @@ pub async fn schedule_setup(tournament_url: &str) -> Result<ScheduleSetupRespons
     .send()
     .await
     .map_err(|e| e.to_string())?;
-    
+
     if r.status().as_u16() == 403 {
         return Err("Schedule not published".to_string());
     }
@@ -2874,8 +3043,12 @@ pub async fn create_match(
 ) -> Result<CreateMatchResponse, String> {
     let c = client();
     let r = with_credentials(
-        c.post(format!("{}/_api/tournaments/{}/matches", base(), tournament_url))
-        .json(req)
+        c.post(format!(
+            "{}/_api/tournaments/{}/matches",
+            base(),
+            tournament_url
+        ))
+        .json(req),
     )
     .send()
     .await
@@ -2884,12 +3057,15 @@ pub async fn create_match(
 }
 
 /// Validate a DSL skip-condition expression. Uses the tournaments blueprint route.
-pub async fn validate_dsl(tournament_url: &str, expression: &str) -> Result<ValidateDslResponse, String> {
+pub async fn validate_dsl(
+    tournament_url: &str,
+    expression: &str,
+) -> Result<ValidateDslResponse, String> {
     let c = client();
     let body = serde_json::json!({ "expression": expression });
     let r = with_credentials(
         c.post(format!("{}/_api/{}/validate-dsl", base(), tournament_url))
-        .json(&body)
+            .json(&body),
     )
     .send()
     .await
@@ -2899,18 +3075,25 @@ pub async fn validate_dsl(tournament_url: &str, expression: &str) -> Result<Vali
 
 pub async fn delete_match(tournament_url: &str, match_id: &str) -> Result<(), String> {
     let c = client();
-    let r = with_credentials(
-        c.delete(format!("{}/_api/tournaments/{}/matches/{}", base(), tournament_url, match_id))
-    )
+    let r = with_credentials(c.delete(format!(
+        "{}/_api/tournaments/{}/matches/{}",
+        base(),
+        tournament_url,
+        match_id
+    )))
     .send()
     .await
     .map_err(|e| e.to_string())?;
-    
+
     let data: Value = response_json(r).await?;
     if data.get("success").and_then(|v| v.as_bool()) == Some(true) {
         Ok(())
     } else {
-        Err(data.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown error").to_string())
+        Err(data
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown error")
+            .to_string())
     }
 }
 
@@ -2920,8 +3103,12 @@ pub async fn create_field(
 ) -> Result<CreateFieldResponse, String> {
     let c = client();
     let r = with_credentials(
-        c.post(format!("{}/_api/tournaments/{}/fields", base(), tournament_url))
-        .json(req)
+        c.post(format!(
+            "{}/_api/tournaments/{}/fields",
+            base(),
+            tournament_url
+        ))
+        .json(req),
     )
     .send()
     .await
@@ -2931,18 +3118,25 @@ pub async fn create_field(
 
 pub async fn delete_field(tournament_url: &str, field_id: u32) -> Result<(), String> {
     let c = client();
-    let r = with_credentials(
-        c.delete(format!("{}/_api/tournaments/{}/fields/{}", base(), tournament_url, field_id))
-    )
+    let r = with_credentials(c.delete(format!(
+        "{}/_api/tournaments/{}/fields/{}",
+        base(),
+        tournament_url,
+        field_id
+    )))
     .send()
     .await
     .map_err(|e| e.to_string())?;
-    
+
     let data: Value = response_json(r).await?;
     if data.get("success").and_then(|v| v.as_bool()) == Some(true) {
         Ok(())
     } else {
-        Err(data.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown error").to_string())
+        Err(data
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown error")
+            .to_string())
     }
 }
 
@@ -2952,8 +3146,12 @@ pub async fn create_tag(
 ) -> Result<CreateTagResponse, String> {
     let c = client();
     let r = with_credentials(
-        c.post(format!("{}/_api/tournaments/{}/tags", base(), tournament_url))
-        .json(req)
+        c.post(format!(
+            "{}/_api/tournaments/{}/tags",
+            base(),
+            tournament_url
+        ))
+        .json(req),
     )
     .send()
     .await
@@ -2963,9 +3161,12 @@ pub async fn create_tag(
 
 pub async fn delete_tag(tournament_url: &str, tag_id: u32) -> Result<(), String> {
     let c = client();
-    let resp = with_credentials(
-        c.delete(format!("{}/_api/tournaments/{}/tags/{}", base(), tournament_url, tag_id))
-    )
+    let resp = with_credentials(c.delete(format!(
+        "{}/_api/tournaments/{}/tags/{}",
+        base(),
+        tournament_url,
+        tag_id
+    )))
     .send()
     .await
     .map_err(|e| e.to_string())?;
@@ -2975,12 +3176,11 @@ pub async fn delete_tag(tournament_url: &str, tag_id: u32) -> Result<(), String>
         if data.get("success").and_then(|v| v.as_bool()) == Some(true) {
             return Ok(());
         }
-        return Err(
-            data.get("error")
-                .and_then(|v| v.as_str())
-                .unwrap_or("Unknown error")
-                .to_string(),
-        );
+        return Err(data
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown error")
+            .to_string());
     }
     let text = resp.text().await.unwrap_or_default();
     let err_msg = serde_json::from_str::<Value>(&text)
@@ -2993,87 +3193,111 @@ pub async fn delete_tag(tournament_url: &str, tag_id: u32) -> Result<(), String>
 
 pub async fn recompute_schedule(tournament_url: &str) -> Result<(), String> {
     let c = client();
-    let r = with_credentials(
-        c.post(format!("{}/_api/tournaments/{}/recompute-schedule", base(), tournament_url))
-    )
+    let r = with_credentials(c.post(format!(
+        "{}/_api/tournaments/{}/recompute-schedule",
+        base(),
+        tournament_url
+    )))
     .send()
     .await
     .map_err(|e| e.to_string())?;
-    
+
     let data: Value = response_json(r).await?;
     if data.get("success").and_then(|v| v.as_bool()) == Some(true) {
         Ok(())
     } else {
-        Err(data.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown error").to_string())
+        Err(data
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown error")
+            .to_string())
     }
 }
 
 #[allow(dead_code)]
 pub async fn update_all_references(tournament_url: &str) -> Result<(), String> {
     let c = client();
-    let r = with_credentials(
-        c.post(format!("{}/_api/tournaments/{}/update-all-references", base(), tournament_url))
-    )
+    let r = with_credentials(c.post(format!(
+        "{}/_api/tournaments/{}/update-all-references",
+        base(),
+        tournament_url
+    )))
     .send()
     .await
     .map_err(|e| e.to_string())?;
-    
+
     let data: Value = response_json(r).await?;
     if data.get("success").and_then(|v| v.as_bool()) == Some(true) {
         Ok(())
     } else {
-        Err(data.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown error").to_string())
+        Err(data
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown error")
+            .to_string())
     }
 }
 
 #[allow(dead_code)]
-pub async fn push_back_matches(
-    tournament_url: &str,
-    req: &PushBackRequest,
-) -> Result<(), String> {
+pub async fn push_back_matches(tournament_url: &str, req: &PushBackRequest) -> Result<(), String> {
     let c = client();
     let r = with_credentials(
-        c.post(format!("{}/_api/tournaments/{}/push-back-matches", base(), tournament_url))
-        .json(req)
+        c.post(format!(
+            "{}/_api/tournaments/{}/push-back-matches",
+            base(),
+            tournament_url
+        ))
+        .json(req),
     )
     .send()
     .await
     .map_err(|e| e.to_string())?;
-    
+
     let data: Value = response_json(r).await?;
     if data.get("success").and_then(|v| v.as_bool()) == Some(true) {
         Ok(())
     } else {
-        Err(data.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown error").to_string())
+        Err(data
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown error")
+            .to_string())
     }
 }
 
-pub async fn update_tags(
-    tournament_url: &str,
-    req: &UpdateTagsRequest,
-) -> Result<(), String> {
+pub async fn update_tags(tournament_url: &str, req: &UpdateTagsRequest) -> Result<(), String> {
     let c = client();
     let r = with_credentials(
-        c.post(format!("{}/_api/tournaments/{}/update-tags", base(), tournament_url))
-        .json(req)
+        c.post(format!(
+            "{}/_api/tournaments/{}/update-tags",
+            base(),
+            tournament_url
+        ))
+        .json(req),
     )
     .send()
     .await
     .map_err(|e| e.to_string())?;
-    
+
     let data: Value = response_json(r).await?;
     if data.get("success").and_then(|v| v.as_bool()) == Some(true) {
         Ok(())
     } else {
-        Err(data.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown error").to_string())
+        Err(data
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown error")
+            .to_string())
     }
 }
 
 pub async fn export_schedule(tournament_url: &str) -> Result<ExportScheduleResponse, String> {
     let c = client();
-    let r = with_credentials(
-        c.get(format!("{}/_api/tournaments/{}/export-schedule", base(), tournament_url))
-    )
+    let r = with_credentials(c.get(format!(
+        "{}/_api/tournaments/{}/export-schedule",
+        base(),
+        tournament_url
+    )))
     .send()
     .await
     .map_err(|e| e.to_string())?;
@@ -3086,18 +3310,26 @@ pub async fn import_schedule(
 ) -> Result<(), String> {
     let c = client();
     let r = with_credentials(
-        c.post(format!("{}/_api/tournaments/{}/import-schedule", base(), tournament_url))
-        .json(req)
+        c.post(format!(
+            "{}/_api/tournaments/{}/import-schedule",
+            base(),
+            tournament_url
+        ))
+        .json(req),
     )
     .send()
     .await
     .map_err(|e| e.to_string())?;
-    
+
     let data: Value = response_json(r).await?;
     if data.get("success").and_then(|v| v.as_bool()) == Some(true) {
         Ok(())
     } else {
-        Err(data.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown error").to_string())
+        Err(data
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown error")
+            .to_string())
     }
 }
 
@@ -3114,14 +3346,20 @@ pub struct CreatePenaltyTypeResponse {
 
 pub async fn get_penalty_types(tournament_url: &str) -> Result<GetPenaltyTypesResponse, String> {
     let c = client();
-    let r = c.get(format!("{}/_api/{}/penalty-types", base(), tournament_url))
+    let r = c
+        .get(format!("{}/_api/{}/penalty-types", base(), tournament_url))
         .send()
         .await
         .map_err(|e| e.to_string())?;
     response_json(r).await
 }
 
-pub async fn create_penalty_type(tournament_url: &str, name: &str, color: Option<&str>, desc: Option<&str>) -> Result<CreatePenaltyTypeResponse, String> {
+pub async fn create_penalty_type(
+    tournament_url: &str,
+    name: &str,
+    color: Option<&str>,
+    desc: Option<&str>,
+) -> Result<CreatePenaltyTypeResponse, String> {
     let c = client();
     let body = serde_json::json!({
         "name": name,
@@ -3129,29 +3367,60 @@ pub async fn create_penalty_type(tournament_url: &str, name: &str, color: Option
         "desc": desc
     });
     let r = with_credentials(
-        c.post(format!("{}/_api/{}/penalty-types", base(), tournament_url)).json(&body)
-    ).send().await.map_err(|e| e.to_string())?;
+        c.post(format!("{}/_api/{}/penalty-types", base(), tournament_url))
+            .json(&body),
+    )
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
     response_json(r).await
 }
 
-pub async fn update_penalty_type(tournament_url: &str, pt_id: i32, name: Option<&str>, color: Option<&str>, desc: Option<&str>) -> Result<Value, String> {
+pub async fn update_penalty_type(
+    tournament_url: &str,
+    pt_id: i32,
+    name: Option<&str>,
+    color: Option<&str>,
+    desc: Option<&str>,
+) -> Result<Value, String> {
     let c = client();
     let mut body = serde_json::Map::new();
-    if let Some(n) = name { body.insert("name".to_string(), serde_json::json!(n)); }
-    if let Some(c_val) = color { body.insert("color".to_string(), serde_json::json!(c_val)); }
-    if let Some(d) = desc { body.insert("desc".to_string(), serde_json::json!(d)); }
-    
+    if let Some(n) = name {
+        body.insert("name".to_string(), serde_json::json!(n));
+    }
+    if let Some(c_val) = color {
+        body.insert("color".to_string(), serde_json::json!(c_val));
+    }
+    if let Some(d) = desc {
+        body.insert("desc".to_string(), serde_json::json!(d));
+    }
+
     let r = with_credentials(
-        c.patch(format!("{}/_api/{}/penalty-types/{}", base(), tournament_url, pt_id)).json(&body)
-    ).send().await.map_err(|e| e.to_string())?;
+        c.patch(format!(
+            "{}/_api/{}/penalty-types/{}",
+            base(),
+            tournament_url,
+            pt_id
+        ))
+        .json(&body),
+    )
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
     response_json(r).await
 }
 
 pub async fn delete_penalty_type(tournament_url: &str, pt_id: i32) -> Result<Value, String> {
     let c = client();
-    let r = with_credentials(
-        c.delete(format!("{}/_api/{}/penalty-types/{}", base(), tournament_url, pt_id))
-    ).send().await.map_err(|e| e.to_string())?;
+    let r = with_credentials(c.delete(format!(
+        "{}/_api/{}/penalty-types/{}",
+        base(),
+        tournament_url,
+        pt_id
+    )))
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
     response_json(r).await
 }
 
@@ -3177,14 +3446,16 @@ pub async fn get_player_penalty_history(
     response_json(r).await
 }
 
-pub async fn delete_point_note(
-    tournament_url: &str,
-    note_id: &str,
-) -> Result<Value, String> {
+pub async fn delete_point_note(tournament_url: &str, note_id: &str) -> Result<Value, String> {
     let c = client();
     let body = serde_json::json!({ "note_id": note_id });
     let r = with_credentials(
-        c.post(format!("{}/_api/{}/delete-point-note", base(), tournament_url)).json(&body)
+        c.post(format!(
+            "{}/_api/{}/delete-point-note",
+            base(),
+            tournament_url
+        ))
+        .json(&body),
     )
     .send()
     .await
