@@ -937,6 +937,24 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
     let retry_finalization_message = use_signal(|| None::<String>);
     let retry_finalization_error = use_signal(|| None::<String>);
 
+    // Reset per-page player/camera state when navigating to a different match.
+    {
+        let val_reset = val.clone();
+        use_effect(move || {
+            let match_uuid = val_reset
+                .read()
+                .as_ref()
+                .and_then(|r| r.as_ref().ok())
+                .map(|d| d.match_data.uuid.clone());
+            if match_uuid.is_some() {
+                selected_camera_idx.set(0);
+                selected_point_index.set(0);
+                camera_dropdown_open.set(false);
+                pending_seek_time.set(None);
+            }
+        });
+    }
+
     use_effect(move || {
         let _ = (val.read().as_ref(), selected_camera_idx(), live_points_signal());
         if let Some(Ok(d)) = val.read().as_ref() {
@@ -1054,6 +1072,14 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                     r#"
 (function() {{
   var url = '{}';
+  function ensureApiLoaded() {{
+    if (window.YT && window.YT.Player) return;
+    if (document.querySelector('script[data-arctos-yt-api="1"]')) return;
+    var tag = document.createElement('script');
+    tag.src = 'https://www.youtube.com/iframe_api';
+    tag.setAttribute('data-arctos-yt-api', '1');
+    document.head.appendChild(tag);
+  }}
   function extractVideoId(u) {{
     if (!u) return null;
     var m = u.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/v\/)([^&\n?#]+)/) || u.match(/^([a-zA-Z0-9_-]{{11}})$/);
@@ -1061,14 +1087,44 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
   }}
   var videoId = extractVideoId(url);
   if (videoId) {{
-    function createNew() {{
-      var el = document.getElementById('youtube-player');
+    function getMountEl() {{
+      return document.getElementById('youtube-player');
+    }}
+    function resetStalePlayer(mountEl) {{
+      if (!window.__arctosYtPlayer) return;
+      try {{
+        var iframe = window.__arctosYtPlayer.getIframe ? window.__arctosYtPlayer.getIframe() : null;
+        if (!iframe || !mountEl || !mountEl.contains(iframe)) {{
+          try {{ window.__arctosYtPlayer.destroy(); }} catch (_err) {{}}
+          window.__arctosYtPlayer = null;
+          if (mountEl) {{
+            mountEl.innerHTML = '';
+          }}
+        }}
+      }} catch (_err) {{
+        window.__arctosYtPlayer = null;
+        if (mountEl) {{
+          mountEl.innerHTML = '';
+        }}
+      }}
+    }}
+    function createOrLoad() {{
+      var el = getMountEl();
       if (!el) return;
+      resetStalePlayer(el);
       if (window.__arctosYtPlayer) {{
-        try {{ window.__arctosYtPlayer.loadVideoById(videoId); return; }} catch (e) {{ window.__arctosYtPlayer = null; }}
+        try {{
+          window.__arctosYtPlayer.loadVideoById(videoId);
+          return;
+        }} catch (e) {{
+          try {{ window.__arctosYtPlayer.destroy(); }} catch (_err) {{}}
+          window.__arctosYtPlayer = null;
+          el.innerHTML = '';
+        }}
       }}
       if (!window.__arctosYtPlayer) {{
-        window.__arctosYtPlayer = new YT.Player('youtube-player', {{
+        el.innerHTML = '';
+        window.__arctosYtPlayer = new YT.Player(el, {{
           videoId: videoId,
           host: 'https://www.youtube-nocookie.com',
           playerVars: {{ autoplay: 1, controls: 1, rel: 0, modestbranding: 1, enablejsapi: 1, origin: window.location.origin, iv_load_policy: 1, playsinline: 1 }},
@@ -1076,8 +1132,14 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
         }});
       }}
     }}
-    window.onYouTubeIframeAPIReady = function() {{ createNew(); }};
-    if (window.YT && window.YT.Player) createNew();
+    ensureApiLoaded();
+    window.onYouTubeIframeAPIReady = function() {{ createOrLoad(); }};
+    if (window.YT && window.YT.Player) {{
+      createOrLoad();
+    }} else {{
+      setTimeout(createOrLoad, 150);
+      setTimeout(createOrLoad, 500);
+    }}
   }} else {{
     console.warn('Arctos: no YouTube video ID in', url);
   }}

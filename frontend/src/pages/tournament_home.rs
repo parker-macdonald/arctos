@@ -2,7 +2,7 @@ use crate::api;
 use crate::components::{
     EditRegistrationContext, EditRegistrationModal, EventHeader, LeagueRegistrationButtons,
 };
-use crate::types::{ToEntry, User};
+use crate::types::{ToEntry, User, UserUploadPlanningMatch, UserUploadPlanningResponse};
 use crate::Route;
 use chrono::{DateTime, SecondsFormat, Utc};
 use dioxus::prelude::*;
@@ -15,6 +15,30 @@ struct PendingUpload {
     start_world_suggested: Option<String>,
     start_world_value: String,
     start_world_error: Option<String>,
+    duration_sec: Option<f64>,
+    metadata_error: Option<String>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum UploadMode {
+    RawClips,
+    EditedMatch,
+}
+
+impl UploadMode {
+    fn as_api_str(self) -> &'static str {
+        match self {
+            Self::RawClips => "raw_clips",
+            Self::EditedMatch => "edited_match",
+        }
+    }
+}
+
+#[derive(Clone, PartialEq)]
+struct UploadPreviewClip {
+    label: String,
+    clip_start_file_sec: f64,
+    clip_duration_sec: f64,
 }
 
 fn infer_start_world_from_file(file: &dioxus::html::FileData) -> Option<String> {
@@ -37,6 +61,44 @@ fn validate_upload_start_world(raw: &str) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(target_arch = "wasm32")]
+async fn load_video_duration_sec(file: &dioxus::html::FileData) -> Result<f64, String> {
+    use gloo_timers::future::TimeoutFuture;
+    use wasm_bindgen::JsCast;
+
+    let web_file = file
+        .inner()
+        .downcast_ref::<web_sys::File>()
+        .cloned()
+        .ok_or_else(|| "Could not access browser file handle".to_string())?;
+    let blob: web_sys::Blob = web_file.unchecked_into();
+    let object_url = web_sys::Url::create_object_url_with_blob(&blob)
+        .map_err(|_| "Could not create object URL for video".to_string())?;
+    let document = web_sys::window()
+        .and_then(|w| w.document())
+        .ok_or_else(|| "Could not access browser document".to_string())?;
+    let video: web_sys::HtmlVideoElement = document
+        .create_element("video")
+        .map_err(|_| "Could not create temporary video element".to_string())?
+        .dyn_into()
+        .map_err(|_| "Could not cast temporary video element".to_string())?;
+    video.set_preload("metadata");
+    video.set_src(&object_url);
+    video.load();
+
+    for _ in 0..50 {
+        let duration = video.duration();
+        if duration.is_finite() && duration > 0.0 {
+            let _ = web_sys::Url::revoke_object_url(&object_url);
+            return Ok(duration);
+        }
+        TimeoutFuture::new(100).await;
+    }
+
+    let _ = web_sys::Url::revoke_object_url(&object_url);
+    Err("Could not read video duration from browser metadata.".to_string())
+}
+
 fn default_camera_name_from_filename(name: &str) -> String {
     let trimmed = name.trim();
     if trimmed.is_empty() {
@@ -51,12 +113,11 @@ fn default_camera_name_from_filename(name: &str) -> String {
 }
 
 fn is_current_user_to(me: Option<&Result<User, String>>, to_entries: &[ToEntry]) -> bool {
-    me.and_then(|r| r.as_ref().ok())
-        .map_or(false, |u| {
-            to_entries
-                .iter()
-                .any(|e| e.user_id == u.id && e.user_type == u.user_type)
-        })
+    me.and_then(|r| r.as_ref().ok()).map_or(false, |u| {
+        to_entries
+            .iter()
+            .any(|e| e.user_id == u.id && e.user_type == u.user_type)
+    })
 }
 
 fn format_date(iso: &str) -> String {
@@ -70,6 +131,87 @@ fn format_date_display(start: &str, end: Option<&String>) -> String {
         Some(e) if e.as_str() == start => start_fmt,
         Some(e) => format!("{} - {}", start_fmt, format_date(e)),
     }
+}
+
+fn parse_iso_utc(raw: &str) -> Option<DateTime<Utc>> {
+    chrono::DateTime::parse_from_rfc3339(raw)
+        .ok()
+        .map(|dt| dt.with_timezone(&Utc))
+}
+
+fn format_duration_compact(seconds: f64) -> String {
+    let total_ms = (seconds.max(0.0) * 1000.0).round() as i64;
+    let mins = total_ms / 60_000;
+    let secs = (total_ms % 60_000) as f64 / 1000.0;
+    if mins > 0 {
+        format!("{mins}m {secs:04.1}s")
+    } else {
+        format!("{secs:.1}s")
+    }
+}
+
+fn preview_clips_for_upload(
+    upload: &PendingUpload,
+    matches: &[UserUploadPlanningMatch],
+) -> Result<Vec<UploadPreviewClip>, String> {
+    let start_world_raw = upload.start_world_value.trim().to_string();
+    let start_world_raw = if start_world_raw.is_empty() {
+        upload
+            .start_world_suggested
+            .clone()
+            .ok_or_else(|| "Enter a start timestamp to preview clips.".to_string())?
+    } else {
+        start_world_raw
+    };
+    let video_start_world = parse_iso_utc(&start_world_raw)
+        .ok_or_else(|| "Start timestamp is not valid RFC3339.".to_string())?;
+    let duration_sec = upload
+        .duration_sec
+        .ok_or_else(|| "Video duration metadata is not available yet.".to_string())?;
+    let video_end_world =
+        video_start_world + chrono::TimeDelta::milliseconds((duration_sec * 1000.0) as i64);
+    let padding = chrono::TimeDelta::seconds(3);
+
+    let mut previews = Vec::new();
+    for match_row in matches {
+        for point in &match_row.points {
+            let Some(point_start_world) = point.stamp.as_deref().and_then(parse_iso_utc) else {
+                continue;
+            };
+            let point_end_world = point
+                .end_stamp
+                .as_deref()
+                .and_then(parse_iso_utc)
+                .unwrap_or(point_start_world);
+
+            if point_start_world > video_end_world || point_end_world < video_start_world {
+                continue;
+            }
+
+            let clip_start_world = std::cmp::max(point_start_world - padding, video_start_world);
+            let clip_end_world = std::cmp::min(point_end_world + padding, video_end_world);
+            let clip_start_file_sec =
+                (clip_start_world - video_start_world).num_milliseconds() as f64 / 1000.0;
+            let clip_duration_sec =
+                (clip_end_world - clip_start_world).num_milliseconds() as f64 / 1000.0;
+            if clip_duration_sec <= 0.0 {
+                continue;
+            }
+
+            previews.push(UploadPreviewClip {
+                label: format!("[{}] point {}", match_row.name, point.index),
+                clip_start_file_sec,
+                clip_duration_sec,
+            });
+        }
+    }
+
+    previews.sort_by(|a, b| {
+        a.clip_start_file_sec
+            .partial_cmp(&b.clip_start_file_sec)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    Ok(previews)
 }
 
 #[component]
@@ -119,12 +261,18 @@ pub fn TournamentHome(url: String) -> Element {
     let mut pending_uploads = use_signal(|| Vec::<PendingUpload>::new());
     let mut upload_error = use_signal(|| None::<String>);
     let mut uploading = use_signal(|| false);
+    let mut upload_metadata_loading = use_signal(|| false);
     // Per-row upload percent (0–100) while uploading; empty when idle.
     let mut upload_row_progress = use_signal(|| Vec::<Option<u32>>::new());
     // Shared display name for all files in this upload batch (one logical camera).
     let mut upload_batch_camera_name = use_signal(|| String::new());
     // Field for the whole batch (one camera sits on one field).
     let mut upload_batch_field_id = use_signal(|| None::<u32>);
+    let mut upload_mode = use_signal(|| UploadMode::RawClips);
+    let mut upload_match_uuid = use_signal(|| None::<String>);
+    let mut upload_planning = use_signal(|| None::<UserUploadPlanningResponse>);
+    let mut upload_planning_error = use_signal(|| None::<String>);
+    let mut upload_planning_loading = use_signal(|| false);
     let mut upload_modal_open = use_signal(|| false);
 
     let url_for_fields = url.clone();
@@ -136,6 +284,58 @@ pub fn TournamentHome(url: String) -> Element {
                 .map_err(|e| e.to_string())
         }
     });
+
+    {
+        let url_for_upload_planning = url.clone();
+        let mut upload_planning = upload_planning;
+        let mut upload_planning_error = upload_planning_error;
+        let mut upload_planning_loading = upload_planning_loading;
+        let mut upload_match_uuid = upload_match_uuid;
+        use_effect(move || {
+            let open = upload_modal_open();
+            let field_id = upload_batch_field_id();
+            if !open {
+                upload_planning.set(None);
+                upload_planning_error.set(None);
+                upload_planning_loading.set(false);
+                upload_match_uuid.set(None);
+                return;
+            }
+            let Some(field_id) = field_id else {
+                upload_planning.set(None);
+                upload_planning_error.set(None);
+                upload_planning_loading.set(false);
+                upload_match_uuid.set(None);
+                return;
+            };
+
+            upload_planning_loading.set(true);
+            upload_planning_error.set(None);
+            let planning_url = url_for_upload_planning.clone();
+            spawn(async move {
+                match api::user_upload_planning(&planning_url, field_id).await {
+                    Ok(resp) => {
+                        let matches = resp.matches.clone();
+                        let keep_current = upload_match_uuid()
+                            .as_ref()
+                            .map(|selected| matches.iter().any(|m| m.uuid == *selected))
+                            .unwrap_or(false);
+                        if !keep_current {
+                            upload_match_uuid.set(matches.first().map(|m| m.uuid.clone()));
+                        }
+                        upload_planning.set(Some(resp));
+                        upload_planning_error.set(None);
+                    }
+                    Err(err) => {
+                        upload_planning.set(None);
+                        upload_planning_error.set(Some(err));
+                        upload_match_uuid.set(None);
+                    }
+                }
+                upload_planning_loading.set(false);
+            });
+        });
+    }
 
     rsx! {
         if let Some(Ok(d)) = val.read().as_ref() {
@@ -162,16 +362,25 @@ pub fn TournamentHome(url: String) -> Element {
                     if d.tournament.bracket && (d.tournament.schedule_published || is_current_user_to(me_res.read().as_ref(), &d.to_entries)) {
                         Link { to: Route::Bracket { url: url.clone() }, class: "btn btn-outline-primary", "Bracket" }
                     }
-                    if d.manual_footage_uploads_enabled
-                        && me_res.read().as_ref().and_then(|r| r.as_ref().ok()).is_some()
-                    {
-                        button {
-                            class: "btn btn-outline-secondary",
-                            onclick: move |_| {
-                                upload_modal_open.set(true);
-                                upload_error.set(None);
-                            },
-                            "Upload Footage"
+                    if d.manual_footage_uploads_enabled {
+                        if let Some(current_user) = me_res.read().as_ref().and_then(|r| r.as_ref().ok()) {
+                            if current_user.user_type == "player" && d.is_current_player_registered {
+                                button {
+                                    class: "btn btn-outline-secondary",
+                                    onclick: move |_| {
+                                        upload_modal_open.set(true);
+                                        upload_error.set(None);
+                                    },
+                                    "Upload Footage"
+                                }
+                            } else {
+                                button {
+                                    class: "btn btn-outline-secondary disabled",
+                                    disabled: true,
+                                    title: "Only players registered for this tournament can upload footage.",
+                                    "Upload Footage (registered players only)"
+                                }
+                            }
                         }
                     }
                     if let Some(ref l) = d.tournament.league {
@@ -536,18 +745,61 @@ pub fn TournamentHome(url: String) -> Element {
                                         {{
                                             let default_field_id = fields[0].id;
                                             rsx! {
-                                                p { class: "text-muted mb-2",
-                                                    "All videos in this upload are treated as one camera on the field you choose below. Points will be clipped out of the video, concatenated together, and published as a single video. Do not upload videos with pauses/skips in the middle; this will not work."
+                                                div { class: "row g-2 mb-3",
+                                                    div { class: "col-md-6",
+                                                        label { class: "form-label small mb-1", "Upload mode" }
+                                                        div { class: "d-flex flex-wrap gap-3",
+                                                            label { class: "form-check-label d-flex align-items-center gap-2",
+                                                                input {
+                                                                    class: "form-check-input",
+                                                                    r#type: "radio",
+                                                                    name: "upload_mode",
+                                                                    checked: upload_mode() == UploadMode::RawClips,
+                                                                    disabled: uploading() || upload_metadata_loading(),
+                                                                    onchange: move |_| {
+                                                                        upload_mode.set(UploadMode::RawClips);
+                                                                        upload_error.set(None);
+                                                                    }
+                                                                }
+                                                                span { "Generate point clips" }
+                                                            }
+                                                            label { class: "form-check-label d-flex align-items-center gap-2",
+                                                                input {
+                                                                    class: "form-check-input",
+                                                                    r#type: "radio",
+                                                                    name: "upload_mode",
+                                                                    checked: upload_mode() == UploadMode::EditedMatch,
+                                                                    disabled: uploading() || upload_metadata_loading(),
+                                                                    onchange: move |_| {
+                                                                        upload_mode.set(UploadMode::EditedMatch);
+                                                                        upload_error.set(None);
+                                                                    }
+                                                                }
+                                                                span { "Upload edited match video" }
+                                                            }
+                                                        }
+                                                    }
                                                 }
-                                                p { class: "text-muted mb-2 small",
-                                                    "Be sure that the start timestamp is set correctly - I try to guess based on the file metadata, but that may not be accurate, especially if you've ever edited the file."
+                                                if upload_mode() == UploadMode::RawClips {
+                                                    p { class: "text-muted mb-2",
+                                                        "All videos are treated as one camera on the field you choose below. They may not overlap and may not have pauses. Their start timestamp is used to detect which points are recorded, and Arctos will clip the video to these points and upload them to YouTube. If the detected timestamp is wrong, you may manually override it."
+                                                        br {}
+                                                        "If you have footage of multiple fields, upload each field separately (ie, upload all the footage from one field first, submit it, and only then upload the next field)"
+                                                    }
+                                                    p { class: "text-muted mb-2 small",
+                                                        "Your upload will need some processing before it is ready and visible. If you want a status update, check in with a TO; they can see the status of your upload."
+                                                    }
+                                                } else {
+                                                    p { class: "text-muted mb-2",
+                                                        "Edited uploads go straight to one selected match page and YouTube. No point timestamps or point seek data are generated for these videos."
+                                                    }
                                                 }
                                                 input {
                                                     class: "form-control",
                                                     r#type: "file",
                                                     accept: "video/*",
                                                     multiple: true,
-                                                    disabled: uploading(),
+                                                    disabled: uploading() || upload_metadata_loading(),
                                                     onchange: move |evt| {
                                                         #[cfg(target_arch = "wasm32")]
                                                         {
@@ -555,37 +807,55 @@ pub fn TournamentHome(url: String) -> Element {
                                                             if files.is_empty() {
                                                                 return;
                                                             }
-
-                                                            let mut items: Vec<PendingUpload> = Vec::new();
-                                                            let mut first_filename: Option<String> = None;
-                                                            for f in files {
-                                                                let guessed_start = infer_start_world_from_file(&f);
-                                                                let filename = f.name();
-                                                                if first_filename.is_none() {
-                                                                    first_filename = Some(filename.clone());
+                                                            upload_metadata_loading.set(true);
+                                                            let mut pending_uploads = pending_uploads;
+                                                            let mut upload_batch_camera_name = upload_batch_camera_name;
+                                                            let mut upload_batch_field_id = upload_batch_field_id;
+                                                            let mut upload_error = upload_error;
+                                                            let mut upload_metadata_loading = upload_metadata_loading;
+                                                            spawn(async move {
+                                                                let mut items: Vec<PendingUpload> = Vec::new();
+                                                                let mut first_filename: Option<String> = None;
+                                                                for f in files {
+                                                                    let guessed_start = infer_start_world_from_file(&f);
+                                                                    let filename = f.name();
+                                                                    let duration_res = load_video_duration_sec(&f).await;
+                                                                    if first_filename.is_none() {
+                                                                        first_filename = Some(filename.clone());
+                                                                    }
+                                                                    let (duration_sec, metadata_error) = match duration_res {
+                                                                        Ok(duration) => (Some(duration), None),
+                                                                        Err(err) => (None, Some(err)),
+                                                                    };
+                                                                    items.push(PendingUpload {
+                                                                        filename,
+                                                                        file: f,
+                                                                        start_world_suggested: guessed_start.clone(),
+                                                                        start_world_value: String::new(),
+                                                                        start_world_error: None,
+                                                                        duration_sec,
+                                                                        metadata_error,
+                                                                    });
                                                                 }
-                                                                items.push(PendingUpload {
-                                                                    filename,
-                                                                    file: f,
-                                                                    start_world_suggested: guessed_start.clone(),
-                                                                    start_world_value: String::new(),
-                                                                    start_world_error: None,
-                                                                });
-                                                            }
-                                                            if upload_batch_field_id().is_none() {
-                                                                upload_batch_field_id.set(Some(default_field_id));
-                                                            }
-                                                            if upload_batch_camera_name().trim().is_empty() {
-                                                                if let Some(ref fnm) = first_filename {
-                                                                    upload_batch_camera_name.set(default_camera_name_from_filename(fnm));
+                                                                if upload_batch_field_id().is_none() {
+                                                                    upload_batch_field_id.set(Some(default_field_id));
                                                                 }
-                                                            }
-                                                            let mut existing = pending_uploads();
-                                                            existing.extend(items);
-                                                            pending_uploads.set(existing);
-                                                            upload_error.set(None);
+                                                                if upload_batch_camera_name().trim().is_empty() {
+                                                                    if let Some(ref fnm) = first_filename {
+                                                                        upload_batch_camera_name.set(default_camera_name_from_filename(fnm));
+                                                                    }
+                                                                }
+                                                                let mut existing = pending_uploads();
+                                                                existing.extend(items);
+                                                                pending_uploads.set(existing);
+                                                                upload_error.set(None);
+                                                                upload_metadata_loading.set(false);
+                                                            });
                                                         }
                                                     }
+                                                }
+                                                if upload_metadata_loading() {
+                                                    p { class: "text-muted small mt-2 mb-0", "Reading video metadata..." }
                                                 }
 
                                                 if !pending_uploads().is_empty() {
@@ -604,6 +874,9 @@ pub fn TournamentHome(url: String) -> Element {
                                                             }
                                                             p { class: "text-muted small mt-1 mb-0",
                                                                 "Used for every match highlight from this upload."
+                                                                if upload_mode() == UploadMode::EditedMatch {
+                                                                    " Used as the camera name on the selected match page."
+                                                                }
                                                             }
                                                         }
                                                         div { class: "col-md-6",
@@ -622,13 +895,51 @@ pub fn TournamentHome(url: String) -> Element {
                                                             }
                                                         }
                                                     }
+                                                    if upload_mode() == UploadMode::EditedMatch {
+                                                        div { class: "mb-3",
+                                                            label { class: "form-label small mb-0", "Target match" }
+                                                            select {
+                                                                class: "form-select form-select-sm",
+                                                                disabled: uploading() || upload_planning_loading(),
+                                                                value: "{upload_match_uuid().unwrap_or_default()}",
+                                                                onchange: move |ev| {
+                                                                    let value = ev.value();
+                                                                    upload_match_uuid.set(if value.trim().is_empty() {
+                                                                        None
+                                                                    } else {
+                                                                        Some(value)
+                                                                    });
+                                                                },
+                                                                if let Some(plan) = upload_planning() {
+                                                                    for match_row in plan.matches.iter() {
+                                                                        option { value: "{match_row.uuid}", "{match_row.name}" }
+                                                                    }
+                                                                } else {
+                                                                    option { value: "", "Select a field first" }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                    if upload_planning_loading() {
+                                                        div { class: "text-muted small mb-2", "Loading field matches and points..." }
+                                                    } else if let Some(plan_err) = upload_planning_error() {
+                                                        div { class: "alert alert-warning py-2 mb-2", "{plan_err}" }
+                                                    }
                                                     div { class: "mt-1 table-responsive",
                                                         table { class: "table table-sm align-middle",
                                                             thead {
                                                                 tr {
                                                                     th { "File" }
                                                                     th { "Progress" }
-                                                                    th { "Start timestamp override (ISO with timezone)" }
+                                                                    th { "Detected metadata" }
+                                                                    th {
+                                                                        if upload_mode() == UploadMode::RawClips {
+                                                                            "Start timestamp override (ISO with timezone)"
+                                                                        } else {
+                                                                            "Upload target"
+                                                                        }
+                                                                    }
+                                                                    th { "Clip preview" }
                                                                     th { "" }
                                                                 }
                                                             }
@@ -656,59 +967,131 @@ pub fn TournamentHome(url: String) -> Element {
                                                                             }
                                                                         }
                                                                         td {
-                                                                            div { class: "d-flex gap-2 align-items-center",
-                                                                                input {
-                                                                                    class: "form-control form-control-sm",
-                                                                                    r#type: "text",
-                                                                                    placeholder: "2026-03-18T01:23:45Z",
-                                                                                    value: "{item.start_world_value}",
-                                                                                    disabled: uploading(),
-                                                                                    oninput: move |e| {
-                                                                                        let mut list = pending_uploads();
-                                                                                        if let Some(t) = list.get_mut(idx) {
-                                                                                            t.start_world_value = e.value();
-                                                                                            t.start_world_error = None;
-                                                                                        }
-                                                                                        pending_uploads.set(list);
-                                                                                    }
-                                                                                }
-                                                                                button {
-                                                                                    class: "btn btn-sm btn-outline-secondary",
-                                                                                    disabled: uploading(),
-                                                                                    onclick: move |_| {
-                                                                                        let mut list = pending_uploads();
-                                                                                        if let Some(t) = list.get_mut(idx) {
-                                                                                            t.start_world_value = t
-                                                                                                .start_world_suggested
-                                                                                                .clone()
-                                                                                                .unwrap_or_default();
-                                                                                            t.start_world_error = None;
-                                                                                        }
-                                                                                        pending_uploads.set(list);
-                                                                                    },
-                                                                                    "Reset"
-                                                                                }
-                                                                            }
-                                                                            if let Some(err) = &item.start_world_error {
-                                                                                div { class: "text-danger small mt-1", "{err}" }
-                                                                            } else if let Some(s) = &item.start_world_suggested {
-                                                                                div { class: "text-muted small mt-1", "File modified time only, not recording start: {s}" }
+                                                                            if let Some(duration_sec) = item.duration_sec {
+                                                                                div { class: "small", "Duration: {format_duration_compact(duration_sec)}" }
                                                                             } else {
-                                                                                div { class: "text-muted small mt-1", "Leave blank to let the server read recording metadata from the uploaded file. Enter a manual value with timezone only if you need to override it." }
+                                                                                div { class: "text-muted small", "Duration unavailable" }
+                                                                            }
+                                                                            if let Some(s) = &item.start_world_suggested {
+                                                                                div { class: "text-muted small mt-1", "Detected file timestamp: {s}" }
+                                                                            } else {
+                                                                                div { class: "text-muted small mt-1", "No browser timestamp was available for this file." }
+                                                                            }
+                                                                            if let Some(err) = &item.metadata_error {
+                                                                                div { class: "text-danger small mt-1", "{err}" }
                                                                             }
                                                                         }
                                                                         td {
-                                                                            button {
-                                                                                class: "btn btn-sm btn-outline-danger",
-                                                                                disabled: uploading(),
-                                                                                onclick: move |_| {
-                                                                                    let mut list = pending_uploads();
-                                                                                    if idx < list.len() {
-                                                                                        list.remove(idx);
+                                                                            if upload_mode() == UploadMode::RawClips {
+                                                                                div { class: "d-flex gap-2 align-items-center",
+                                                                                    input {
+                                                                                        class: "form-control form-control-sm",
+                                                                                        r#type: "text",
+                                                                                        placeholder: "2026-03-18T01:23:45Z",
+                                                                                        value: "{item.start_world_value}",
+                                                                                        disabled: uploading(),
+                                                                                        oninput: move |e| {
+                                                                                            let mut list = pending_uploads();
+                                                                                            if let Some(t) = list.get_mut(idx) {
+                                                                                                t.start_world_value = e.value();
+                                                                                                t.start_world_error = None;
+                                                                                            }
+                                                                                            pending_uploads.set(list);
+                                                                                        }
                                                                                     }
-                                                                                    pending_uploads.set(list);
-                                                                                },
-                                                                                "Remove"
+                                                                                    button {
+                                                                                        class: "btn btn-sm btn-outline-secondary",
+                                                                                        disabled: uploading(),
+                                                                                        onclick: move |_| {
+                                                                                            let mut list = pending_uploads();
+                                                                                            if let Some(t) = list.get_mut(idx) {
+                                                                                                t.start_world_value = t
+                                                                                                    .start_world_suggested
+                                                                                                    .clone()
+                                                                                                    .unwrap_or_default();
+                                                                                                t.start_world_error = None;
+                                                                                            }
+                                                                                            pending_uploads.set(list);
+                                                                                        },
+                                                                                        "Reset"
+                                                                                    }
+                                                                                }
+                                                                                if let Some(err) = &item.start_world_error {
+                                                                                    div { class: "text-danger small mt-1", "{err}" }
+                                                                                } else {
+                                                                                    div { class: "text-muted small mt-1", "Leave blank to keep the detected file timestamp. Enter an override with timezone if needed." }
+                                                                                }
+                                                                            } else if let Some(plan) = upload_planning() {
+                                                                                if let Some(selected_match_uuid) = upload_match_uuid() {
+                                                                                    if let Some(match_row) = plan.matches.iter().find(|m| m.uuid == selected_match_uuid) {
+                                                                                        div { class: "small", "{match_row.name}" }
+                                                                                        div { class: "text-muted small mt-1", "Direct match upload with no point timestamps." }
+                                                                                    } else {
+                                                                                        div { class: "text-muted small", "Select a match." }
+                                                                                    }
+                                                                                } else {
+                                                                                    div { class: "text-muted small", "Select a match." }
+                                                                                }
+                                                                            } else {
+                                                                                div { class: "text-muted small", "Select a field to load matches." }
+                                                                            }
+                                                                        }
+                                                                        td {
+                                                                            if upload_mode() == UploadMode::RawClips {
+                                                                                if let Some(plan) = upload_planning() {
+                                                                                    {{
+                                                                                        let preview_result = preview_clips_for_upload(item, &plan.matches);
+                                                                                        rsx! {
+                                                                                            match preview_result {
+                                                                                                Ok(previews) if previews.is_empty() => rsx! {
+                                                                                                    div { class: "text-muted small", "No points overlap this file." }
+                                                                                                },
+                                                                                                Ok(previews) => rsx! {
+                                                                                                    ul { class: "small mb-0 ps-3",
+                                                                                                        for preview in previews.iter() {
+                                                                                                            li {
+                                                                                                                "{preview.label} "
+                                                                                                                span {
+                                                                                                                    class: "text-muted",
+                                                                                                                    {format!(
+                                                                                                                        "({} in, {} long)",
+                                                                                                                        format_duration_compact(preview.clip_start_file_sec),
+                                                                                                                        format_duration_compact(preview.clip_duration_sec),
+                                                                                                                    )}
+                                                                                                                }
+                                                                                                            }
+                                                                                                        }
+                                                                                                    }
+                                                                                                },
+                                                                                                Err(err) => rsx! {
+                                                                                                    div { class: "text-muted small", "{err}" }
+                                                                                                },
+                                                                                            }
+                                                                                        }
+                                                                                    }}
+                                                                                } else if upload_planning_loading() {
+                                                                                    div { class: "text-muted small", "Loading field points..." }
+                                                                                } else {
+                                                                                    div { class: "text-muted small", "Select a field to preview clips." }
+                                                                                }
+                                                                            } else {
+                                                                                div { class: "text-muted small", "This video uploads as-is with no point timing metadata." }
+                                                                            }
+                                                                        }
+                                                                        td {
+                                                                            div { class: "d-flex gap-2 align-items-center",
+                                                                                button {
+                                                                                    class: "btn btn-sm btn-outline-danger",
+                                                                                    disabled: uploading(),
+                                                                                    onclick: move |_| {
+                                                                                        let mut list = pending_uploads();
+                                                                                        if idx < list.len() {
+                                                                                            list.remove(idx);
+                                                                                        }
+                                                                                        pending_uploads.set(list);
+                                                                                    },
+                                                                                    "Remove"
+                                                                                }
                                                                             }
                                                                         }
                                                                     }
@@ -736,8 +1119,12 @@ pub fn TournamentHome(url: String) -> Element {
                                         button {
                                             class: "btn btn-primary",
                                             disabled: uploading()
+                                                || upload_metadata_loading()
                                                 || pending_uploads().is_empty()
-                                                || upload_batch_camera_name().trim().is_empty(),
+                                                || upload_batch_camera_name().trim().is_empty()
+                                                || upload_batch_field_id().is_none()
+                                                || (upload_mode() == UploadMode::EditedMatch
+                                                    && upload_match_uuid().is_none()),
                                             onclick: move |_| {
                                                 #[cfg(target_arch = "wasm32")]
                                                 {
@@ -753,27 +1140,35 @@ pub fn TournamentHome(url: String) -> Element {
                                                         ));
                                                         return;
                                                     }
+                                                    let mode = upload_mode();
                                                     let Some(field_id) = upload_batch_field_id() else {
                                                         upload_error.set(Some("Select a field.".into()));
                                                         return;
                                                     };
+                                                    let selected_match_uuid = upload_match_uuid();
+                                                    if mode == UploadMode::EditedMatch && selected_match_uuid.is_none() {
+                                                        upload_error.set(Some("Select a target match.".into()));
+                                                        return;
+                                                    }
                                                     let mut validated_uploads = uploads.clone();
-                                                    let mut has_invalid_start_world = false;
-                                                    for item in validated_uploads.iter_mut() {
-                                                        match validate_upload_start_world(&item.start_world_value) {
-                                                            Ok(()) => item.start_world_error = None,
-                                                            Err(err) => {
-                                                                item.start_world_error = Some(err);
-                                                                has_invalid_start_world = true;
+                                                    if mode == UploadMode::RawClips {
+                                                        let mut has_invalid_start_world = false;
+                                                        for item in validated_uploads.iter_mut() {
+                                                            match validate_upload_start_world(&item.start_world_value) {
+                                                                Ok(()) => item.start_world_error = None,
+                                                                Err(err) => {
+                                                                    item.start_world_error = Some(err);
+                                                                    has_invalid_start_world = true;
+                                                                }
                                                             }
                                                         }
-                                                    }
-                                                    if has_invalid_start_world {
-                                                        pending_uploads.set(validated_uploads);
-                                                        upload_error.set(Some(
-                                                            "Fix the highlighted start timestamps before uploading.".into(),
-                                                        ));
-                                                        return;
+                                                        if has_invalid_start_world {
+                                                            pending_uploads.set(validated_uploads);
+                                                            upload_error.set(Some(
+                                                                "Fix the highlighted start timestamps before uploading.".into(),
+                                                            ));
+                                                            return;
+                                                        }
                                                     }
                                                     let n = uploads.len();
                                                     let batch_id = format!(
@@ -787,15 +1182,26 @@ pub fn TournamentHome(url: String) -> Element {
                                                     spawn(async move {
                                                         let mut first_err: Option<String> = None;
                                                         for (file_idx, u) in uploads.into_iter().enumerate() {
-                                                            let start_world = if u.start_world_value.trim().is_empty() {
-                                                                None
+                                                            let start_world = if mode == UploadMode::RawClips {
+                                                                let candidate = if !u.start_world_value.trim().is_empty() {
+                                                                    Some(u.start_world_value.clone())
+                                                                } else {
+                                                                    u.start_world_suggested.clone()
+                                                                };
+                                                                candidate.filter(|s| !s.trim().is_empty())
                                                             } else {
-                                                                Some(u.start_world_value.clone())
+                                                                None
                                                             };
                                                             let mut progress_sig = progress_sig.clone();
                                                             if let Err(e) = api::user_upload_video_footage_with_progress(
                                                                 &url,
-                                                                field_id,
+                                                                mode.as_api_str(),
+                                                                if mode == UploadMode::RawClips {
+                                                                    Some(field_id)
+                                                                } else {
+                                                                    None
+                                                                },
+                                                                selected_match_uuid.as_deref(),
                                                                 u.file,
                                                                 start_world,
                                                                 Some(camera.clone()),
@@ -830,6 +1236,8 @@ pub fn TournamentHome(url: String) -> Element {
                                                             pending_uploads.set(Vec::new());
                                                             upload_batch_camera_name.set(String::new());
                                                             upload_batch_field_id.set(None);
+                                                            upload_match_uuid.set(None);
+                                                            upload_mode.set(UploadMode::RawClips);
                                                             upload_modal_open.set(false);
                                                         }
                                                     });
@@ -929,4 +1337,3 @@ pub fn TournamentHome(url: String) -> Element {
         }
     }
 }
-

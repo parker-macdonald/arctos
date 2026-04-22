@@ -473,9 +473,7 @@ pub struct PointTimestamp {
     pub in_video_start: f64,
 }
 
-fn deserialize_point_timestamps<'de, D>(
-    d: D,
-) -> Result<Option<Vec<PointTimestamp>>, D::Error>
+fn deserialize_point_timestamps<'de, D>(d: D) -> Result<Option<Vec<PointTimestamp>>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
@@ -499,9 +497,8 @@ where
                 });
             }
             serde_json::Value::Object(o) => {
-                let pt: PointTimestamp =
-                    serde_json::from_value(serde_json::Value::Object(o))
-                        .map_err(serde::de::Error::custom)?;
+                let pt: PointTimestamp = serde_json::from_value(serde_json::Value::Object(o))
+                    .map_err(serde::de::Error::custom)?;
                 out.push(pt);
             }
             _ => {}
@@ -536,6 +533,36 @@ pub struct CameraData {
 pub struct FieldOption {
     pub id: u32,
     pub name: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct UserUploadPlanningField {
+    pub id: u32,
+    pub name: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct UserUploadPlanningPoint {
+    pub uuid: String,
+    pub index: u32,
+    pub stamp: Option<String>,
+    pub end_stamp: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct UserUploadPlanningMatch {
+    pub uuid: String,
+    pub name: String,
+    pub field_name: String,
+    #[serde(default)]
+    pub points: Vec<UserUploadPlanningPoint>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct UserUploadPlanningResponse {
+    pub field: UserUploadPlanningField,
+    #[serde(default)]
+    pub matches: Vec<UserUploadPlanningMatch>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -973,7 +1000,8 @@ pub struct ScoreboardStateResponse {
     pub team2_name: Option<String>,
     pub team1_photo: Option<String>,
     pub team2_photo: Option<String>,
-    pub scores_by_set: Option<std::collections::HashMap<String, std::collections::HashMap<String, u32>>>,
+    pub scores_by_set:
+        Option<std::collections::HashMap<String, std::collections::HashMap<String, u32>>>,
     pub sets: Option<Vec<u32>>,
     pub stones_info: Option<StonesInfo>,
     #[serde(default)]
