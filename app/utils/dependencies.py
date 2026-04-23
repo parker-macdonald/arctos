@@ -9,8 +9,23 @@ from app.utils.helpers import resolve_tag_to_team
 
 
 def apply_match_dependencies(tournament_url: str, completed_match: Match) -> None:
-    """Replace placeholders like 'MatchName winner/loser' in other matches' initial fields
-    with explicit team ids in non-initial fields (team1/team2/refs)."""
+    """Resolve winner/loser placeholders for all matches that depended on *completed_match*.
+
+    Scans every match in the tournament and replaces ``"<name>::winner"`` and
+    ``"<name>::loser"`` placeholders in ``team1_initial``, ``team2_initial``,
+    and ``refs_initial`` with the concrete team IDs from *completed_match*,
+    writing the result to the non-``_initial`` columns (``team1``, ``team2``,
+    ``refs``).
+
+    This function is called after a match is finalised so that downstream
+    matches can have their rosters and refs resolved in preparation for
+    starting.
+
+    Args:
+        tournament_url: URL slug of the tournament; used to scope queries.
+        completed_match: The match that just finished, whose winner/loser team
+            IDs should be propagated to dependent matches.
+    """
     # Determine winner/loser team ids
     winner_team_id = completed_match.winner_team_id
     loser_team_id = completed_match.loser_team_id

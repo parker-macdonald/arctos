@@ -6,7 +6,18 @@ from typing import Optional
 
 
 def match_name_char_error(name: str) -> Optional[str]:
-    """Return an error message if ``name`` contains forbidden characters, else ``None``."""
+    """Return an error message if *name* contains characters forbidden in match names.
+
+    Match names must not contain ``","`` (used as a separator in CSV columns)
+    or ``"::"`` (reserved for winner/loser reference syntax).
+
+    Args:
+        name: The candidate match name.
+
+    Returns:
+        A human-readable error string if the name is invalid, or ``None``
+        if the name passes validation.
+    """
     if "," in name:
         return 'Match names cannot contain ",".'
     if "::" in name:
@@ -15,7 +26,18 @@ def match_name_char_error(name: str) -> Optional[str]:
 
 
 def team_pseudonym_char_error(pseudonym: str) -> Optional[str]:
-    """Return an error message if ``pseudonym`` contains forbidden characters, else ``None``."""
+    """Return an error message if *pseudonym* contains forbidden characters.
+
+    Team pseudonyms must not contain ``","`` or ``"::"`` for the same
+    reasons as match names.
+
+    Args:
+        pseudonym: The candidate team pseudonym.
+
+    Returns:
+        A human-readable error string if the pseudonym is invalid, or
+        ``None`` if it passes validation.
+    """
     if "," in pseudonym:
         return 'Team pseudonyms cannot contain ",".'
     if "::" in pseudonym:

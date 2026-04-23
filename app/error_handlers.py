@@ -11,6 +11,20 @@ from flask import Flask
 
 
 def register_error_handlers(app: Flask) -> None:
+    """Register domain-level error handlers on the Flask application.
+
+    Attaches a single handler for :class:`~app.exceptions.ArctosError`
+    (and all subclasses) that decides whether to respond with JSON or an
+    HTML flash-and-redirect based on the request context:
+
+    * Requests to ``/_api/…`` paths always receive a JSON error body.
+    * Requests that ``Accept: application/json`` (and not HTML) receive JSON.
+    * All other requests receive a flashed message and a redirect to the
+      referring page.
+
+    Args:
+        app: The Flask application instance to register handlers on.
+    """
     from flask import flash, redirect, request
 
     from app.exceptions import ArctosError

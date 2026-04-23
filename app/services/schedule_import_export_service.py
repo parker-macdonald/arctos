@@ -24,7 +24,19 @@ if TYPE_CHECKING:  # pragma: no cover
 
 
 def _is_explicit_team_id(token: str) -> bool:
-    """True if the token is an explicit team ID (not tag:: or match::winner/loser)."""
+    """Return ``True`` if *token* is a direct team ID rather than a reference.
+
+    Returns ``False`` for:
+
+    * ``tag::<name>`` — tag references
+    * Strings containing ``::winner`` or ``::loser`` — match references
+
+    Args:
+        token: A team slot string from the schedule.
+
+    Returns:
+        ``True`` when *token* is an explicit team ID.
+    """
     if not token or not str(token).strip():
         return False
     t = str(token).strip()
@@ -37,7 +49,21 @@ def _is_explicit_team_id(token: str) -> bool:
 
 @dataclass(frozen=True)
 class ImportResult:
-    """Result of an import operation."""
+    """Result of a schedule import operation.
+
+    Attributes:
+        tags_created: Number of new :class:`~app.models.tournament.Tag`
+            records created.
+        tags_updated: Number of existing tag records updated.
+        fields_created: Number of new :class:`~app.models.tournament.Field`
+            records created.
+        fields_updated: Number of existing field records updated.
+        matches_created: Number of new :class:`~app.models.match.Match`
+            records created.
+        matches_updated: Number of existing match records updated.
+        errors: List of human-readable error strings encountered during
+            import.  Non-empty indicates a partial or failed import.
+    """
 
     tags_created: int = 0
     tags_updated: int = 0
@@ -47,7 +73,8 @@ class ImportResult:
     matches_updated: int = 0
     errors: list[str] = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
+        """Initialise the mutable *errors* list on a frozen dataclass."""
         if self.errors is None:
             object.__setattr__(self, "errors", [])
 
@@ -236,9 +263,7 @@ class ScheduleImportExportService:
 
         errors: list[str] = []
         for tid in sorted(unregistered):
-            errors.append(
-                f"Team '{tid}' is not registered for this tournament."
-            )
+            errors.append(f"Team '{tid}' is not registered for this tournament.")
         return errors
 
     @staticmethod

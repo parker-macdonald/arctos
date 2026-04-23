@@ -28,11 +28,30 @@ if TYPE_CHECKING:  # pragma: no cover
 
 @dataclass(frozen=True)
 class MatchActionsService:
+    """Service for in-match actions (add/update/delete points, update stones/sets).
+
+    All methods are static; the class acts as a typed namespace.  Each public
+    method returns a :class:`~app.error_values.Result` so callers can map
+    errors to HTTP responses without raising exceptions.
+    """
+
     @staticmethod
     @allow_Q
     def _require_match(
         tournament_url: str, match_id: str
     ) -> Result["Match", ArctosError]:
+        """Fetch and validate a match belongs to *tournament_url*.
+
+        Args:
+            tournament_url: Expected tournament URL slug.
+            match_id: UUID of the match to fetch.
+
+        Returns:
+            :class:`~app.error_values.Ok` wrapping the match, or
+            :class:`~app.error_values.Err` with
+            :class:`~app.exceptions.ValidationError` /
+            :class:`~app.exceptions.NotFoundError`.
+        """
         from models import Match
 
         if not match_id:
@@ -49,6 +68,17 @@ class MatchActionsService:
     @staticmethod
     @allow_Q
     def _require_point(point_id: str) -> Result["Point", ArctosError]:
+        """Fetch a :class:`~app.models.match.Point` by its UUID.
+
+        Args:
+            point_id: UUID of the point to fetch.
+
+        Returns:
+            :class:`~app.error_values.Ok` wrapping the point, or
+            :class:`~app.error_values.Err` with
+            :class:`~app.exceptions.ValidationError` /
+            :class:`~app.exceptions.NotFoundError`.
+        """
         from models import Point
 
         if not point_id:
@@ -64,6 +94,19 @@ class MatchActionsService:
     def _require_head_ref(
         tournament_url: str, user_id: str, *, match
     ) -> Result[None, ArctosError]:
+        """Verify that *user_id* has head-ref permission for *match*.
+
+        Args:
+            tournament_url: Tournament URL slug.
+            user_id: ID of the player to check.
+            match: The :class:`~app.models.match.Match` instance to check
+                against, or ``None`` for a general check.
+
+        Returns:
+            :class:`~app.error_values.Ok` wrapping ``None`` on success, or
+            :class:`~app.error_values.Err` with
+            :class:`~app.exceptions.UnauthorizedError`.
+        """
         if not can_head_ref_match(tournament_url, user_id, match=match):
             return Err(UnauthorizedError("Not authorized", status_code=403))
         return Ok(None)
@@ -73,6 +116,17 @@ class MatchActionsService:
     def get_points(
         tournament_url: str, user_id: str, *, match_id: str
     ) -> Result[dict, ArctosError]:
+        """Return all scored points for a match.
+
+        Args:
+            tournament_url: Tournament URL slug scoping the match.
+            user_id: Requesting player's ID (must be a head ref).
+            match_id: UUID of the target match.
+
+        Returns:
+            :class:`~app.error_values.Ok` wrapping
+            ``{"points": [...]}``, or :class:`~app.error_values.Err`.
+        """
         from models import Point
 
         match = MatchActionsService._require_match(tournament_url, match_id).Q()
@@ -109,6 +163,25 @@ class MatchActionsService:
         timestamp_ms: int | float | None,
         stones_at_start: int | None,
     ) -> Result[dict, ArctosError]:
+        """Record a new scored point in the match.
+
+        Attaches camera stream timestamp metadata when the field has camera
+        information.
+
+        Args:
+            tournament_url: Tournament URL slug scoping the match.
+            user_id: Requesting player's ID (must be a head ref).
+            match_id: UUID of the target match.
+            set_number: Which set this point belongs to (1-indexed).
+            timestamp_ms: Unix timestamp in milliseconds when the point
+                was scored.
+            stones_at_start: Stones remaining at the start of this point
+                (``STONES`` mode only).
+
+        Returns:
+            :class:`~app.error_values.Ok` wrapping the new point's UUID and
+            metadata, or :class:`~app.error_values.Err`.
+        """
         from models import Field, Point, db
         from app.utils.datetime_helpers import to_iso_z
 
@@ -189,6 +262,21 @@ class MatchActionsService:
         point_id: str,
         data: dict,
     ) -> Result[dict, ArctosError]:
+        """Update mutable fields on an existing point.
+
+        Supported keys in *data*: ``winner``, ``rerolled``, ``notes``,
+        ``set_number``, ``end_stamp``.
+
+        Args:
+            tournament_url: Tournament URL slug scoping the point's match.
+            user_id: Requesting player's ID (must be a head ref).
+            point_id: UUID of the point to update.
+            data: Dictionary of field names to new values.
+
+        Returns:
+            :class:`~app.error_values.Ok` wrapping the updated point dict,
+            or :class:`~app.error_values.Err`.
+        """
         from models import Match, db
 
         point = MatchActionsService._require_point(point_id).Q()
@@ -230,6 +318,17 @@ class MatchActionsService:
     def delete_point(
         tournament_url: str, user_id: str, *, point_id: str
     ) -> Result[dict, ArctosError]:
+        """Permanently delete a scored point from a match.
+
+        Args:
+            tournament_url: Tournament URL slug scoping the point's match.
+            user_id: Requesting player's ID (must be a head ref).
+            point_id: UUID of the point to delete.
+
+        Returns:
+            :class:`~app.error_values.Ok` wrapping ``{"point_id": ...}``,
+            or :class:`~app.error_values.Err`.
+        """
         from models import Match, db
 
         point = MatchActionsService._require_point(point_id).Q()
@@ -252,6 +351,19 @@ class MatchActionsService:
         match_id: str,
         stones_remaining: int | str | None,
     ) -> Result[dict, ArctosError]:
+        """Update the stones-remaining count for a ``STONES``-mode match.
+
+        Args:
+            tournament_url: Tournament URL slug scoping the match.
+            user_id: Requesting player's ID (must be a head ref).
+            match_id: UUID of the target match.
+            stones_remaining: New stones-remaining value (coerced to int).
+
+        Returns:
+            :class:`~app.error_values.Ok` wrapping
+            ``{"stones_remaining": int}``, or
+            :class:`~app.error_values.Err`.
+        """
         from models import db
 
         if not match_id or stones_remaining is None:
@@ -283,6 +395,18 @@ class MatchActionsService:
         point_id: str,
         set_number: int | str | None,
     ) -> Result[dict, ArctosError]:
+        """Reassign a point to a different set number.
+
+        Args:
+            tournament_url: Tournament URL slug scoping the point's match.
+            user_id: Requesting player's ID (must be a head ref).
+            point_id: UUID of the point to reassign.
+            set_number: Target set number (coerced to int).
+
+        Returns:
+            :class:`~app.error_values.Ok` wrapping the point ID and new set
+            number, or :class:`~app.error_values.Err`.
+        """
         from models import Match, db
 
         if not point_id or set_number is None:
@@ -312,6 +436,17 @@ class MatchActionsService:
     def complete_match(
         tournament_url: str, user_id: str, *, match_id: str
     ) -> Result[dict, ArctosError]:
+        """Transition a match's status to ``COMPLETED``.
+
+        Args:
+            tournament_url: Tournament URL slug scoping the match.
+            user_id: Requesting player's ID (must be a head ref).
+            match_id: UUID of the match to complete.
+
+        Returns:
+            :class:`~app.error_values.Ok` wrapping match ID and new status,
+            or :class:`~app.error_values.Err`.
+        """
         from models import db
 
         match = MatchActionsService._require_match(tournament_url, match_id).Q()

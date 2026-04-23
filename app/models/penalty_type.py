@@ -1,20 +1,40 @@
+"""SQLAlchemy model for configurable penalty types."""
+
 from __future__ import annotations
 
 from app.models.base import db
+from app.models.constants import HEX_COLOR_LEN, SHORT_LABEL_LEN, URL_SLUG_LEN
 
 
 class PenaltyType(db.Model):
+    """A named penalty category defined by a TO for an event or league.
+
+    Penalty types appear in the head-ref interface so refs can attach
+    structured penalty records to :class:`~app.models.match.MatchNote`
+    entries.  Either ``event`` or ``league_id`` must be set (not both).
+
+    Attributes:
+        id: Auto-increment primary key.
+        event: Tournament URL slug this type belongs to, or ``None`` for
+            league-level types.
+        league_id: League URL slug this type belongs to, or ``None`` for
+            event-level types.
+        name: Short display name (e.g. ``"Yellow card"``).
+        color: Six-character hex colour code for UI rendering (no ``#``).
+        desc: Optional longer description of when to use this penalty.
+    """
+
     __tablename__ = "penalty_types"
 
     id = db.Column(db.Integer, primary_key=True)
     event = db.Column(
-        db.String(100), db.ForeignKey("tournaments.url"), nullable=True
+        db.String(URL_SLUG_LEN), db.ForeignKey("tournaments.url"), nullable=True
     )
     league_id = db.Column(
-        db.String(100), db.ForeignKey("leagues.url"), nullable=True
+        db.String(URL_SLUG_LEN), db.ForeignKey("leagues.url"), nullable=True
     )
-    name = db.Column(db.String(50), nullable=False)
-    color = db.Column(db.String(6), nullable=False)
+    name = db.Column(db.String(SHORT_LABEL_LEN), nullable=False)
+    color = db.Column(db.String(HEX_COLOR_LEN), nullable=False)
     desc = db.Column(db.Text)
 
     league = db.relationship(

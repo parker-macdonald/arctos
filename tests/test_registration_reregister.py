@@ -1,3 +1,5 @@
+"""Tests for re-registration after rejection (no duplicate row created)."""
+
 import pytest
 
 from app.domain.enums import RegistrationStatus

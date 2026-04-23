@@ -1,3 +1,5 @@
+"""Unit tests for RegistrationService and MatchService behaviour."""
+
 import pytest
 
 from app.domain.enums import MatchStatus
@@ -11,6 +13,7 @@ from datetime import datetime, timezone
 
 @pytest.mark.unit
 def test_registration_service_register_team_closed_raises(test_db, team):
+    """register_team returns Err(RegistrationClosedError) when team registration is closed."""
     t = Tournament(
         url="closed",
         name="Closed",
@@ -34,6 +37,7 @@ def test_registration_service_register_team_closed_raises(test_db, team):
 def test_match_service_overlap_raises_without_mutating_match(
     test_db, tournament, head_ref_player
 ):
+    """start_match returns Err(ValidationError) for overlapping player rosters and leaves match unchanged."""
     tournament_url = tournament.url
     ref = db.session.merge(head_ref_player)
     m = Match(

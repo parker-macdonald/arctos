@@ -17,7 +17,23 @@ TEnum = TypeVar("TEnum", bound=StrEnum)
 
 
 def parse_enum(enum_cls: type[TEnum], value: object) -> Option[TEnum]:
-    """Best-effort parse of an enum from a DB/string value, returning Option."""
+    """Best-effort conversion of a raw DB or string value into an enum member.
+
+    Handles three cases without raising:
+
+    * ``None`` → :class:`~app.error_values.Null`
+    * Already the correct enum type → :class:`~app.error_values.Some` wrapping it
+    * Convertible string → :class:`~app.error_values.Some` wrapping the member
+    * Unrecognised string → :class:`~app.error_values.Null`
+
+    Args:
+        enum_cls: The :class:`~enum.StrEnum` subclass to parse into.
+        value: The raw value from a database column or request parameter.
+
+    Returns:
+        :class:`~app.error_values.Some` containing the parsed enum member, or
+        :class:`~app.error_values.Null` if the value cannot be mapped.
+    """
     if value is None:
         return Null()
     if isinstance(value, enum_cls):
@@ -29,6 +45,8 @@ def parse_enum(enum_cls: type[TEnum], value: object) -> Option[TEnum]:
 
 
 class MatchNoteTarget(StrEnum):
+    """The entity that a :class:`~app.models.match.MatchNote` is associated with."""
+
     TEAM1 = "team1"
     TEAM2 = "team2"
     MATCH = "match"
@@ -36,6 +54,8 @@ class MatchNoteTarget(StrEnum):
 
 
 class RegistrationStatus(StrEnum):
+    """Lifecycle status of an individual player's registration in an event."""
+
     PENDING_TEAM_APPROVAL = "PENDING_TEAM_APPROVAL"
     CONFIRMED = "CONFIRMED"
     REJECTED = "REJECTED"
@@ -43,6 +63,8 @@ class RegistrationStatus(StrEnum):
 
 
 class TeamRegistrationStatus(StrEnum):
+    """Lifecycle status of a team's registration in an event."""
+
     CONFIRMED = "CONFIRMED"
     CANCELLED = "CANCELLED"
 
@@ -75,6 +97,19 @@ class MatchStatus(StrEnum):
 
 
 class ScheduleType(StrEnum):
+    """Scheduling strategy for computing match start times.
+
+    Attributes:
+        STATIC: Times are fixed and never recalculated automatically.
+        SAFE: Times are recalculated conservatively, preventing cascading
+            delays.
+        FAST: Times are recalculated aggressively, scheduling matches as
+            early as possible.
+        BREAK: A scheduled break (no match played).
+        JOIN: A synchronisation point that waits for multiple preceding
+            matches to complete before advancing.
+    """
+
     STATIC = "STATIC"
     SAFE = "SAFE"
     FAST = "FAST"
@@ -83,10 +118,24 @@ class ScheduleType(StrEnum):
 
 
 class SetType(StrEnum):
+    """Scoring mode used for matches in a tournament.
+
+    Attributes:
+        SETS: Winner is determined by number of sets won.
+        STONES: Winner is determined by total stone count (points).
+    """
+
     SETS = "SETS"
     STONES = "STONES"
 
 
 class WinnerSide(StrEnum):
+    """Identifies which team won a completed match.
+
+    Attributes:
+        TEAM1: The first team in the match won.
+        TEAM2: The second team in the match won.
+    """
+
     TEAM1 = "TEAM1"
     TEAM2 = "TEAM2"

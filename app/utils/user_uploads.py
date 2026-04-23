@@ -345,7 +345,10 @@ def _validate_compatible_source_media_profiles(
     for source_path in source_paths[1:]:
         profile = _get_media_profile(source_path)
         if profile is None:
-            return None, f"could not read media streams from {path.basename(source_path)}"
+            return (
+                None,
+                f"could not read media streams from {path.basename(source_path)}",
+            )
         if profile != baseline_profile:
             return (
                 None,
@@ -478,7 +481,9 @@ def _manifest_read_write_locked(manifest_path: str, mutator: Any) -> Any:
             fcntl.flock(fp.fileno(), fcntl.LOCK_UN)
 
 
-def _manifest_set_status(manifest_path: str, status: str, error: Optional[str] = None) -> None:
+def _manifest_set_status(
+    manifest_path: str, status: str, error: Optional[str] = None
+) -> None:
     def _m(data: Optional[dict[str, Any]]) -> dict[str, Any]:
         if not data:
             return {"status": status, "error": error}
@@ -725,13 +730,18 @@ def list_batch_manifest_rows(tournament_url: str) -> list[dict[str, Any]]:
             except (OSError, json.JSONDecodeError):
                 continue
 
-            status = str(manifest.get("status") or "pending").strip().lower() or "pending"
+            status = (
+                str(manifest.get("status") or "pending").strip().lower() or "pending"
+            )
             if status == "done":
                 continue
 
             files_map = manifest.get("files") or {}
             world_start = None
-            for idx in sorted(files_map.keys(), key=lambda raw: int(raw) if str(raw).isdigit() else raw):
+            for idx in sorted(
+                files_map.keys(),
+                key=lambda raw: int(raw) if str(raw).isdigit() else raw,
+            ):
                 entry = files_map.get(idx) or {}
                 sw = (entry.get("start_world_override") or "").strip()
                 if sw:
@@ -739,8 +749,12 @@ def list_batch_manifest_rows(tournament_url: str) -> list[dict[str, Any]]:
                     break
 
             uploader = None
-            uploader_user_type = str(manifest.get("uploader_user_type") or "").strip() or None
-            uploader_user_id = str(manifest.get("uploader_user_id") or "").strip() or None
+            uploader_user_type = (
+                str(manifest.get("uploader_user_type") or "").strip() or None
+            )
+            uploader_user_id = (
+                str(manifest.get("uploader_user_id") or "").strip() or None
+            )
             if uploader_user_type and uploader_user_id:
                 uploader = f"{uploader_user_type}:{uploader_user_id}"
             elif uploader_user_id:
@@ -833,9 +847,7 @@ def user_autoclips_from_uploaded_batch_worker(
             start_world_override_iso=video_start_world_override_iso,
         )
         if window is None:
-            _log.error(
-                "user_autoclips batch: bad duration for %s", user_video_abs_path
-            )
+            _log.error("user_autoclips batch: bad duration for %s", user_video_abs_path)
             _finalize_batch_status(
                 manifest_path,
                 status="failed",
@@ -884,8 +896,8 @@ def user_autoclips_from_uploaded_batch_worker(
     keyframes_by_source: dict[str, list[float]] = {}
     for source_window in source_windows:
         try:
-            keyframes_by_source[source_window.source_path] = _get_video_keyframe_times_sec(
-                source_window.source_path
+            keyframes_by_source[source_window.source_path] = (
+                _get_video_keyframe_times_sec(source_window.source_path)
             )
         except Exception:
             _log.exception(
@@ -905,7 +917,11 @@ def user_autoclips_from_uploaded_batch_worker(
 
     field_obj = Field.query.filter_by(event=tournament_url, name=field_name).first()
     if not field_obj:
-        _log.error("user_autoclips batch: field not found event=%s field=%s", tournament_url, field_name)
+        _log.error(
+            "user_autoclips batch: field not found event=%s field=%s",
+            tournament_url,
+            field_name,
+        )
         _finalize_batch_status(
             manifest_path,
             status="failed",
@@ -916,7 +932,11 @@ def user_autoclips_from_uploaded_batch_worker(
 
     matches = Match.query.filter_by(event=tournament_url, field=field_name).all()
     if not matches:
-        _log.warning("user_autoclips batch: no matches field=%s event=%s", field_name, tournament_url)
+        _log.warning(
+            "user_autoclips batch: no matches field=%s event=%s",
+            field_name,
+            tournament_url,
+        )
         _finalize_batch_status(
             manifest_path,
             status="failed",
@@ -927,7 +947,9 @@ def user_autoclips_from_uploaded_batch_worker(
 
     uuid_to_match = {m.uuid: m for m in matches}
     match_ids = [m.uuid for m in matches]
-    points = Point.query.filter(Point.match.in_(match_ids)).order_by(Point.stamp.asc()).all()
+    points = (
+        Point.query.filter(Point.match.in_(match_ids)).order_by(Point.stamp.asc()).all()
+    )
 
     points_by_match: dict[str, list[Point]] = {}
     for pt in points:
@@ -1124,7 +1146,9 @@ def create_direct_user_upload_camera(
     if not match_obj.field:
         raise ValueError("Selected match has no field")
 
-    field_obj = Field.query.filter_by(event=tournament_url, name=match_obj.field).first()
+    field_obj = Field.query.filter_by(
+        event=tournament_url, name=match_obj.field
+    ).first()
     if not field_obj:
         raise ValueError("Match field not found")
 
@@ -1202,4 +1226,3 @@ def create_direct_user_upload_camera(
         match_uuid,
     )
     return str(camera_row.uuid)
-

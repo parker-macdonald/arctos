@@ -14,10 +14,23 @@ from app.exceptions import ArctosError, ValidationError
 
 
 def parse_toml_schedule(content: str) -> Result[dict[str, Any], ArctosError]:
-    """
-    Parse TOML schedule content with validation.
+    """Parse and structurally validate a TOML schedule string.
 
-    Returns Result containing parsed data dict with keys: 'event', 'tags', 'fields', 'matches'.
+    Expects a TOML document with:
+
+    * ``event`` (str, required) — tournament URL slug.
+    * ``tags`` (array of tables, optional).
+    * ``fields`` (array of tables, optional).
+    * ``matches`` (array of tables, optional).
+
+    Args:
+        content: Raw TOML string.
+
+    Returns:
+        :class:`~app.error_values.Ok` wrapping a dict with keys
+        ``"event"``, ``"tags"``, ``"fields"``, ``"matches"``; or
+        :class:`~app.error_values.Err` wrapping a
+        :class:`~app.exceptions.ValidationError` on parse / structure error.
     """
     try:
         data = tomli.loads(content)
@@ -66,18 +79,23 @@ def write_toml_schedule(
     *,
     metadata: dict[str, Any] | None = None,
 ) -> str:
-    """
-    Write schedule data to TOML format.
+    """Serialise a tournament schedule to a TOML string.
+
+    Produces a human-readable TOML document suitable for download or
+    re-import.  An optional metadata comment header is prepended when
+    *metadata* is provided.
 
     Args:
-        event: Tournament URL
-        tags: List of tag dicts with 'id', 'name', and optional 'team' (team id)
-        fields: List of field dicts with 'id', 'name', 'camera'
-        matches: List of match dicts with match attributes
-        metadata: Optional metadata dict (e.g., export_date, version)
+        event: Tournament URL slug written as the ``event`` key.
+        tags: List of tag dicts with ``id``, ``name``, and optional
+            ``team`` (team ID).
+        fields: List of field dicts with ``id``, ``name``, and ``camera``.
+        matches: List of match attribute dicts.
+        metadata: Optional key-value pairs written as TOML comments at the
+            top (e.g. ``{"export_date": "2024-06-01", "version": "1"}``)
 
     Returns:
-        TOML string
+        A TOML-formatted string.
     """
     lines = []
 

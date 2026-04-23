@@ -1,3 +1,5 @@
+"""Tests for PermissionService and TO-guarded routes."""
+
 import pytest
 
 from app.services.permission_service import PermissionService
@@ -10,6 +12,7 @@ from tests.utils import login_as
 def test_permission_service_is_tournament_organizer_false_when_missing_to(
     app, test_db, tournament, player
 ):
+    """is_tournament_organizer returns False when no TO row exists for the player."""
     with app.app_context():
         t = db.session.merge(tournament)
         p = db.session.merge(player)
@@ -23,6 +26,7 @@ def test_permission_service_is_tournament_organizer_false_when_missing_to(
 def test_permission_service_is_tournament_organizer_true_when_to_exists(
     app, test_db, tournament, player
 ):
+    """is_tournament_organizer returns True when a matching TO row is present."""
     with app.app_context():
         t = db.session.merge(tournament)
         p = db.session.merge(player)
@@ -35,6 +39,7 @@ def test_permission_service_is_tournament_organizer_true_when_to_exists(
 def test_permission_service_can_view_unpublished_tournament_for_to(
     app, test_db, player
 ):
+    """can_view_tournament returns True for an unpublished tournament when the user is its TO."""
     with app.app_context():
         p = db.session.merge(player)
         t = Tournament(
@@ -53,6 +58,7 @@ def test_permission_service_can_view_unpublished_tournament_for_to(
 
 @pytest.mark.integration
 def test_tournament_manage_requires_to(app, client, tournament, player, test_db):
+    """Non-TO players are redirected away from the manage page."""
     # Not a TO -> redirect
     with app.app_context():
         t = db.session.merge(tournament)
@@ -65,6 +71,7 @@ def test_tournament_manage_requires_to(app, client, tournament, player, test_db)
 
 @pytest.mark.integration
 def test_tournament_manage_allows_to(app, client, tournament, player, test_db):
+    """Tournament Organisers can access the manage page (HTTP 200)."""
     with app.app_context():
         t = db.session.merge(tournament)
         p = db.session.merge(player)

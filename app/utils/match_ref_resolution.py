@@ -12,7 +12,17 @@ from app.utils.helpers import resolve_tag_to_team, resolve_team_name_to_id
 
 
 def is_explicit_team_id(val: str) -> bool:
-    """True if val looks like a bare team id, not a tag or match reference."""
+    """Return ``True`` if *val* is a bare team ID rather than a symbolic reference.
+
+    Symbolic references (``tag::<name>`` and strings containing ``::winner``
+    or ``::loser``) return ``False``.
+
+    Args:
+        val: A team slot string from the schedule or API.
+
+    Returns:
+        ``True`` when *val* is a non-empty, non-reference team ID.
+    """
     if not val or not val.strip():
         return False
     val = val.strip()
@@ -24,11 +34,22 @@ def is_explicit_team_id(val: str) -> bool:
 
 
 def resolve_single_ref_slot(r_str: str, tournament_url: str) -> tuple[str, str]:
-    """
-    Resolve one refs column slot.
+    """Resolve a single referee slot string to a team ID and display token.
+
+    Resolution order:
+
+    1. Registered pseudonym / team ID lookup via :func:`~app.utils.helpers.resolve_team_name_to_id`.
+    2. Bare team ID (explicit) — returned as-is.
+    3. Tag reference (``tag::<name>``) — resolved via :func:`~app.utils.helpers.resolve_tag_to_team`.
+
+    Args:
+        r_str: A single comma-slot string from ``refs`` / ``refs_initial``.
+        tournament_url: Tournament URL slug for resolution context.
 
     Returns:
-        (resolved_team_id_or_empty, initial_display_token)
+        A ``(resolved_team_id, initial_display_token)`` tuple.  *resolved_team_id*
+        is empty when resolution fails; *initial_display_token* is always the
+        original user-facing string.
     """
     r_str = (r_str or "").strip()
     if not r_str:
@@ -55,11 +76,15 @@ def resolve_team_slot(
     raw: str | None,
     tournament_url: str,
 ) -> tuple[str | None, str | None]:
-    """
-    Resolve one team column token while preserving the original token as initial text.
+    """Resolve a ``team1`` / ``team2`` slot token to a team ID and display text.
+
+    Args:
+        raw: The raw token from the SPA request or TOML file, or ``None``.
+        tournament_url: Tournament URL slug for resolution context.
 
     Returns:
-        (resolved_team_id_or_none, initial_display_token_or_none)
+        A ``(resolved_team_id, initial_display_token)`` tuple.  Both values
+        are ``None`` when *raw* is empty.
     """
     raw_str = str(raw).strip() if raw is not None else ""
     if not raw_str:
@@ -114,17 +139,39 @@ def resolve_refs_slots(
 
 
 def resolve_team_column(raw: str | None, tournament_url: str) -> str | None:
-    """
-    Resolve team1/team2 from an initial token (SPA / TOML).
+    """Resolve a ``team1`` / ``team2`` initial token to a team ID.
 
-    Order: confirmed registration (pseudonym/id), explicit bare id, tag:: resolution.
+    Convenience wrapper around :func:`resolve_team_slot` that discards the
+    display token.
+
+    Resolution order: confirmed registration (pseudonym / ID), explicit bare
+    ID, ``tag::`` reference.
+
+    Args:
+        raw: Raw token from the SPA or TOML schedule, or ``None``.
+        tournament_url: Tournament URL slug for resolution context.
+
+    Returns:
+        Resolved team ID string, or ``None`` if the token cannot be resolved.
     """
     resolved, _ = resolve_team_slot(raw, tournament_url)
     return resolved
 
 
 def refs_string_to_tokens(refs_value: str | None) -> list[str]:
-    """Split a refs form/API string into trimmed slot tokens (empty slots preserved)."""
+    """Split a comma-separated refs string into per-slot tokens.
+
+    Unlike a simple ``str.split(",")``, this function trims whitespace and
+    returns an empty list for falsy / blank input.  Empty slots between
+    commas are preserved as empty strings.
+
+    Args:
+        refs_value: A comma-separated refs string from a form field or API,
+            or ``None``.
+
+    Returns:
+        List of stripped slot tokens, possibly containing empty strings.
+    """
     if not refs_value or not str(refs_value).strip():
         return []
     return [p.strip() for p in str(refs_value).split(",")]
