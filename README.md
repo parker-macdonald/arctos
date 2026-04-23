@@ -11,61 +11,68 @@ see [CONTRIBUTING](CONTRIBUTING.md) for how to get involved.
 ### Part 1: Backend
 
 1. Install [uv](https://docs.astral.sh/uv/).
-2. Set up your SSL certs. if you're using nginx you can do this there
-   and use certbot or something. If you're just testing, you can
-   create self-signed certs:
+2. Set up your SSL certs. If you're using nginx you can do this there
+   and use [certbot](https://certbot.eff.org/). If you're just testing, you can
+   generate self-signed certs with:
 
 ```bash
 openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem -sha256 -days 365
 ```
 
-3. Create a bash script called `run` with the following contents:
+or
 
 ```bash
-#!/bin/bash -e
-
-uv sync
-
-ARCTOS_CORS_DEV=1 \
-ARCTOS_API_BASE=http://127.0.0.1:8081 \
-EXTERNAL_BASE_URL=your_public_domain_or_ip \
-PYTHONPATH=path/to/arctos:$PYTHONPATH \
-YOUTUBE_API_KEY=your_youtube_api_key \
-GOOGLE_CLIENT_SECRET=your_google_client_secret \
-GOOGLE_CLIENT_ID=your_google_client_id \
-SECRET_KEY=your_app_secret_key \
-	uv run gunicorn \
-        --workers=5 \
-        --bind 0.0.0.0:8081 \
-        --log-level debug \
-        --certfile=cert.pem \
-        --keyfile=key.pem \
-        run_app:app
-
+make certs
 ```
 
-with all the info filled out. If you don't have some of these, you can
-leave them empty; they are only needed for the sign in with google and
-youtube auto-seek features.  the `SECRET_KEY` variable must be a
-random value for security reasons. You can get one by running
+   This writes `cert.pem` and `key.pem` to the repo root (valid for
+   365 days, `CN=localhost`). Override with
+   `make certs CERT_DAYS=730 CERT_SUBJECT=/CN=arctos.example.com`,
+   and pass `FORCE=1` to overwrite existing certs.
+
+3. Create a `.env` file at the repo root with the variables you need:
+
+```bash
+ARCTOS_CORS_DEV=1
+ARCTOS_API_BASE=http://127.0.0.1:8081
+EXTERNAL_BASE_URL=your_public_domain_or_ip
+YOUTUBE_API_KEY=your_youtube_api_key
+GOOGLE_CLIENT_SECRET=your_google_client_secret
+GOOGLE_CLIENT_ID=your_google_client_id
+SECRET_KEY=your_app_secret_key
+```
+
+If you don't have some of these, you can leave them empty; they are
+only needed for the sign in with google and youtube auto-seek
+features. The `SECRET_KEY` variable must be a random value for
+security reasons. You can get one by running
 
 ```bash
 python -c "import os; print(os.urandom(12).hex())"
 ```
 
-The gunicorn args provided are just examples; set workers as high as
-you'd like, set it to bind to whatever you need, and omit the
-`certfile` and `keyfile` arguments if you're handling SSL elsewhere.
-
-> [!IMPORTANT] 
-> 
+> [!IMPORTANT]
+>
 > The `ARCTOS_CORS_DEV` and `ARCTOS_API_BASE` are only for dev
 > environments where you don't have a reverse proxy set up to direct
 > traffic and are thus hosting the frontend and backend on different
 > ports.
 
-4. run `chmod +x run`
-5. finally, start the app with `./run`
+4. Start the app:
+
+```bash
+make run
+```
+
+This loads `.env`, runs `uv sync`, and starts gunicorn. The defaults
+match the example above (5 workers, binding `0.0.0.0:8081`, using
+`cert.pem`/`key.pem`). Override any of them on the command line, e.g.:
+
+```bash
+make run WORKERS=10 BIND=0.0.0.0:9000
+make run CERTFILE= KEYFILE=          # if you handle SSL elsewhere
+make run ENV_FILE=.env.prod          # use a different env file
+```
 
 #### Video storage
 
