@@ -149,7 +149,9 @@ def test_start_match_post_rejects_when_another_in_progress_on_same_field(
     assert data is not None
     assert "error" in data or "reasons" in data
     if "error" in data:
-        assert "in progress" in data["error"].lower() or "field" in data["error"].lower()
+        assert (
+            "in progress" in data["error"].lower() or "field" in data["error"].lower()
+        )
 
     with app.app_context():
         m2 = Match.query.get(match_id)

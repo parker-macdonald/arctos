@@ -22,7 +22,9 @@ def test_team_register_and_deregister_flow(app, client, tournament, team):
     assert resp.status_code == 200
 
     with app.app_context():
-        reg = TeamRegistration.query.filter_by(event=tournament_url, team=team_id).first()
+        reg = TeamRegistration.query.filter_by(
+            event=tournament_url, team=team_id
+        ).first()
         assert reg is not None
         assert reg.status == TeamRegistrationStatus.CONFIRMED
         assert reg.pseudonym == "Team Pseudonym"
@@ -31,7 +33,9 @@ def test_team_register_and_deregister_flow(app, client, tournament, team):
     assert resp2.status_code == 200
 
     with app.app_context():
-        reg2 = TeamRegistration.query.filter_by(event=tournament_url, team=team_id).first()
+        reg2 = TeamRegistration.query.filter_by(
+            event=tournament_url, team=team_id
+        ).first()
         assert reg2 is not None
         assert reg2.status == TeamRegistrationStatus.CANCELLED
 

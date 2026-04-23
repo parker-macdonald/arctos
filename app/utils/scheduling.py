@@ -53,7 +53,9 @@ def _match_participant_team_ids(match: object) -> set[str]:
 
 
 def _matches_share_any_team(match_a: object, match_b: object) -> bool:
-    return bool(_match_participant_team_ids(match_a) & _match_participant_team_ids(match_b))
+    return bool(
+        _match_participant_team_ids(match_a) & _match_participant_team_ids(match_b)
+    )
 
 
 def _intervals_overlap(
@@ -62,12 +64,7 @@ def _intervals_overlap(
     start_b: Optional[datetime],
     length_b: Optional[int],
 ) -> bool:
-    if (
-        start_a is None
-        or start_b is None
-        or length_a is None
-        or length_b is None
-    ):
+    if start_a is None or start_b is None or length_a is None or length_b is None:
         return False
     end_a = start_a + timedelta(minutes=length_a)
     end_b = start_b + timedelta(minutes=length_b)

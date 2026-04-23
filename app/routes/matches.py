@@ -6,7 +6,16 @@ from flask import Blueprint, request, jsonify
 from flask_login import login_required, current_user
 from datetime import datetime, timezone
 import json
-from models import Match, Tournament, Point, PlayerRegistration, Player, Field, PenaltyType, db
+from models import (
+    Match,
+    Tournament,
+    Point,
+    PlayerRegistration,
+    Player,
+    Field,
+    PenaltyType,
+    db,
+)
 from app.filters import is_head_ref
 from app.utils.helpers import can_head_ref_match
 from app.utils.dependencies import apply_match_dependencies
@@ -60,7 +69,11 @@ def scoreboard():
             else None
         )
         team1_name = (
-            (reg1.pseudonym if reg1 and reg1.pseudonym else (team1_obj.name if team1_obj else m.team1_initial))
+            (
+                reg1.pseudonym
+                if reg1 and reg1.pseudonym
+                else (team1_obj.name if team1_obj else m.team1_initial)
+            )
             if m.team1
             else m.team1_initial
         )
@@ -70,7 +83,11 @@ def scoreboard():
             else None
         )
         team2_name = (
-            (reg2.pseudonym if reg2 and reg2.pseudonym else (team2_obj.name if team2_obj else m.team2_initial))
+            (
+                reg2.pseudonym
+                if reg2 and reg2.pseudonym
+                else (team2_obj.name if team2_obj else m.team2_initial)
+            )
             if m.team2
             else m.team2_initial
         )
@@ -272,7 +289,11 @@ def scoreboard_state():
             else None
         )
         team1_name = (
-            (reg1.pseudonym if reg1 and reg1.pseudonym else (team1_obj.name if team1_obj else m.team1_initial))
+            (
+                reg1.pseudonym
+                if reg1 and reg1.pseudonym
+                else (team1_obj.name if team1_obj else m.team1_initial)
+            )
             if m.team1
             else m.team1_initial
         )
@@ -282,7 +303,11 @@ def scoreboard_state():
             else None
         )
         team2_name = (
-            (reg2.pseudonym if reg2 and reg2.pseudonym else (team2_obj.name if team2_obj else m.team2_initial))
+            (
+                reg2.pseudonym
+                if reg2 and reg2.pseudonym
+                else (team2_obj.name if team2_obj else m.team2_initial)
+            )
             if m.team2
             else m.team2_initial
         )
@@ -327,6 +352,7 @@ def scoreboard_state():
                 "stones_per_set": match.stones_per_set or match.nstonesperset or 100,
                 "stones_remaining": match.stones_remaining,
             }
+
             def _iso_z(dt):
                 if dt is None:
                     return None
@@ -618,14 +644,23 @@ def match_page(tournament_url):
                                 bucket = current_app.config.get("S3_VIDEO_BUCKET")
                                 if bucket:
                                     from app.utils.s3_video import get_presigned_url
-                                    region = current_app.config.get("AWS_REGION") or "us-east-1"
+
+                                    region = (
+                                        current_app.config.get("AWS_REGION")
+                                        or "us-east-1"
+                                    )
                                     expiry = current_app.config.get(
                                         "S3_PRESIGNED_EXPIRY_SECONDS", 3600
                                     )
-                                    endpoint_url = current_app.config.get("S3_ENDPOINT_URL")
+                                    endpoint_url = current_app.config.get(
+                                        "S3_ENDPOINT_URL"
+                                    )
                                     playable_url = get_presigned_url(
-                                        bucket, video_path, region=region,
-                                        expiry_seconds=expiry, endpoint_url=endpoint_url
+                                        bucket,
+                                        video_path,
+                                        region=region,
+                                        expiry_seconds=expiry,
+                                        endpoint_url=endpoint_url,
                                     )
                                     if playable_url:
                                         recorded_videos.append(
@@ -787,7 +822,10 @@ def start_match(tournament_url):
     )
     if not can_start:
         error_msg = block_reasons[0] if block_reasons else "Cannot start this match."
-        return jsonify({"success": False, "error": error_msg, "reasons": block_reasons}), 400
+        return (
+            jsonify({"success": False, "error": error_msg, "reasons": block_reasons}),
+            400,
+        )
 
     tournament = Tournament.query.get(tournament_url)
 
@@ -885,8 +923,12 @@ def get_selection_notes(tournament_url):
         pid.strip() for pid in player_ids_csv.split(",") if pid.strip()
     ]
 
-    team1_matches = Match.query.filter(Match.event.in_(event_urls), Match.team1 == team_id).all()
-    team2_matches = Match.query.filter(Match.event.in_(event_urls), Match.team2 == team_id).all()
+    team1_matches = Match.query.filter(
+        Match.event.in_(event_urls), Match.team1 == team_id
+    ).all()
+    team2_matches = Match.query.filter(
+        Match.event.in_(event_urls), Match.team2 == team_id
+    ).all()
     team1_match_ids = {m.uuid for m in team1_matches}
     team2_match_ids = {m.uuid for m in team2_matches}
 
@@ -924,11 +966,19 @@ def get_selection_notes(tournament_url):
     for n in player_notes + filtered_team_notes:
         all_notes[getattr(n, "uuid", id(n))] = n
 
-    penalty_type_ids = {getattr(n, "penalty_type_id", None) for n in all_notes.values() if getattr(n, "penalty_type_id", None)}
+    penalty_type_ids = {
+        getattr(n, "penalty_type_id", None)
+        for n in all_notes.values()
+        if getattr(n, "penalty_type_id", None)
+    }
     pt_map = {}
     if penalty_type_ids:
         for pt in PenaltyType.query.filter(PenaltyType.id.in_(penalty_type_ids)).all():
-            pt_map[pt.id] = {"name": pt.name, "color": pt.color, "desc": pt.desc.strip() if pt.desc and pt.desc.strip() else None}
+            pt_map[pt.id] = {
+                "name": pt.name,
+                "color": pt.color,
+                "desc": pt.desc.strip() if pt.desc and pt.desc.strip() else None,
+            }
 
     notes_data = []
     for n in all_notes.values():
@@ -980,7 +1030,10 @@ def start_match_post(tournament_url):
 
     match res:
         case Ok(match_obj):
-            return jsonify({"success": True, "message": "Match started successfully!"}), 200
+            return (
+                jsonify({"success": True, "message": "Match started successfully!"}),
+                200,
+            )
         case Err(err):
             return jsonify({"success": False, "error": public_error_message(err)}), 400
 
@@ -998,10 +1051,26 @@ def run_match(tournament_url):
         return jsonify({"success": False, "error": "Match not found"}), 404
 
     if match.status in (MatchStatus.COMPLETED, MatchStatus.SKIPPED):
-        return jsonify({"success": False, "error": "This match has already been completed or skipped"}), 400
+        return (
+            jsonify(
+                {
+                    "success": False,
+                    "error": "This match has already been completed or skipped",
+                }
+            ),
+            400,
+        )
 
     if not can_head_ref_match(tournament_url, current_user.id, match=match):
-        return jsonify({"success": False, "error": "You are not authorized to run matches for this tournament"}), 403
+        return (
+            jsonify(
+                {
+                    "success": False,
+                    "error": "You are not authorized to run matches for this tournament",
+                }
+            ),
+            403,
+        )
 
     tournament = Tournament.query.get(tournament_url)
     points = Point.query.filter_by(match=match.uuid).order_by(Point.stamp).all()
@@ -1072,10 +1141,26 @@ def finalize_match(tournament_url):
         return jsonify({"success": False, "error": "Match not found"}), 404
 
     if match.status in (MatchStatus.COMPLETED, MatchStatus.SKIPPED):
-        return jsonify({"success": False, "error": "This match has already been completed/skipped"}), 400
+        return (
+            jsonify(
+                {
+                    "success": False,
+                    "error": "This match has already been completed/skipped",
+                }
+            ),
+            400,
+        )
 
     if not can_head_ref_match(tournament_url, current_user.id, match=match):
-        return jsonify({"success": False, "error": "You are not authorized to finalize matches for this tournament"}), 403
+        return (
+            jsonify(
+                {
+                    "success": False,
+                    "error": "You are not authorized to finalize matches for this tournament",
+                }
+            ),
+            403,
+        )
 
     tournament = Tournament.query.get(tournament_url)
     points = Point.query.filter_by(match=match.uuid).order_by(Point.stamp).all()
@@ -1153,7 +1238,15 @@ def finalize_match_post(tournament_url):
         return jsonify({"success": False, "error": "Match not found"}), 404
 
     if not can_head_ref_match(tournament_url, current_user.id, match=match):
-        return jsonify({"success": False, "error": "You are not authorized to finalize matches for this tournament"}), 403
+        return (
+            jsonify(
+                {
+                    "success": False,
+                    "error": "You are not authorized to finalize matches for this tournament",
+                }
+            ),
+            403,
+        )
 
     match.status = MatchStatus.COMPLETED
     # Note: end_time may need to be added to Match model if not present

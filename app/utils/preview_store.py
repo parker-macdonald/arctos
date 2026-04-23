@@ -13,9 +13,8 @@ from pathlib import Path
 # Default: sibling to app root (e.g. project/preview/)
 def _preview_root():
     from flask import current_app
-    return os.path.abspath(
-        os.path.join(current_app.root_path, "..", "preview")
-    )
+
+    return os.path.abspath(os.path.join(current_app.root_path, "..", "preview"))
 
 
 def _safe_join(base, *parts):

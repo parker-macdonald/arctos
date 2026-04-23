@@ -26,7 +26,9 @@ def main():
         if not user:
             user = Team.query.filter_by(id=username).first()
         if not user:
-            print(f"Error: no player or team found with id '{username}'", file=sys.stderr)
+            print(
+                f"Error: no player or team found with id '{username}'", file=sys.stderr
+            )
             sys.exit(1)
         password = secrets.token_urlsafe(16)
         user.set_password(password)

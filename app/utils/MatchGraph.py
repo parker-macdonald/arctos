@@ -536,9 +536,7 @@ def build_match_graph(
                             or candidate_start >= match_start
                         ):
                             continue
-                        if not (
-                            participants & _match_participant_team_ids(candidate)
-                        ):
+                        if not (participants & _match_participant_team_ids(candidate)):
                             continue
                         if latest_shared_match is None or (
                             candidate_start,

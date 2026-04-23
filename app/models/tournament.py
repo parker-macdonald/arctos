@@ -18,9 +18,7 @@ class Tournament(db.Model):
     max_team_size_field = db.Column(db.Integer)  # Maximum players on field at once
     max_field_size = db.Column(db.Integer)
     schedule_published = db.Column(db.Boolean, default=False)
-    league_id = db.Column(
-        db.String(100), db.ForeignKey("leagues.url"), nullable=True
-    )
+    league_id = db.Column(db.String(100), db.ForeignKey("leagues.url"), nullable=True)
     head_refs_allowed_list = db.Column(
         db.Text
     )  # comma-separated list of allowed usernames
@@ -65,9 +63,7 @@ class TO(db.Model):
     user_id = db.Column(db.String(50), nullable=False)  # Player or Team ID
     user_type = db.Column(db.String(10), nullable=False)  # 'player' or 'team'
     event = db.Column(db.String(100), db.ForeignKey("tournaments.url"), nullable=True)
-    league_id = db.Column(
-        db.String(100), db.ForeignKey("leagues.url"), nullable=True
-    )
+    league_id = db.Column(db.String(100), db.ForeignKey("leagues.url"), nullable=True)
 
 
 class Field(db.Model):

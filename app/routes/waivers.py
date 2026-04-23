@@ -79,4 +79,3 @@ def event_waiver_alias(event_url: str):
         return {"error": "Waiver not found"}, 404
 
     return send_file(file_path, as_attachment=False)
-

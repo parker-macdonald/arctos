@@ -79,6 +79,7 @@ class MatchService:
 
         tournament_obj = Tournament.query.get(tournament_url)
         from app.utils.helpers import get_registrable_config
+
         cfg = get_registrable_config(tournament_obj)
         max_roster = getattr(cfg, "max_team_size_field", None) if cfg else None
         try:

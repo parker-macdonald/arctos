@@ -91,6 +91,7 @@ def client(app, test_db):
 # so no nested `with app.app_context()` is needed.
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def tournament(test_db):
     """Create a test tournament with two fields and open registration."""

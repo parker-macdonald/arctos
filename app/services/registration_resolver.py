@@ -25,14 +25,11 @@ def team_registration_for_tournament(tournament, team_id: str):
 
     event, league_id = _registrable_filter(tournament)
     if league_id is not None:
-        return (
-            TeamRegistration.query.filter_by(
-                league_id=league_id,
-                team=team_id,
-                status=TeamRegistrationStatus.CONFIRMED,
-            )
-            .first()
-        )
+        return TeamRegistration.query.filter_by(
+            league_id=league_id,
+            team=team_id,
+            status=TeamRegistrationStatus.CONFIRMED,
+        ).first()
     return TeamRegistration.query.filter_by(
         event=event, team=team_id, status=TeamRegistrationStatus.CONFIRMED
     ).first()
@@ -67,7 +64,10 @@ def player_registrations_for_tournament(
     from models import PlayerRegistration
 
     if statuses is None:
-        statuses = [RegistrationStatus.PENDING_TEAM_APPROVAL, RegistrationStatus.CONFIRMED]
+        statuses = [
+            RegistrationStatus.PENDING_TEAM_APPROVAL,
+            RegistrationStatus.CONFIRMED,
+        ]
 
     event, league_id = _registrable_filter(tournament)
     q = PlayerRegistration.query
@@ -128,17 +128,14 @@ def is_player_registered(tournament, player_id: str) -> bool:
 
     event, league_id = _registrable_filter(tournament)
     if league_id is not None:
-        q = (
-            PlayerRegistration.query.filter_by(
-                league_id=league_id, player=player_id
-            )
-            .filter(
-                PlayerRegistration.status.in_(
-                    [
-                        RegistrationStatus.PENDING_TEAM_APPROVAL,
-                        RegistrationStatus.CONFIRMED,
-                    ]
-                )
+        q = PlayerRegistration.query.filter_by(
+            league_id=league_id, player=player_id
+        ).filter(
+            PlayerRegistration.status.in_(
+                [
+                    RegistrationStatus.PENDING_TEAM_APPROVAL,
+                    RegistrationStatus.CONFIRMED,
+                ]
             )
         )
     else:

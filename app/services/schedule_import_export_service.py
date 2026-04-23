@@ -236,9 +236,7 @@ class ScheduleImportExportService:
 
         errors: list[str] = []
         for tid in sorted(unregistered):
-            errors.append(
-                f"Team '{tid}' is not registered for this tournament."
-            )
+            errors.append(f"Team '{tid}' is not registered for this tournament.")
         return errors
 
     @staticmethod

@@ -63,7 +63,9 @@ class RegistrationService:
     ) -> Result[None, ArctosError]:
         if not RegistrationService._tournament_team_reg_open(tournament):
             return Err(
-                RegistrationClosedError("Team registration is not open for this tournament")
+                RegistrationClosedError(
+                    "Team registration is not open for this tournament"
+                )
             )
         return Ok(None)
 
@@ -73,7 +75,9 @@ class RegistrationService:
     ) -> Result[None, ArctosError]:
         if not RegistrationService._tournament_player_reg_open(tournament):
             return Err(
-                RegistrationClosedError("Player registration is not open for this tournament")
+                RegistrationClosedError(
+                    "Player registration is not open for this tournament"
+                )
             )
         return Ok(None)
 
@@ -127,6 +131,7 @@ class RegistrationService:
             )
 
         from app.utils.helpers import get_registrable_config
+
         cfg = get_registrable_config(tournament)
         n_max = getattr(cfg, "n_max_teams", None) if cfg else None
         if n_max is not None:
@@ -154,6 +159,7 @@ class RegistrationService:
 
         # Auto-mark as paid if registration fee is zero
         from app.utils.helpers import get_registrable_config
+
         cfg = get_registrable_config(tournament)
         if not cfg or not cfg.team_reg_fee or cfg.team_reg_fee == 0:
             team_registration.paid = True
@@ -178,7 +184,9 @@ class RegistrationService:
         from models import PlayerRegistration, db
 
         tournament = RegistrationService._get_tournament(tournament_url).Q()
-        RegistrationService._require_player_registration_open_for_register(tournament).Q()
+        RegistrationService._require_player_registration_open_for_register(
+            tournament
+        ).Q()
 
         existing_reg = PlayerRegistration.query.filter_by(
             event=tournament_url, player=player_id
@@ -220,6 +228,7 @@ class RegistrationService:
 
         # Auto-mark as paid if registration fee is zero
         from app.utils.helpers import get_registrable_config
+
         cfg = get_registrable_config(tournament)
         if not cfg or not cfg.player_reg_fee or cfg.player_reg_fee == 0:
             player_registration.paid = True
@@ -254,7 +263,9 @@ class RegistrationService:
         from models import Match, Tournament, TeamRegistration, PlayerRegistration, db
 
         tournament = RegistrationService._get_tournament(tournament_url).Q()
-        RegistrationService._require_team_registration_open_for_deregister(tournament).Q()
+        RegistrationService._require_team_registration_open_for_deregister(
+            tournament
+        ).Q()
 
         team_registration = TeamRegistration.query.filter_by(
             event=tournament_url, team=team_id, status=RegistrationStatus.CONFIRMED
@@ -264,9 +275,7 @@ class RegistrationService:
 
         in_progress = (
             Match.query.filter_by(event=tournament_url, status=MatchStatus.IN_PROGRESS)
-            .filter(
-                (Match.team1 == team_id) | (Match.team2 == team_id)
-            )
+            .filter((Match.team1 == team_id) | (Match.team2 == team_id))
             .first()
         )
         if in_progress:
@@ -293,7 +302,9 @@ class RegistrationService:
         from models import Match, Tournament, PlayerRegistration, db
 
         tournament = RegistrationService._get_tournament(tournament_url).Q()
-        RegistrationService._require_player_registration_open_for_deregister(tournament).Q()
+        RegistrationService._require_player_registration_open_for_deregister(
+            tournament
+        ).Q()
 
         player_registration = (
             PlayerRegistration.query.filter_by(event=tournament_url, player=player_id)
@@ -316,9 +327,7 @@ class RegistrationService:
                 Match.query.filter_by(
                     event=tournament_url, status=MatchStatus.IN_PROGRESS
                 )
-                .filter(
-                    (Match.team1 == player_team) | (Match.team2 == player_team)
-                )
+                .filter((Match.team1 == player_team) | (Match.team2 == player_team))
                 .first()
             )
             if in_progress:
@@ -346,9 +355,7 @@ class RegistrationService:
         rc = league.registrable_config
         if not (rc and getattr(rc, "team_registration_open", rc.registration_open)):
             return Err(
-                RegistrationClosedError(
-                    "Registration is not open for this league"
-                )
+                RegistrationClosedError("Registration is not open for this league")
             )
 
         pseudonym = (pseudonym or "").strip()
@@ -415,9 +422,7 @@ class RegistrationService:
         rc = league.registrable_config
         if not (rc and getattr(rc, "player_registration_open", rc.registration_open)):
             return Err(
-                RegistrationClosedError(
-                    "Registration is not open for this league"
-                )
+                RegistrationClosedError("Registration is not open for this league")
             )
 
         team_id = (team_id or "").strip() or None
@@ -437,9 +442,7 @@ class RegistrationService:
                 RegistrationStatus.CANCELLED,
             ):
                 return Err(
-                    ValidationError(
-                        "You already have a registration for this league"
-                    )
+                    ValidationError("You already have a registration for this league")
                 )
             player_registration = existing_reg
             player_registration.team = team_id
@@ -461,7 +464,9 @@ class RegistrationService:
         if not rc or not rc.player_reg_fee or rc.player_reg_fee == 0:
             player_registration.paid = True
             player_registration.amount_paid = 0.0
-            player_registration.paid_at = datetime.now(timezone.utc).replace(tzinfo=None)
+            player_registration.paid_at = datetime.now(timezone.utc).replace(
+                tzinfo=None
+            )
 
         # If a waiver is configured, players must sign it.
         waiver_filepath = getattr(rc, "waiver_filepath", None) if rc else None
@@ -495,9 +500,7 @@ class RegistrationService:
         rc = league.registrable_config
         if not (rc and getattr(rc, "team_registration_open", rc.registration_open)):
             return Err(
-                ValidationError(
-                    "Registration changes are locked for this league"
-                )
+                ValidationError("Registration changes are locked for this league")
             )
 
         team_registration = TeamRegistration.query.filter_by(
@@ -509,8 +512,7 @@ class RegistrationService:
         from models import Match, Tournament
 
         tournament_urls = [
-            t.url
-            for t in Tournament.query.filter_by(league_id=league_id).all()
+            t.url for t in Tournament.query.filter_by(league_id=league_id).all()
         ]
         in_progress = (
             Match.query.filter(
@@ -529,9 +531,9 @@ class RegistrationService:
 
         team_registration.status = TeamRegistrationStatus.CANCELLED
 
-        PlayerRegistration.query.filter_by(
-            league_id=league_id, team=team_id
-        ).update({"status": RegistrationStatus.CANCELLED})
+        PlayerRegistration.query.filter_by(league_id=league_id, team=team_id).update(
+            {"status": RegistrationStatus.CANCELLED}
+        )
 
         db.session.commit()
         return Ok(None)
@@ -549,15 +551,11 @@ class RegistrationService:
         rc = league.registrable_config
         if not (rc and getattr(rc, "player_registration_open", rc.registration_open)):
             return Err(
-                ValidationError(
-                    "Registration changes are locked for this league"
-                )
+                ValidationError("Registration changes are locked for this league")
             )
 
         player_registration = (
-            PlayerRegistration.query.filter_by(
-                league_id=league_id, player=player_id
-            )
+            PlayerRegistration.query.filter_by(league_id=league_id, player=player_id)
             .filter(
                 PlayerRegistration.status.in_(
                     [
@@ -569,28 +567,21 @@ class RegistrationService:
             .first()
         )
         if not player_registration:
-            return Err(
-                ValidationError("You are not registered for this league")
-            )
+            return Err(ValidationError("You are not registered for this league"))
 
         player_team = player_registration.team
         if player_team:
             from models import Match, Tournament
 
             tournament_urls = [
-                t.url
-                for t in Tournament.query.filter_by(
-                    league_id=league_id
-                ).all()
+                t.url for t in Tournament.query.filter_by(league_id=league_id).all()
             ]
             in_progress = (
                 Match.query.filter(
                     Match.event.in_(tournament_urls),
                     Match.status == MatchStatus.IN_PROGRESS,
                 )
-                .filter(
-                    (Match.team1 == player_team) | (Match.team2 == player_team)
-                )
+                .filter((Match.team1 == player_team) | (Match.team2 == player_team))
                 .first()
             )
             if in_progress:

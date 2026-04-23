@@ -16,7 +16,9 @@ class Camera(db.Model):
     )
 
     # Convenience fields to avoid joins for UI / filtering.
-    event = db.Column(db.String(100), db.ForeignKey("tournaments.url"), nullable=False, index=True)
+    event = db.Column(
+        db.String(100), db.ForeignKey("tournaments.url"), nullable=False, index=True
+    )
     field = db.Column(db.Integer, nullable=False, index=True)
 
     # Display / identity.
@@ -26,16 +28,23 @@ class Camera(db.Model):
     source_type = db.Column(db.String(50), nullable=False, default="recording")
 
     uploaded_by_user_id = db.Column(db.String(50), nullable=True)
-    uploaded_by_user_type = db.Column(db.String(10), nullable=True)  # e.g. "player" or "team"
+    uploaded_by_user_type = db.Column(
+        db.String(10), nullable=True
+    )  # e.g. "player" or "team"
 
     # Output identity.
-    status = db.Column(db.String(50), nullable=False, default="UPLOADING")  # UPLOADING|SUCCESS|FAILED
+    status = db.Column(
+        db.String(50), nullable=False, default="UPLOADING"
+    )  # UPLOADING|SUCCESS|FAILED
     link = db.Column(db.String(500))  # YouTube URL/id when SUCCESS
 
     # Local/static/S3 key for FAILED downloads (and possibly for in-progress uploads).
     file = db.Column(db.String(500))
 
     # JSON arrays stored as strings (SQLite-safe). Keep format consistent with frontend expectations.
-    time_world = db.Column(db.Text)  # JSON array of world timestamps; one per session/clip boundary
-    time_video = db.Column(db.Text)  # JSON array of float seconds; one per session/clip boundary
-
+    time_world = db.Column(
+        db.Text
+    )  # JSON array of world timestamps; one per session/clip boundary
+    time_video = db.Column(
+        db.Text
+    )  # JSON array of float seconds; one per session/clip boundary

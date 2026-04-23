@@ -36,6 +36,10 @@ class RegistrableConfig(db.Model):  # type: ignore[misc]
     max_team_size_field = db.Column(db.Integer)
 
     __table_args__ = (
-        db.CheckConstraint("team_reg_fee >= 0", name="ck_registrable_config_team_reg_fee_nonneg"),
-        db.CheckConstraint("player_reg_fee >= 0", name="ck_registrable_config_player_reg_fee_nonneg"),
+        db.CheckConstraint(
+            "team_reg_fee >= 0", name="ck_registrable_config_team_reg_fee_nonneg"
+        ),
+        db.CheckConstraint(
+            "player_reg_fee >= 0", name="ck_registrable_config_player_reg_fee_nonneg"
+        ),
     )

@@ -20,6 +20,7 @@ def get_registrable_config(tournament):
     """
     if getattr(tournament, "league_id", None):
         from models import League
+
         league = League.query.get(tournament.league_id)
         return league.registrable_config if league else None
     return getattr(tournament, "registrable_config", None)
@@ -48,7 +49,10 @@ def match_event_urls_for_penalties(tournament):
     tournaments, returns just this event's URL.
     """
     if getattr(tournament, "league_id", None):
-        return [t.url for t in Tournament.query.filter_by(league_id=tournament.league_id).all()]
+        return [
+            t.url
+            for t in Tournament.query.filter_by(league_id=tournament.league_id).all()
+        ]
     return [tournament.url]
 
 
@@ -69,12 +73,14 @@ DEFAULT_PENALTY_COLORS = [
     "000000",  # Black
 ]
 
+
 def get_next_penalty_color(existing_colors: set[str]) -> str:
     """Get the next available default color that isn't already used."""
     for color in DEFAULT_PENALTY_COLORS:
         if color not in existing_colors:
             return color
     return "000000"  # Default fallback
+
 
 def can_head_ref_match(tournament_url: str, player_id: str, match=None) -> bool:
     """
@@ -164,6 +170,7 @@ def get_team_display_name_for_event(tournament_url: str, team_id: str) -> str:
     if not team_id:
         return ""
     from app.domain.enums import TeamRegistrationStatus
+
     reg = TeamRegistration.query.filter_by(
         event=tournament_url, team=team_id, status=TeamRegistrationStatus.CONFIRMED
     ).first()

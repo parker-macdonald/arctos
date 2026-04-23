@@ -56,13 +56,21 @@ def create_app(config=None):
     # Public base URL for OAuth and redirects (e.g. https://example.com). When set, used for
     # Google redirect_uri and post-login redirects so they work behind proxies and match
     # the authorized redirect URI in Google Cloud Console. No trailing slash.
-    app.config["EXTERNAL_BASE_URL"] = os.environ.get("EXTERNAL_BASE_URL", "").rstrip("/")
+    app.config["EXTERNAL_BASE_URL"] = os.environ.get("EXTERNAL_BASE_URL", "").rstrip(
+        "/"
+    )
 
     # S3 video storage: when S3_VIDEO_BUCKET is set, finalization uploads finished videos to S3.
-    app.config["S3_VIDEO_BUCKET"] = os.environ.get("S3_VIDEO_BUCKET", "").strip() or None
-    app.config["S3_ENDPOINT_URL"] = os.environ.get("S3_ENDPOINT_URL", "").strip() or None
+    app.config["S3_VIDEO_BUCKET"] = (
+        os.environ.get("S3_VIDEO_BUCKET", "").strip() or None
+    )
+    app.config["S3_ENDPOINT_URL"] = (
+        os.environ.get("S3_ENDPOINT_URL", "").strip() or None
+    )
     app.config["AWS_REGION"] = os.environ.get("AWS_REGION", "us-east-1").strip()
-    app.config["S3_VIDEO_PREFIX"] = os.environ.get("S3_VIDEO_PREFIX", "").strip() or None
+    app.config["S3_VIDEO_PREFIX"] = (
+        os.environ.get("S3_VIDEO_PREFIX", "").strip() or None
+    )
     app.config["S3_PRESIGNED_EXPIRY_SECONDS"] = int(
         os.environ.get("S3_PRESIGNED_EXPIRY_SECONDS", "3600")
     )
@@ -70,10 +78,9 @@ def create_app(config=None):
         os.environ.get("RECORDING_ARTIFACTS_AFTER_UPLOAD", "delete").strip().lower()
         or "delete"
     )
-    app.config["ENABLE_MANUAL_FOOTAGE_UPLOADS"] = (
-        os.environ.get("ENABLE_MANUAL_FOOTAGE_UPLOADS", "").strip().lower()
-        in ("1", "true", "yes", "on")
-    )
+    app.config["ENABLE_MANUAL_FOOTAGE_UPLOADS"] = os.environ.get(
+        "ENABLE_MANUAL_FOOTAGE_UPLOADS", ""
+    ).strip().lower() in ("1", "true", "yes", "on")
 
     # Handle subpath deployment
     if "SCRIPT_NAME" in os.environ:
@@ -130,6 +137,7 @@ def create_app(config=None):
                         cur.execute("PRAGMA busy_timeout=30000")
                     finally:
                         cur.close()
+
     except Exception:
         pass
     # Ensure tables exist (safe to call on startup)

@@ -103,7 +103,11 @@ class TournamentService:
                     if reg:
                         user_reg_status[t.url] = {
                             "type": "team",
-                            "status": reg.status.value if hasattr(reg.status, "value") else str(reg.status or ""),
+                            "status": (
+                                reg.status.value
+                                if hasattr(reg.status, "value")
+                                else str(reg.status or "")
+                            ),
                             "paid": bool(reg.paid),
                             "amount_paid": reg.amount_paid or 0.0,
                         }
@@ -129,9 +133,11 @@ class TournamentService:
                         from app.utils.helpers import get_registrable_config
 
                         cfg = get_registrable_config(t)
-                        waiver_required = bool(
-                            getattr(cfg, "waiver_filepath", None)
-                        ) if cfg else False
+                        waiver_required = (
+                            bool(getattr(cfg, "waiver_filepath", None))
+                            if cfg
+                            else False
+                        )
                         waiver_sha_current = (
                             getattr(cfg, "waiver_sha256", None) if cfg else None
                         )
@@ -154,7 +160,11 @@ class TournamentService:
 
                         user_reg_status[t.url] = {
                             "type": "player",
-                            "status": reg.status.value if hasattr(reg.status, "value") else str(reg.status or ""),
+                            "status": (
+                                reg.status.value
+                                if hasattr(reg.status, "value")
+                                else str(reg.status or "")
+                            ),
                             "paid": bool(reg.paid),
                             "amount_paid": reg.amount_paid or 0.0,
                             "waiver_required": waiver_required,
