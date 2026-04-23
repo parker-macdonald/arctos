@@ -4,6 +4,7 @@ import pytest
 
 from app.services.tournament_service import TournamentService
 from models import TO, Tournament, TeamRegistration, db
+from tests.utils import make_registrable_config
 
 
 @pytest.mark.unit
@@ -13,14 +14,14 @@ def test_homepage_context_includes_only_published_for_anonymous(test_db):
         name="Published",
         start_date=datetime.now(timezone.utc),
         published=True,
-        registration_open=False,
+        registrable_config_id=make_registrable_config().id,
     )
     priv = Tournament(
         url="priv",
         name="Private",
         start_date=datetime.now(timezone.utc),
         published=False,
-        registration_open=False,
+        registrable_config_id=make_registrable_config().id,
     )
     db.session.add_all([pub, priv])
     db.session.commit()
@@ -39,7 +40,7 @@ def test_homepage_context_team_counts_grouped_query(test_db):
         name="Counted",
         start_date=datetime.now(timezone.utc),
         published=True,
-        registration_open=False,
+        registrable_config_id=make_registrable_config().id,
     )
     db.session.add(t)
     db.session.add_all(
@@ -71,7 +72,7 @@ def test_homepage_context_includes_unpublished_for_to(test_db, player):
         name="Private TO",
         start_date=datetime.now(timezone.utc),
         published=False,
-        registration_open=False,
+        registrable_config_id=make_registrable_config().id,
     )
     db.session.add(priv)
     db.session.add(TO(user_id=p.id, user_type="player", event=priv_url))

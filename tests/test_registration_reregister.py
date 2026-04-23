@@ -37,11 +37,10 @@ def test_player_can_reregister_after_rejected_without_creating_duplicate_row(
 
     # Re-register (no team) should update the same row and become CONFIRMED
     resp = client.post(
-        f"/{tournament_url}/register-player",
+        f"/_api/{tournament_url}/register-player",
         data={"jersey_name": "Alice2", "jersey_number": "8"},
-        follow_redirects=False,
     )
-    assert resp.status_code in (301, 302, 303, 307, 308)
+    assert resp.status_code == 200
 
     with app.app_context():
         regs = PlayerRegistration.query.filter_by(
