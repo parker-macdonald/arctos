@@ -28,3 +28,6 @@ dependencies = [
     "werkzeug==3.1.4",
     "wtforms==3.2.1",
 ]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
