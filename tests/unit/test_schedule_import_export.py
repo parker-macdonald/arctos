@@ -8,7 +8,7 @@ import pytest
 from app.error_values import Err, Ok
 from app.services.schedule_import_export_service import ScheduleImportExportService
 from app.utils.toml_helpers import write_toml_schedule
-from models import Field, Match, Tag, Tournament, db
+from models import Field, Match, Tag, db
 
 
 @pytest.mark.unit
@@ -133,9 +133,7 @@ def test_import_schedule_rejects_invalid_match_reference(test_db, tournament):
     res = ScheduleImportExportService.import_schedule(tournament_url, toml_content)
     match res:
         case Ok(_):
-            raise AssertionError(
-                "Expected Err(ValidationError) for invalid match reference"
-            )
+            raise AssertionError("Expected Err(ValidationError) for invalid match reference")
         case Err(err):
             from app.exceptions import ValidationError
 
@@ -143,9 +141,7 @@ def test_import_schedule_rejects_invalid_match_reference(test_db, tournament):
 
 
 @pytest.mark.unit
-def test_import_schedule_replaces_existing_objects_and_deletes_missing(
-    test_db, tournament
-):
+def test_import_schedule_replaces_existing_objects_and_deletes_missing(test_db, tournament):
     """
     Real import should:
     - create new tags/fields/matches present in TOML,
@@ -194,9 +190,7 @@ def test_import_schedule_replaces_existing_objects_and_deletes_missing(
             "set_type": keep_match.set_type,
         }
     ]
-    toml_str = write_toml_schedule(
-        event=tournament_url, tags=tags, fields=fields, matches=matches
-    )
+    toml_str = write_toml_schedule(event=tournament_url, tags=tags, fields=fields, matches=matches)
 
     res = ScheduleImportExportService.import_schedule(tournament_url, toml_str)
     match res:
@@ -222,9 +216,7 @@ def test_import_schedule_replaces_existing_objects_and_deletes_missing(
 
 
 @pytest.mark.unit
-def test_break_join_matches_can_have_duplicate_names_on_different_fields(
-    test_db, tournament, app
-):
+def test_break_join_matches_can_have_duplicate_names_on_different_fields(test_db, tournament, app):
     """BREAK and JOIN matches can have the same name on different fields."""
     tournament_url = tournament.url
 
@@ -253,9 +245,7 @@ def test_break_join_matches_can_have_duplicate_names_on_different_fields(
     db.session.commit()
 
     # Both should exist
-    breaks = Match.query.filter_by(
-        event=tournament_url, name="Lunch Break", schedule_type="BREAK"
-    ).all()
+    breaks = Match.query.filter_by(event=tournament_url, name="Lunch Break", schedule_type="BREAK").all()
     assert len(breaks) == 2
     assert {b.field for b in breaks} == {"Field 1", "Field 2"}
 
@@ -278,9 +268,7 @@ def test_break_join_matches_can_have_duplicate_names_on_different_fields(
     db.session.commit()
 
     # Both should exist
-    joins = Match.query.filter_by(
-        event=tournament_url, name="Morning End", schedule_type="JOIN"
-    ).all()
+    joins = Match.query.filter_by(event=tournament_url, name="Morning End", schedule_type="JOIN").all()
     assert len(joins) == 2
     assert {j.field for j in joins} == {"Field 1", "Field 2"}
 
@@ -309,9 +297,6 @@ def test_regular_matches_cannot_have_duplicate_names(test_db, tournament, app):
     db.session.commit()
 
     # Try to create another STATIC match with the same name (even on different field) - should fail
-    from app.routes.tournaments import add_match
-    from flask import Flask
-    from flask_login import current_user
 
     # We can't easily test the route directly, but we can test the uniqueness constraint
     # by trying to create a duplicate match directly
@@ -328,9 +313,7 @@ def test_regular_matches_cannot_have_duplicate_names(test_db, tournament, app):
 
     # Both exist in DB (no DB constraint), but the route validation should prevent this
     # Let's verify that regular matches with same name exist (they do, but route should prevent creation)
-    matches = Match.query.filter_by(
-        event=tournament_url, name="Match A", schedule_type="STATIC"
-    ).all()
+    matches = Match.query.filter_by(event=tournament_url, name="Match A", schedule_type="STATIC").all()
     # Note: This test verifies the DB allows it, but the route validation should prevent it
     # We'll test the route validation separately if needed
 
@@ -471,9 +454,7 @@ def test_tags_with_spaces_work_correctly(test_db, tournament):
             raise AssertionError(f"Expected Ok(ImportResult), got Err({err})")
 
     # Verify the imported match has the correct reference
-    imported_match = Match.query.filter_by(
-        event=tournament_url, name="Test Match"
-    ).first()
+    imported_match = Match.query.filter_by(event=tournament_url, name="Test Match").first()
     assert imported_match is not None
     assert imported_match.team1_initial == "tag::Pool A Teams"
     assert imported_match.refs_initial == "tag::Pool A Teams"

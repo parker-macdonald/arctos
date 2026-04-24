@@ -6,7 +6,7 @@ which matches they depend on, and what type of dependency (direct or skip_condit
 """
 
 from lark import Lark, Tree, Token
-from typing import Set, Tuple, Dict
+from typing import Set, Dict
 import os
 
 
@@ -44,9 +44,7 @@ class MatchDependencyAnalyzer:
         with open(grammar_path, "r") as g:
             self.parser = Lark(g, parser="lalr")
 
-    def analyze(
-        self, expression: str, visited_matches: Set[str] = None
-    ) -> Dict[str, Set[str]]:
+    def analyze(self, expression: str, visited_matches: Set[str] = None) -> Dict[str, Set[str]]:
         """
         Analyze a DSL expression to find match dependencies.
 
@@ -70,16 +68,14 @@ class MatchDependencyAnalyzer:
             dependencies = {"direct": set(), "skip_condition": set()}
             self._visit(tree, dependencies, visited_matches)
             return dependencies
-        except Exception as e:
+        except Exception:
             # If parsing fails, return empty dependencies
             # (the expression will be validated elsewhere)
             # Note: We don't log errors here to avoid noise - the expression will be validated
             # by the actual parser when it's used
             return {"direct": set(), "skip_condition": set()}
 
-    def _visit(
-        self, tree, dependencies: Dict[str, Set[str]], visited_matches: Set[str]
-    ):
+    def _visit(self, tree, dependencies: Dict[str, Set[str]], visited_matches: Set[str]):
         """
         Recursively visit AST nodes to find dependencies.
 
@@ -125,9 +121,7 @@ class MatchDependencyAnalyzer:
             for child in tree.children:
                 self._visit(child, dependencies, visited_matches)
 
-    def _visit_list(
-        self, tree: Tree, dependencies: Dict[str, Set[str]], visited_matches: Set[str]
-    ):
+    def _visit_list(self, tree: Tree, dependencies: Dict[str, Set[str]], visited_matches: Set[str]):
         """
         Visit a list/s-expression node.
 
@@ -153,13 +147,8 @@ class MatchDependencyAnalyzer:
             elif head.data == "atom" and head.children:
                 # Handle atom wrapper
                 atom_child = head.children[0]
-                if (
-                    isinstance(atom_child, Tree)
-                    and atom_child.data == "identifier_atom"
-                ):
-                    if atom_child.children and isinstance(
-                        atom_child.children[0], Token
-                    ):
+                if isinstance(atom_child, Tree) and atom_child.data == "identifier_atom":
+                    if atom_child.children and isinstance(atom_child.children[0], Token):
                         function_name = atom_child.children[0].value
         elif isinstance(head, Token):
             function_name = head.value
@@ -190,9 +179,7 @@ class MatchDependencyAnalyzer:
                 if tree.children[1:]:
                     self._visit(tree.children[1], dependencies, visited_matches)
 
-        elif (
-            function_name and function_name in self.SKIP_CONDITION_DEPENDENCY_FUNCTIONS
-        ):
+        elif function_name and function_name in self.SKIP_CONDITION_DEPENDENCY_FUNCTIONS:
             # is-skipped(MATCH) needs the match's status; no recursive skip_condition analysis
             for arg in tree.children[1:]:
                 match_atoms = set()

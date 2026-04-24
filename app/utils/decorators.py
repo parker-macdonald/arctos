@@ -47,9 +47,7 @@ def require_tournament_organizer(
             if tournament_url is None and args:
                 tournament_url = args[0]
 
-            if not PermissionService.is_tournament_organizer(
-                tournament_url, current_user
-            ):
+            if not PermissionService.is_tournament_organizer(tournament_url, current_user):
                 flash(message, "error")
                 return redirect(request.referrer or f"/{tournament_url}")
 

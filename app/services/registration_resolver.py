@@ -7,7 +7,6 @@ Supports both standalone tournaments (event=tournament.url) and league tournamen
 
 from __future__ import annotations
 
-from typing import List, Optional
 
 from app.domain.enums import RegistrationStatus, TeamRegistrationStatus
 
@@ -51,14 +50,10 @@ def team_registration_for_tournament(tournament, team_id: str):
             team=team_id,
             status=TeamRegistrationStatus.CONFIRMED,
         ).first()
-    return TeamRegistration.query.filter_by(
-        event=event, team=team_id, status=TeamRegistrationStatus.CONFIRMED
-    ).first()
+    return TeamRegistration.query.filter_by(event=event, team=team_id, status=TeamRegistrationStatus.CONFIRMED).first()
 
 
-def team_registrations_for_tournament(
-    tournament, status=TeamRegistrationStatus.CONFIRMED, exclude_cancelled=False
-):
+def team_registrations_for_tournament(tournament, status=TeamRegistrationStatus.CONFIRMED, exclude_cancelled=False):
     """Return a list of team registrations for a tournament or league.
 
     Args:
@@ -145,16 +140,13 @@ def is_team_registered(tournament, team_id: str) -> bool:
             is not None
         )
     return (
-        TeamRegistration.query.filter_by(
-            event=event, team=team_id, status=TeamRegistrationStatus.CONFIRMED
-        ).first()
+        TeamRegistration.query.filter_by(event=event, team=team_id, status=TeamRegistrationStatus.CONFIRMED).first()
         is not None
     )
 
 
 def player_registration_for_tournament(tournament, player_id: str):
     """Single player registration for (tournament, player_id), or None."""
-    from models import PlayerRegistration
 
     prs = player_registrations_for_tournament(
         tournament,
@@ -175,9 +167,7 @@ def is_player_registered(tournament, player_id: str) -> bool:
 
     event, league_id = _registrable_filter(tournament)
     if league_id is not None:
-        q = PlayerRegistration.query.filter_by(
-            league_id=league_id, player=player_id
-        ).filter(
+        q = PlayerRegistration.query.filter_by(league_id=league_id, player=player_id).filter(
             PlayerRegistration.status.in_(
                 [
                     RegistrationStatus.PENDING_TEAM_APPROVAL,

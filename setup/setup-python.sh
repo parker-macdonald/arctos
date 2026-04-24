@@ -18,3 +18,6 @@ echo "Using Python version: ${python_version}"
 uv python install ${python_version}
 echo "Installed Python"
 
+uv sync --group dev
+uv run pre-commit install
+echo "Installed pre-commit hooks"

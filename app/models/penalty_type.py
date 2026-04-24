@@ -27,12 +27,8 @@ class PenaltyType(db.Model):
     __tablename__ = "penalty_types"
 
     id = db.Column(db.Integer, primary_key=True)
-    event = db.Column(
-        db.String(URL_SLUG_LEN), db.ForeignKey("tournaments.url"), nullable=True
-    )
-    league_id = db.Column(
-        db.String(URL_SLUG_LEN), db.ForeignKey("leagues.url"), nullable=True
-    )
+    event = db.Column(db.String(URL_SLUG_LEN), db.ForeignKey("tournaments.url"), nullable=True)
+    league_id = db.Column(db.String(URL_SLUG_LEN), db.ForeignKey("leagues.url"), nullable=True)
     name = db.Column(db.String(SHORT_LABEL_LEN), nullable=False)
     color = db.Column(db.String(HEX_COLOR_LEN), nullable=False)
     desc = db.Column(db.Text)
@@ -45,8 +41,7 @@ class PenaltyType(db.Model):
 
     __table_args__ = (
         db.CheckConstraint(
-            "(event IS NOT NULL AND league_id IS NULL) OR "
-            "(event IS NULL AND league_id IS NOT NULL)",
+            "(event IS NOT NULL AND league_id IS NULL) OR (event IS NULL AND league_id IS NOT NULL)",
             name="ck_penalty_type_event_league_mutual_exclusive",
         ),
     )

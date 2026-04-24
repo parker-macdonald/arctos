@@ -15,11 +15,8 @@ from flask_executor import Executor
 from datetime import datetime, timedelta, timezone
 import json
 import time
-import threading
 import uuid
 
-from flask_login.utils import urlencode
-from urllib3.util import url
 from models import (
     Tournament,
     Match,
@@ -37,17 +34,14 @@ from models import (
 from app.utils.helpers import (
     resolve_team_name_to_id,
     resolve_tag_to_team,
-    can_head_ref_match,
 )
 from app.utils.scheduling import (
     compute_dynamic_match_nominal_start_time,
     validate_match_input,
     recompute_all_match_times,
-    detect_match_conflicts,
 )
 from app.utils.name_validation import match_name_char_error
 from app.utils.decorators import require_tournament_organizer
-from app.filters import is_head_ref
 
 from os import path, listdir
 
@@ -59,8 +53,6 @@ from app.utils.user_uploads import (
 )
 from app.utils.camera_helpers import (
     generate_camera_key,
-    validate_camera_key,
-    get_camera_key_from_request,
     require_camera_key,
 )
 from app.utils.recording_retry import (
@@ -71,7 +63,6 @@ from app.utils import preview_store
 
 from app.domain.enums import (
     MatchStatus,
-    RegistrationStatus,
     ScheduleType,
     SetType,
 )
@@ -85,9 +76,7 @@ executor = Executor()
 bp = Blueprint("tournaments", __name__, url_prefix="/_api")
 
 
-def update_match_previous_link(
-    match: Match, prev_match_id: str, tournament_url: str, is_new: bool = False
-) -> None:
+def update_match_previous_link(match: Match, prev_match_id: str, tournament_url: str, is_new: bool = False) -> None:
     """
     Update the previous_match link for a match, maintaining a doubly linked list structure.
 
@@ -126,9 +115,7 @@ def update_match_previous_link(
 
     # If prev_match had a next_match that isn't this match, link it to this match
     if prev_match_old_next_id and prev_match_old_next_id != match.uuid:
-        prev_match_old_next = Match.query.filter_by(
-            uuid=prev_match_old_next_id, event=tournament_url
-        ).first()
+        prev_match_old_next = Match.query.filter_by(uuid=prev_match_old_next_id, event=tournament_url).first()
         if prev_match_old_next:
             # Set the current match's next_match to the old next_match
             match.next_match = prev_match_old_next_id
@@ -144,16 +131,12 @@ def update_match_previous_link(
 
     # If updating and had an old previous_match, handle cleanup
     if old_prev_id and old_prev_id != prev_match_id:
-        old_prev_match = Match.query.filter_by(
-            uuid=old_prev_id, event=tournament_url
-        ).first()
+        old_prev_match = Match.query.filter_by(uuid=old_prev_id, event=tournament_url).first()
         if old_prev_match:
             # If old_prev_match's next_match pointed to this match, we need to update it
             if old_prev_match.next_match == match.uuid:
                 # The old previous match's next should now point to this match's old next (if any)
-                old_prev_match.next_match = (
-                    old_next_id if old_next_id != old_prev_id else None
-                )
+                old_prev_match.next_match = old_next_id if old_next_id != old_prev_id else None
                 # If we set old_prev_match.next_match to something, update that match's previous_match
                 if old_prev_match.next_match:
                     old_next_of_old_prev = Match.query.filter_by(
@@ -164,17 +147,13 @@ def update_match_previous_link(
 
     # If updating and had an old next_match that we didn't preserve, handle cleanup
     if old_next_id and old_next_id != match.next_match:
-        old_next_match = Match.query.filter_by(
-            uuid=old_next_id, event=tournament_url
-        ).first()
+        old_next_match = Match.query.filter_by(uuid=old_next_id, event=tournament_url).first()
         if old_next_match and old_next_match.previous_match == match.uuid:
             # This match's old next_match no longer has this match as its previous
             old_next_match.previous_match = None
 
 
-def is_not_TO(
-    tournament_url, message="Only tournament organizers can access this page"
-):
+def is_not_TO(tournament_url, message="Only tournament organizers can access this page"):
     """
     Legacy helper retained for compatibility.
 
@@ -459,9 +438,7 @@ def camera_url_api():
         # Check if user is a TO for this tournament
         if is_not_TO(tournament_url):
             return (
-                jsonify(
-                    {"error": "Unauthorized: You must be a TO for this tournament"}
-                ),
+                jsonify({"error": "Unauthorized: You must be a TO for this tournament"}),
                 403,
             )
 
@@ -476,8 +453,7 @@ def camera_url_api():
 
         base = request.url_root.rstrip("/")
         camera_url = (
-            f"{base}/{tournament_url}/record"
-            f"?field={quote(field_name)}&camera_key={quote(access_key)}&camera_name="
+            f"{base}/{tournament_url}/record?field={quote(field_name)}&camera_key={quote(access_key)}&camera_name="
         )
 
         return jsonify({"url": camera_url})
@@ -496,9 +472,7 @@ def record_match_status():
 
     tournament_url = request.args.get("tournament")
     field_name = request.args.get("field")
-    current_match_id = request.args.get(
-        "current_match_id"
-    )  # Optional: track specific match
+    current_match_id = request.args.get("current_match_id")  # Optional: track specific match
 
     if not tournament_url or not field_name:
         return jsonify({"error": "Tournament and field parameters required"}), 400
@@ -539,9 +513,7 @@ def record_match_status():
                 else:
                     end_stamp_str = p.end_stamp.astimezone(timezone.utc).isoformat()
                 if not end_stamp_str.endswith("Z"):
-                    end_stamp_str = end_stamp_str.replace("+00:00", "Z").replace(
-                        "-00:00", "Z"
-                    )
+                    end_stamp_str = end_stamp_str.replace("+00:00", "Z").replace("-00:00", "Z")
                     if not end_stamp_str.endswith("Z"):
                         end_stamp_str += "Z"
 
@@ -555,9 +527,7 @@ def record_match_status():
 
     # If we're tracking a specific match, check its status
     if current_match_id:
-        match = Match.query.filter_by(
-            uuid=current_match_id, event=tournament_url
-        ).first()
+        match = Match.query.filter_by(uuid=current_match_id, event=tournament_url).first()
         if match:
             # Continue recording if match is still IN_PROGRESS (not yet finalized)
             if match.status == MatchStatus.IN_PROGRESS:
@@ -566,11 +536,7 @@ def record_match_status():
                         "hasActiveMatch": True,
                         "match_id": match.uuid,
                         "match_name": match.name,
-                        "start_time": (
-                            match.confirmed_start_time.isoformat()
-                            if match.confirmed_start_time
-                            else None
-                        ),
+                        "start_time": (match.confirmed_start_time.isoformat() if match.confirmed_start_time else None),
                         "status": match.status,
                         "points": get_points_data(match),
                         "preview_requested": preview_requested,
@@ -598,9 +564,7 @@ def record_match_status():
             )
 
     # No specific match tracked - find any active match on this field
-    match = Match.query.filter_by(
-        event=tournament_url, field=field_name, status=MatchStatus.IN_PROGRESS
-    ).first()
+    match = Match.query.filter_by(event=tournament_url, field=field_name, status=MatchStatus.IN_PROGRESS).first()
 
     if match:
         return jsonify(
@@ -608,11 +572,7 @@ def record_match_status():
                 "hasActiveMatch": True,
                 "match_id": match.uuid,
                 "match_name": match.name,
-                "start_time": (
-                    match.confirmed_start_time.isoformat()
-                    if match.confirmed_start_time
-                    else None
-                ),
+                "start_time": (match.confirmed_start_time.isoformat() if match.confirmed_start_time else None),
                 "status": match.status,
                 "points": get_points_data(match),
                 "preview_requested": preview_requested,
@@ -632,9 +592,7 @@ def record_match_status():
 def record_request_preview():
     """TO requests preview for a field; creates sentinel so record pages send frames."""
     data = request.get_json(silent=True) or {}
-    tournament_url = (
-        data.get("tournament") or request.args.get("tournament") or ""
-    ).strip()
+    tournament_url = (data.get("tournament") or request.args.get("tournament") or "").strip()
     field_name = (data.get("field") or request.args.get("field") or "").strip()
     if not tournament_url or not field_name:
         return jsonify({"error": "tournament and field required"}), 400
@@ -652,9 +610,7 @@ def record_request_preview():
 def record_release_preview():
     """TO releases preview for a field; deletes sentinel and optionally cleans pending/serving."""
     data = request.get_json(silent=True) or {}
-    tournament_url = (
-        data.get("tournament") or request.args.get("tournament") or ""
-    ).strip()
+    tournament_url = (data.get("tournament") or request.args.get("tournament") or "").strip()
     field_name = (data.get("field") or request.args.get("field") or "").strip()
     if not tournament_url or not field_name:
         return jsonify({"error": "tournament and field required"}), 400
@@ -667,13 +623,9 @@ def record_release_preview():
 @bp.route("/record/preview-frame", methods=["POST"])
 def record_preview_frame_post():
     """Record page uploads a preview frame (JPEG). Writes to path A (pending). Requires camera_key."""
-    tournament_url = (
-        request.args.get("tournament") or request.form.get("tournament") or ""
-    ).strip()
+    tournament_url = (request.args.get("tournament") or request.form.get("tournament") or "").strip()
     field_name = (request.args.get("field") or request.form.get("field") or "").strip()
-    camera_name = (
-        request.args.get("camera_name") or request.form.get("camera_name") or "camera"
-    ).strip() or "camera"
+    camera_name = (request.args.get("camera_name") or request.form.get("camera_name") or "camera").strip() or "camera"
     if not tournament_url or not field_name:
         return jsonify({"error": "tournament and field required"}), 400
     is_valid, error_response = require_camera_key(tournament_url, field_name)
@@ -707,18 +659,10 @@ def record_preview_frame_consumed():
 @bp.route("/record/preview-metadata", methods=["POST"])
 def record_preview_metadata_post():
     """Record page sends device metadata (storage, battery) with camera_key. Optional fields."""
-    tournament_url = (
-        request.args.get("tournament") or (request.json or {}).get("tournament") or ""
-    ).strip()
-    field_name = (
-        request.args.get("field") or (request.json or {}).get("field") or ""
-    ).strip()
+    tournament_url = (request.args.get("tournament") or (request.json or {}).get("tournament") or "").strip()
+    field_name = (request.args.get("field") or (request.json or {}).get("field") or "").strip()
     camera_name = (
-        (
-            request.args.get("camera_name")
-            or (request.json or {}).get("camera_name")
-            or "camera"
-        )
+        request.args.get("camera_name") or (request.json or {}).get("camera_name") or "camera"
     ).strip() or "camera"
     if not tournament_url or not field_name:
         return jsonify({"error": "tournament and field required"}), 400
@@ -834,16 +778,13 @@ def record_upload_chunk():
     """Receive one fMP4 fragment for point recording (container=mp4). Camera key required."""
     import os
     from flask import current_app
-    from datetime import datetime
     import fcntl
 
     tournament_url = request.form.get("tournament")
     field_name = request.form.get("field")
     match_id = request.form.get("match_id")
     session_id = request.form.get("session_id")
-    chunk_start_timestamp = request.form.get(
-        "chunk_start_timestamp"
-    )  # Absolute world time when chunk started
+    chunk_start_timestamp = request.form.get("chunk_start_timestamp")  # Absolute world time when chunk started
     recording_session_start_time = request.form.get("recording_session_start_time")
     chunk_duration = request.form.get("chunk_duration")  # Duration in milliseconds
     camera_name = request.form.get("camera_name")
@@ -949,9 +890,7 @@ def record_upload_chunk():
                 "chunk_start_timestamp": parse_timestamp(chunk_start_timestamp),
                 "chunk_duration": float(chunk_duration),
                 "camera_name": camera_name,
-                "recording_session_start_time": parse_timestamp(
-                    recording_session_start_time
-                ),
+                "recording_session_start_time": parse_timestamp(recording_session_start_time),
                 "blob_event_timestamp_ms": parse_float_opt(blob_event_timestamp_ms_raw),
                 "is_init_segment": parse_bool(is_init_segment_raw),
             }
@@ -961,7 +900,7 @@ def record_upload_chunk():
             lock_file.truncate(0)
             json.dump(chunks_meta, lock_file, indent=2)
             lock_file.flush()
-    except (IOError, OSError) as e:
+    except (IOError, OSError):
         print("error writing :sob:")
         return jsonify({"error": "Failed to save chunk"}), 500
 
@@ -979,9 +918,7 @@ def record_upload_chunk():
     except Exception as e:
         current_app.logger.warning("record chunk debug read failed: %s", e)
 
-    return jsonify(
-        {"success": True, "chunk_index": chunk_index, "session_id": session_id}
-    )
+    return jsonify({"success": True, "chunk_index": chunk_index, "session_id": session_id})
 
 
 @bp.route("/record/finalize", methods=["POST"])
@@ -1107,9 +1044,7 @@ def retry_match_finalization(tournament_url: str, match_id: str):
 
     if not chunk_dirs:
         return (
-            jsonify(
-                {"success": False, "error": "No chunk metadata found for this match"}
-            ),
+            jsonify({"success": False, "error": "No chunk metadata found for this match"}),
             404,
         )
 
@@ -1124,9 +1059,7 @@ def retry_match_finalization(tournament_url: str, match_id: str):
             getattr(current_user, "id", None),
         )
 
-        def run_finalize_with_app_context(
-            chunk_dir: str = chunk_dir, camera_name: str = camera_name
-        ):
+        def run_finalize_with_app_context(chunk_dir: str = chunk_dir, camera_name: str = camera_name):
             with app.app_context():
                 finalize_recording_worker(
                     logger,
@@ -1169,9 +1102,7 @@ def user_upload_video_footage(tournament_url: str):
     if not video_file or video_file.filename == "":
         return jsonify({"error": "video file is required"}), 400
 
-    start_world_override = request.form.get("start_world") or request.form.get(
-        "start_timestamp"
-    )
+    start_world_override = request.form.get("start_world") or request.form.get("start_timestamp")
     try:
         start_world_override = _normalize_user_upload_start_world(start_world_override)
     except ValueError as e:
@@ -1292,9 +1223,7 @@ def _user_upload_incoming_dir_name(upload_id: str, batch_index: int) -> str:
     return f"{upload_id}__{batch_index:06d}"
 
 
-def _locate_user_upload_incoming_dir(
-    tournament_url: str, upload_id: str, batch_index: int | None = None
-):
+def _locate_user_upload_incoming_dir(tournament_url: str, upload_id: str, batch_index: int | None = None):
     """Search all fields for an in-progress user-upload directory.
 
     Looks in ``static/uploads/videos/<tournament>/<field>/user_uploads/_incoming/``
@@ -1329,9 +1258,7 @@ def _locate_user_upload_incoming_dir(
 
         candidate_names = []
         if batch_index is not None:
-            candidate_names.append(
-                _user_upload_incoming_dir_name(upload_id, batch_index)
-            )
+            candidate_names.append(_user_upload_incoming_dir_name(upload_id, batch_index))
         candidate_names.append(upload_id)
 
         for dir_name in candidate_names:
@@ -1353,11 +1280,7 @@ def _locate_user_upload_incoming_dir(
                 continue
             if batch_index is not None:
                 try:
-                    existing_batch_index = int(
-                        meta.get("batch_index")
-                        if meta.get("batch_index") is not None
-                        else 0
-                    )
+                    existing_batch_index = int(meta.get("batch_index") if meta.get("batch_index") is not None else 0)
                 except (TypeError, ValueError):
                     existing_batch_index = 0
                 if existing_batch_index != batch_index:
@@ -1392,13 +1315,9 @@ def _normalize_user_upload_start_world(raw_value: str | None) -> str | None:
     try:
         dt = datetime.fromisoformat(s)
     except ValueError as exc:
-        raise ValueError(
-            "start_world must be an ISO timestamp with timezone, e.g. 2026-03-18T01:23:45Z"
-        ) from exc
+        raise ValueError("start_world must be an ISO timestamp with timezone, e.g. 2026-03-18T01:23:45Z") from exc
     if dt.tzinfo is None:
-        raise ValueError(
-            "start_world must include timezone, e.g. 2026-03-18T01:23:45Z or 2026-03-17T18:23:45-07:00"
-        )
+        raise ValueError("start_world must include timezone, e.g. 2026-03-18T01:23:45Z or 2026-03-17T18:23:45-07:00")
     return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
@@ -1436,11 +1355,7 @@ def _require_registered_player_for_upload(tournament_url: str):
         )
     if not is_player_registered(tournament, str(current_user.id)):
         return None, (
-            jsonify(
-                {
-                    "error": "You must be registered for this tournament to upload footage"
-                }
-            ),
+            jsonify({"error": "You must be registered for this tournament to upload footage"}),
             403,
         )
     return tournament, None
@@ -1453,9 +1368,7 @@ def user_upload_planning(tournament_url: str):
     if err:
         return err
 
-    field_id_raw = (
-        request.args.get("field_id") or request.args.get("field") or ""
-    ).strip()
+    field_id_raw = (request.args.get("field_id") or request.args.get("field") or "").strip()
     if not field_id_raw:
         return jsonify({"error": "field_id is required"}), 400
     try:
@@ -1479,11 +1392,7 @@ def user_upload_planning(tournament_url: str):
     match_ids = [m.uuid for m in matches]
     points_by_match: dict[str, list[Point]] = {m.uuid: [] for m in matches}
     if match_ids:
-        points = (
-            Point.query.filter(Point.match.in_(match_ids))
-            .order_by(Point.stamp.asc(), Point.uuid.asc())
-            .all()
-        )
+        points = Point.query.filter(Point.match.in_(match_ids)).order_by(Point.stamp.asc(), Point.uuid.asc()).all()
         for pt in points:
             if pt.match:
                 points_by_match.setdefault(pt.match, []).append(pt)
@@ -1497,16 +1406,10 @@ def user_upload_planning(tournament_url: str):
                     "uuid": str(pt.uuid),
                     "index": idx,
                     "stamp": (
-                        pt.stamp.replace(tzinfo=timezone.utc)
-                        .isoformat()
-                        .replace("+00:00", "Z")
-                        if pt.stamp
-                        else None
+                        pt.stamp.replace(tzinfo=timezone.utc).isoformat().replace("+00:00", "Z") if pt.stamp else None
                     ),
                     "end_stamp": (
-                        pt.end_stamp.replace(tzinfo=timezone.utc)
-                        .isoformat()
-                        .replace("+00:00", "Z")
+                        pt.end_stamp.replace(tzinfo=timezone.utc).isoformat().replace("+00:00", "Z")
                         if pt.end_stamp
                         else None
                     ),
@@ -1622,9 +1525,7 @@ def user_upload_video_footage_chunk(tournament_url: str):
         if not match_obj.field:
             return jsonify({"error": "Selected match has no field"}), 400
         field_name_resolved = match_obj.field
-        field_obj = Field.query.filter_by(
-            event=tournament_url, name=field_name_resolved
-        ).first()
+        field_obj = Field.query.filter_by(event=tournament_url, name=field_name_resolved).first()
         if not field_obj:
             return jsonify({"error": "Match field not found"}), 404
         field_id = field_obj.id
@@ -1657,9 +1558,7 @@ def user_upload_video_footage_chunk(tournament_url: str):
             return jsonify({"error": "batch_total mismatch"}), 400
         existing_batch_index = existing.get("batch_index")
         try:
-            existing_batch_index = (
-                int(existing_batch_index) if existing_batch_index is not None else -1
-            )
+            existing_batch_index = int(existing_batch_index) if existing_batch_index is not None else -1
         except (TypeError, ValueError):
             existing_batch_index = -1
         if existing_batch_index != batch_index:
@@ -1730,9 +1629,7 @@ def user_upload_video_footage_complete(tournament_url: str):
         return err
 
     payload = request.get_json(silent=True) or {}
-    upload_id = (
-        payload.get("upload_id") or request.form.get("upload_id") or ""
-    ).strip()
+    upload_id = (payload.get("upload_id") or request.form.get("upload_id") or "").strip()
     if not upload_id:
         return jsonify({"error": "upload_id is required"}), 400
 
@@ -1747,9 +1644,7 @@ def user_upload_video_footage_complete(tournament_url: str):
         except (TypeError, ValueError):
             return jsonify({"error": "batch_index must be an integer"}), 400
 
-    incoming_dir, field_name = _locate_user_upload_incoming_dir(
-        tournament_url, upload_id, batch_index
-    )
+    incoming_dir, field_name = _locate_user_upload_incoming_dir(tournament_url, upload_id, batch_index)
     if not incoming_dir or not field_name:
         return jsonify({"error": "Upload not found"}), 404
     db.session.remove()
@@ -1770,9 +1665,7 @@ def user_upload_video_footage_complete(tournament_url: str):
 
     filename = meta.get("filename") or "source.webm"
     ext = path.splitext(path.basename(filename))[1].lower() or ".webm"
-    incoming_dir_name = (meta.get("incoming_dir_name") or "").strip() or path.basename(
-        incoming_dir
-    )
+    incoming_dir_name = (meta.get("incoming_dir_name") or "").strip() or path.basename(incoming_dir)
     final_dir = path.join(
         current_app.root_path,
         "../static/uploads/videos",
@@ -1810,15 +1703,11 @@ def user_upload_video_footage_complete(tournament_url: str):
 
     batch_id = (meta.get("batch_id") or "").strip() or upload_id
     try:
-        batch_index = int(
-            meta.get("batch_index") if meta.get("batch_index") is not None else 0
-        )
+        batch_index = int(meta.get("batch_index") if meta.get("batch_index") is not None else 0)
     except (TypeError, ValueError):
         batch_index = 0
     try:
-        batch_total = int(
-            meta.get("batch_total") if meta.get("batch_total") is not None else 1
-        )
+        batch_total = int(meta.get("batch_total") if meta.get("batch_total") is not None else 1)
     except (TypeError, ValueError):
         batch_total = 1
     batch_camera_name = (meta.get("batch_camera_name") or "").strip()
@@ -1901,11 +1790,7 @@ def user_upload_delete_camera(tournament_url: str, camera_uuid: str):
     """TO-only: delete a user-uploaded camera highlight."""
     import os
 
-    cam = (
-        Camera.query.filter_by(uuid=camera_uuid, event=tournament_url)
-        .filter_by(source_type="user_upload")
-        .first()
-    )
+    cam = Camera.query.filter_by(uuid=camera_uuid, event=tournament_url).filter_by(source_type="user_upload").first()
     if not cam:
         return jsonify({"error": "Camera not found"}), 404
 
@@ -1994,9 +1879,7 @@ def update_tournament_settings(tournament_url):
     tournament.location = request.form.get("location", "")
     tournament.about = request.form.get("about", "")
     tournament.head_refs_allowed_list = request.form.get("head_refs_allowed_list", "")
-    tournament.head_refs_allow_reffing_teams = (
-        "head_refs_allow_reffing_teams" in request.form
-    )
+    tournament.head_refs_allow_reffing_teams = "head_refs_allow_reffing_teams" in request.form
     tournament.head_refs_allow_anyone = "head_refs_allow_anyone" in request.form
     tournament.published = "published" in request.form
     tournament.schedule_published = "schedule_published" in request.form
@@ -2008,12 +1891,8 @@ def update_tournament_settings(tournament_url):
         # Legacy combined flag; if provided, acts as default for team/player when
         # more specific checkboxes are absent.
         legacy_reg_open = "registration_open" in request.form
-        rc.team_registration_open = (
-            "team_registration_open" in request.form or legacy_reg_open
-        )
-        rc.player_registration_open = (
-            "player_registration_open" in request.form or legacy_reg_open
-        )
+        rc.team_registration_open = "team_registration_open" in request.form or legacy_reg_open
+        rc.player_registration_open = "player_registration_open" in request.form or legacy_reg_open
         n_max = request.form.get("n_max_teams", "").strip()
         rc.n_max_teams = int(n_max) if n_max else None
         roster = request.form.get("max_team_size_roster", "").strip()
@@ -2025,9 +1904,7 @@ def update_tournament_settings(tournament_url):
             rc.waiver_sha256 = None
 
     if request.form.get("start_date"):
-        tournament.start_date = datetime.strptime(
-            request.form["start_date"], "%Y-%m-%d"
-        )
+        tournament.start_date = datetime.strptime(request.form["start_date"], "%Y-%m-%d")
 
     end_date_val = request.form.get("end_date", "").strip()
     if not end_date_val:
@@ -2044,9 +1921,7 @@ def update_tournament_settings(tournament_url):
 
     db.session.commit()
     return (
-        jsonify(
-            {"success": True, "message": "Tournament settings updated successfully!"}
-        ),
+        jsonify({"success": True, "message": "Tournament settings updated successfully!"}),
         200,
     )
 
@@ -2132,9 +2007,7 @@ def add_match(tournament_url):
             )
     else:
         # For other matches: check uniqueness by (name, event)
-        existing_match = Match.query.filter_by(
-            event=tournament_url, name=match_name
-        ).first()
+        existing_match = Match.query.filter_by(event=tournament_url, name=match_name).first()
         if existing_match:
             return (
                 jsonify(
@@ -2149,9 +2022,7 @@ def add_match(tournament_url):
     # Get stones_per_set for STONES matches (with fallback to deprecated nstonesperset for backward compatibility)
     stones_per_set_value = None
     if set_type == SetType.STONES:
-        stones_per_set_str = request.form.get("stones_per_set") or request.form.get(
-            "nstonesperset"
-        )
+        stones_per_set_str = request.form.get("stones_per_set") or request.form.get("nstonesperset")
         if stones_per_set_str:
             try:
                 stones_per_set_value = int(stones_per_set_str)
@@ -2220,11 +2091,7 @@ def add_match(tournament_url):
 
     # Skip condition only for SAFE and FAST; clear for STATIC, BREAK, and JOIN
     skip_condition_raw = request.form.get("skip_condition", "").strip() or None
-    skip_condition = (
-        skip_condition_raw
-        if schedule_type in (ScheduleType.SAFE, ScheduleType.FAST)
-        else None
-    )
+    skip_condition = skip_condition_raw if schedule_type in (ScheduleType.SAFE, ScheduleType.FAST) else None
 
     match = Match(
         name=match_name,
@@ -2238,9 +2105,7 @@ def add_match(tournament_url):
         set_type=set_type,
         ribbon=ribbon,
         nsets=(
-            int(request.form.get("nsets", 3))
-            if schedule_type not in (ScheduleType.BREAK, ScheduleType.JOIN)
-            else None
+            int(request.form.get("nsets", 3)) if schedule_type not in (ScheduleType.BREAK, ScheduleType.JOIN) else None
         ),
         nominal_length=nominal_length,
         refs=final_refs,
@@ -2259,20 +2124,15 @@ def add_match(tournament_url):
         prev_match_id = request.form.get("previous_match", "")
         if prev_match_id:
             # Update doubly linked list: insert this match after prev_match
-            update_match_previous_link(
-                match, prev_match_id, tournament_url, is_new=True
-            )
+            update_match_previous_link(match, prev_match_id, tournament_url, is_new=True)
         else:
             match.previous_match = None
-        match.nominal_start_time = compute_dynamic_match_nominal_start_time(
-            match, tournament_url
-        )
+        match.nominal_start_time = compute_dynamic_match_nominal_start_time(match, tournament_url)
     else:
         # Static matches can have manual start time
         # Prefer UTC ISO format from client conversion, fallback to datetime-local (assumed server-local)
         if request.form.get("start_time_utc"):
             # Client sent UTC ISO string
-            from app.utils.datetime_helpers import to_aware_utc
 
             utc_str = request.form["start_time_utc"]
             try:
@@ -2283,16 +2143,12 @@ def add_match(tournament_url):
                 if request.form.get("start_time"):
                     from app.utils.datetime_helpers import parse_datetime_local_to_utc
 
-                    match.nominal_start_time = parse_datetime_local_to_utc(
-                        request.form["start_time"]
-                    )
+                    match.nominal_start_time = parse_datetime_local_to_utc(request.form["start_time"])
         elif request.form.get("start_time"):
             # Old format: datetime-local (assumed server-local), convert to UTC
             from app.utils.datetime_helpers import parse_datetime_local_to_utc
 
-            match.nominal_start_time = parse_datetime_local_to_utc(
-                request.form["start_time"]
-            )
+            match.nominal_start_time = parse_datetime_local_to_utc(request.form["start_time"])
 
     # Set initial status: STATIC matches are TIME_FINALIZED, others are NOT_STARTED
     if schedule_type == ScheduleType.STATIC:
@@ -2341,9 +2197,7 @@ def add_field(tournament_url):
     # Store as JSON array
     camera_value = json.dumps(camera_urls) if camera_urls else ""
 
-    field = Field(
-        event=tournament_url, name=request.form["field_name"], camera=camera_value
-    )
+    field = Field(event=tournament_url, name=request.form["field_name"], camera=camera_value)
 
     db.session.add(field)
     db.session.commit()
@@ -2394,12 +2248,8 @@ def update_field(tournament_url):
 
     # Get all matches that reference this field (for both name and camera updates)
     # Use old field name if name changed, otherwise use current name
-    field_name_for_query = (
-        old_field_name if old_field_name != new_field_name else new_field_name
-    )
-    matches_to_update = Match.query.filter_by(
-        event=tournament_url, field=field_name_for_query
-    ).all()
+    field_name_for_query = old_field_name if old_field_name != new_field_name else new_field_name
+    matches_to_update = Match.query.filter_by(event=tournament_url, field=field_name_for_query).all()
 
     # If camera URLs changed, update matches and points that reference this field
     camera_urls_changed = old_camera_urls != camera_urls
@@ -2429,14 +2279,10 @@ def update_field(tournament_url):
                             new_idx_str = old_to_new_index_map[old_idx_str]
                             new_stream_starts[new_idx_str] = start_time
                         # If old index not in map, camera was removed - don't include it
-                    match.camera_stream_starts = (
-                        json.dumps(new_stream_starts) if new_stream_starts else None
-                    )
+                    match.camera_stream_starts = json.dumps(new_stream_starts) if new_stream_starts else None
                     camera_update_count += 1
                 except (json.JSONDecodeError, TypeError) as e:
-                    print(
-                        f"Error updating camera_stream_starts for match {match.uuid}: {e}"
-                    )
+                    print(f"Error updating camera_stream_starts for match {match.uuid}: {e}")
                     # If parsing fails, clear it
                     match.camera_stream_starts = None
 
@@ -2492,9 +2338,7 @@ def update_field(tournament_url):
                     camera_idx_str = str(point.camera_index)
                     if camera_idx_str in stream_starts:
                         stream_start_time = stream_starts[camera_idx_str]
-                        new_timestamp = calculate_stream_timestamp(
-                            point.stamp, stream_start_time
-                        )
+                        new_timestamp = calculate_stream_timestamp(point.stamp, stream_start_time)
                         if new_timestamp is not None:
                             point.stream_timestamp = new_timestamp
                             point_update_count += 1
@@ -2509,21 +2353,15 @@ def update_field(tournament_url):
     # Generate success message
     update_messages = []
     if name_update_count > 0:
-        update_messages.append(
-            f"Updated {name_update_count} match(es) to use the new field name"
-        )
+        update_messages.append(f"Updated {name_update_count} match(es) to use the new field name")
     if camera_urls_changed:
         if camera_update_count > 0:
-            update_messages.append(
-                f"Updated camera stream data for {camera_update_count} match(es)"
-            )
+            update_messages.append(f"Updated camera stream data for {camera_update_count} match(es)")
         if point_update_count > 0:
-            update_messages.append(
-                f"Updated camera indices for {point_update_count} point(s)"
-            )
+            update_messages.append(f"Updated camera indices for {point_update_count} point(s)")
 
     msg = (
-        f'Field updated successfully! {" ".join(update_messages)}.'
+        f"Field updated successfully! {' '.join(update_messages)}."
         if update_messages
         else "Field updated successfully!"
     )
@@ -2657,9 +2495,7 @@ def update_match(tournament_url):
         ScheduleType.JOIN: (ScheduleType.JOIN,),
     }
     current_schedule_type = match.schedule_type
-    allowed = _ALLOWED_SCHEDULE_TYPE_TRANSITIONS.get(
-        current_schedule_type, (current_schedule_type,)
-    )
+    allowed = _ALLOWED_SCHEDULE_TYPE_TRANSITIONS.get(current_schedule_type, (current_schedule_type,))
     if schedule_type not in allowed:
         return (
             jsonify(
@@ -2716,9 +2552,7 @@ def update_match(tournament_url):
                 )
         else:
             # For other matches: check uniqueness by (name, event)
-            existing_match = Match.query.filter_by(
-                event=tournament_url, name=new_match_name
-            ).first()
+            existing_match = Match.query.filter_by(event=tournament_url, name=new_match_name).first()
             if existing_match and existing_match.uuid != match.uuid:
                 return (
                     jsonify(
@@ -2805,9 +2639,7 @@ def update_match(tournament_url):
 
     # Update stones_per_set for STONES matches (with fallback to deprecated nstonesperset for backward compatibility)
     if set_type == SetType.STONES:
-        stones_per_set_str = request.form.get("stones_per_set") or request.form.get(
-            "nstonesperset"
-        )
+        stones_per_set_str = request.form.get("stones_per_set") or request.form.get("nstonesperset")
         if stones_per_set_str:
             try:
                 match.stones_per_set = int(stones_per_set_str)
@@ -2824,21 +2656,13 @@ def update_match(tournament_url):
     if schedule_type == ScheduleType.JOIN:
         match.nominal_length = 0
     elif schedule_type == ScheduleType.BREAK:
-        match.nominal_length = int(
-            request.form.get("length", match.nominal_length or 60)
-        )
+        match.nominal_length = int(request.form.get("length", match.nominal_length or 60))
     else:
-        match.nominal_length = int(
-            request.form.get("length", match.nominal_length or 60)
-        )
+        match.nominal_length = int(request.form.get("length", match.nominal_length or 60))
 
     # Update skip_condition (only for SAFE, FAST; clear for STATIC, BREAK, and JOIN)
     skip_condition_raw = request.form.get("skip_condition", "").strip() or None
-    match.skip_condition = (
-        skip_condition_raw
-        if schedule_type in (ScheduleType.SAFE, ScheduleType.FAST)
-        else None
-    )
+    match.skip_condition = skip_condition_raw if schedule_type in (ScheduleType.SAFE, ScheduleType.FAST) else None
 
     # If refs_initial changed, clear refs and repopulate with explicit team IDs and resolved tag references
     old_refs_initial = match.refs_initial or ""
@@ -2875,22 +2699,16 @@ def update_match(tournament_url):
         prev_match_id = request.form.get("previous_match", "")
         if prev_match_id:
             # Update doubly linked list: insert this match after prev_match
-            update_match_previous_link(
-                match, prev_match_id, tournament_url, is_new=False
-            )
+            update_match_previous_link(match, prev_match_id, tournament_url, is_new=False)
         else:
             # Clear previous_match and update old previous's next_match if needed
             old_prev = match.previous_match
             match.previous_match = None
             if old_prev:
-                old_prev_m = Match.query.filter_by(
-                    uuid=old_prev, event=tournament_url
-                ).first()
+                old_prev_m = Match.query.filter_by(uuid=old_prev, event=tournament_url).first()
                 if old_prev_m and old_prev_m.next_match == match.uuid:
                     old_prev_m.next_match = None
-        match.nominal_start_time = compute_dynamic_match_nominal_start_time(
-            match, tournament_url
-        )
+        match.nominal_start_time = compute_dynamic_match_nominal_start_time(match, tournament_url)
     else:
         # Static matches can have manual start time
         match.previous_match = None
@@ -2906,18 +2724,14 @@ def update_match(tournament_url):
                 if request.form.get("start_time"):
                     from app.utils.datetime_helpers import parse_datetime_local_to_utc
 
-                    match.nominal_start_time = parse_datetime_local_to_utc(
-                        request.form["start_time"]
-                    )
+                    match.nominal_start_time = parse_datetime_local_to_utc(request.form["start_time"])
                 else:
                     match.nominal_start_time = None
         elif request.form.get("start_time"):
             # Old format: datetime-local (assumed server-local), convert to UTC
             from app.utils.datetime_helpers import parse_datetime_local_to_utc
 
-            match.nominal_start_time = parse_datetime_local_to_utc(
-                request.form["start_time"]
-            )
+            match.nominal_start_time = parse_datetime_local_to_utc(request.form["start_time"])
         else:
             match.nominal_start_time = None
 
@@ -2954,9 +2768,7 @@ def update_all_references(tournament_url):
     from app.utils.dependencies import apply_match_dependencies
 
     # Get all completed matches (have a winner; skipped matches are excluded)
-    completed_matches = Match.query.filter_by(
-        event=tournament_url, status=MatchStatus.COMPLETED
-    ).all()
+    completed_matches = Match.query.filter_by(event=tournament_url, status=MatchStatus.COMPLETED).all()
 
     updated_count = 0
     for match in completed_matches:
@@ -2996,11 +2808,7 @@ def push_back_matches(tournament_url):
 
     non_started_matches = (
         Match.query.filter_by(event=tournament_url)
-        .filter(
-            ~Match.status.in_(
-                [MatchStatus.IN_PROGRESS, MatchStatus.COMPLETED, MatchStatus.SKIPPED]
-            )
-        )
+        .filter(~Match.status.in_([MatchStatus.IN_PROGRESS, MatchStatus.COMPLETED, MatchStatus.SKIPPED]))
         .all()
     )
 
@@ -3008,23 +2816,17 @@ def push_back_matches(tournament_url):
     for match in non_started_matches:
         # Push back nominal_start_time if it exists
         if match.nominal_start_time:
-            match.nominal_start_time = match.nominal_start_time + timedelta(
-                minutes=minutes
-            )
+            match.nominal_start_time = match.nominal_start_time + timedelta(minutes=minutes)
             updated_count += 1
 
         # Also push back confirmed_start_time if it exists (even when start time is already finalized)
         if match.confirmed_start_time:
-            match.confirmed_start_time = match.confirmed_start_time + timedelta(
-                minutes=minutes
-            )
+            match.confirmed_start_time = match.confirmed_start_time + timedelta(minutes=minutes)
 
     db.session.commit()
 
     if updated_count > 0:
-        msg = (
-            f"Pushed back {updated_count} non-started match(es) by {minutes} minute(s)"
-        )
+        msg = f"Pushed back {updated_count} non-started match(es) by {minutes} minute(s)"
     else:
         msg = "No matches were updated. All matches have already started or been completed."
     return jsonify({"success": True, "message": msg}), 200
@@ -3059,11 +2861,7 @@ def tournament_autocomplete(tournament_url):
             )
 
     # Tags for this tournament (by name, surfaced as tag::TAG_NAME values)
-    tags = (
-        Tag.query.filter_by(event=tournament_url).all()
-        if "Tag" in globals() or True
-        else []
-    )
+    tags = Tag.query.filter_by(event=tournament_url).all() if "Tag" in globals() or True else []
     try:
         tags = Tag.query.filter_by(event=tournament_url).all()
     except Exception:
@@ -3072,9 +2870,7 @@ def tournament_autocomplete(tournament_url):
         name = (t.name or "").strip()
         if not query or query in name.lower():
             tag_ref = f"tag::{name}"
-            suggestions.append(
-                {"type": "tag", "value": tag_ref, "label": tag_ref, "id": t.id}
-            )
+            suggestions.append({"type": "tag", "value": tag_ref, "label": tag_ref, "id": t.id})
 
     # Matches in this tournament (by name)
     # Exclude BREAK and JOIN matches entirely
@@ -3190,9 +2986,7 @@ def validate_dsl(tournament_url):
     expression = data.get("expression", "").strip()
 
     if not expression:
-        return jsonify(
-            {"valid": True, "value": None, "simplified": None, "error": None}
-        )
+        return jsonify({"valid": True, "value": None, "simplified": None, "error": None})
 
     try:
         parser = get_parser(tournament_url)
@@ -3216,9 +3010,7 @@ def validate_dsl(tournament_url):
             }
         )
     except DSLValidationError as e:
-        return jsonify(
-            {"valid": False, "value": None, "simplified": None, "error": str(e)}
-        )
+        return jsonify({"valid": False, "value": None, "simplified": None, "error": str(e)})
     except Exception as e:
         return jsonify(
             {
@@ -3266,8 +3058,6 @@ def delete_tournament(tournament_url):
         MatchNote,
         Match,
         HeadRef,
-        PlayerRegistration,
-        TeamRegistration,
         Field,
         Tag,
         SideComp,
@@ -3282,35 +3072,23 @@ def delete_tournament(tournament_url):
     side_comps = SideComp.query.filter_by(event=tournament_url).all()
     side_comp_ids = [sc.id for sc in side_comps]
     if side_comp_ids:
-        SideCompResult.query.filter(SideCompResult.comp.in_(side_comp_ids)).delete(
-            synchronize_session=False
-        )
+        SideCompResult.query.filter(SideCompResult.comp.in_(side_comp_ids)).delete(synchronize_session=False)
 
     SideComp.query.filter_by(event=tournament_url).delete(synchronize_session=False)
 
     matches = Match.query.filter_by(event=tournament_url).all()
     match_uuids = [m.uuid for m in matches]
     if match_uuids:
-        Point.query.filter(Point.match.in_(match_uuids)).delete(
-            synchronize_session=False
-        )
-        MatchNote.query.filter(MatchNote.match.in_(match_uuids)).delete(
-            synchronize_session=False
-        )
+        Point.query.filter(Point.match.in_(match_uuids)).delete(synchronize_session=False)
+        MatchNote.query.filter(MatchNote.match.in_(match_uuids)).delete(synchronize_session=False)
     Match.query.filter_by(event=tournament_url).delete(synchronize_session=False)
     # PenaltyType after MatchNote (notes reference penalty_type_id)
     # Only delete event-level penalty types; league events use league's penalty types
     if not tournament.league_id:
-        PenaltyType.query.filter_by(event=tournament_url).delete(
-            synchronize_session=False
-        )
+        PenaltyType.query.filter_by(event=tournament_url).delete(synchronize_session=False)
     HeadRef.query.filter_by(event=tournament_url).delete(synchronize_session=False)
-    PlayerRegistration.query.filter_by(event=tournament_url).delete(
-        synchronize_session=False
-    )
-    TeamRegistration.query.filter_by(event=tournament_url).delete(
-        synchronize_session=False
-    )
+    PlayerRegistration.query.filter_by(event=tournament_url).delete(synchronize_session=False)
+    TeamRegistration.query.filter_by(event=tournament_url).delete(synchronize_session=False)
     Field.query.filter_by(event=tournament_url).delete(synchronize_session=False)
     Tag.query.filter_by(event=tournament_url).delete(synchronize_session=False)
     TO.query.filter_by(event=tournament_url).delete(synchronize_session=False)
@@ -3370,31 +3148,25 @@ def add_to(tournament_url):
         return jsonify({"success": False, "error": "Invalid user ID or type"}), 400
 
     # Verify the user exists
-    from models import Player, Team
+    from models import Player
 
     if user_type == "player":
         user = Player.query.get(user_id)
         if not user:
             return (
-                jsonify(
-                    {"success": False, "error": f'Player with ID "{user_id}" not found'}
-                ),
+                jsonify({"success": False, "error": f'Player with ID "{user_id}" not found'}),
                 404,
             )
     else:  # team
         user = Team.query.get(user_id)
         if not user:
             return (
-                jsonify(
-                    {"success": False, "error": f'Team with ID "{user_id}" not found'}
-                ),
+                jsonify({"success": False, "error": f'Team with ID "{user_id}" not found'}),
                 404,
             )
 
     # Check if TO already exists
-    existing_to = TO.query.filter_by(
-        user_id=user_id, user_type=user_type, event=tournament_url
-    ).first()
+    existing_to = TO.query.filter_by(user_id=user_id, user_type=user_type, event=tournament_url).first()
 
     if existing_to:
         return (
@@ -3414,9 +3186,7 @@ def add_to(tournament_url):
 
     user_name = user.name if user else user_id
     return (
-        jsonify(
-            {"success": True, "message": f"Successfully added {user_name} as a TO"}
-        ),
+        jsonify({"success": True, "message": f"Successfully added {user_name} as a TO"}),
         200,
     )
 
@@ -3461,17 +3231,14 @@ def remove_to(tournament_url):
         return jsonify({"success": False, "error": "Invalid TO entry"}), 400
 
     # Prevent removing yourself (optional - you might want to allow this)
-    if (
-        to_to_remove.user_id == current_user.id
-        and to_to_remove.user_type == current_user.__class__.__name__.lower()
-    ):
+    if to_to_remove.user_id == current_user.id and to_to_remove.user_type == current_user.__class__.__name__.lower():
         return (
             jsonify({"success": False, "error": "You cannot remove yourself as a TO"}),
             400,
         )
 
     # Get user info for flash message
-    from models import Player, Team
+    from models import Player
 
     if to_to_remove.user_type == "player":
         user = Player.query.get(to_to_remove.user_id)
@@ -3484,8 +3251,6 @@ def remove_to(tournament_url):
     db.session.commit()
 
     return (
-        jsonify(
-            {"success": True, "message": f"Successfully removed {user_name} as a TO"}
-        ),
+        jsonify({"success": True, "message": f"Successfully removed {user_name} as a TO"}),
         200,
     )

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 
 from app.models.base import db
 from app.models.constants import (
@@ -62,18 +61,10 @@ class Tournament(db.Model):
     max_team_size_field = db.Column(db.Integer)  # Maximum players on field at once
     max_field_size = db.Column(db.Integer)
     schedule_published = db.Column(db.Boolean, default=False)
-    league_id = db.Column(
-        db.String(URL_SLUG_LEN), db.ForeignKey("leagues.url"), nullable=True
-    )
-    head_refs_allowed_list = db.Column(
-        db.Text
-    )  # comma-separated list of allowed usernames
-    head_refs_allow_reffing_teams = db.Column(
-        db.Boolean, default=False
-    )  # allow reffing teams and their members
-    head_refs_allow_anyone = db.Column(
-        db.Boolean, default=False
-    )  # allow anyone registered
+    league_id = db.Column(db.String(URL_SLUG_LEN), db.ForeignKey("leagues.url"), nullable=True)
+    head_refs_allowed_list = db.Column(db.Text)  # comma-separated list of allowed usernames
+    head_refs_allow_reffing_teams = db.Column(db.Boolean, default=False)  # allow reffing teams and their members
+    head_refs_allow_anyone = db.Column(db.Boolean, default=False)  # allow anyone registered
     bracket = db.Column(db.Text)  # TOML string defining bracket visualizations
 
     # Per-event fields (every tournament)
@@ -120,15 +111,9 @@ class TO(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.String(USER_ID_LEN), nullable=False)  # Player or Team ID
-    user_type = db.Column(
-        db.String(SHORT_CODE_LEN), nullable=False
-    )  # 'player' or 'team'
-    event = db.Column(
-        db.String(URL_SLUG_LEN), db.ForeignKey("tournaments.url"), nullable=True
-    )
-    league_id = db.Column(
-        db.String(URL_SLUG_LEN), db.ForeignKey("leagues.url"), nullable=True
-    )
+    user_type = db.Column(db.String(SHORT_CODE_LEN), nullable=False)  # 'player' or 'team'
+    event = db.Column(db.String(URL_SLUG_LEN), db.ForeignKey("tournaments.url"), nullable=True)
+    league_id = db.Column(db.String(URL_SLUG_LEN), db.ForeignKey("leagues.url"), nullable=True)
 
 
 class Field(db.Model):
@@ -145,13 +130,9 @@ class Field(db.Model):
     __tablename__ = "fields"
 
     id = db.Column(db.Integer, primary_key=True)
-    event = db.Column(
-        db.String(URL_SLUG_LEN), db.ForeignKey("tournaments.url"), nullable=False
-    )
+    event = db.Column(db.String(URL_SLUG_LEN), db.ForeignKey("tournaments.url"), nullable=False)
     name = db.Column(db.String(SHORT_NAME_LEN), nullable=False)
-    camera = db.Column(
-        db.Text
-    )  # JSON array of camera URLs (or single URL for backward compatibility)
+    camera = db.Column(db.Text)  # JSON array of camera URLs (or single URL for backward compatibility)
 
 
 class Tag(db.Model):
@@ -170,8 +151,6 @@ class Tag(db.Model):
     __tablename__ = "tags"
 
     id = db.Column(db.Integer, primary_key=True)
-    event = db.Column(
-        db.String(URL_SLUG_LEN), db.ForeignKey("tournaments.url"), nullable=False
-    )
+    event = db.Column(db.String(URL_SLUG_LEN), db.ForeignKey("tournaments.url"), nullable=False)
     name = db.Column(db.String(SHORT_NAME_LEN), nullable=False)
     team = db.Column(db.String(USER_ID_LEN), db.ForeignKey("teams.id"), nullable=True)

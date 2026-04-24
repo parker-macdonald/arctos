@@ -59,22 +59,12 @@ def get_player_display_from_registration(player, registration) -> str:
         Formatted display string (see :func:`format_jersey_display`).
     """
     fallback = getattr(player, "name", "") or getattr(player, "id", "") or ""
-    jersey_name = (
-        getattr(registration, "jersey_name", None) if registration is not None else None
-    )
-    jersey_number = (
-        getattr(registration, "jersey_number", None)
-        if registration is not None
-        else None
-    )
-    return format_jersey_display(
-        jersey_name=jersey_name, jersey_number=jersey_number, fallback=fallback
-    )
+    jersey_name = getattr(registration, "jersey_name", None) if registration is not None else None
+    jersey_number = getattr(registration, "jersey_number", None) if registration is not None else None
+    return format_jersey_display(jersey_name=jersey_name, jersey_number=jersey_number, fallback=fallback)
 
 
-def get_player_display_name(
-    player_id: str, tournament_url: str
-) -> Tuple[Optional[str], Optional[str]]:
+def get_player_display_name(player_id: str, tournament_url: str) -> Tuple[Optional[str], Optional[str]]:
     """Look up a player's canonical name and tournament display string.
 
     Display string priority:
@@ -107,9 +97,7 @@ def get_player_display_name(
     player_display: Optional[str] = None
 
     if tournament_url:
-        reg = PlayerRegistration.query.filter_by(
-            event=tournament_url, player=player_id
-        ).first()
+        reg = PlayerRegistration.query.filter_by(event=tournament_url, player=player_id).first()
         if reg:
             player_display = format_jersey_display(
                 jersey_name=getattr(reg, "jersey_name", None),

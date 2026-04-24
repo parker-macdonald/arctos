@@ -13,9 +13,7 @@ from typing import Any, Dict, Optional, Tuple
 from flask import Response, jsonify
 
 
-def json_success(
-    data: Optional[Dict[str, Any]] = None, status_code: int = 200
-) -> Tuple[Response, int]:
+def json_success(data: Optional[Dict[str, Any]] = None, status_code: int = 200) -> Tuple[Response, int]:
     """Return a ``{"success": true, ...}`` JSON response.
 
     Args:
@@ -32,9 +30,7 @@ def json_success(
     return jsonify(payload), status_code
 
 
-def json_error(
-    message: str, status_code: int = 200, **extra: Any
-) -> Tuple[Response, int]:
+def json_error(message: str, status_code: int = 200, **extra: Any) -> Tuple[Response, int]:
     """Return a ``{"success": false, "error": "..."}`` JSON response.
 
     Defaults to HTTP 200 to preserve historical API compatibility.  Pass an

@@ -2,14 +2,12 @@
 
 import pytest
 
-from models import Match, Point, db
+from models import db
 from tests.utils import login_as
 
 
 @pytest.mark.integration
-def test_update_set_missing_fields_returns_400(
-    app, client, tournament, head_ref_player
-):
+def test_update_set_missing_fields_returns_400(app, client, tournament, head_ref_player):
     """update-set without a point_id returns HTTP 400 with an error message."""
     with app.app_context():
         t = db.session.merge(tournament)

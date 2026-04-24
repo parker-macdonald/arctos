@@ -46,14 +46,10 @@ class Camera(db.Model):
 
     __tablename__ = "cameras"
 
-    uuid = db.Column(
-        db.String(UUID_LEN), primary_key=True, default=lambda: str(uuid.uuid4())
-    )
+    uuid = db.Column(db.String(UUID_LEN), primary_key=True, default=lambda: str(uuid.uuid4()))
 
     # Camera belongs to a single match.
-    match_uuid = db.Column(
-        db.String(UUID_LEN), db.ForeignKey("matches.uuid"), nullable=False, index=True
-    )
+    match_uuid = db.Column(db.String(UUID_LEN), db.ForeignKey("matches.uuid"), nullable=False, index=True)
 
     # Convenience fields to avoid joins for UI / filtering.
     event = db.Column(
@@ -68,28 +64,18 @@ class Camera(db.Model):
     name = db.Column(db.String(LONG_NAME_LEN), nullable=False)
 
     # Upload source tracking.
-    source_type = db.Column(
-        db.String(SHORT_LABEL_LEN), nullable=False, default="recording"
-    )
+    source_type = db.Column(db.String(SHORT_LABEL_LEN), nullable=False, default="recording")
 
     uploaded_by_user_id = db.Column(db.String(USER_ID_LEN), nullable=True)
-    uploaded_by_user_type = db.Column(
-        db.String(SHORT_CODE_LEN), nullable=True
-    )  # e.g. "player" or "team"
+    uploaded_by_user_type = db.Column(db.String(SHORT_CODE_LEN), nullable=True)  # e.g. "player" or "team"
 
     # Output identity.
-    status = db.Column(
-        db.String(SHORT_LABEL_LEN), nullable=False, default="UPLOADING"
-    )  # UPLOADING|SUCCESS|FAILED
+    status = db.Column(db.String(SHORT_LABEL_LEN), nullable=False, default="UPLOADING")  # UPLOADING|SUCCESS|FAILED
     link = db.Column(db.String(LONG_URL_LEN))  # YouTube URL/id when SUCCESS
 
     # Local/static/S3 key for FAILED downloads (and possibly for in-progress uploads).
     file = db.Column(db.String(LONG_URL_LEN))
 
     # JSON arrays stored as strings (SQLite-safe). Keep format consistent with frontend expectations.
-    time_world = db.Column(
-        db.Text
-    )  # JSON array of world timestamps; one per session/clip boundary
-    time_video = db.Column(
-        db.Text
-    )  # JSON array of float seconds; one per session/clip boundary
+    time_world = db.Column(db.Text)  # JSON array of world timestamps; one per session/clip boundary
+    time_video = db.Column(db.Text)  # JSON array of float seconds; one per session/clip boundary

@@ -116,7 +116,7 @@ def write_toml_schedule(
         for tag in tags:
             lines.append("[[tags]]")
             if "id" in tag and tag["id"] is not None:
-                lines.append(f'id = {tag["id"]}')
+                lines.append(f"id = {tag['id']}")
             if "name" in tag and tag["name"]:
                 lines.append(f'name = "{_escape_toml_string(tag["name"])}"')
             if "team" in tag and tag["team"]:
@@ -129,7 +129,7 @@ def write_toml_schedule(
         for field in fields:
             lines.append("[[fields]]")
             if "id" in field and field["id"] is not None:
-                lines.append(f'id = {field["id"]}')
+                lines.append(f"id = {field['id']}")
             if "name" in field and field["name"]:
                 lines.append(f'name = "{_escape_toml_string(field["name"])}"')
             if "camera" in field and field["camera"]:
@@ -160,9 +160,7 @@ def write_toml_schedule(
                 "skip_condition",
             ]:
                 if field_name in match and match[field_name]:
-                    lines.append(
-                        f'{field_name} = "{_escape_toml_string(str(match[field_name]))}"'
-                    )
+                    lines.append(f'{field_name} = "{_escape_toml_string(str(match[field_name]))}"')
 
             # Datetime
             if "nominal_start_time" in match and match["nominal_start_time"]:
@@ -190,9 +188,7 @@ def write_toml_schedule(
             # Relationship references - only include if present
             for field_name in ["previous_match", "next_match"]:
                 if field_name in match and match[field_name]:
-                    lines.append(
-                        f'{field_name} = "{_escape_toml_string(match[field_name])}"'
-                    )
+                    lines.append(f'{field_name} = "{_escape_toml_string(match[field_name])}"')
 
             lines.append("")
 

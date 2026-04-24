@@ -20,7 +20,6 @@ import mimetypes
 import os
 import shutil
 from dataclasses import dataclass
-from datetime import datetime
 from os import path
 from typing import Optional
 
@@ -118,11 +117,7 @@ def _video_file_abs_path(camera: Camera) -> str:
 
 
 def _recording_artifact_policy() -> str:
-    return (
-        str(current_app.config.get("RECORDING_ARTIFACTS_AFTER_UPLOAD") or "delete")
-        .strip()
-        .lower()
-    )
+    return str(current_app.config.get("RECORDING_ARTIFACTS_AFTER_UPLOAD") or "delete").strip().lower()
 
 
 def _recording_artifact_dir_abs(camera: Camera) -> str:
@@ -242,9 +237,7 @@ def _cleanup_recording_artifacts_after_success(camera: Camera) -> None:
     )
 
 
-def _team_label_for_youtube_title(
-    tournament_url: str, team_id: str | None, fallback: str
-) -> str:
+def _team_label_for_youtube_title(tournament_url: str, team_id: str | None, fallback: str) -> str:
     """Prefer tournament/league registration pseudonym; else team account name; else id."""
     if not team_id:
         return fallback
@@ -277,9 +270,7 @@ def _build_camera_title(camera: Camera) -> str:
     return f"[{event_name}] {match.name}: {t1} vs {t2} ({camera.name} on {field_name})"
 
 
-def _upload_failed_source_to_s3(
-    camera: Camera, file_path_abs: str, content_type: str
-) -> None:
+def _upload_failed_source_to_s3(camera: Camera, file_path_abs: str, content_type: str) -> None:
     """
     Best-effort fallback: upload source file to S3 only after YouTube failure.
     If successful, rewrite `camera.file` to the S3 key so API can serve presigned downloads.
@@ -405,9 +396,7 @@ def _youtube_upload_resumable(
                 start = end + 1
                 continue
 
-            raise RuntimeError(
-                f"YouTube upload failed: {resp.status_code} {resp.text[:300]}"
-            )
+            raise RuntimeError(f"YouTube upload failed: {resp.status_code} {resp.text[:300]}")
 
     raise RuntimeError("YouTube upload ended without success")
 
@@ -422,9 +411,7 @@ def upload_camera_to_youtube(camera_uuid: str) -> None:
     cfg = _get_config()
     camera: Camera = Camera.query.filter_by(uuid=camera_uuid).first()
     if not camera:
-        current_app.logger.warning(
-            "youtube_upload: camera not found uuid=%s", camera_uuid
-        )
+        current_app.logger.warning("youtube_upload: camera not found uuid=%s", camera_uuid)
         return
 
     if camera.status != "UPLOADING":
@@ -505,9 +492,7 @@ def upload_camera_to_youtube(camera_uuid: str) -> None:
         except Exception:
             db.session.rollback()
             raise
-        current_app.logger.exception(
-            "youtube_upload: OAuth/init/upload failed camera uuid=%s", camera_uuid
-        )
+        current_app.logger.exception("youtube_upload: OAuth/init/upload failed camera uuid=%s", camera_uuid)
         return
 
     # SUCCESS
