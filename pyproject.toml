@@ -28,3 +28,8 @@ dependencies = [
     "werkzeug==3.1.4",
     "wtforms==3.2.1",
 ]
+
+[[tool.uv.index]]
+name = "pypi"
+url = "https://pypi.org/simple"
+default = true
