@@ -25,9 +25,7 @@ def main() -> None:
     Raises:
         SystemExit: On invalid arguments or when the account is not found.
     """
-    parser = argparse.ArgumentParser(
-        description="Set a user's password to a random value and print it."
-    )
+    parser = argparse.ArgumentParser(description="Set a user's password to a random value and print it.")
     parser.add_argument(
         "username",
         help="Player or team username (id)",
@@ -47,9 +45,7 @@ def main() -> None:
         if not user:
             user = Team.query.filter_by(id=username).first()
         if not user:
-            print(
-                f"Error: no player or team found with id '{username}'", file=sys.stderr
-            )
+            print(f"Error: no player or team found with id '{username}'", file=sys.stderr)
             sys.exit(1)
         password = secrets.token_urlsafe(16)
         user.set_password(password)

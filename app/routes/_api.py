@@ -20,7 +20,6 @@ from app.utils.helpers import (
     can_head_ref_match,
     resolve_team_name_to_id,
     resolve_tag_to_team,
-    DEFAULT_PENALTY_COLORS,
     get_next_penalty_color,
     get_registrable_config,
 )
@@ -252,10 +251,7 @@ def register():
             ),
             400,
         )
-    if (
-        Player.query.filter_by(id=username).first()
-        or Team.query.filter_by(id=username).first()
-    ):
+    if Player.query.filter_by(id=username).first() or Team.query.filter_by(id=username).first():
         return jsonify({"error": "Username already exists"}), 409
     if user_type == "player":
         user = Player(id=username, name=name)
@@ -281,10 +277,7 @@ def check_username():
                 "message": "Username must be URL-safe: letters, numbers, hyphens, underscores. Cannot start or end with hyphen or underscore.",
             }
         )
-    if (
-        Player.query.filter_by(id=username).first()
-        or Team.query.filter_by(id=username).first()
-    ):
+    if Player.query.filter_by(id=username).first() or Team.query.filter_by(id=username).first():
         return jsonify({"available": False, "message": "Username already exists"})
     return jsonify({"available": True, "message": "Username is available"})
 
@@ -389,9 +382,7 @@ def google_complete_profile_api():
                 name=display_name,
                 google_id=oauth_data["google_id"],
                 email=email,
-                profile_photo=(
-                    None if username.lower() not in ("jeb", "jebediah") else "jeb.png"
-                ),
+                profile_photo=(None if username.lower() not in ("jeb", "jebediah") else "jeb.png"),
             )
         else:
             user = Team(
@@ -399,9 +390,7 @@ def google_complete_profile_api():
                 name=display_name,
                 google_id=oauth_data["google_id"],
                 email=email,
-                profile_photo=(
-                    None if username.lower() not in ("jeb", "jebediah") else "jeb.png"
-                ),
+                profile_photo=(None if username.lower() not in ("jeb", "jebediah") else "jeb.png"),
             )
         db.session.add(user)
         db.session.commit()
@@ -439,9 +428,7 @@ def _tournament_to_dict(t) -> dict:
     player_reg_open = False
     if cfg:
         team_reg_open = getattr(cfg, "team_registration_open", cfg.registration_open)
-        player_reg_open = getattr(
-            cfg, "player_registration_open", cfg.registration_open
-        )
+        player_reg_open = getattr(cfg, "player_registration_open", cfg.registration_open)
 
     out = {
         "url": t.url,
@@ -460,17 +447,11 @@ def _tournament_to_dict(t) -> dict:
         "about": getattr(t, "about", None),
         "team_reg_fee": cfg.team_reg_fee if cfg else None,
         "player_reg_fee": cfg.player_reg_fee if cfg else None,
-        "max_team_size_roster": (
-            getattr(cfg, "max_team_size_roster", None) if cfg else None
-        ),
-        "max_team_size_field": (
-            getattr(cfg, "max_team_size_field", None) if cfg else None
-        ),
+        "max_team_size_roster": (getattr(cfg, "max_team_size_roster", None) if cfg else None),
+        "max_team_size_field": (getattr(cfg, "max_team_size_field", None) if cfg else None),
         "terms_link": cfg.terms_link if cfg else None,
         "head_refs_allowed_list": getattr(t, "head_refs_allowed_list", None),
-        "head_refs_allow_reffing_teams": bool(
-            getattr(t, "head_refs_allow_reffing_teams", False)
-        ),
+        "head_refs_allow_reffing_teams": bool(getattr(t, "head_refs_allow_reffing_teams", False)),
         "head_refs_allow_anyone": bool(getattr(t, "head_refs_allow_anyone", False)),
     }
     if cfg:
@@ -487,9 +468,7 @@ def _tournament_to_dict(t) -> dict:
         if league and league.registrable_config:
             rc = league.registrable_config
             l_team_open = getattr(rc, "team_registration_open", rc.registration_open)
-            l_player_open = getattr(
-                rc, "player_registration_open", rc.registration_open
-            )
+            l_player_open = getattr(rc, "player_registration_open", rc.registration_open)
             out["league"] = {
                 "league_url": league.url,
                 "name": league.name,
@@ -572,9 +551,7 @@ def _league_to_dict(league) -> dict:
         "published": getattr(league, "published", False),
         "terms_link": rc.terms_link if rc else None,
         "n_max_teams": getattr(rc, "n_max_teams", None) if rc else None,
-        "max_team_size_roster": (
-            getattr(rc, "max_team_size_roster", None) if rc else None
-        ),
+        "max_team_size_roster": (getattr(rc, "max_team_size_roster", None) if rc else None),
         "max_team_size_field": getattr(rc, "max_team_size_field", None) if rc else None,
         "waiver_required": bool(wf),
         "waiver_filepath": wf,
@@ -594,9 +571,7 @@ def leagues_list():
     if leagues:
         league_ids = [l.url for l in leagues]
         counts = (
-            db.session.query(
-                TeamRegistration.league_id, func.count(TeamRegistration.id)
-            )
+            db.session.query(TeamRegistration.league_id, func.count(TeamRegistration.id))
             .filter(TeamRegistration.status == TeamRegistrationStatus.CONFIRMED)
             .filter(TeamRegistration.league_id.in_(league_ids))
             .group_by(TeamRegistration.league_id)
@@ -614,36 +589,24 @@ def leagues_list():
         for l in leagues:
             reg = None
             if is_team(current_user):
-                reg = TeamRegistration.query.filter_by(
-                    league_id=l.url, team=current_user.id
-                ).first()
+                reg = TeamRegistration.query.filter_by(league_id=l.url, team=current_user.id).first()
                 if reg:
                     user_reg_status[l.url] = {
                         "type": "team",
-                        "status": (
-                            reg.status.value
-                            if hasattr(reg.status, "value")
-                            else str(reg.status or "")
-                        ),
+                        "status": (reg.status.value if hasattr(reg.status, "value") else str(reg.status or "")),
                         "paid": bool(reg.paid),
                         "amount_paid": reg.amount_paid or 0.0,
                         "waiver_required": False,
                         "waiver_status": None,
                     }
             elif is_player(current_user):
-                reg = PlayerRegistration.query.filter_by(
-                    league_id=l.url, player=current_user.id
-                ).first()
+                reg = PlayerRegistration.query.filter_by(league_id=l.url, player=current_user.id).first()
                 if reg:
                     rc = l.registrable_config
                     w = _player_reg_waiver_api(reg, rc)
                     user_reg_status[l.url] = {
                         "type": "player",
-                        "status": (
-                            reg.status.value
-                            if hasattr(reg.status, "value")
-                            else str(reg.status or "")
-                        ),
+                        "status": (reg.status.value if hasattr(reg.status, "value") else str(reg.status or "")),
                         "paid": bool(reg.paid),
                         "amount_paid": reg.amount_paid or 0.0,
                         "waiver_required": w["waiver_required"],
@@ -699,11 +662,7 @@ def league_detail(league_url):
         return jsonify({"error": "Not found" if err == 404 else "Forbidden"}), err
 
     # Tournaments in this league
-    tournaments_in_league = (
-        Tournament.query.filter_by(league_id=league_url)
-        .order_by(Tournament.start_date)
-        .all()
-    )
+    tournaments_in_league = Tournament.query.filter_by(league_id=league_url).order_by(Tournament.start_date).all()
     events = [_tournament_to_dict(t) for t in tournaments_in_league]
 
     # Create a simple object with league_id for resolver
@@ -716,9 +675,7 @@ def league_detail(league_url):
     team_regs = team_registrations_for_tournament(ctx)
     teams_with_counts = []
     for team_reg in team_regs:
-        prs = player_registrations_for_tournament(
-            ctx, team_id=team_reg.team, statuses=[RegistrationStatus.CONFIRMED]
-        )
+        prs = player_registrations_for_tournament(ctx, team_id=team_reg.team, statuses=[RegistrationStatus.CONFIRMED])
         n = len(prs)
         team = Team.query.get(team_reg.team)
         teams_with_counts.append(
@@ -732,9 +689,7 @@ def league_detail(league_url):
             }
         )
     unattached = []
-    for pr in player_registrations_for_tournament(
-        ctx, unattached_only=True, statuses=[RegistrationStatus.CONFIRMED]
-    ):
+    for pr in player_registrations_for_tournament(ctx, unattached_only=True, statuses=[RegistrationStatus.CONFIRMED]):
         p = Player.query.get(pr.player)
         unattached.append(
             {
@@ -778,10 +733,7 @@ def league_detail(league_url):
             is_current_player_registered = is_player_registered(ctx, current_user.id)
 
     penalty_types = PenaltyType.query.filter_by(league_id=league_url).all()
-    penalty_types_data = [
-        {"id": t.id, "name": t.name, "color": t.color, "desc": (t.desc or "")}
-        for t in penalty_types
-    ]
+    penalty_types_data = [{"id": t.id, "name": t.name, "color": t.color, "desc": (t.desc or "")} for t in penalty_types]
 
     return jsonify(
         {
@@ -806,9 +758,7 @@ def league_results(league_url):
     if err:
         return jsonify({"error": "Not found" if err == 404 else "Forbidden"}), err
 
-    tournament_urls = [
-        t.url for t in Tournament.query.filter_by(league_id=league_url).all()
-    ]
+    tournament_urls = [t.url for t in Tournament.query.filter_by(league_id=league_url).all()]
     if not tournament_urls:
         return jsonify(
             {
@@ -827,9 +777,7 @@ def league_results(league_url):
         "true",
         "yes",
     )
-    teams_list = compute_team_stats(
-        matches, first_tournament, include_ribbon=include_ribbon
-    )
+    teams_list = compute_team_stats(matches, first_tournament, include_ribbon=include_ribbon)
     return jsonify(
         {
             "league": _league_to_dict(league),
@@ -844,9 +792,7 @@ def league_results_team_matches(league_url, team_id):
     league, err = _require_league(league_url)
     if err:
         return jsonify({"error": "Not found" if err == 404 else "Forbidden"}), err
-    tournament_urls = [
-        t.url for t in Tournament.query.filter_by(league_id=league_url).all()
-    ]
+    tournament_urls = [t.url for t in Tournament.query.filter_by(league_id=league_url).all()]
     if not tournament_urls:
         return jsonify({"matches": []})
     matches = (
@@ -865,10 +811,7 @@ def league_results_team_matches(league_url, team_id):
             points_by_match.setdefault(p.match, []).append(p)
     if matches:
         event_urls = {m.event for m in matches}
-        tournaments_by_url = {
-            t.url: t
-            for t in Tournament.query.filter(Tournament.url.in_(event_urls)).all()
-        }
+        tournaments_by_url = {t.url: t for t in Tournament.query.filter(Tournament.url.in_(event_urls)).all()}
     else:
         tournaments_by_url = {}
     match_list = []
@@ -884,9 +827,7 @@ def league_results_team_matches(league_url, team_id):
             if getattr(p, "rerolled", False):
                 continue
             sn = getattr(p, "set_number", None) or 1
-            set_scores.setdefault(
-                sn, {"set_number": sn, "team1_points": 0, "team2_points": 0}
-            )
+            set_scores.setdefault(sn, {"set_number": sn, "team1_points": 0, "team2_points": 0})
             w = getattr(p, "winner", None)
             if w == "TEAM1":
                 set_scores[sn]["team1_points"] += 1
@@ -923,9 +864,7 @@ def league_register_team(league_url):
     league, err = _require_league(league_url)
     if err:
         return jsonify({"error": "Not found" if err == 404 else "Forbidden"}), err
-    res = RegistrationService.register_team_for_league(
-        league.url, current_user.id, request.form.get("pseudonym", "")
-    )
+    res = RegistrationService.register_team_for_league(league.url, current_user.id, request.form.get("pseudonym", ""))
     match res:
         case Ok(_):
             return (
@@ -1012,15 +951,9 @@ def league_update_settings(league_url):
     rc = league.registrable_config
     if rc:
         if "team_reg_fee" in data:
-            rc.team_reg_fee = (
-                float(data["team_reg_fee"]) if data["team_reg_fee"] is not None else 0.0
-            )
+            rc.team_reg_fee = float(data["team_reg_fee"]) if data["team_reg_fee"] is not None else 0.0
         if "player_reg_fee" in data:
-            rc.player_reg_fee = (
-                float(data["player_reg_fee"])
-                if data["player_reg_fee"] is not None
-                else 0.0
-            )
+            rc.player_reg_fee = float(data["player_reg_fee"]) if data["player_reg_fee"] is not None else 0.0
         if data.get("require_waiver_signature") is False:
             rc.waiver_filepath = None
             rc.waiver_sha256 = None
@@ -1041,25 +974,13 @@ def league_update_settings(league_url):
             rc.payment_info = data["payment_info"] or None
         if "n_max_teams" in data:
             v = data["n_max_teams"]
-            rc.n_max_teams = (
-                int(v)
-                if v is not None and (v != "" if isinstance(v, str) else True)
-                else None
-            )
+            rc.n_max_teams = int(v) if v is not None and (v != "" if isinstance(v, str) else True) else None
         if "max_team_size_roster" in data:
             v = data["max_team_size_roster"]
-            rc.max_team_size_roster = (
-                int(v)
-                if v is not None and (v != "" if isinstance(v, str) else True)
-                else None
-            )
+            rc.max_team_size_roster = int(v) if v is not None and (v != "" if isinstance(v, str) else True) else None
         if "max_team_size_field" in data:
             v = data["max_team_size_field"]
-            rc.max_team_size_field = (
-                int(v)
-                if v is not None and (v != "" if isinstance(v, str) else True)
-                else None
-            )
+            rc.max_team_size_field = int(v) if v is not None and (v != "" if isinstance(v, str) else True) else None
     if "published" in data:
         league.published = bool(data["published"])
 
@@ -1075,12 +996,7 @@ def get_league_penalty_types(league_url):
         return jsonify({"error": "Not found" if err == 404 else "Forbidden"}), err
     types = PenaltyType.query.filter_by(league_id=league_url).all()
     return jsonify(
-        {
-            "penalty_types": [
-                {"id": t.id, "name": t.name, "color": t.color, "desc": (t.desc or "")}
-                for t in types
-            ]
-        }
+        {"penalty_types": [{"id": t.id, "name": t.name, "color": t.color, "desc": (t.desc or "")} for t in types]}
     )
 
 
@@ -1228,14 +1144,10 @@ def league_add_to(league_url):
                 404,
             )
 
-    existing = TO.query.filter_by(
-        user_id=user_id, user_type=user_type, league_id=league_url
-    ).first()
+    existing = TO.query.filter_by(user_id=user_id, user_type=user_type, league_id=league_url).first()
     if existing:
         return (
-            jsonify(
-                {"success": False, "error": "This user is already a TO for this league"}
-            ),
+            jsonify({"success": False, "error": "This user is already a TO for this league"}),
             400,
         )
 
@@ -1265,9 +1177,7 @@ def league_remove_to(league_url):
     ).first()
     if not is_to:
         return (
-            jsonify(
-                {"success": False, "error": "Only league organizers can remove TOs"}
-            ),
+            jsonify({"success": False, "error": "Only league organizers can remove TOs"}),
             403,
         )
 
@@ -1279,10 +1189,7 @@ def league_remove_to(league_url):
     if to_to_remove.league_id != league_url:
         return jsonify({"success": False, "error": "Invalid TO entry"}), 400
 
-    if (
-        to_to_remove.user_id == current_user.id
-        and to_to_remove.user_type == current_user.__class__.__name__.lower()
-    ):
+    if to_to_remove.user_id == current_user.id and to_to_remove.user_type == current_user.__class__.__name__.lower():
         return (
             jsonify({"success": False, "error": "You cannot remove yourself as a TO"}),
             400,
@@ -1349,12 +1256,8 @@ def delete_league(league_url):
         )
 
     # Delete in order: registrations, penalty types, TOs, league, registrable_config
-    TeamRegistration.query.filter_by(league_id=league_url).delete(
-        synchronize_session=False
-    )
-    PlayerRegistration.query.filter_by(league_id=league_url).delete(
-        synchronize_session=False
-    )
+    TeamRegistration.query.filter_by(league_id=league_url).delete(synchronize_session=False)
+    PlayerRegistration.query.filter_by(league_id=league_url).delete(synchronize_session=False)
     PenaltyType.query.filter_by(league_id=league_url).delete(synchronize_session=False)
     TO.query.filter_by(league_id=league_url).delete(synchronize_session=False)
     rc_id = league.registrable_config_id
@@ -1442,11 +1345,7 @@ def get_my_player_registration_league(league_url):
                 "jersey_name": reg.jersey_name,
                 "jersey_number": reg.jersey_number,
                 "team": reg.team,
-                "status": (
-                    reg.status.value
-                    if hasattr(reg.status, "value")
-                    else str(reg.status)
-                ),
+                "status": (reg.status.value if hasattr(reg.status, "value") else str(reg.status)),
             },
             "current_team": current_team,
             "waiver_required": w["waiver_required"],
@@ -1551,11 +1450,7 @@ def get_my_team_registration_league(league_url):
             "registration": {
                 "id": reg.id,
                 "pseudonym": reg.pseudonym,
-                "status": (
-                    reg.status.value
-                    if hasattr(reg.status, "value")
-                    else str(reg.status)
-                ),
+                "status": (reg.status.value if hasattr(reg.status, "value") else str(reg.status)),
             }
         }
     )
@@ -1636,9 +1531,7 @@ def league_manage_api(league_url):
     search_query = (request.args.get("search") or "").strip()
     search_type = (request.args.get("type") or "both").lower()
 
-    team_registrations = team_registrations_for_tournament(
-        fake_t, exclude_cancelled=True
-    )
+    team_registrations = team_registrations_for_tournament(fake_t, exclude_cancelled=True)
     teams_with_registrations = []
     for team_reg in team_registrations:
         team = Team.query.get(team_reg.team)
@@ -1658,9 +1551,7 @@ def league_manage_api(league_url):
         player = Player.query.get(player_reg.player)
         team = Team.query.get(player_reg.team) if player_reg.team else None
         if player:
-            players_with_registrations.append(
-                {"registration": player_reg, "player": player, "team": team}
-            )
+            players_with_registrations.append({"registration": player_reg, "player": player, "team": team})
 
     if search_query:
         q = search_query.lower()
@@ -1806,9 +1697,7 @@ def league_invitations_api(league_url):
         league_id=league_url, team=current_user.id, status=RegistrationStatus.CONFIRMED
     ).count()
 
-    all_player_registrations = PlayerRegistration.query.filter_by(
-        league_id=league_url, team=current_user.id
-    ).all()
+    all_player_registrations = PlayerRegistration.query.filter_by(league_id=league_url, team=current_user.id).all()
     team_roster = []
     for reg in all_player_registrations:
         player = Player.query.get(reg.player)
@@ -1823,9 +1712,7 @@ def league_invitations_api(league_url):
         "location": None,
         "published": league.published,
         "max_team_size_roster": (
-            getattr(league.registrable_config, "max_team_size_roster", None)
-            if league.registrable_config
-            else None
+            getattr(league.registrable_config, "max_team_size_roster", None) if league.registrable_config else None
         ),
         "league": {"league_url": league.url, "name": league.name},
     }
@@ -1908,9 +1795,7 @@ def league_mark_team_paid(league_url):
     payment_reference = request.form.get("payment_reference", "")
     payment_notes = request.form.get("payment_notes", "")
 
-    reg = TeamRegistration.query.filter_by(
-        id=reg_id, league_id=league_url
-    ).first_or_404()
+    reg = TeamRegistration.query.filter_by(id=reg_id, league_id=league_url).first_or_404()
     reg.paid = paid
     reg.amount_paid = amount_paid
     reg.payment_method = payment_method
@@ -1951,9 +1836,7 @@ def league_mark_player_paid(league_url):
     payment_reference = request.form.get("payment_reference", "")
     payment_notes = request.form.get("payment_notes", "")
 
-    reg = PlayerRegistration.query.filter_by(
-        id=reg_id, league_id=league_url
-    ).first_or_404()
+    reg = PlayerRegistration.query.filter_by(id=reg_id, league_id=league_url).first_or_404()
     reg.paid = paid
     reg.amount_paid = amount_paid
     reg.payment_method = payment_method
@@ -2040,11 +1923,7 @@ def league_deregister_any_player(league_url):
 
     player_registration = (
         PlayerRegistration.query.filter_by(league_id=league_url, player=player_id)
-        .filter(
-            PlayerRegistration.status.in_(
-                [RegistrationStatus.PENDING_TEAM_APPROVAL, RegistrationStatus.CONFIRMED]
-            )
-        )
+        .filter(PlayerRegistration.status.in_([RegistrationStatus.PENDING_TEAM_APPROVAL, RegistrationStatus.CONFIRMED]))
         .first()
     )
 
@@ -2056,16 +1935,12 @@ def league_deregister_any_player(league_url):
             200,
         )
     return (
-        jsonify(
-            {"success": False, "error": "Player not found or already deregistered"}
-        ),
+        jsonify({"success": False, "error": "Player not found or already deregistered"}),
         404,
     )
 
 
-@bp.route(
-    "/leagues/<league_url>/invitation/<int:invitation_id>/accept", methods=["POST"]
-)
+@bp.route("/leagues/<league_url>/invitation/<int:invitation_id>/accept", methods=["POST"])
 @login_required
 def league_accept_invitation(league_url, invitation_id):
     """Accept a pending player registration (league roster)."""
@@ -2085,16 +1960,12 @@ def league_accept_invitation(league_url, invitation_id):
     player_registration.status = RegistrationStatus.CONFIRMED
     db.session.commit()
     return (
-        jsonify(
-            {"success": True, "message": "Player approved! They are now on your team."}
-        ),
+        jsonify({"success": True, "message": "Player approved! They are now on your team."}),
         200,
     )
 
 
-@bp.route(
-    "/leagues/<league_url>/invitation/<int:invitation_id>/decline", methods=["POST"]
-)
+@bp.route("/leagues/<league_url>/invitation/<int:invitation_id>/decline", methods=["POST"])
 @login_required
 def league_decline_invitation(league_url, invitation_id):
     """Decline a pending player registration (league roster)."""
@@ -2217,17 +2088,12 @@ def tournament_detail(tournament_url):
         if current_user.__class__.__name__ == "Team":
             is_current_team_registered = is_team_registered(tournament, current_user.id)
         else:
-            is_current_player_registered = is_player_registered(
-                tournament, current_user.id
-            )
+            is_current_player_registered = is_player_registered(tournament, current_user.id)
 
     from app.utils.helpers import get_penalty_types_for_tournament
 
     penalty_types = get_penalty_types_for_tournament(tournament)
-    penalty_types_data = [
-        {"id": t.id, "name": t.name, "color": t.color, "desc": (t.desc or "")}
-        for t in penalty_types
-    ]
+    penalty_types_data = [{"id": t.id, "name": t.name, "color": t.color, "desc": (t.desc or "")} for t in penalty_types]
 
     return jsonify(
         {
@@ -2238,9 +2104,7 @@ def tournament_detail(tournament_url):
             "is_current_team_registered": is_current_team_registered,
             "is_current_player_registered": is_current_player_registered,
             "penalty_types": penalty_types_data,
-            "manual_footage_uploads_enabled": bool(
-                current_app.config.get("ENABLE_MANUAL_FOOTAGE_UPLOADS", False)
-            ),
+            "manual_footage_uploads_enabled": bool(current_app.config.get("ENABLE_MANUAL_FOOTAGE_UPLOADS", False)),
         }
     )
 
@@ -2269,9 +2133,7 @@ def tournament_manage_api(tournament_url):
     search_query = (request.args.get("search") or "").strip()
     search_type = (request.args.get("type") or "both").lower()
 
-    team_registrations = team_registrations_for_tournament(
-        tournament, exclude_cancelled=True
-    )
+    team_registrations = team_registrations_for_tournament(tournament, exclude_cancelled=True)
     teams_with_registrations = []
     for team_reg in team_registrations:
         team = Team.query.get(team_reg.team)
@@ -2291,9 +2153,7 @@ def tournament_manage_api(tournament_url):
         player = Player.query.get(player_reg.player)
         team = Team.query.get(player_reg.team) if player_reg.team else None
         if player:
-            players_with_registrations.append(
-                {"registration": player_reg, "player": player, "team": team}
-            )
+            players_with_registrations.append({"registration": player_reg, "player": player, "team": team})
 
     if search_query:
         q = search_query.lower()
@@ -2422,9 +2282,7 @@ def tournament_invitations_api(tournament_url):
         event=tournament_url, team=current_user.id, status=RegistrationStatus.CONFIRMED
     ).count()
 
-    all_player_registrations = PlayerRegistration.query.filter_by(
-        event=tournament_url, team=current_user.id
-    ).all()
+    all_player_registrations = PlayerRegistration.query.filter_by(event=tournament_url, team=current_user.id).all()
     team_roster = []
     for reg in all_player_registrations:
         player = Player.query.get(reg.player)
@@ -2678,9 +2536,7 @@ def tournament_bracket_api(tournament_url):
             if team_ref.lower().startswith("tag::"):
                 tag_name = team_ref[5:].strip()
                 if tag_name:
-                    tag = Tag.query.filter_by(
-                        event=tournament_url, name=tag_name
-                    ).first()
+                    tag = Tag.query.filter_by(event=tournament_url, name=tag_name).first()
                     if tag and tag.team:
                         team_reg = TeamRegistration.query.filter_by(
                             event=tournament_url,
@@ -2705,26 +2561,12 @@ def tournament_bracket_api(tournament_url):
                 parts = team_ref.split("::", 1)
                 match_name = parts[0].strip()
                 ref_type = parts[1].strip() if len(parts) > 1 else ""
-                match = Match.query.filter_by(
-                    event=tournament_url, name=match_name
-                ).first()
-                if (
-                    match
-                    and match.status == MatchStatus.COMPLETED
-                    and match.match_winner
-                ):
+                match = Match.query.filter_by(event=tournament_url, name=match_name).first()
+                if match and match.status == MatchStatus.COMPLETED and match.match_winner:
                     if ref_type == "winner":
-                        team_id = (
-                            match.team1
-                            if match.match_winner == "TEAM1"
-                            else match.team2
-                        )
+                        team_id = match.team1 if match.match_winner == "TEAM1" else match.team2
                     elif ref_type == "loser":
-                        team_id = (
-                            match.team2
-                            if match.match_winner == "TEAM1"
-                            else match.team1
-                        )
+                        team_id = match.team2 if match.match_winner == "TEAM1" else match.team1
                     else:
                         team_id = None
                     if team_id:
@@ -2763,9 +2605,7 @@ def tournament_bracket_api(tournament_url):
                         "display_text": team_reg.pseudonym,
                     }
                 else:
-                    tag = Tag.query.filter_by(
-                        event=tournament_url, name=team_ref
-                    ).first()
+                    tag = Tag.query.filter_by(event=tournament_url, name=team_ref).first()
                     if tag and tag.team:
                         team_reg = TeamRegistration.query.filter_by(
                             event=tournament_url,
@@ -2801,13 +2641,9 @@ def tournament_bracket_api(tournament_url):
                 }
             )
 
-        processed_brackets.append(
-            {"name": bracket_name, "image": bracket_image, "teams": processed_teams}
-        )
+        processed_brackets.append({"name": bracket_name, "image": bracket_image, "teams": processed_teams})
 
-    return jsonify(
-        {"tournament": _tournament_to_dict(tournament), "brackets": processed_brackets}
-    )
+    return jsonify({"tournament": _tournament_to_dict(tournament), "brackets": processed_brackets})
 
 
 @bp.route("/tournaments/<tournament_url>/start-match", methods=["GET"])
@@ -2823,9 +2659,7 @@ def start_match_data_api(tournament_url):
 
     from app.services.match_start_eligibility import get_can_start_and_reasons
 
-    can_start, block_reasons, _ = get_can_start_and_reasons(
-        tournament_url, match, current_user
-    )
+    can_start, block_reasons, _ = get_can_start_and_reasons(tournament_url, match, current_user)
     if not can_start:
         error_msg = block_reasons[0] if block_reasons else "Cannot start this match."
         return jsonify({"error": error_msg, "reasons": block_reasons}), 400
@@ -2833,9 +2667,7 @@ def start_match_data_api(tournament_url):
     tournament = Tournament.query.get(tournament_url)
     from app.services.registration_resolver import player_registrations_for_tournament
 
-    all_prs = player_registrations_for_tournament(
-        tournament, statuses=[RegistrationStatus.CONFIRMED]
-    )
+    all_prs = player_registrations_for_tournament(tournament, statuses=[RegistrationStatus.CONFIRMED])
     team1_prs = [pr for pr in all_prs if pr.team == match.team1]
     team2_prs = [pr for pr in all_prs if pr.team == match.team2]
     all_prs_list = all_prs
@@ -3042,9 +2874,7 @@ def finalize_match_post_api(tournament_url):
     match.finalized_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
     if match.field:
-        field_obj = Field.query.filter_by(
-            event=tournament_url, name=match.field
-        ).first()
+        field_obj = Field.query.filter_by(event=tournament_url, name=match.field).first()
         if field_obj and field_obj.camera:
             from app.utils.camera_helpers import get_all_camera_stream_starts
 
@@ -3094,9 +2924,7 @@ def _schedule_published_check(tournament_url, tournament):
         event=tournament_url,
     ).first():
         return True
-    if current_user.__class__.__name__ == "Player" and can_head_ref_match(
-        tournament_url, current_user.id, match=None
-    ):
+    if current_user.__class__.__name__ == "Player" and can_head_ref_match(tournament_url, current_user.id, match=None):
         return True
     return False
 
@@ -3109,14 +2937,9 @@ def tournament_schedule(tournament_url):
         return jsonify({"error": "Not found"}), err
     if not _schedule_published_check(tournament_url, tournament):
         return jsonify({"error": "Schedule not published"}), 403
-    matches = (
-        Match.query.filter_by(event=tournament_url)
-        .order_by(Match.nominal_start_time)
-        .all()
-    )
+    matches = Match.query.filter_by(event=tournament_url).order_by(Match.nominal_start_time).all()
     fields = [
-        {"id": f.id, "name": f.name}
-        for f in Field.query.filter_by(event=tournament_url).order_by(Field.name).all()
+        {"id": f.id, "name": f.name} for f in Field.query.filter_by(event=tournament_url).order_by(Field.name).all()
     ]
     team_options = []
     seen = set()
@@ -3137,16 +2960,9 @@ def tournament_schedule(tournament_url):
         for initial, key in [(m.team1_initial, "team1"), (m.team2_initial, "team2")]:
             if not initial or initial in seen:
                 continue
-            if (
-                "::winner" in initial
-                or "::loser" in initial
-                or " winner" in initial
-                or " loser" in initial
-            ):
+            if "::winner" in initial or "::loser" in initial or " winner" in initial or " loser" in initial:
                 continue
-            team_options.append(
-                {"id": initial, "pseudonym": initial, "profile_photo": None}
-            )
+            team_options.append({"id": initial, "pseudonym": initial, "profile_photo": None})
             seen.add(initial)
     match_list = []
     for m in matches:
@@ -3159,9 +2975,7 @@ def tournament_schedule(tournament_url):
                 "team2": m.team2,
                 "team1_initial": m.team1_initial,
                 "team2_initial": m.team2_initial,
-                "status": (
-                    m.status.value if hasattr(m.status, "value") else str(m.status)
-                ),
+                "status": (m.status.value if hasattr(m.status, "value") else str(m.status)),
                 "nominal_start_time": _dt_iso(m.nominal_start_time),
                 "confirmed_start_time": _dt_iso(m.confirmed_start_time),
                 "completed_time": _dt_iso(m.completed_time),
@@ -3247,9 +3061,7 @@ def tournament_results_team_matches(tournament_url, team_id):
             if getattr(p, "rerolled", False):
                 continue
             sn = getattr(p, "set_number", None) or 1
-            set_scores.setdefault(
-                sn, {"set_number": sn, "team1_points": 0, "team2_points": 0}
-            )
+            set_scores.setdefault(sn, {"set_number": sn, "team1_points": 0, "team2_points": 0})
             w = getattr(p, "winner", None)
             if w == "TEAM1":
                 set_scores[sn]["team1_points"] += 1
@@ -3279,9 +3091,7 @@ def tournament_fields(tournament_url):
     if err:
         return jsonify({"error": "Not found"}), err
     fields = Field.query.filter_by(event=tournament_url).order_by(Field.name).all()
-    return jsonify(
-        {"fields": [{"id": f.id, "name": f.name, "camera": f.camera} for f in fields]}
-    )
+    return jsonify({"fields": [{"id": f.id, "name": f.name, "camera": f.camera} for f in fields]})
 
 
 @bp.route("/tournaments/<tournament_url>/schedule-setup", methods=["GET"])
@@ -3300,9 +3110,7 @@ def tournament_schedule_setup(tournament_url):
         return jsonify({"error": "Schedule not published"}), 403
 
     # Fields
-    fields_query = (
-        Field.query.filter_by(event=tournament_url).order_by(Field.name).all()
-    )
+    fields_query = Field.query.filter_by(event=tournament_url).order_by(Field.name).all()
     fields_data = []
     for f in fields_query:
         camera_urls = []
@@ -3322,11 +3130,7 @@ def tournament_schedule_setup(tournament_url):
     tags_data = [{"id": t.id, "name": t.name, "team": t.team} for t in tags_query]
 
     # Matches
-    matches_query = (
-        Match.query.filter_by(event=tournament_url)
-        .order_by(Match.nominal_start_time)
-        .all()
-    )
+    matches_query = Match.query.filter_by(event=tournament_url).order_by(Match.nominal_start_time).all()
     match_list = []
     for m in matches_query:
         match_list.append(
@@ -3338,9 +3142,7 @@ def tournament_schedule_setup(tournament_url):
                 "team2": m.team2,
                 "team1_initial": m.team1_initial,
                 "team2_initial": m.team2_initial,
-                "status": (
-                    m.status.value if hasattr(m.status, "value") else str(m.status)
-                ),
+                "status": (m.status.value if hasattr(m.status, "value") else str(m.status)),
                 "nominal_start_time": _dt_iso(m.nominal_start_time),
                 "confirmed_start_time": _dt_iso(m.confirmed_start_time),
                 "completed_time": _dt_iso(m.completed_time),
@@ -3446,13 +3248,9 @@ def tournament_match_detail(tournament_url):
     if not match_id and not match_name:
         return jsonify({"error": "Match id or name required"}), 400
     if match_id:
-        match = Match.query.filter(
-            Match.uuid == match_id, Match.event.in_(event_urls)
-        ).first()
+        match = Match.query.filter(Match.uuid == match_id, Match.event.in_(event_urls)).first()
     else:
-        match = Match.query.filter(
-            Match.name == match_name, Match.event.in_(event_urls)
-        ).first()
+        match = Match.query.filter(Match.name == match_name, Match.event.in_(event_urls)).first()
     if not match:
         return jsonify({"error": "Match not found"}), 404
     points = Point.query.filter_by(match=match.uuid).order_by(Point.stamp).all()
@@ -3468,9 +3266,7 @@ def tournament_match_detail(tournament_url):
             "rerolled": p.rerolled,
             "stamp": _dt_iso(p.stamp),
             "end_stamp": _dt_iso(p.end_stamp),
-            "stones_at_start": (
-                p.stones_at_start if match.set_type == SetType.STONES else None
-            ),
+            "stones_at_start": (p.stones_at_start if match.set_type == SetType.STONES else None),
         }
         for p in points
     ]
@@ -3480,7 +3276,6 @@ def tournament_match_detail(tournament_url):
     available_cameras = []
     camera_url = None
     from app.utils.camera_helpers import parse_camera_urls
-    import os
 
     legacy_point_timestamps_by_camera_name = {}
     if match.camera_stream_starts:
@@ -3498,9 +3293,7 @@ def tournament_match_detail(tournament_url):
     # 1) YouTube livestream cameras from Field configuration (source of truth initially).
     camera_urls: list[str] = []
     if match.field:
-        field_obj = Field.query.filter_by(
-            event=tournament_url, name=match.field
-        ).first()
+        field_obj = Field.query.filter_by(event=tournament_url, name=match.field).first()
         if field_obj and field_obj.camera:
             camera_urls = parse_camera_urls(field_obj.camera)
             for idx, url in enumerate(camera_urls):
@@ -3516,17 +3309,10 @@ def tournament_match_detail(tournament_url):
 
     # 2) Match-scoped cameras from the new Camera table.
     camera_rows = (
-        Camera.query.filter_by(match_uuid=match.uuid)
-        .filter_by(event=tournament_url)
-        .order_by(Camera.name.asc())
-        .all()
+        Camera.query.filter_by(match_uuid=match.uuid).filter_by(event=tournament_url).order_by(Camera.name.asc()).all()
     )
     for idx, cam in enumerate(camera_rows):
-        cam_type = (
-            "youtube"
-            if (cam.source_type or "").strip() == "youtube_livestream"
-            else "recorded"
-        )
+        cam_type = "youtube" if (cam.source_type or "").strip() == "youtube_livestream" else "recorded"
         time_world = None
         time_video = None
         try:
@@ -3545,18 +3331,12 @@ def tournament_match_detail(tournament_url):
         # - if `file` is a local static/ path, frontend can link directly
         # - if `file` looks like an S3 key, return a presigned URL instead
         video_path = cam.file
-        if (
-            cam.status == "FAILED"
-            and video_path
-            and not video_path.startswith("static/")
-        ):
+        if cam.status == "FAILED" and video_path and not video_path.startswith("static/"):
             bucket = current_app.config.get("S3_VIDEO_BUCKET")
             if bucket:
                 from app.utils.s3_video import get_presigned_url
 
-                region = (
-                    current_app.config.get("AWS_REGION") or "us-east-1"
-                ) or "us-east-1"
+                region = (current_app.config.get("AWS_REGION") or "us-east-1") or "us-east-1"
                 expiry = current_app.config.get("S3_PRESIGNED_EXPIRY_SECONDS", 3600)
                 endpoint_url = current_app.config.get("S3_ENDPOINT_URL")
                 playable_url = get_presigned_url(
@@ -3578,9 +3358,7 @@ def tournament_match_detail(tournament_url):
                 "video_path": video_path,
                 "camera_id": cam.name,
                 "session_id": None,
-                "point_timestamps": legacy_point_timestamps_by_camera_name.get(
-                    cam.name
-                ),
+                "point_timestamps": legacy_point_timestamps_by_camera_name.get(cam.name),
                 "status": cam.status,
                 "source_type": cam.source_type,
                 "time_world": time_world,
@@ -3607,9 +3385,7 @@ def tournament_match_detail(tournament_url):
         from app.utils.user_helpers import is_player
 
         if is_player(current_user):
-            is_head_ref = can_head_ref_match(
-                tournament_url, current_user.id, match=match
-            )
+            is_head_ref = can_head_ref_match(tournament_url, current_user.id, match=match)
 
     # Can start and blocking reasons (for "why?" UX)
     from app.services.match_start_eligibility import (
@@ -3619,9 +3395,7 @@ def tournament_match_detail(tournament_url):
     )
 
     _user = current_user if current_user.is_authenticated else None
-    can_start, block_reasons, why_sections = get_can_start_and_reasons(
-        tournament_url, match, _user
-    )
+    can_start, block_reasons, why_sections = get_can_start_and_reasons(tournament_url, match, _user)
 
     # Conflicting match on same field (for force-start modal)
     conflicting_match = None
@@ -3636,20 +3410,14 @@ def tournament_match_detail(tournament_url):
 
     # Get match-level notes (point_id is None) - only for head refs
     if is_head_ref:
-        notes = (
-            MatchNote.query.filter_by(match=match.uuid, point_id=None)
-            .order_by(MatchNote.created_at.desc())
-            .all()
-        )
+        notes = MatchNote.query.filter_by(match=match.uuid, point_id=None).order_by(MatchNote.created_at.desc()).all()
         from app.utils.player_helpers import get_player_display_name
 
         for note in notes:
             player_name = None
             player_display = None
             if note.player_id:
-                player_name, player_display = get_player_display_name(
-                    note.player_id, tournament_url
-                )
+                player_name, player_display = get_player_display_name(note.player_id, tournament_url)
             team_id = None
             if note.target == "team1":
                 team_id = match.team1
@@ -3732,11 +3500,7 @@ def tournament_match_detail(tournament_url):
                 player=pid,
                 status=RegistrationStatus.CONFIRMED,
             ).first()
-            display = (
-                get_player_display_from_registration(player, pr)
-                if pr
-                else (player.name or pid)
-            )
+            display = get_player_display_from_registration(player, pr) if pr else (player.name or pid)
             match_players.append(
                 {
                     "player_id": player.id,
@@ -3759,11 +3523,7 @@ def tournament_match_detail(tournament_url):
                 player=pid,
                 status=RegistrationStatus.CONFIRMED,
             ).first()
-            display = (
-                get_player_display_from_registration(player, pr)
-                if pr
-                else (player.name or pid)
-            )
+            display = get_player_display_from_registration(player, pr) if pr else (player.name or pid)
             match_players.append(
                 {
                     "player_id": player.id,
@@ -3816,10 +3576,7 @@ def tournament_match_detail(tournament_url):
     from app.utils.helpers import get_penalty_types_for_tournament
 
     penalty_types = get_penalty_types_for_tournament(tournament)
-    penalty_types_data = [
-        {"id": t.id, "name": t.name, "color": t.color, "desc": (t.desc or "")}
-        for t in penalty_types
-    ]
+    penalty_types_data = [{"id": t.id, "name": t.name, "color": t.color, "desc": (t.desc or "")} for t in penalty_types]
 
     # Get point-specific notes - point notes (target='match') visible to everyone
     if points:
@@ -3843,9 +3600,7 @@ def tournament_match_detail(tournament_url):
                 player_name = None
                 player_display = None
                 if n.player_id:
-                    player_name, player_display = get_player_display_name(
-                        n.player_id, tournament_url
-                    )
+                    player_name, player_display = get_player_display_name(n.player_id, tournament_url)
                 team_id = None
                 if n.target == "team1":
                     team_id = match.team1
@@ -3879,23 +3634,15 @@ def tournament_match_detail(tournament_url):
                 "team2_photo": team2_photo,
                 "team1_initial": match.team1_initial,
                 "team2_initial": match.team2_initial,
-                "status": (
-                    match.status.value
-                    if hasattr(match.status, "value")
-                    else str(match.status)
-                ),
+                "status": (match.status.value if hasattr(match.status, "value") else str(match.status)),
                 "nominal_start_time": _dt_iso(match.nominal_start_time),
                 "confirmed_start_time": _dt_iso(match.confirmed_start_time),
                 "completed_time": _dt_iso(match.completed_time),
                 "set_type": match.set_type.value if match.set_type else None,
                 "stones_per_set": match.stones_per_set or match.nstonesperset,
                 "stones_remaining": match.stones_remaining,
-                "match_winner": (
-                    match.match_winner.value if match.match_winner else None
-                ),
-                "schedule_type": (
-                    match.schedule_type.value if match.schedule_type else None
-                ),
+                "match_winner": (match.match_winner.value if match.match_winner else None),
+                "schedule_type": (match.schedule_type.value if match.schedule_type else None),
                 "nominal_length": match.nominal_length,
                 "previous_match": match.previous_match,
                 "refs": match.refs,
@@ -3945,12 +3692,8 @@ def tournament_match_state(tournament_url):
     for set_num in sets:
         set_points = [p for p in points if p.set_number == set_num]
         scores_by_set[set_num] = {
-            "team1_score": sum(
-                1 for p in set_points if p.winner == "TEAM1" and not p.rerolled
-            ),
-            "team2_score": sum(
-                1 for p in set_points if p.winner == "TEAM2" and not p.rerolled
-            ),
+            "team1_score": sum(1 for p in set_points if p.winner == "TEAM1" and not p.rerolled),
+            "team2_score": sum(1 for p in set_points if p.winner == "TEAM2" and not p.rerolled),
         }
 
     points_data = []
@@ -3965,35 +3708,24 @@ def tournament_match_state(tournament_url):
                 "rerolled": p.rerolled,
                 "stamp": stamp_iso,
                 "end_stamp": end_stamp_iso,
-                "stones_at_start": (
-                    p.stones_at_start if match.set_type == SetType.STONES else None
-                ),
+                "stones_at_start": (p.stones_at_start if match.set_type == SetType.STONES else None),
             }
         )
 
     finalized_at = None
-    if (
-        match.status in (MatchStatus.COMPLETED, MatchStatus.SKIPPED)
-        and match.finalized_at
-    ):
+    if match.status in (MatchStatus.COMPLETED, MatchStatus.SKIPPED) and match.finalized_at:
         finalized_at = match.finalized_at.isoformat()
 
     return jsonify(
         {
             "match_id": match.uuid,
-            "status": (
-                match.status.value
-                if hasattr(match.status, "value")
-                else str(match.status)
-            ),
+            "status": (match.status.value if hasattr(match.status, "value") else str(match.status)),
             "team1_score": team1_score,
             "team2_score": team2_score,
             "scores_by_set": scores_by_set,
             "points": points_data,
             "stones_remaining": (
-                match.stones_remaining
-                if getattr(match, "set_type", None) == SetType.STONES
-                else None
+                match.stones_remaining if getattr(match, "set_type", None) == SetType.STONES else None
             ),
             "finalized_at": finalized_at,
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -4008,19 +3740,12 @@ def players_list():
     page = max(1, request.args.get("page", type=int) or 1)
     per_page = 50
     if search:
-        q = Player.query.filter(
-            Player.name.contains(search) | Player.id.contains(search)
-        )
+        q = Player.query.filter(Player.name.contains(search) | Player.id.contains(search))
     else:
         q = Player.query
     total = q.count()
     total_pages = (total + per_page - 1) // per_page
-    players = (
-        q.order_by(Player.name.asc())
-        .offset((page - 1) * per_page)
-        .limit(per_page)
-        .all()
-    )
+    players = q.order_by(Player.name.asc()).offset((page - 1) * per_page).limit(per_page).all()
     return jsonify(
         {
             "players": [
@@ -4066,9 +3791,7 @@ def player_profile(player_id):
                     can_see_note = True
                 elif current_user.__class__.__name__ == "Player":
                     match_obj = Match.query.get(note.match) if note.match else None
-                    if match_obj and can_head_ref_match(
-                        match_obj.event, current_user.id, match=match_obj
-                    ):
+                    if match_obj and can_head_ref_match(match_obj.event, current_user.id, match=match_obj):
                         can_see_note = True
                 if can_see_note:
                     player_notes.append(note)
@@ -4076,9 +3799,7 @@ def player_profile(player_id):
             player_notes = []
 
     penalty_type_ids = {
-        getattr(n, "penalty_type_id", None)
-        for n in player_notes
-        if getattr(n, "penalty_type_id", None)
+        getattr(n, "penalty_type_id", None) for n in player_notes if getattr(n, "penalty_type_id", None)
     }
     pt_map = {}
     if penalty_type_ids:
@@ -4094,11 +3815,7 @@ def player_profile(player_id):
             if match_obj and note.point_id:
                 match_id = match_obj.uuid
                 if match_id not in match_to_points:
-                    pts = (
-                        Point.query.filter_by(match=match_id)
-                        .order_by(Point.stamp)
-                        .all()
-                    )
+                    pts = Point.query.filter_by(match=match_id).order_by(Point.stamp).all()
                     match_to_points[match_id] = [p.uuid for p in pts]
                 order = match_to_points.get(match_id, [])
                 if note.point_id in order:
@@ -4148,14 +3865,10 @@ def player_profile(player_id):
         if event_or_league_key and event_or_league_key.startswith("league:"):
             lid = event_or_league_key[7:] if len(event_or_league_key) > 7 else league_id
             if lid:
-                reg = TeamRegistration.query.filter_by(
-                    league_id=lid, team=team_id
-                ).first()
+                reg = TeamRegistration.query.filter_by(league_id=lid, team=team_id).first()
                 return reg.pseudonym if reg else None
             return None
-        reg = TeamRegistration.query.filter_by(
-            event=event_or_league_key, team=team_id
-        ).first()
+        reg = TeamRegistration.query.filter_by(event=event_or_league_key, team=team_id).first()
         return reg.pseudonym if reg else None
 
     registration_rows = []
@@ -4179,9 +3892,7 @@ def player_profile(player_id):
                     r.team,
                     r.league_id,
                 ),
-                "status": (
-                    r.status.value if hasattr(r.status, "value") else str(r.status)
-                ),
+                "status": (r.status.value if hasattr(r.status, "value") else str(r.status)),
                 "jersey_name": r.jersey_name,
                 "jersey_number": r.jersey_number,
                 "paid": bool(r.paid),
@@ -4197,11 +3908,7 @@ def player_profile(player_id):
                 "id": player.id,
                 "name": player.name,
                 "profile_photo": player.profile_photo,
-                "phone": (
-                    player.phone
-                    if (current_user.is_authenticated and current_user.id == player_id)
-                    else None
-                ),
+                "phone": (player.phone if (current_user.is_authenticated and current_user.id == player_id) else None),
                 "location": player.location,
                 "bio": player.bio,
             },
@@ -4238,9 +3945,7 @@ def player_injuries(player_id):
         return jsonify({"error": "Forbidden"}), 403
 
     if request.method == "GET":
-        injuries = (
-            Injury.query.filter_by(player=player_id).order_by(Injury.stamp.desc()).all()
-        )
+        injuries = Injury.query.filter_by(player=player_id).order_by(Injury.stamp.desc()).all()
         return jsonify([_injury_json(inj) for inj in injuries])
 
     data = request.get_json() or {}
@@ -4267,9 +3972,7 @@ def player_injuries(player_id):
     return jsonify(_injury_json(injury))
 
 
-@bp.route(
-    "/players/<player_id>/injuries/<int:injury_id>", methods=["GET", "PUT", "DELETE"]
-)
+@bp.route("/players/<player_id>/injuries/<int:injury_id>", methods=["GET", "PUT", "DELETE"])
 @login_required
 def player_injury(player_id, injury_id):
     if current_user.id != player_id:
@@ -4417,9 +4120,7 @@ def teams_list():
     """List teams with optional search."""
     search = request.args.get("search", "").strip()
     if search:
-        teams = Team.query.filter(
-            Team.name.contains(search) | Team.id.contains(search)
-        ).all()
+        teams = Team.query.filter(Team.name.contains(search) | Team.id.contains(search)).all()
     else:
         teams = Team.query.all()
     return jsonify(
@@ -4496,23 +4197,15 @@ def team_profile(team_id):
     team = Team.query.get(team_id)
     if not team:
         return jsonify({"error": "Not found"}), 404
-    regs = TeamRegistration.query.filter_by(
-        team=team_id, status=RegistrationStatus.CONFIRMED
-    ).all()
+    regs = TeamRegistration.query.filter_by(team=team_id, status=RegistrationStatus.CONFIRMED).all()
     tournaments = Tournament.query.all()
     tournament_start = {t.url: t.start_date for t in tournaments}
 
     tournament_players = {}
-    if (
-        current_user.is_authenticated
-        and current_user.id == team_id
-        and current_user.__class__.__name__ == "Team"
-    ):
+    if current_user.is_authenticated and current_user.id == team_id and current_user.__class__.__name__ == "Team":
         for team_reg in regs:
             event_key = (
-                team_reg.event
-                if team_reg.event
-                else (f"league:{team_reg.league_id}" if team_reg.league_id else None)
+                team_reg.event if team_reg.event else (f"league:{team_reg.league_id}" if team_reg.league_id else None)
             )
             if event_key is None:
                 continue
@@ -4564,9 +4257,7 @@ def team_profile(team_id):
     if current_user.is_authenticated:
         try:
             candidate_notes = (
-                MatchNote.query.filter(
-                    or_(MatchNote.target == "team1", MatchNote.target == "team2")
-                )
+                MatchNote.query.filter(or_(MatchNote.target == "team1", MatchNote.target == "team2"))
                 .order_by(MatchNote.created_at.desc())
                 .all()
             )
@@ -4575,10 +4266,7 @@ def team_profile(team_id):
                 m = Match.query.get(n.match)
                 if not m:
                     continue
-                if not (
-                    (n.target == "team1" and m.team1 == team_id)
-                    or (n.target == "team2" and m.team2 == team_id)
-                ):
+                if not ((n.target == "team1" and m.team1 == team_id) or (n.target == "team2" and m.team2 == team_id)):
                     continue
 
                 can_see_note = False
@@ -4598,9 +4286,7 @@ def team_profile(team_id):
                 if n.point_id:
                     mid = m.uuid
                     if mid not in match_to_points:
-                        pts = (
-                            Point.query.filter_by(match=mid).order_by(Point.stamp).all()
-                        )
+                        pts = Point.query.filter_by(match=mid).order_by(Point.stamp).all()
                         match_to_points[mid] = [p.uuid for p in pts]
                     order = match_to_points.get(mid, [])
                     if n.point_id in order:
@@ -4632,17 +4318,12 @@ def team_profile(team_id):
             },
             "registrations": [
                 {
-                    "event": r.event
-                    or (f"league:{r.league_id}" if r.league_id else ""),
+                    "event": r.event or (f"league:{r.league_id}" if r.league_id else ""),
                     "pseudonym": r.pseudonym,
-                    "status": (
-                        r.status.value if hasattr(r.status, "value") else str(r.status)
-                    ),
+                    "status": (r.status.value if hasattr(r.status, "value") else str(r.status)),
                     "paid": bool(r.paid),
                     "amount_paid": r.amount_paid,
-                    "start_date": (
-                        _dt_iso(tournament_start.get(r.event)) if r.event else None
-                    ),
+                    "start_date": (_dt_iso(tournament_start.get(r.event)) if r.event else None),
                 }
                 for r in regs
             ],
@@ -4682,13 +4363,9 @@ def stones_list():
                     }
                 )
         mp3_files.sort(key=lambda x: (x["sort_order"], x["filename"]))
-    user_can_see_all = (
-        current_user.is_authenticated and current_user.id in ALLOWED_USERS
-    )
+    user_can_see_all = current_user.is_authenticated and current_user.id in ALLOWED_USERS
     if not user_can_see_all:
-        mp3_files = [
-            f for f in mp3_files if f["display_name"].lower() in ["classic", "snare"]
-        ]
+        mp3_files = [f for f in mp3_files if f["display_name"].lower() in ["classic", "snare"]]
     return jsonify({"stones": mp3_files})
 
 
@@ -4737,9 +4414,7 @@ def update_match_api(tournament_url, match_id):
         try:
             new_schedule_type = ScheduleType(schedule_type_str)
             current_schedule_type = match.schedule_type
-            allowed = _ALLOWED_SCHEDULE_TYPE_TRANSITIONS.get(
-                current_schedule_type, (current_schedule_type,)
-            )
+            allowed = _ALLOWED_SCHEDULE_TYPE_TRANSITIONS.get(current_schedule_type, (current_schedule_type,))
             if new_schedule_type not in allowed:
                 return (
                     jsonify(
@@ -4796,11 +4471,7 @@ def update_match_api(tournament_url, match_id):
                         400,
                     )
                 return (
-                    jsonify(
-                        {
-                            "error": "A match with this name already exists in this tournament."
-                        }
-                    ),
+                    jsonify({"error": "A match with this name already exists in this tournament."}),
                     400,
                 )
 
@@ -4920,16 +4591,10 @@ def update_match_api(tournament_url, match_id):
         ScheduleType.FAST,
         ScheduleType.SAFE,
     ):
-        prev_id = (
-            (previous_match_id or "").strip() if previous_match_id is not None else ""
-        )
+        prev_id = (previous_match_id or "").strip() if previous_match_id is not None else ""
         if not prev_id:
             return (
-                jsonify(
-                    {
-                        "error": "Previous match is required for Break, Join, Fast, and Safe matches."
-                    }
-                ),
+                jsonify({"error": "Previous match is required for Break, Join, Fast, and Safe matches."}),
                 400,
             )
         effective_field = match.field or ""
@@ -4962,30 +4627,22 @@ def update_match_api(tournament_url, match_id):
 
         # STATIC matches have no previous_match: always clear and unlink (ignore previous_match_id)
         if match.previous_match:
-            old_prev = Match.query.filter_by(
-                uuid=match.previous_match, event=tournament_url
-            ).first()
+            old_prev = Match.query.filter_by(uuid=match.previous_match, event=tournament_url).first()
             if old_prev and old_prev.next_match == match.uuid:
                 old_prev.next_match = match.next_match
                 if match.next_match:
-                    old_next = Match.query.filter_by(
-                        uuid=match.next_match, event=tournament_url
-                    ).first()
+                    old_next = Match.query.filter_by(uuid=match.next_match, event=tournament_url).first()
                     if old_next:
                         old_next.previous_match = old_prev.uuid
             elif match.next_match:
-                old_next = Match.query.filter_by(
-                    uuid=match.next_match, event=tournament_url
-                ).first()
+                old_next = Match.query.filter_by(uuid=match.next_match, event=tournament_url).first()
                 if old_next:
                     old_next.previous_match = None
         match.previous_match = None  # Always set for STATIC so it persists
         flag_modified(match, "previous_match")
     else:
         # Dynamic (BREAK, JOIN, FAST, SAFE)
-        match.nominal_start_time = compute_dynamic_match_nominal_start_time(
-            match, tournament_url
-        )
+        match.nominal_start_time = compute_dynamic_match_nominal_start_time(match, tournament_url)
         if match.schedule_type in (
             ScheduleType.BREAK,
             ScheduleType.JOIN,
@@ -5048,11 +4705,7 @@ def force_start_match_api(tournament_url, match_id):
     if other_match:
         if not conflicting_action:
             return (
-                jsonify(
-                    {
-                        "error": "Another match is in progress on this field. Choose SKIP or COMPLETE."
-                    }
-                ),
+                jsonify({"error": "Another match is in progress on this field. Choose SKIP or COMPLETE."}),
                 400,
             )
         if conflicting_action == "COMPLETE" and conflicting_winner not in (
@@ -5060,11 +4713,7 @@ def force_start_match_api(tournament_url, match_id):
             "TEAM2",
         ):
             return (
-                jsonify(
-                    {
-                        "error": "When marking as COMPLETE, choose TEAM1 or TEAM2 as winner."
-                    }
-                ),
+                jsonify({"error": "When marking as COMPLETE, choose TEAM1 or TEAM2 as winner."}),
                 400,
             )
 
@@ -5078,9 +4727,7 @@ def force_start_match_api(tournament_url, match_id):
             other_match.match_winner = None
         else:
             other_match.status = MatchStatus.COMPLETED
-            other_match.match_winner = (
-                WinnerSide.TEAM1 if conflicting_winner == "TEAM1" else WinnerSide.TEAM2
-            )
+            other_match.match_winner = WinnerSide.TEAM1 if conflicting_winner == "TEAM1" else WinnerSide.TEAM2
         other_match.finalized_at = now
 
     # 2. Update target match
@@ -5106,21 +4753,15 @@ def force_start_match_api(tournament_url, match_id):
 
     # Unlink previous/next
     if match.previous_match:
-        old_prev = Match.query.filter_by(
-            uuid=match.previous_match, event=tournament_url
-        ).first()
+        old_prev = Match.query.filter_by(uuid=match.previous_match, event=tournament_url).first()
         if old_prev and old_prev.next_match == match.uuid:
             old_prev.next_match = match.next_match
             if match.next_match:
-                old_next = Match.query.filter_by(
-                    uuid=match.next_match, event=tournament_url
-                ).first()
+                old_next = Match.query.filter_by(uuid=match.next_match, event=tournament_url).first()
                 if old_next:
                     old_next.previous_match = old_prev.uuid
         elif match.next_match:
-            old_next = Match.query.filter_by(
-                uuid=match.next_match, event=tournament_url
-            ).first()
+            old_next = Match.query.filter_by(uuid=match.next_match, event=tournament_url).first()
             if old_next:
                 old_next.previous_match = None
     match.previous_match = None
@@ -5216,12 +4857,8 @@ def update_field_api(tournament_url, field_id):
     field.camera = json.dumps(camera_urls) if camera_urls else ""
 
     # Update matches and points (logic copied from tournaments.py)
-    field_name_for_query = (
-        old_field_name if old_field_name != new_field_name else new_field_name
-    )
-    matches_to_update = Match.query.filter_by(
-        event=tournament_url, field=field_name_for_query
-    ).all()
+    field_name_for_query = old_field_name if old_field_name != new_field_name else new_field_name
+    matches_to_update = Match.query.filter_by(event=tournament_url, field=field_name_for_query).all()
 
     camera_urls_changed = old_camera_urls != camera_urls
 
@@ -5243,9 +4880,7 @@ def update_field_api(tournament_url, field_id):
                         if old_idx_str in old_to_new_index_map:
                             new_idx_str = old_to_new_index_map[old_idx_str]
                             new_stream_starts[new_idx_str] = start_time
-                    match.camera_stream_starts = (
-                        json.dumps(new_stream_starts) if new_stream_starts else None
-                    )
+                    match.camera_stream_starts = json.dumps(new_stream_starts) if new_stream_starts else None
                 except:
                     match.camera_stream_starts = None
 
@@ -5282,9 +4917,7 @@ def update_field_api(tournament_url, field_id):
                 if point.camera_index is not None and point.stamp:
                     camera_idx_str = str(point.camera_index)
                     if camera_idx_str in stream_starts:
-                        new_ts = calculate_stream_timestamp(
-                            point.stamp, stream_starts[camera_idx_str]
-                        )
+                        new_ts = calculate_stream_timestamp(point.stamp, stream_starts[camera_idx_str])
                         if new_ts is not None:
                             point.stream_timestamp = new_ts
 
@@ -5314,9 +4947,7 @@ def update_field_api(tournament_url, field_id):
                     stream_starts[str(idx)] = val.strip()
                 elif str(idx) in stream_starts:
                     del stream_starts[str(idx)]
-            match.camera_stream_starts = (
-                json.dumps(stream_starts) if stream_starts else None
-            )
+            match.camera_stream_starts = json.dumps(stream_starts) if stream_starts else None
         # Recompute point stream_timestamp for matches we updated
         for match in matches_to_update:
             points = Point.query.filter_by(match=match.uuid).all()
@@ -5327,14 +4958,8 @@ def update_field_api(tournament_url, field_id):
                 except (TypeError, ValueError):
                     pass
             for point in points:
-                if (
-                    point.camera_index is not None
-                    and point.stamp
-                    and str(point.camera_index) in stream_starts
-                ):
-                    new_ts = calculate_stream_timestamp(
-                        point.stamp, stream_starts[str(point.camera_index)]
-                    )
+                if point.camera_index is not None and point.stamp and str(point.camera_index) in stream_starts:
+                    new_ts = calculate_stream_timestamp(point.stamp, stream_starts[str(point.camera_index)])
                     if new_ts is not None:
                         point.stream_timestamp = new_ts
 
@@ -5378,26 +5003,18 @@ def create_match_api(tournament_url):
             schedule_type=schedule_type,
         ).first()
     else:
-        existing = Match.query.filter_by(
-            event=tournament_url, name=name.strip()
-        ).first()
+        existing = Match.query.filter_by(event=tournament_url, name=name.strip()).first()
     if existing:
         if schedule_type in (ScheduleType.BREAK, ScheduleType.JOIN):
             return (
-                jsonify(
-                    {
-                        "error": f"A {schedule_type.value} match with this name already exists on this field."
-                    }
-                ),
+                jsonify({"error": f"A {schedule_type.value} match with this name already exists on this field."}),
                 400,
             )
         return jsonify({"error": "Match name already exists"}), 400
 
     match = Match(event=tournament_url, name=name)
     match.field = data.get("field")
-    match.nominal_length = (
-        int(data.get("length")) if data.get("length") is not None else None
-    )
+    match.nominal_length = int(data.get("length")) if data.get("length") is not None else None
     match.schedule_type = schedule_type
 
     # BREAK, JOIN, FAST, SAFE require non-empty previous_match on same field
@@ -5410,11 +5027,7 @@ def create_match_api(tournament_url):
         prev_id = (data.get("previous_match_id") or "").strip()
         if not prev_id:
             return (
-                jsonify(
-                    {
-                        "error": "Previous match is required for Break, Join, Fast, and Safe matches."
-                    }
-                ),
+                jsonify({"error": "Previous match is required for Break, Join, Fast, and Safe matches."}),
                 400,
             )
         effective_field = (match.field or "").strip()
@@ -5464,16 +5077,8 @@ def create_match_api(tournament_url):
         team2_name = str(team2_input).strip()
 
         # Resolve via registrations (team ID or pseudonym) first
-        team1_id, _ = (
-            resolve_team_name_to_id(team1_name, tournament_url)
-            if team1_name
-            else (None, None)
-        )
-        team2_id, _ = (
-            resolve_team_name_to_id(team2_name, tournament_url)
-            if team2_name
-            else (None, None)
-        )
+        team1_id, _ = resolve_team_name_to_id(team1_name, tournament_url) if team1_name else (None, None)
+        team2_id, _ = resolve_team_name_to_id(team2_name, tournament_url) if team2_name else (None, None)
 
         # Derive final team1 from explicit IDs or tags when not resolved by registration
         final_team1 = None
@@ -5551,9 +5156,7 @@ def create_match_api(tournament_url):
 
     # Dynamic time compute
     if match.schedule_type != ScheduleType.STATIC:
-        match.nominal_start_time = compute_dynamic_match_nominal_start_time(
-            match, tournament_url
-        )
+        match.nominal_start_time = compute_dynamic_match_nominal_start_time(match, tournament_url)
 
     ok, err = validate_match_input(match, tournament_url)
     if not ok:
@@ -5578,9 +5181,7 @@ def delete_match_api(tournament_url, match_id):
 
     # Update doubly linked list: unlink this match from prev and next
     if match.previous_match:
-        prev = Match.query.filter_by(
-            uuid=match.previous_match, event=tournament_url
-        ).first()
+        prev = Match.query.filter_by(uuid=match.previous_match, event=tournament_url).first()
         if prev and prev.next_match == match.uuid:
             prev.next_match = match.next_match
     if match.next_match:
@@ -5682,9 +5283,7 @@ def _tag_usage(tournament_url, tag_name):
                 if r == tag_ref:
                     used.append(f'Refs of match "{m.name}"')
                     break
-        if m.skip_condition and (
-            tag_ref in m.skip_condition or tag_name in m.skip_condition
-        ):
+        if m.skip_condition and (tag_ref in m.skip_condition or tag_name in m.skip_condition):
             used.append(f'Skip condition of match "{m.name}"')
     return used
 
@@ -5741,9 +5340,7 @@ def list_tags(tournament_url):
     if not _check_to(tournament_url):
         return jsonify({"error": "Forbidden"}), 403
     tags = Tag.query.filter_by(event=tournament_url).order_by(Tag.name).all()
-    return jsonify(
-        {"tags": [{"id": t.id, "name": t.name, "team": t.team} for t in tags]}
-    )
+    return jsonify({"tags": [{"id": t.id, "name": t.name, "team": t.team} for t in tags]})
 
 
 @bp.route("/markdown/<slug>", methods=["GET"])
@@ -6008,9 +5605,7 @@ def delete_team_profile_photo(team_id):
     """Remove team profile photo."""
     if current_user.id != team_id or current_user.__class__.__name__ != "Team":
         return (
-            jsonify(
-                {"error": "You can only remove a photo from your own team profile"}
-            ),
+            jsonify({"error": "You can only remove a photo from your own team profile"}),
             403,
         )
     team = Team.query.get_or_404(team_id)
@@ -6061,11 +5656,7 @@ def get_my_player_registration(tournament_url):
                 "jersey_name": reg.jersey_name,
                 "jersey_number": reg.jersey_number,
                 "team": reg.team,
-                "status": (
-                    reg.status.value
-                    if hasattr(reg.status, "value")
-                    else str(reg.status)
-                ),
+                "status": (reg.status.value if hasattr(reg.status, "value") else str(reg.status)),
             },
             "current_team": current_team,
             "waiver_required": w["waiver_required"],
@@ -6088,11 +5679,7 @@ def update_my_player_registration(tournament_url):
 
     tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
     cfg = get_registrable_config(tournament)
-    reg_open = (
-        getattr(cfg, "player_registration_open", cfg.registration_open)
-        if cfg
-        else False
-    )
+    reg_open = getattr(cfg, "player_registration_open", cfg.registration_open) if cfg else False
     if not reg_open:
         return jsonify({"error": "Registration changes are locked"}), 403
 
@@ -6155,11 +5742,7 @@ def get_my_team_registration(tournament_url):
             "registration": {
                 "id": reg.id,
                 "pseudonym": reg.pseudonym,
-                "status": (
-                    reg.status.value
-                    if hasattr(reg.status, "value")
-                    else str(reg.status)
-                ),
+                "status": (reg.status.value if hasattr(reg.status, "value") else str(reg.status)),
             }
         }
     )
@@ -6176,9 +5759,7 @@ def update_my_team_registration(tournament_url):
 
     tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
     cfg = get_registrable_config(tournament)
-    reg_open = (
-        getattr(cfg, "team_registration_open", cfg.registration_open) if cfg else False
-    )
+    reg_open = getattr(cfg, "team_registration_open", cfg.registration_open) if cfg else False
     if not reg_open:
         return jsonify({"error": "Registration changes are locked"}), 403
 
@@ -6383,9 +5964,7 @@ def tournament_upload_waiver(tournament_url):
     base_name = os.path.basename(orig)
     safe_slug = re.sub(r"[^a-zA-Z0-9._-]+", "_", base_name)[:120] or "waiver.pdf"
 
-    upload_dir = os.path.join(
-        current_app.root_path, "..", "static", "uploads", "waivers", tournament_url
-    )
+    upload_dir = os.path.join(current_app.root_path, "..", "static", "uploads", "waivers", tournament_url)
     os.makedirs(upload_dir, exist_ok=True)
 
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
@@ -6401,9 +5980,7 @@ def tournament_upload_waiver(tournament_url):
     cfg.waiver_filepath = rel_path
     cfg.waiver_sha256 = sha256_hex
     db.session.commit()
-    return jsonify(
-        {"success": True, "waiver_filepath": rel_path, "waiver_sha256": sha256_hex}
-    )
+    return jsonify({"success": True, "waiver_filepath": rel_path, "waiver_sha256": sha256_hex})
 
 
 @bp.route("/leagues/<league_url>/upload-waiver", methods=["POST"])
@@ -6462,9 +6039,7 @@ def league_upload_waiver_api(league_url):
     rc.waiver_filepath = rel_path
     rc.waiver_sha256 = sha256_hex
     db.session.commit()
-    return jsonify(
-        {"success": True, "waiver_filepath": rel_path, "waiver_sha256": sha256_hex}
-    )
+    return jsonify({"success": True, "waiver_filepath": rel_path, "waiver_sha256": sha256_hex})
 
 
 @bp.route("/<tournament_url>/penalty-types", methods=["GET"])
@@ -6520,9 +6095,7 @@ def create_penalty_type(tournament_url):
             return jsonify({"error": "Invalid color format"}), 400
 
     if tournament.league_id:
-        pt = PenaltyType(
-            league_id=tournament.league_id, name=name, color=color, desc=desc
-        )
+        pt = PenaltyType(league_id=tournament.league_id, name=name, color=color, desc=desc)
     else:
         pt = PenaltyType(event=tournament_url, name=name, color=color, desc=desc)
     db.session.add(pt)
@@ -6550,9 +6123,7 @@ def update_penalty_type(tournament_url, pt_id):
         return jsonify({"error": "Forbidden"}), 403
 
     if tournament.league_id:
-        pt = PenaltyType.query.filter_by(
-            id=pt_id, league_id=tournament.league_id
-        ).first_or_404()
+        pt = PenaltyType.query.filter_by(id=pt_id, league_id=tournament.league_id).first_or_404()
     else:
         pt = PenaltyType.query.filter_by(id=pt_id, event=tournament_url).first_or_404()
 
@@ -6582,9 +6153,7 @@ def delete_penalty_type(tournament_url, pt_id):
         return jsonify({"error": "Forbidden"}), 403
 
     if tournament.league_id:
-        pt = PenaltyType.query.filter_by(
-            id=pt_id, league_id=tournament.league_id
-        ).first_or_404()
+        pt = PenaltyType.query.filter_by(id=pt_id, league_id=tournament.league_id).first_or_404()
     else:
         pt = PenaltyType.query.filter_by(id=pt_id, event=tournament_url).first_or_404()
 
@@ -6613,9 +6182,7 @@ def get_player_penalty_history(tournament_url, player_id):
 
     event_urls = match_event_urls_for_penalties(tournament)
     current_match_id = request.args.get("match_id")
-    current_point_id = request.args.get(
-        "point_id"
-    )  # point from which Penalties button was clicked
+    current_point_id = request.args.get("point_id")  # point from which Penalties button was clicked
     notes = (
         db.session.query(MatchNote, Match.name, Point.set_number, MatchNote.created_at)
         .join(Match, MatchNote.match == Match.uuid)
@@ -6635,19 +6202,11 @@ def get_player_penalty_history(tournament_url, player_id):
             pt_map[pt.id] = pt.name
     rows = []
     for note, match_name, set_number, created_at in notes:
-        pt_name = (
-            pt_map.get(note.penalty_type_id)
-            if note.penalty_type_id
-            else (note.text or "Other")
-        )
+        pt_name = pt_map.get(note.penalty_type_id) if note.penalty_type_id else (note.text or "Other")
         point_label = f"Set {set_number}" if set_number else "-"
         date_str = created_at.strftime("%m/%d") if created_at else "-"
         is_current = str(note.match) == current_match_id if current_match_id else False
-        is_current_point = (
-            str(note.point_id) == current_point_id
-            if current_point_id and note.point_id
-            else False
-        )
+        is_current_point = str(note.point_id) == current_point_id if current_point_id and note.point_id else False
         rows.append(
             {
                 "penalty_type_name": pt_name,

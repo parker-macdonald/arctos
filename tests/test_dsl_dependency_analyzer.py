@@ -76,7 +76,9 @@ class TestMatchDependencyAnalyzer:
         """Test the complex expression with if statement."""
         with app.app_context():
             analyzer = MatchDependencyAnalyzer(tournament.url)
-            expression = "(is-skipped (if (== [teamnamehere] (winner {matchnamehere})) {othermatchname} {othermatchname2}))"
+            expression = (
+                "(is-skipped (if (== [teamnamehere] (winner {matchnamehere})) {othermatchname} {othermatchname2}))"
+            )
             result = analyzer.analyze(expression)
 
             # Should have matchnamehere as direct dependency (from winner call)
@@ -92,9 +94,7 @@ class TestMatchDependencyAnalyzer:
         """Test expression with multiple direct dependencies."""
         with app.app_context():
             analyzer = MatchDependencyAnalyzer(tournament.url)
-            result = analyzer.analyze(
-                "(and (== 0 (losses [Match1::winner])) (== 0 (losses [Match2::winner])))"
-            )
+            result = analyzer.analyze("(and (== 0 (losses [Match1::winner])) (== 0 (losses [Match2::winner])))")
             assert "Match1" in result["direct"]
             assert "Match2" in result["direct"]
             assert result["skip_condition"] == set()

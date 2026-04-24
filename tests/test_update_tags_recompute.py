@@ -3,7 +3,7 @@
 import pytest
 
 from app.domain.enums import MatchStatus, ScheduleType
-from models import Field, Match, Tag, TO, Tournament, db
+from models import Field, Match, Tag, TO, db
 from tests.utils import login_as
 
 

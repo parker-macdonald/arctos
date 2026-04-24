@@ -5,10 +5,8 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy.orm import foreign
 
 from app.domain.enums import (
-    WinnerSide,
     MatchStatus,
     ScheduleType,
     WinnerSide,
@@ -82,13 +80,9 @@ class Match(db.Model):
 
     __tablename__ = "matches"
 
-    uuid = db.Column(
-        db.String(UUID_LEN), primary_key=True, default=lambda: str(uuid.uuid4())
-    )
+    uuid = db.Column(db.String(UUID_LEN), primary_key=True, default=lambda: str(uuid.uuid4()))
     name = db.Column(db.String(LONG_NAME_LEN), nullable=False)
-    event = db.Column(
-        db.String(URL_SLUG_LEN), db.ForeignKey("tournaments.url"), nullable=False
-    )
+    event = db.Column(db.String(URL_SLUG_LEN), db.ForeignKey("tournaments.url"), nullable=False)
     team1 = db.Column(db.String(USER_ID_LEN), db.ForeignKey("teams.id"))
     team2 = db.Column(db.String(USER_ID_LEN), db.ForeignKey("teams.id"))
     team1_initial = db.Column(db.String(LONG_NAME_LEN))
@@ -100,25 +94,13 @@ class Match(db.Model):
     confirmed_start_time = db.Column(db.DateTime)
     completed_time = db.Column(db.DateTime)
     nominal_length = db.Column(db.Integer)  # minutes
-    schedule_type = db.Column(
-        db.Enum(ScheduleType), default=ScheduleType.STATIC
-    )  # STATIC, SAFE, FAST, BREAK, JOIN
-    set_type = db.Column(
-        db.Enum(SetType), default=SetType.SETS
-    )  # SETS, STONES (only for non-BREAK/JOIN matches)
-    ribbon = db.Column(
-        db.Boolean, default=False
-    )  # True if this is a ribbon game (not counted in results)
+    schedule_type = db.Column(db.Enum(ScheduleType), default=ScheduleType.STATIC)  # STATIC, SAFE, FAST, BREAK, JOIN
+    set_type = db.Column(db.Enum(SetType), default=SetType.SETS)  # SETS, STONES (only for non-BREAK/JOIN matches)
+    ribbon = db.Column(db.Boolean, default=False)  # True if this is a ribbon game (not counted in results)
     nsets = db.Column(db.Integer)
-    nstonesperset = db.Column(
-        db.Integer
-    )  # DEPRECATED: Use stones_per_set instead. Kept for backward compatibility.
-    status = db.Column(
-        db.Enum(MatchStatus), default=MatchStatus.NOT_STARTED
-    )  # NOT_STARTED, IN_PROGRESS, COMPLETED
-    initial_notes = db.Column(
-        db.Text
-    )  # notes (initial match notes, distinct from MatchNote objects)
+    nstonesperset = db.Column(db.Integer)  # DEPRECATED: Use stones_per_set instead. Kept for backward compatibility.
+    status = db.Column(db.Enum(MatchStatus), default=MatchStatus.NOT_STARTED)  # NOT_STARTED, IN_PROGRESS, COMPLETED
+    initial_notes = db.Column(db.Text)  # notes (initial match notes, distinct from MatchNote objects)
     team1_players = db.Column(db.Text)  # JSON array of player IDs
     team2_players = db.Column(db.Text)  # JSON array of player IDs
     started_by = db.Column(db.String(USER_ID_LEN))  # user ID who started the match
@@ -133,18 +115,10 @@ class Match(db.Model):
     finalized_at = db.Column(db.DateTime)  # when match was finalized
     ready_to_start = db.Column(db.Boolean, default=False)  # flag for dynamic scheduling
     ready_to_start_at = db.Column(db.DateTime)  # when ready_to_start was set
-    camera_stream_starts = db.Column(
-        db.Text
-    )  # JSON object mapping camera_index to stream start time (ISO format)
-    previous_match = db.Column(
-        db.String(UUID_LEN), db.ForeignKey("matches.uuid"), nullable=True
-    )
-    next_match = db.Column(
-        db.String(UUID_LEN), db.ForeignKey("matches.uuid"), nullable=True
-    )
-    skip_condition = db.Column(
-        db.Text, default="false"
-    )  # DSL expression that determines if match should be skipped
+    camera_stream_starts = db.Column(db.Text)  # JSON object mapping camera_index to stream start time (ISO format)
+    previous_match = db.Column(db.String(UUID_LEN), db.ForeignKey("matches.uuid"), nullable=True)
+    next_match = db.Column(db.String(UUID_LEN), db.ForeignKey("matches.uuid"), nullable=True)
+    skip_condition = db.Column(db.Text, default="false")  # DSL expression that determines if match should be skipped
 
     # Relationships
     previous_match_obj = db.relationship(
@@ -280,28 +254,18 @@ class Point(db.Model):
 
     __tablename__ = "points"
 
-    uuid = db.Column(
-        db.String(UUID_LEN), primary_key=True, default=lambda: str(uuid.uuid4())
-    )
-    match = db.Column(
-        db.String(UUID_LEN), db.ForeignKey("matches.uuid"), nullable=False
-    )
+    uuid = db.Column(db.String(UUID_LEN), primary_key=True, default=lambda: str(uuid.uuid4()))
+    match = db.Column(db.String(UUID_LEN), db.ForeignKey("matches.uuid"), nullable=False)
     winner = db.Column(db.String(SHORT_CODE_LEN))  # TEAM1, TEAM2
     rerolled = db.Column(db.Boolean, default=False)
-    stamp = db.Column(
-        db.DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None)
-    )
+    stamp = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
     end_stamp = db.Column(db.DateTime)
     footage = db.Column(db.String(LONG_URL_LEN))
-    camera_index = db.Column(
-        db.Integer
-    )  # Index of camera in field's camera array (0-based)
+    camera_index = db.Column(db.Integer)  # Index of camera in field's camera array (0-based)
     stream_timestamp = db.Column(db.Float)  # Timestamp in seconds from stream start
     length = db.Column(db.Interval)
     nstones = db.Column(db.Integer)
-    stones_at_start = db.Column(
-        db.Integer
-    )  # Stones remaining when this point started (for STONES matches)
+    stones_at_start = db.Column(db.Integer)  # Stones remaining when this point started (for STONES matches)
     rerollreason = db.Column(db.Text)
     set_number = db.Column(db.Integer, default=1)
     notes = db.Column(db.Text)
@@ -329,22 +293,12 @@ class MatchNote(db.Model):
 
     __tablename__ = "match_notes"
 
-    uuid = db.Column(
-        db.String(UUID_LEN), primary_key=True, default=lambda: str(uuid.uuid4())
-    )
-    match = db.Column(
-        db.String(UUID_LEN), db.ForeignKey("matches.uuid"), nullable=False
-    )
+    uuid = db.Column(db.String(UUID_LEN), primary_key=True, default=lambda: str(uuid.uuid4()))
+    match = db.Column(db.String(UUID_LEN), db.ForeignKey("matches.uuid"), nullable=False)
     text = db.Column(db.Text, nullable=False)
-    target = db.Column(
-        db.Enum(MatchNoteTarget, values_callable=lambda obj: [e.value for e in obj])
-    )
-    created_by = db.Column(
-        db.String(USER_ID_LEN), db.ForeignKey("players.id"), nullable=False
-    )
-    created_at = db.Column(
-        db.DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None)
-    )
+    target = db.Column(db.Enum(MatchNoteTarget, values_callable=lambda obj: [e.value for e in obj]))
+    created_by = db.Column(db.String(USER_ID_LEN), db.ForeignKey("players.id"), nullable=False)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
     # Optional link to a specific player
     player_id = db.Column(db.String(USER_ID_LEN), db.ForeignKey("players.id"))
     # Optional link to a specific point

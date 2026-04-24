@@ -5,7 +5,6 @@ team/match operations, lambdas, and list operations.
 """
 
 import pytest
-from datetime import datetime, timezone, timedelta
 
 from app.utils.parser import get_parser, DSLValidationError
 from app.domain.enums import MatchStatus, WinnerSide
@@ -268,9 +267,7 @@ class TestMatchOperations:
             parser = get_parser(tournament_with_data["tournament_url"])
             tournament_url = tournament_with_data["tournament_url"]
             match3_name = tournament_with_data["match3_name"]
-            match3 = Match.query.filter_by(
-                event=tournament_url, name=match3_name
-            ).first()
+            match3 = Match.query.filter_by(event=tournament_url, name=match3_name).first()
 
             # SKIPPED -> True
             match3.status = MatchStatus.SKIPPED
@@ -550,9 +547,7 @@ class TestSymbolicExpressions:
             assert result[0] == "=="
 
     @pytest.mark.unit
-    def test_preserved_expression_with_unresolved_match(
-        self, app, tournament_with_data
-    ):
+    def test_preserved_expression_with_unresolved_match(self, app, tournament_with_data):
         with app.app_context():
             parser = get_parser(tournament_with_data["tournament_url"])
 
@@ -639,12 +634,8 @@ class TestSkipConditionIntegration:
             match1_name = tournament_with_data["match1_name"]
 
             # match3's skip_condition: skip if match1 is skipped
-            match3 = Match.query.filter_by(
-                event=tournament_url, name=match3_name
-            ).first()
-            match1 = Match.query.filter_by(
-                event=tournament_url, name=match1_name
-            ).first()
+            match3 = Match.query.filter_by(event=tournament_url, name=match3_name).first()
+            match1 = Match.query.filter_by(event=tournament_url, name=match1_name).first()
             match3.skip_condition = f"(is-skipped {{{match1_name}}})"
             db.session.commit()
 
@@ -670,29 +661,19 @@ class TestSkipConditionIntegration:
             match2_name = tournament_with_data["match2_name"]
             match3_name = tournament_with_data["match3_name"]
 
-            match3 = Match.query.filter_by(
-                event=tournament_url, name=match3_name
-            ).first()
-            match3.skip_condition = (
-                f"(or (is-skipped {{{match1_name}}}) (is-skipped {{{match2_name}}}))"
-            )
+            match3 = Match.query.filter_by(event=tournament_url, name=match3_name).first()
+            match3.skip_condition = f"(or (is-skipped {{{match1_name}}}) (is-skipped {{{match2_name}}}))"
             db.session.commit()
 
             # Neither skipped -> False
-            Match.query.filter_by(event=tournament_url, name=match1_name).update(
-                {"status": MatchStatus.COMPLETED}
-            )
-            Match.query.filter_by(event=tournament_url, name=match2_name).update(
-                {"status": MatchStatus.COMPLETED}
-            )
+            Match.query.filter_by(event=tournament_url, name=match1_name).update({"status": MatchStatus.COMPLETED})
+            Match.query.filter_by(event=tournament_url, name=match2_name).update({"status": MatchStatus.COMPLETED})
             db.session.commit()
             result = parser.parse(match3.skip_condition)
             assert result is False
 
             # match1 skipped -> True
-            Match.query.filter_by(event=tournament_url, name=match1_name).update(
-                {"status": MatchStatus.SKIPPED}
-            )
+            Match.query.filter_by(event=tournament_url, name=match1_name).update({"status": MatchStatus.SKIPPED})
             db.session.commit()
             result = parser.parse(match3.skip_condition)
             assert result is True

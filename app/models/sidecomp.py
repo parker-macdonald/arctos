@@ -26,9 +26,7 @@ class SideComp(db.Model):
     __tablename__ = "sidecomps"
 
     id = db.Column(db.Integer, primary_key=True)
-    event = db.Column(
-        db.String(URL_SLUG_LEN), db.ForeignKey("tournaments.url"), nullable=False
-    )
+    event = db.Column(db.String(URL_SLUG_LEN), db.ForeignKey("tournaments.url"), nullable=False)
     name = db.Column(db.String(SHORT_NAME_LEN), nullable=False)
     type = db.Column(db.String(SHORT_LABEL_LEN), nullable=False)
 
@@ -49,10 +47,6 @@ class SideCompResult(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     comp = db.Column(db.Integer, db.ForeignKey("sidecomps.id"), nullable=False)
-    player = db.Column(
-        db.String(USER_ID_LEN), db.ForeignKey("players.id"), nullable=False
-    )
+    player = db.Column(db.String(USER_ID_LEN), db.ForeignKey("players.id"), nullable=False)
     scanner_id = db.Column(db.Integer)
-    stamp = db.Column(
-        db.DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None)
-    )
+    stamp = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))

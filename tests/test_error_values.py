@@ -1,7 +1,5 @@
 """Tests for the error-as-values module (Option / Result / allow_Q)."""
 
-import pytest
-
 from app.error_values import Err, Null, Ok, Some, option
 
 

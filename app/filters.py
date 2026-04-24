@@ -3,13 +3,10 @@ Jinja2 template filters for the tournament site.
 """
 
 import json
-import hmac
-import hashlib
-import base64
 from datetime import timezone, timedelta
-from flask import Blueprint, current_app, url_for
+from flask import Blueprint, url_for
 from markupsafe import Markup
-from models import TeamRegistration, Tournament
+from models import TeamRegistration
 from app.utils.helpers import can_head_ref_match
 import markdown
 import bleach
@@ -18,9 +15,7 @@ bp = Blueprint("filters", __name__)
 
 
 @bp.app_template_filter("team_registration_for_tournament")
-def team_registration_for_tournament(
-    team_id: str | None, tournament_url: str
-) -> "TeamRegistration | None":
+def team_registration_for_tournament(team_id: str | None, tournament_url: str) -> "TeamRegistration | None":
     """Return the team registration record for the given team and tournament.
 
     Args:
@@ -38,9 +33,7 @@ def team_registration_for_tournament(
 
 
 @bp.app_template_filter("team_by_pseudonym_for_tournament")
-def team_by_pseudonym_for_tournament(
-    pseudonym: str | None, tournament_url: str
-) -> "TeamRegistration | None":
+def team_by_pseudonym_for_tournament(pseudonym: str | None, tournament_url: str) -> "TeamRegistration | None":
     """Return the team registration matching a pseudonym within a tournament.
 
     Args:
@@ -54,9 +47,7 @@ def team_by_pseudonym_for_tournament(
     """
     if not pseudonym:
         return None
-    return TeamRegistration.query.filter_by(
-        pseudonym=pseudonym, event=tournament_url
-    ).first()
+    return TeamRegistration.query.filter_by(pseudonym=pseudonym, event=tournament_url).first()
 
 
 @bp.app_template_filter("is_head_ref")
@@ -182,9 +173,7 @@ def localtime(dt, format_str: str = "%Y-%m-%d %H:%M") -> str:
     formatted = dt.strftime(format_str)
 
     # Store the format string in a data attribute so JS knows how to format
-    return Markup(
-        f'<span class="utc-timestamp" data-utc="{iso_str}" data-format="{format_str}">{formatted}</span>'
-    )
+    return Markup(f'<span class="utc-timestamp" data-utc="{iso_str}" data-format="{format_str}">{formatted}</span>')
 
 
 @bp.app_template_filter("utc_iso")
@@ -329,9 +318,7 @@ def merge_refs(match) -> str:
 
     # Split both lists
     refs_list = [r.strip() for r in refs_str.split(",")] if refs_str else []
-    refs_initial_list = (
-        [r.strip() for r in refs_initial_str.split(",")] if refs_initial_str else []
-    )
+    refs_initial_list = [r.strip() for r in refs_initial_str.split(",")] if refs_initial_str else []
 
     # Use refs_initial as the base (it defines the structure)
     merged = []

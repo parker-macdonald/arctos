@@ -55,15 +55,11 @@ def create_app(config: dict | None = None) -> Flask:
     config = config or dict()
     # Default configuration
     app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev-key")
-    app.config["SQLALCHEMY_DATABASE_URI"] = config.get(
-        "SQLALCHEMY_DATABASE_URI", "sqlite:///tournament.db"
-    )
+    app.config["SQLALCHEMY_DATABASE_URI"] = config.get("SQLALCHEMY_DATABASE_URI", "sqlite:///tournament.db")
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
     # Record / footage uploads use multi-MB POST bodies; set explicitly so Werkzeug does not reject large chunks.
     # Reverse proxies (nginx client_max_body_size, etc.) may still need raising in deployment.
-    app.config["MAX_CONTENT_LENGTH"] = int(
-        os.environ.get("MAX_CONTENT_LENGTH_BYTES", str(100 * 1024 * 1024))
-    )
+    app.config["MAX_CONTENT_LENGTH"] = int(os.environ.get("MAX_CONTENT_LENGTH_BYTES", str(100 * 1024 * 1024)))
     app.config["SESSION_COOKIE_HTTPONLY"] = True
     # For cross-origin SPA (e.g. dx serve on port 8080, Flask on 5006), set ARCTOS_CORS_DEV=1
     # so the session cookie is sent with credentialed requests. SameSite=None requires Secure
@@ -81,27 +77,16 @@ def create_app(config: dict | None = None) -> Flask:
     # Public base URL for OAuth and redirects (e.g. https://example.com). When set, used for
     # Google redirect_uri and post-login redirects so they work behind proxies and match
     # the authorized redirect URI in Google Cloud Console. No trailing slash.
-    app.config["EXTERNAL_BASE_URL"] = os.environ.get("EXTERNAL_BASE_URL", "").rstrip(
-        "/"
-    )
+    app.config["EXTERNAL_BASE_URL"] = os.environ.get("EXTERNAL_BASE_URL", "").rstrip("/")
 
     # S3 video storage: when S3_VIDEO_BUCKET is set, finalization uploads finished videos to S3.
-    app.config["S3_VIDEO_BUCKET"] = (
-        os.environ.get("S3_VIDEO_BUCKET", "").strip() or None
-    )
-    app.config["S3_ENDPOINT_URL"] = (
-        os.environ.get("S3_ENDPOINT_URL", "").strip() or None
-    )
+    app.config["S3_VIDEO_BUCKET"] = os.environ.get("S3_VIDEO_BUCKET", "").strip() or None
+    app.config["S3_ENDPOINT_URL"] = os.environ.get("S3_ENDPOINT_URL", "").strip() or None
     app.config["AWS_REGION"] = os.environ.get("AWS_REGION", "us-east-1").strip()
-    app.config["S3_VIDEO_PREFIX"] = (
-        os.environ.get("S3_VIDEO_PREFIX", "").strip() or None
-    )
-    app.config["S3_PRESIGNED_EXPIRY_SECONDS"] = int(
-        os.environ.get("S3_PRESIGNED_EXPIRY_SECONDS", "3600")
-    )
+    app.config["S3_VIDEO_PREFIX"] = os.environ.get("S3_VIDEO_PREFIX", "").strip() or None
+    app.config["S3_PRESIGNED_EXPIRY_SECONDS"] = int(os.environ.get("S3_PRESIGNED_EXPIRY_SECONDS", "3600"))
     app.config["RECORDING_ARTIFACTS_AFTER_UPLOAD"] = (
-        os.environ.get("RECORDING_ARTIFACTS_AFTER_UPLOAD", "delete").strip().lower()
-        or "delete"
+        os.environ.get("RECORDING_ARTIFACTS_AFTER_UPLOAD", "delete").strip().lower() or "delete"
     )
     app.config["ENABLE_MANUAL_FOOTAGE_UPLOADS"] = os.environ.get(
         "ENABLE_MANUAL_FOOTAGE_UPLOADS", ""
@@ -250,11 +235,7 @@ def create_app(config: dict | None = None) -> Flask:
         # Otherwise only for /_api and (in dev) /static/
         cors_dev_all = os.environ.get("ARCTOS_CORS_DEV") == "1"
         is_api = "/_api" in request.path
-        is_static_cors = (
-            cors_dev_all
-            and request.endpoint == "static"
-            and request.path.startswith("/static/")
-        )
+        is_static_cors = cors_dev_all and request.endpoint == "static" and request.path.startswith("/static/")
         if not cors_dev_all and not is_api and not is_static_cors:
             return response
         origin_header = request.headers.get("Origin")
@@ -272,9 +253,7 @@ def create_app(config: dict | None = None) -> Flask:
         cors_dev_all = os.environ.get("ARCTOS_CORS_DEV") == "1"
         is_api = "/_api" in request.path
         is_static_cors = cors_dev_all and request.path.startswith("/static/")
-        if request.method != "OPTIONS" or (
-            not cors_dev_all and not is_api and not is_static_cors
-        ):
+        if request.method != "OPTIONS" or (not cors_dev_all and not is_api and not is_static_cors):
             return None
         origin_header = request.headers.get("Origin")
         origin = _cors_allowed_origin(origin_header) if origin_header else None
@@ -291,9 +270,7 @@ def create_app(config: dict | None = None) -> Flask:
         # Check if this is a static file request
         if response.status_code == 200 and request.endpoint == "static":
             # Cache images and other static assets for 1 hour
-            if request.path.startswith("/static/uploads/") or request.path.startswith(
-                "/static/"
-            ):
+            if request.path.startswith("/static/uploads/") or request.path.startswith("/static/"):
                 response.cache_control.max_age = 3600
                 response.cache_control.public = True
         return response
@@ -315,11 +292,7 @@ def create_app(config: dict | None = None) -> Flask:
                 if t.end_date is None:
                     not_complete = True
                 else:
-                    end_utc = (
-                        t.end_date.replace(tzinfo=timezone.utc)
-                        if t.end_date.tzinfo is None
-                        else t.end_date
-                    )
+                    end_utc = t.end_date.replace(tzinfo=timezone.utc) if t.end_date.tzinfo is None else t.end_date
                     not_complete = end_utc >= now
                 if not_complete:
                     try:

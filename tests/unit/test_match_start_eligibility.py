@@ -4,13 +4,11 @@ import pytest
 
 from app.domain.enums import MatchStatus, ScheduleType
 from app.services.match_start_eligibility import get_can_start_and_reasons
-from models import Field, Match, Player, PlayerRegistration, Tag, Tournament, db
+from models import Field, Match, db
 
 
 @pytest.mark.unit
-def test_can_start_true_when_ref_ready_no_conflict(
-    app, test_db, tournament, head_ref_player
-):
+def test_can_start_true_when_ref_ready_no_conflict(app, test_db, tournament, head_ref_player):
     """When user is ref, match is READY_TO_START, and no other match on field, can_start is True."""
     with app.app_context():
         t = db.session.merge(tournament)
@@ -101,10 +99,7 @@ def test_can_start_false_user_not_ref(app, test_db, tournament, player):
         can_start, reasons, _ = get_can_start_and_reasons(t.url, m, p)
         assert can_start is False
         assert any(
-            "not allowed" in r.lower()
-            or "not registered" in r.lower()
-            or "logged in" in r.lower()
-            for r in reasons
+            "not allowed" in r.lower() or "not registered" in r.lower() or "logged in" in r.lower() for r in reasons
         )
 
 
@@ -136,9 +131,7 @@ def test_can_start_false_status_not_ready(app, test_db, tournament, head_ref_pla
 
 
 @pytest.mark.unit
-def test_can_start_completed_returns_false_no_reasons(
-    app, test_db, tournament, head_ref_player
-):
+def test_can_start_completed_returns_false_no_reasons(app, test_db, tournament, head_ref_player):
     """When match is COMPLETED, can_start is False and reasons are empty (match is over)."""
     with app.app_context():
         t = db.session.merge(tournament)

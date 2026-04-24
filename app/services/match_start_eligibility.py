@@ -31,13 +31,9 @@ from app.utils.helpers import can_head_ref_match, get_team_display_name_for_even
 class WhySections:
     """Structured reasons for the 'Why can't I start?' modal."""
 
-    match_ready: Dict[str, Any] = field(
-        default_factory=dict
-    )  # status, reasons[], blocks_start
+    match_ready: Dict[str, Any] = field(default_factory=dict)  # status, reasons[], blocks_start
     conflicts: List[str] = field(default_factory=list)
-    ref_permissions: Dict[str, List[str]] = field(
-        default_factory=dict
-    )  # who_allowed[], current_user[]
+    ref_permissions: Dict[str, List[str]] = field(default_factory=dict)  # who_allowed[], current_user[]
 
 
 def get_who_allowed_explanation(tournament_url: str, match=None) -> List[str]:
@@ -56,28 +52,15 @@ def get_who_allowed_explanation(tournament_url: str, match=None) -> List[str]:
     lines: List[str] = []
 
     if tournament.head_refs_allowed_list:
-        allowed_list = [
-            ref.strip()
-            for ref in tournament.head_refs_allowed_list.split(",")
-            if ref.strip()
-        ]
+        allowed_list = [ref.strip() for ref in tournament.head_refs_allowed_list.split(",") if ref.strip()]
         if allowed_list:
             lines.append(f"{', '.join(allowed_list)} are allowed.")
 
-    if (
-        tournament.head_refs_allow_reffing_teams
-        and match
-        and getattr(match, "refs", None)
-    ):
+    if tournament.head_refs_allow_reffing_teams and match and getattr(match, "refs", None):
         ref_teams = [t.strip() for t in match.refs.split(",") if t.strip()]
         if ref_teams:
-            names = [
-                get_team_display_name_for_event(tournament_url, tid) or tid
-                for tid in ref_teams
-            ]
-            lines.append(
-                f"Players registered for assigned ref teams ({', '.join(names)}) are allowed."
-            )
+            names = [get_team_display_name_for_event(tournament_url, tid) or tid for tid in ref_teams]
+            lines.append(f"Players registered for assigned ref teams ({', '.join(names)}) are allowed.")
 
     if tournament.head_refs_allow_anyone:
         lines.append("Anyone registered for this tournament can head ref.")
@@ -108,9 +91,7 @@ def get_current_user_explanation(tournament_url: str, user) -> List[str]:
 
     if is_team(user):
         team_name = getattr(user, "name", None) or getattr(user, "id", "")
-        lines.append(
-            f"Only player accounts can be refs. You are signed in as a team ({team_name})."
-        )
+        lines.append(f"Only player accounts can be refs. You are signed in as a team ({team_name}).")
         return lines
 
     if not is_player(user):
@@ -184,9 +165,7 @@ def _reasons_teams_refs(match, tournament_url: str) -> List[str]:
         refs_list = [r.strip() for r in refs_initial.split(",")]
         refs_current = (getattr(match, "refs", None) or "").split(",")
         if len(refs_current) < len(refs_list):
-            refs_current = list(refs_current) + [""] * (
-                len(refs_list) - len(refs_current)
-            )
+            refs_current = list(refs_current) + [""] * (len(refs_list) - len(refs_current))
         elif len(refs_current) > len(refs_list):
             refs_current = refs_current[: len(refs_list)]
         for i, initial in enumerate(refs_list):
@@ -199,16 +178,12 @@ def _reasons_teams_refs(match, tournament_url: str) -> List[str]:
                 tag_name = initial[5:].strip()
                 tag = Tag.query.filter_by(event=tournament_url, name=tag_name).first()
                 if not tag or not getattr(tag, "team", None):
-                    reasons.append(
-                        f"Ref slot {i + 1} is set by tag '{tag_name}', which is not yet assigned."
-                    )
+                    reasons.append(f"Ref slot {i + 1} is set by tag '{tag_name}', which is not yet assigned.")
             elif "::winner" in initial or "::loser" in initial:
                 base = initial.split("::")[0].strip()
                 dep = Match.query.filter_by(name=base, event=tournament_url).first()
                 if not dep or getattr(dep, "match_winner", None) is None:
-                    reasons.append(
-                        f"Ref slot {i + 1} depends on match '{base}', which is not yet completed."
-                    )
+                    reasons.append(f"Ref slot {i + 1} depends on match '{base}', which is not yet completed.")
             else:
                 reasons.append(f"Ref slot {i + 1} is not yet set.")
     return reasons
@@ -228,9 +203,7 @@ def _reasons_status_and_deps(tournament_url: str, match) -> List[str]:
     if prev_uuid:
         prev = Match.query.filter_by(uuid=prev_uuid, event=tournament_url).first()
         if prev and prev.status not in (MatchStatus.COMPLETED, MatchStatus.SKIPPED):
-            reasons.append(
-                f"Previous match '{getattr(prev, 'name', prev_uuid)}' is not completed."
-            )
+            reasons.append(f"Previous match '{getattr(prev, 'name', prev_uuid)}' is not completed.")
 
     if getattr(match, "schedule_type", None) != ScheduleType.STATIC:
         try:
@@ -238,16 +211,10 @@ def _reasons_status_and_deps(tournament_url: str, match) -> List[str]:
         except Exception:
             deps = []
         if deps:
-            not_finished = [
-                d
-                for d in deps
-                if d.status not in (MatchStatus.COMPLETED, MatchStatus.SKIPPED)
-            ]
+            not_finished = [d for d in deps if d.status not in (MatchStatus.COMPLETED, MatchStatus.SKIPPED)]
             if not_finished and not (getattr(match, "ready_to_start", False)):
                 names = [getattr(d, "name", d.uuid) for d in not_finished]
-                reasons.append(
-                    f"Dependency match(es) not completed: {', '.join(names)}."
-                )
+                reasons.append(f"Dependency match(es) not completed: {', '.join(names)}.")
 
     for attr, label in [
         ("team1_initial", "Team 1"),
@@ -261,16 +228,12 @@ def _reasons_status_and_deps(tournament_url: str, match) -> List[str]:
             tag_name = initial[5:].strip()
             tag = Tag.query.filter_by(event=tournament_url, name=tag_name).first()
             if not tag or not getattr(tag, "team", None):
-                reasons.append(
-                    f"{label} is set by tag '{tag_name}', which is not yet assigned."
-                )
+                reasons.append(f"{label} is set by tag '{tag_name}', which is not yet assigned.")
         elif "::winner" in initial or "::loser" in initial:
             base = initial.split("::")[0].strip()
             dep = Match.query.filter_by(name=base, event=tournament_url).first()
             if not dep or getattr(dep, "match_winner", None) is None:
-                reasons.append(
-                    f"{label} depends on match '{base}', which is not yet completed."
-                )
+                reasons.append(f"{label} depends on match '{base}', which is not yet completed.")
 
     # Ref-slot reasons are added by _reasons_teams_refs so we don't duplicate here.
     return reasons
@@ -289,17 +252,13 @@ def _build_why_sections(tournament_url: str, match, user) -> WhySections:
     match_ready_reasons: List[str] = []
     blocks_start = False
     if status in (MatchStatus.COMPLETED, MatchStatus.SKIPPED):
-        match_ready_reasons.append(
-            f"Match status is {status_str}. The match is already over."
-        )
+        match_ready_reasons.append(f"Match status is {status_str}. The match is already over.")
     elif status == MatchStatus.READY_TO_START:
         match_ready_reasons.append(
             "Match status is READY_TO_START. The match can be started once ref permissions and conflicts are satisfied."
         )
     elif status in (MatchStatus.NOT_STARTED, MatchStatus.TIME_FINALIZED):
-        match_ready_reasons.append(
-            f"Match status is {status_str}. The match is not yet ready to start."
-        )
+        match_ready_reasons.append(f"Match status is {status_str}. The match is not yet ready to start.")
         match_ready_reasons.extend(_reasons_status_and_deps(tournament_url, match))
         if len(match_ready_reasons) == 1:
             match_ready_reasons.append("Schedule or dependencies not yet finalized.")
@@ -325,26 +284,18 @@ def _build_why_sections(tournament_url: str, match, user) -> WhySections:
         sections.conflicts.append(field_reason)
 
     # 3. Ref permissions
-    sections.ref_permissions["who_allowed"] = get_who_allowed_explanation(
-        tournament_url, match
-    )
-    sections.ref_permissions["current_user"] = get_current_user_explanation(
-        tournament_url, user
-    )
+    sections.ref_permissions["who_allowed"] = get_who_allowed_explanation(tournament_url, match)
+    sections.ref_permissions["current_user"] = get_current_user_explanation(tournament_url, user)
     # Section is "ok" (not blocking) when user is allowed to head ref
     user_id = getattr(user, "id", None) if user else None
     sections.ref_permissions["is_ok"] = bool(
-        user_id
-        and is_player(user)
-        and can_head_ref_match(tournament_url, user_id, match=match)
+        user_id and is_player(user) and can_head_ref_match(tournament_url, user_id, match=match)
     )
 
     return sections
 
 
-def get_can_start_and_reasons(
-    tournament_url: str, match, user
-) -> Tuple[bool, List[str], WhySections]:
+def get_can_start_and_reasons(tournament_url: str, match, user) -> Tuple[bool, List[str], WhySections]:
     """
     Single source of truth: can the given user start this match, and why not if not?
 

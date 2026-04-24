@@ -59,7 +59,7 @@ def get_stream_start_time(video_id: str | None) -> str | None:
         return None
 
     try:
-        url = f"https://www.googleapis.com/youtube/v3/videos"
+        url = "https://www.googleapis.com/youtube/v3/videos"
         params = {
             "id": video_id,
             "part": "liveStreamingDetails,snippet",
@@ -82,9 +82,7 @@ def get_stream_start_time(video_id: str | None) -> str | None:
             # Parse and ensure timezone-aware UTC
             # Handle both 'Z' and '+00:00' formats
             if actual_start_time.endswith("Z"):
-                start_dt = datetime.fromisoformat(
-                    actual_start_time.replace("Z", "+00:00")
-                )
+                start_dt = datetime.fromisoformat(actual_start_time.replace("Z", "+00:00"))
             else:
                 start_dt = datetime.fromisoformat(actual_start_time)
 
@@ -210,9 +208,7 @@ def generate_camera_key(tournament_url: str, field_name: str) -> str:
     return base64.urlsafe_b64encode(digest).decode("utf-8").rstrip("=")
 
 
-def validate_camera_key(
-    tournament_url: str, field_name: str, provided_key: str
-) -> bool:
+def validate_camera_key(tournament_url: str, field_name: str, provided_key: str) -> bool:
     """Return whether *provided_key* is a valid camera access key for a field.
 
     Uses a constant-time comparison to prevent timing attacks.
@@ -260,9 +256,7 @@ def require_camera_key(tournament_url: str, field_name: str):
         *error_response* is a ``(jsonify_result, 403)`` tuple.
     """
     access_key = get_camera_key_from_request()
-    if not access_key or not validate_camera_key(
-        tournament_url, field_name, access_key
-    ):
+    if not access_key or not validate_camera_key(tournament_url, field_name, access_key):
         return (False, (jsonify({"error": "Invalid or missing access key"}), 403))
     return (True, None)
 

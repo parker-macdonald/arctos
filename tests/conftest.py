@@ -19,9 +19,6 @@ from models import (
     Player,
     Team,
     TeamRegistration,
-    PlayerRegistration,
-    Point,
-    HeadRef,
     Field,
 )
 from tests.utils import make_registrable_config

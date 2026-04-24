@@ -20,10 +20,7 @@ def test_parse_enum_accepts_valid_strings():
     assert parse_enum(ScheduleType, "FAST").unwrap() == ScheduleType.FAST
     assert parse_enum(SetType, "SETS").unwrap() == SetType.SETS
     assert parse_enum(WinnerSide, "TEAM1").unwrap() == WinnerSide.TEAM1
-    assert (
-        parse_enum(RegistrationStatus, "CONFIRMED").unwrap()
-        == RegistrationStatus.CONFIRMED
-    )
+    assert parse_enum(RegistrationStatus, "CONFIRMED").unwrap() == RegistrationStatus.CONFIRMED
 
 
 @pytest.mark.unit
@@ -37,7 +34,4 @@ def test_parse_enum_returns_none_for_invalid_values():
 @pytest.mark.unit
 def test_parse_enum_is_idempotent():
     """parse_enum wraps an already-correct enum member in Some without error."""
-    assert (
-        parse_enum(MatchStatus, MatchStatus.IN_PROGRESS).unwrap()
-        == MatchStatus.IN_PROGRESS
-    )
+    assert parse_enum(MatchStatus, MatchStatus.IN_PROGRESS).unwrap() == MatchStatus.IN_PROGRESS

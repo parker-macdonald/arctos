@@ -78,17 +78,11 @@ def get_notes(tournament_url: str):
             .all()
         )
     else:
-        notes = (
-            MatchNote.query.filter_by(match=match_id, point_id=None)
-            .order_by(MatchNote.created_at.desc())
-            .all()
-        )
+        notes = MatchNote.query.filter_by(match=match_id, point_id=None).order_by(MatchNote.created_at.desc()).all()
 
     notes_data = []
     for note in notes:
-        notes_data.append(
-            MatchNoteSerializer.to_dict(note, tournament_url, match=match)
-        )
+        notes_data.append(MatchNoteSerializer.to_dict(note, tournament_url, match=match))
 
     return json_success({"notes": notes_data})
 
@@ -226,11 +220,7 @@ def get_point_notes(tournament_url: str):
         is_head_ref = can_head_ref_match(tournament_url, current_user.id, match=match)
 
     # Get all notes for this point
-    notes = (
-        MatchNote.query.filter_by(match=match_id, point_id=point_id)
-        .order_by(MatchNote.created_at.desc())
-        .all()
-    )
+    notes = MatchNote.query.filter_by(match=match_id, point_id=point_id).order_by(MatchNote.created_at.desc()).all()
 
     notes_data = []
     for note in notes:
@@ -238,9 +228,7 @@ def get_point_notes(tournament_url: str):
         # Team and player notes are only visible to head refs
         if not is_head_ref and note.target != "match":
             continue
-        notes_data.append(
-            MatchNoteSerializer.to_dict(note, tournament_url, match=match)
-        )
+        notes_data.append(MatchNoteSerializer.to_dict(note, tournament_url, match=match))
 
     return json_success({"notes": notes_data})
 

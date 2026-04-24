@@ -95,21 +95,15 @@ class MatchService:
 
         from app.services.match_start_eligibility import get_can_start_and_reasons
 
-        can_start, block_reasons, _ = get_can_start_and_reasons(
-            tournament_url, match, user
-        )
+        can_start, block_reasons, _ = get_can_start_and_reasons(tournament_url, match, user)
         if not can_start:
             msg = block_reasons[0] if block_reasons else "Cannot start this match."
             return Err(ValidationError(msg))
 
         raw_team1 = (team1_players_csv or "").strip()
         raw_team2 = (team2_players_csv or "").strip()
-        team1_players = [
-            pid for pid in (raw_team1.split(",") if raw_team1 else []) if pid
-        ]
-        team2_players = [
-            pid for pid in (raw_team2.split(",") if raw_team2 else []) if pid
-        ]
+        team1_players = [pid for pid in (raw_team1.split(",") if raw_team1 else []) if pid]
+        team2_players = [pid for pid in (raw_team2.split(",") if raw_team2 else []) if pid]
 
         overlap = set(team1_players) & set(team2_players)
         if overlap:
@@ -124,9 +118,7 @@ class MatchService:
             max_roster = int(max_roster) if max_roster is not None else None
         except Exception:
             max_roster = None
-        if max_roster and (
-            len(team1_players) > max_roster or len(team2_players) > max_roster
-        ):
+        if max_roster and (len(team1_players) > max_roster or len(team2_players) > max_roster):
             return Err(ValidationError("Too many players selected for a team"))
 
         team1_players = _dedup(team1_players)
@@ -157,9 +149,7 @@ class MatchService:
 
         # Get camera stream start times for all cameras on this field
         if match.field:
-            field_obj = Field.query.filter_by(
-                event=tournament_url, name=match.field
-            ).first()
+            field_obj = Field.query.filter_by(event=tournament_url, name=match.field).first()
             if field_obj and field_obj.camera:
                 from app.utils.camera_helpers import get_all_camera_stream_starts
 

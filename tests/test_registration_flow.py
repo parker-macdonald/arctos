@@ -25,9 +25,7 @@ def test_team_register_and_deregister_flow(app, client, tournament, team):
     assert resp.status_code == 200
 
     with app.app_context():
-        reg = TeamRegistration.query.filter_by(
-            event=tournament_url, team=team_id
-        ).first()
+        reg = TeamRegistration.query.filter_by(event=tournament_url, team=team_id).first()
         assert reg is not None
         assert reg.status == TeamRegistrationStatus.CONFIRMED
         assert reg.pseudonym == "Team Pseudonym"
@@ -36,9 +34,7 @@ def test_team_register_and_deregister_flow(app, client, tournament, team):
     assert resp2.status_code == 200
 
     with app.app_context():
-        reg2 = TeamRegistration.query.filter_by(
-            event=tournament_url, team=team_id
-        ).first()
+        reg2 = TeamRegistration.query.filter_by(event=tournament_url, team=team_id).first()
         assert reg2 is not None
         assert reg2.status == TeamRegistrationStatus.CANCELLED
 
@@ -59,9 +55,7 @@ def test_player_register_and_deregister_flow(app, client, tournament, player):
     assert resp.status_code == 200
 
     with app.app_context():
-        reg = PlayerRegistration.query.filter_by(
-            event=tournament_url, player=player_id
-        ).first()
+        reg = PlayerRegistration.query.filter_by(event=tournament_url, player=player_id).first()
         assert reg is not None
         assert reg.status == "CONFIRMED"
         assert reg.jersey_name == "Alice"
@@ -77,17 +71,13 @@ def test_player_register_and_deregister_flow(app, client, tournament, player):
     assert resp_dup.status_code == 400
     with app.app_context():
         # Still only one row
-        regs = PlayerRegistration.query.filter_by(
-            event=tournament_url, player=player_id
-        ).all()
+        regs = PlayerRegistration.query.filter_by(event=tournament_url, player=player_id).all()
         assert len(regs) == 1
 
     resp2 = client.post(f"/_api/{tournament_url}/deregister-player")
     assert resp2.status_code == 200
 
     with app.app_context():
-        reg2 = PlayerRegistration.query.filter_by(
-            event=tournament_url, player=player_id
-        ).first()
+        reg2 = PlayerRegistration.query.filter_by(event=tournament_url, player=player_id).first()
         assert reg2 is not None
         assert reg2.status == RegistrationStatus.CANCELLED
