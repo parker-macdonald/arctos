@@ -74,13 +74,35 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
-from app import create_app
-from app.domain.enums import WinnerSide
-from app.models import (
+# scripts/ is not a Python package and the repo root is not on sys.path when
+# invoked as ``python scripts/backfill_normalised_tables.py``. Add it so the
+# ``app`` package can be imported from anywhere.
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from app import create_app  # noqa: E402
+
+
+def _resolve_database_url() -> str | None:
+    """Return the SQLAlchemy URL the script should operate on, or ``None``.
+
+    ``create_app()`` only reads ``SQLALCHEMY_DATABASE_URI`` from its config
+    dict argument, falling back to a hard-coded ``sqlite:///tournament.db``.
+    It does not consult the environment. This script honours the env var
+    so an operator can point the backfill at any database (a snapshot, a
+    staging copy, etc.) the same way ``alembic`` does. Returning ``None``
+    leaves the application's default in place.
+    """
+    return os.environ.get("SQLALCHEMY_DATABASE_URI")
+from app.domain.enums import WinnerSide  # noqa: E402
+from app.models import (  # noqa: E402
     Camera,
     CameraTimepoint,
     Field,
@@ -95,7 +117,7 @@ from app.models import (
     Tournament,
     db,
 )
-from app.utils.camera_helpers import parse_camera_urls
+from app.utils.camera_helpers import parse_camera_urls  # noqa: E402
 
 
 @dataclass
@@ -632,8 +654,17 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    app = create_app()
+    config_overrides: dict[str, str] = {}
+    db_url = _resolve_database_url()
+    if db_url:
+        config_overrides["SQLALCHEMY_DATABASE_URI"] = db_url
+    app = create_app(config=config_overrides)
+
     with app.app_context():
+        # Echo the actual database the script is about to touch, so an
+        # operator who forgot to set ``SQLALCHEMY_DATABASE_URI`` doesn't
+        # accidentally backfill the wrong file.
+        print(f"Database: {app.config.get('SQLALCHEMY_DATABASE_URI')}")
         precondition_error = _check_preconditions()
         if precondition_error:
             print(f"error: {precondition_error}", file=sys.stderr)
