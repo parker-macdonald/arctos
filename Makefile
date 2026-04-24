@@ -23,7 +23,9 @@ CERT_SUBJECT ?= /CN=localhost
         setup setup-os setup-macos setup-ubuntu setup-python install setup-frontend \
         lint format \
         test unit integration \
-        run certs
+        run certs \
+        db-baseline db-migrate db-revision db-current db-history \
+        db-backup db-check-duplicates
 
 help: ## Show available targets
 	@awk 'BEGIN {FS = ":.*##"; printf "Usage: make <target>\n\nTargets:\n"} \
@@ -100,6 +102,40 @@ run: ## Run the backend with gunicorn (loads $(ENV_FILE) if present)
 		$(if $(strip $(CERTFILE)),--certfile=$(CERTFILE)) \
 		$(if $(strip $(KEYFILE)),--keyfile=$(KEYFILE)) \
 		run_app:app
+
+# ── Database migrations ───────────────────────────────────────────────────────
+#
+# All targets shell out to alembic via `uv run` so the project-pinned version
+# is always used. See `migrations/README.md` for the full workflow.
+# Run `make db-backup` BEFORE every db-migrate.
+
+db-baseline: ## One-shot: stamp an existing database at the current alembic head
+	@uv run alembic stamp head
+
+db-migrate: ## Apply all outstanding migrations (run `make db-backup` first!)
+	@uv run alembic upgrade head
+
+db-revision: ## Autogenerate a migration; usage: make db-revision MSG="snake_case_message"
+	@if [ -z "$(MSG)" ]; then \
+		echo "error: pass MSG=... e.g. make db-revision MSG=\"add_unique_player_email\""; \
+		exit 1; \
+	fi
+	@uv run alembic revision --autogenerate -m "$(MSG)"
+
+db-current: ## Print the revision currently applied to the database
+	@uv run alembic current
+
+db-history: ## Print the full alembic revision history
+	@uv run alembic history
+
+db-backup: ## Snapshot the live SQLite database to backups/ (run BEFORE every db-migrate)
+	@chmod +x scripts/backup_db.sh
+	@scripts/backup_db.sh
+
+db-check-duplicates: ## Report rows that violate would-be-unique column groups
+	@uv run python scripts/check_duplicates.py
+
+# ── Misc ──────────────────────────────────────────────────────────────────────
 
 certs: ## Generate self-signed SSL certs at $(CERTFILE)/$(KEYFILE) (use FORCE=1 to overwrite)
 	@if [ -z "$(FORCE)" ] && { [ -f "$(CERTFILE)" ] || [ -f "$(KEYFILE)" ]; }; then \

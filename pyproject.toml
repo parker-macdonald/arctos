@@ -5,6 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "alembic>=1.18.4",
     "authlib==1.6.5",
     "bcrypt==5.0.0",
     "bleach==6.3.0",

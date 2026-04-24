@@ -101,6 +101,8 @@ def create_app(config: dict | None = None) -> Flask:
         app.config.update(config)
 
     # SQLite: increase busy timeout; finalize workers and HTTP handlers share one file.
+    # The same timeout is also re-asserted via PRAGMA in `set_sqlite_pragmas` below so
+    # that every new DBAPI connection gets it regardless of how the engine was built.
     uri = app.config.get("SQLALCHEMY_DATABASE_URI") or ""
     if isinstance(uri, str) and uri.startswith("sqlite"):
         opts = dict(app.config.get("SQLALCHEMY_ENGINE_OPTIONS") or {})
@@ -132,7 +134,10 @@ def create_app(config: dict | None = None) -> Flask:
     db = db_instance
     db.init_app(app)
     init_db(db)
-    # WAL + busy_timeout: readers/writers interleave better than default rollback journal.
+    # Per-connection SQLite pragmas. WAL + busy_timeout let readers/writers interleave
+    # better than the default rollback journal; foreign-key enforcement is added here
+    # because SQLite ships with it OFF by default and only honours it when the pragma
+    # is set on EVERY new connection.
     try:
         with app.app_context():
             eng = db.engine
@@ -140,11 +145,27 @@ def create_app(config: dict | None = None) -> Flask:
                 from sqlalchemy import event
 
                 @event.listens_for(eng, "connect")
-                def _sqlite_pragma(dbapi_connection, _connection_record):
+                def set_sqlite_pragmas(dbapi_connection, _connection_record):
+                    """Apply Arctos-required SQLite pragmas to a fresh DBAPI connection.
+
+                    Runs once per new connection that SQLAlchemy's pool hands out:
+
+                    * ``journal_mode=WAL`` — readers and writers do not block each
+                      other; required because finalize workers and HTTP handlers
+                      share a single database file.
+                    * ``busy_timeout=30000`` — wait up to 30 s for a competing writer
+                      instead of failing immediately with ``SQLITE_BUSY``.
+                    * ``foreign_keys=ON`` — SQLite disables FK enforcement by default
+                      and only checks it when this pragma is set on the connection.
+                      Without this every ``ForeignKey`` in the schema is decorative
+                      and deletes silently orphan child rows. This is the one
+                      non-obvious pragma; do not remove it.
+                    """
                     cur = dbapi_connection.cursor()
                     try:
                         cur.execute("PRAGMA journal_mode=WAL")
                         cur.execute("PRAGMA busy_timeout=30000")
+                        cur.execute("PRAGMA foreign_keys=ON")
                     finally:
                         cur.close()
 

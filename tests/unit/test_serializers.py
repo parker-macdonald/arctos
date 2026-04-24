@@ -8,7 +8,7 @@ from models import Match, MatchNote, Player, db
 
 
 @pytest.mark.unit
-def test_match_note_serializer_includes_team_id_for_team_targets(test_db, tournament):
+def test_match_note_serializer_includes_team_id_for_team_targets(test_db, tournament, seeded_teams):
     """MatchNoteSerializer.to_dict resolves team_id from the match for team-targeted notes."""
     tournament_url = tournament.url
     p = Player(id="p1", name="Player One")
