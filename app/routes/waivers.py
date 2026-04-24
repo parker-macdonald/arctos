@@ -20,6 +20,21 @@ bp = Blueprint("waivers", __name__)
 
 
 def _waiver_disk_path(scope_url: str) -> str:
+    """Resolve the absolute path to the waiver file for *scope_url*.
+
+    Searches ``static/uploads/waivers/<scope_url>/`` for a file named
+    ``waiver`` (no extension) or ``waiver.<ext>`` (any extension).  Extension
+    files are preferred over the legacy extensionless variant so that
+    browsers receive a correct ``Content-Type`` header.
+
+    Args:
+        scope_url: URL slug of the tournament or league.
+
+    Returns:
+        Absolute filesystem path to the best matching waiver file.  If the
+        directory does not exist or contains no candidates, returns a
+        sentinel path (which will not pass :func:`os.path.isfile`).
+    """
     # Prefer any extension variant (waiver.<ext>) and fall back to legacy extensionless file.
     base_dir = os.path.join(
         current_app.root_path,
@@ -48,6 +63,15 @@ def _waiver_disk_path(scope_url: str) -> str:
 
 @bp.route("/leagues/<league_url>/waiver", methods=["GET"])
 def league_waiver(league_url: str):
+    """Serve the waiver document for a league.
+
+    ``GET /leagues/<league_url>/waiver``
+
+    Returns:
+        The waiver file as an inline attachment (content-type determined by
+        file extension), or a 404 JSON error when the league or waiver file
+        is not found.
+    """
     league = League.query.filter_by(url=league_url).first()
     if not league:
         return {"error": "Not found"}, 404
@@ -61,6 +85,19 @@ def league_waiver(league_url: str):
 
 @bp.route("/<event_url>/waiver", methods=["GET"])
 def event_waiver_alias(event_url: str):
+    """Serve or redirect to the waiver document for a tournament or league alias.
+
+    ``GET /<event_url>/waiver``
+
+    * If *event_url* is a league URL slug, redirects (302) to the canonical
+      ``/leagues/<event_url>/waiver`` route.
+    * If the tournament belongs to a league, redirects to the league waiver.
+    * Otherwise serves the tournament's own waiver file inline.
+
+    Returns:
+        A 302 redirect, an inline file response, or a 404 JSON error when
+        the event or waiver file cannot be found.
+    """
     # If the slug matches a league, redirect to the canonical league URL.
     league = League.query.filter_by(url=event_url).first()
     if league:

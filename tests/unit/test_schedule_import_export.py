@@ -1,3 +1,5 @@
+"""Unit tests for ScheduleImportExportService (TOML import/export round-trips)."""
+
 import textwrap
 from datetime import datetime, timezone
 

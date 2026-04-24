@@ -1,3 +1,5 @@
+"""Integration tests for match-start flow (HEAD ref starts a match via POST)."""
+
 import json
 
 import pytest
@@ -9,6 +11,7 @@ from tests.utils import login_as
 
 @pytest.mark.integration
 def test_start_match_post_starts_match(app, client, tournament, head_ref_player):
+    """A head ref can successfully start a READY_TO_START match via the API."""
     with app.app_context():
         t = db.session.merge(tournament)
         ref = db.session.merge(head_ref_player)
@@ -52,6 +55,7 @@ def test_start_match_post_starts_match(app, client, tournament, head_ref_player)
 
 @pytest.mark.integration
 def test_start_match_post_rejects_overlap(app, client, tournament, head_ref_player):
+    """start-match rejects a request when a player appears on both rosters."""
     with app.app_context():
         t = db.session.merge(tournament)
         ref = db.session.merge(head_ref_player)

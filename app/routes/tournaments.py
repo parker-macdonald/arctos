@@ -191,7 +191,24 @@ def is_not_TO(
 @bp.route("/create-tournament", methods=["POST"])
 @login_required
 def create_tournament():
-    """Create a new tournament."""
+    """Create a new tournament and assign the creator as TO.
+
+    ``POST /_api/create-tournament``
+
+    Creates the tournament record and, for standalone tournaments, a
+    :class:`~app.models.registrable_config.RegistrableConfig`.  When
+    *league_id* is provided the tournament inherits the league's config and
+    the caller must be a league TO.
+
+    Form Data:
+        name (str): Display name for the tournament.
+        url (str): URL slug (must be unique).
+        league_id (str | None): Optional league to attach to.
+
+    Returns:
+        JSON ``{"success": true, "url": "<slug>"}`` on success, or error
+        with HTTP 400/403.
+    """
     name = request.form["name"]
     url = request.form["url"]
 
@@ -1263,12 +1280,37 @@ def user_upload_video_footage(tournament_url: str):
 
 
 def _user_upload_incoming_dir_name(upload_id: str, batch_index: int) -> str:
+    """Return the expected directory name for an upload batch.
+
+    Args:
+        upload_id: The unique upload session identifier.
+        batch_index: Zero-based index of this batch within the session.
+
+    Returns:
+        A string of the form ``"<upload_id>__<batch_index:06d>"``.
+    """
     return f"{upload_id}__{batch_index:06d}"
 
 
 def _locate_user_upload_incoming_dir(
     tournament_url: str, upload_id: str, batch_index: int | None = None
 ):
+    """Search all fields for an in-progress user-upload directory.
+
+    Looks in ``static/uploads/videos/<tournament>/<field>/user_uploads/_incoming/``
+    for a directory whose name or whose ``meta.json`` content matches
+    *upload_id* and optionally *batch_index*.
+
+    Args:
+        tournament_url: Tournament URL slug used to scope the search.
+        upload_id: The unique upload session identifier to look for.
+        batch_index: Optional batch index; when provided, only directories
+            with a matching ``batch_index`` in ``meta.json`` are returned.
+
+    Returns:
+        A ``(abs_path, field_name)`` tuple when found, or ``(None, None)``
+        when no matching directory exists.
+    """
     incoming_root = path.join(
         current_app.root_path,
         "../static/uploads/videos",
@@ -1326,6 +1368,20 @@ def _locate_user_upload_incoming_dir(
 
 
 def _normalize_user_upload_start_world(raw_value: str | None) -> str | None:
+    """Parse and normalise a ``start_world`` upload timestamp to UTC ISO format.
+
+    Accepts any ISO-8601 string with a timezone designator (including ``Z``).
+
+    Args:
+        raw_value: Raw timestamp string from the request, or ``None``.
+
+    Returns:
+        UTC ISO-8601 string ending with ``"Z"``, or ``None`` when *raw_value*
+        is empty or ``None``.
+
+    Raises:
+        ValueError: If the value is not a valid timezone-aware ISO timestamp.
+    """
     if raw_value is None:
         return None
     s = raw_value.strip()
@@ -1347,6 +1403,20 @@ def _normalize_user_upload_start_world(raw_value: str | None) -> str | None:
 
 
 def _normalize_user_upload_mode(raw_value: str | None) -> str:
+    """Normalise the user-upload mode string to a canonical value.
+
+    Accepts several alias strings and maps them to ``"raw_clips"`` or
+    ``"edited_match"``.
+
+    Args:
+        raw_value: Raw mode string from the request, or ``None``.
+
+    Returns:
+        ``"raw_clips"`` or ``"edited_match"``.
+
+    Raises:
+        ValueError: If *raw_value* is not a recognised mode alias.
+    """
     mode = (raw_value or "raw_clips").strip().lower()
     if mode in ("raw_clips", "raw", "clips"):
         return "raw_clips"

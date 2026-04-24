@@ -17,7 +17,18 @@ from app.domain.enums import ScheduleType, MatchStatus
 
 
 def _node_key(name: str, field: Optional[str]) -> Tuple[str, str]:
-    """Canonical key for a node: (name, field or ''). Matches with same name on different fields get different keys."""
+    """Return the canonical graph key for a match node.
+
+    Matches on different fields with the same name are treated as distinct
+    nodes.
+
+    Args:
+        name: Match name.
+        field: Field (court) name, or ``None``.
+
+    Returns:
+        A ``(name, field_or_empty)`` tuple used as the dict key.
+    """
     return (name, field or "")
 
 
@@ -343,6 +354,14 @@ def _is_match_resolved(match: Match) -> bool:
 
 
 def _csv_tokens(raw: Optional[str]) -> List[str]:
+    """Split a comma-separated string into a trimmed list, dropping empty parts.
+
+    Args:
+        raw: A comma-separated string, or ``None``.
+
+    Returns:
+        List of non-empty stripped tokens.
+    """
     if not raw:
         return []
     return [part.strip() for part in str(raw).split(",") if part.strip()]

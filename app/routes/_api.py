@@ -78,7 +78,16 @@ def login_redirect():
     return redirect("/")
 
 
-def _dt_iso(dt):
+def _dt_iso(dt) -> str | None:
+    """Serialise a datetime-like value to an ISO-8601 string.
+
+    Args:
+        dt: A :class:`~datetime.datetime` instance or any object with an
+            ``isoformat()`` method, or ``None``.
+
+    Returns:
+        ISO-8601 string when *dt* is non-null, otherwise ``None``.
+    """
     if dt is None:
         return None
     if hasattr(dt, "isoformat"):
@@ -117,7 +126,14 @@ def _player_reg_waiver_api(reg, cfg):
     }
 
 
-def _user_json():
+def _user_json() -> dict | None:
+    """Serialise the current user to a minimal JSON-safe dictionary.
+
+    Returns:
+        A dict with keys ``id``, ``name``, ``type`` (``"player"`` or
+        ``"team"``), and ``has_password``; or ``None`` when no user is
+        authenticated.
+    """
     if not current_user.is_authenticated:
         return None
     t = "player" if current_user.__class__.__name__ == "Player" else "team"
@@ -275,6 +291,20 @@ def check_username():
 
 @bp.route("/google/choose-account-type", methods=["GET", "POST"])
 def google_choose_account_type_api():
+    """Select account type (player / team) after Google OAuth.
+
+    ``GET  /_api/google/choose-account-type`` — Returns the email stored in the
+    session so the frontend can pre-fill the form.
+
+    ``POST /_api/google/choose-account-type`` — Stores the chosen
+    ``user_type`` in the session and returns ``{"ok": true}``.
+
+    Request JSON (POST):
+        user_type (str): ``"player"`` or ``"team"``.
+
+    Returns:
+        JSON object or error with HTTP 400/401.
+    """
     oauth_data = session.get("google_oauth_data")
     if not oauth_data:
         return jsonify({"error": "Session expired"}), 401
@@ -298,6 +328,23 @@ def google_choose_account_type_api():
 
 @bp.route("/google/complete-profile", methods=["GET", "POST"])
 def google_complete_profile_api():
+    """Complete account creation for a new Google OAuth user.
+
+    ``GET  /_api/google/complete-profile`` — Returns the email, account type,
+    and a suggested display name derived from the session-stored OAuth data.
+
+    ``POST /_api/google/complete-profile`` — Validates the chosen username and
+    display name, creates the :class:`~app.models.user.Player` or
+    :class:`~app.models.user.Team` record, clears the OAuth session data, and
+    logs the user in.
+
+    Request JSON (POST):
+        username (str): Desired URL-safe username.
+        display_name (str): Public display name.
+
+    Returns:
+        JSON object with ``ok`` key on success, or error with HTTP 400/401/409.
+    """
     oauth_data = session.get("google_oauth_data")
     if not oauth_data:
         return jsonify({"error": "Session expired"}), 401
@@ -371,7 +418,19 @@ def google_complete_profile_api():
     )
 
 
-def _tournament_to_dict(t):
+def _tournament_to_dict(t) -> dict:
+    """Serialise a :class:`~app.models.tournament.Tournament` to an API dict.
+
+    Includes registration status, fee, waiver, head-ref policy, and league
+    membership information.  Falls back gracefully when the tournament's
+    :class:`~app.models.registrable_config.RegistrableConfig` is not found.
+
+    Args:
+        t: The tournament ORM instance to serialise.
+
+    Returns:
+        A JSON-serialisable dictionary suitable for the SPA.
+    """
     cfg = get_registrable_config(t)
     end = t.end_date.isoformat() if t.end_date else None
     start = t.start_date.isoformat() if t.start_date else None
@@ -449,8 +508,21 @@ def _tournament_to_dict(t):
     return out
 
 
-def _require_league(league_url):
-    """Get League by url. Check access (published or TO)."""
+def _require_league(league_url: str):
+    """Fetch a league by URL slug and verify access rights.
+
+    A league is accessible when it is published, or when the current user is
+    a TO for it.  Unpublished leagues return an HTTP 403 code to authenticated
+    non-TO users.
+
+    Args:
+        league_url: The URL slug to look up.
+
+    Returns:
+        A ``(league, error_code)`` tuple where *error_code* is ``None`` on
+        success, ``404`` if the league does not exist, or ``403`` if the
+        caller lacks access.
+    """
     league = League.query.filter_by(url=league_url).first()
     if not league:
         return None, 404
@@ -468,8 +540,19 @@ def _require_league(league_url):
     return league, None
 
 
-def _league_to_dict(league):
-    """Serialize League for API."""
+def _league_to_dict(league) -> dict:
+    """Serialise a :class:`~app.models.league.League` to an API dict.
+
+    Includes registration status, fees, waiver info, and payment instructions
+    drawn from the league's
+    :class:`~app.models.registrable_config.RegistrableConfig`.
+
+    Args:
+        league: The league ORM instance to serialise.
+
+    Returns:
+        A JSON-serialisable dictionary suitable for the SPA.
+    """
     rc = league.registrable_config
     team_reg_open = False
     player_reg_open = False

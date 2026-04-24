@@ -27,8 +27,25 @@ if TYPE_CHECKING:  # pragma: no cover
 
 @dataclass(frozen=True)
 class RegistrationService:
+    """Service encapsulating tournament registration workflows.
+
+    All methods are static; the class acts as a typed namespace.  Each
+    public method returns a :class:`~app.error_values.Result` so callers
+    can map errors to HTTP responses without raising exceptions.
+    """
+
     @staticmethod
     def _get_tournament(tournament_url: str) -> Result["Tournament", ArctosError]:
+        """Fetch a tournament by URL slug, returning an error if not found.
+
+        Args:
+            tournament_url: The tournament URL slug to look up.
+
+        Returns:
+            :class:`~app.error_values.Ok` wrapping the tournament, or
+            :class:`~app.error_values.Err` wrapping a
+            :class:`~app.exceptions.TournamentNotFoundError`.
+        """
         from models import Tournament
 
         tournament = Tournament.query.filter_by(url=tournament_url).first()
@@ -36,6 +53,17 @@ class RegistrationService:
 
     @staticmethod
     def _tournament_team_reg_open(tournament) -> bool:
+        """Return whether team registration is currently open for *tournament*.
+
+        Prefers the ``team_registration_open`` field; falls back to the
+        legacy ``registration_open`` field for older records.
+
+        Args:
+            tournament: The tournament to check.
+
+        Returns:
+            ``True`` if team registration is open.
+        """
         from app.utils.helpers import get_registrable_config
 
         cfg = get_registrable_config(tournament)
@@ -48,6 +76,17 @@ class RegistrationService:
 
     @staticmethod
     def _tournament_player_reg_open(tournament) -> bool:
+        """Return whether player registration is currently open for *tournament*.
+
+        Prefers the ``player_registration_open`` field; falls back to the
+        legacy ``registration_open`` field for older records.
+
+        Args:
+            tournament: The tournament to check.
+
+        Returns:
+            ``True`` if player registration is open.
+        """
         from app.utils.helpers import get_registrable_config
 
         cfg = get_registrable_config(tournament)

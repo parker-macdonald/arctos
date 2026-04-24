@@ -12,11 +12,17 @@ from models import Tournament, PlayerRegistration, Match, TeamRegistration, Team
 
 
 def get_registrable_config(tournament):
-    """
-    Get RegistrableConfig for a tournament.
+    """Return the effective :class:`~app.models.registrable_config.RegistrableConfig` for a tournament.
 
-    When tournament.league_id is set, returns the league's config.
-    When league_id is null (standalone tournament), returns the tournament's config.
+    League tournaments inherit the league's config; standalone tournaments
+    have their own config.
+
+    Args:
+        tournament: A :class:`~app.models.tournament.Tournament` instance.
+
+    Returns:
+        The :class:`~app.models.registrable_config.RegistrableConfig` object,
+        or ``None`` if neither the league nor the tournament has one.
     """
     if getattr(tournament, "league_id", None):
         from models import League
@@ -75,7 +81,19 @@ DEFAULT_PENALTY_COLORS = [
 
 
 def get_next_penalty_color(existing_colors: set[str]) -> str:
-    """Get the next available default color that isn't already used."""
+    """Return the first default penalty colour not already in use.
+
+    Iterates :data:`DEFAULT_PENALTY_COLORS` in order and returns the first
+    colour absent from *existing_colors*.
+
+    Args:
+        existing_colors: Set of 6-character hex colour strings already
+            assigned to existing penalty types.
+
+    Returns:
+        A 6-character hex colour string (no ``#``).  Falls back to
+        ``"000000"`` when all defaults are taken.
+    """
     for color in DEFAULT_PENALTY_COLORS:
         if color not in existing_colors:
             return color
@@ -166,7 +184,22 @@ def resolve_team_name_to_id(team_name, tournament_url):
 
 
 def get_team_display_name_for_event(tournament_url: str, team_id: str) -> str:
-    """Return display name for a team in an event: pseudonym if set, else team name, else team_id."""
+    """Return the best display name for a team within a specific tournament.
+
+    Priority:
+
+    1. :class:`~app.models.registration.TeamRegistration` pseudonym (if
+       confirmed and non-empty).
+    2. :attr:`~app.models.user.Team.name`.
+    3. *team_id* as a fallback.
+
+    Args:
+        tournament_url: Tournament URL slug used to look up the registration.
+        team_id: The team's unique identifier.
+
+    Returns:
+        A non-empty display string.
+    """
     if not team_id:
         return ""
     from app.domain.enums import TeamRegistrationStatus
@@ -207,8 +240,21 @@ def resolve_tag_to_team(tag_ref: str, tournament_url: str) -> str | None:
     return None
 
 
-def check_tournament_access(tournament_url):
-    """Check if current user has access to view a tournament."""
+def check_tournament_access(tournament_url: str):
+    """Check whether the current Flask user may view a tournament.
+
+    A tournament is accessible when it is published, or when the current
+    user is a Tournament Organiser for the event or its league.
+
+    Args:
+        tournament_url: The URL slug of the tournament to check.
+
+    Returns:
+        A ``(has_access, tournament)`` tuple.  *has_access* is ``True`` when
+        access is granted; *tournament* is the
+        :class:`~app.models.tournament.Tournament` instance (or ``None`` when
+        the tournament does not exist).
+    """
     from models import Tournament, TO
 
     tournament = Tournament.query.get(tournament_url)

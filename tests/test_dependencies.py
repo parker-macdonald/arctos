@@ -1,3 +1,5 @@
+"""Tests for apply_match_dependencies (winner/loser placeholder resolution)."""
+
 import pytest
 
 from app.domain.enums import MatchStatus
@@ -9,6 +11,7 @@ from models import Match, db
 def test_apply_match_dependencies_substitutes_winner_loser_and_refs(
     test_db, tournament
 ):
+    """apply_match_dependencies replaces winner/loser placeholders in dependent matches."""
     tournament_url = tournament.url
     completed = Match(
         name="Match A",

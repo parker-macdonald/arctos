@@ -1,16 +1,35 @@
-"""RegistrableConfig model for shared registration settings."""
+"""SQLAlchemy model for shared registration configuration (RegistrableConfig)."""
 
 from __future__ import annotations
 
 from app.models.base import db
+from app.models.constants import LONG_URL_LEN, SHA256_HEX_LEN
 
 
 class RegistrableConfig(db.Model):  # type: ignore[misc]
-    """
-    Shared registration config for standalone tournaments and leagues.
+    """Shared registration configuration for standalone tournaments and leagues.
 
-    Standalone tournaments (league_id is null) have their own RegistrableConfig.
-    League events use the league's RegistrableConfig.
+    Standalone tournaments (``league_id`` is null) own their own config;
+    league tournaments inherit the league's config.  Fee constraints are
+    enforced at the database level.
+
+    Attributes:
+        id: Auto-increment primary key.
+        team_reg_fee: Registration fee charged per team (≥ 0).
+        player_reg_fee: Registration fee charged per player (≥ 0).
+        payment_info: Free-text payment instructions shown to registrants.
+        registration_open: Deprecated global toggle; prefer the per-type
+            toggles below.
+        team_registration_open: Whether team registration is currently
+            accepting new entries.
+        player_registration_open: Whether individual player registration is
+            currently open.
+        terms_link: URL to the tournament's terms and conditions page.
+        waiver_filepath: Server-relative path to the uploaded waiver file.
+        waiver_sha256: SHA-256 hex digest of the waiver file bytes.
+        n_max_teams: Cap on the number of registered teams, or ``None``.
+        max_team_size_roster: Maximum players on a team's full roster.
+        max_team_size_field: Maximum players allowed on the field at once.
     """
 
     __tablename__ = "registrable_configs"
@@ -25,12 +44,12 @@ class RegistrableConfig(db.Model):  # type: ignore[misc]
     # Separate toggles for team and player registration.
     team_registration_open = db.Column(db.Boolean, default=False, nullable=False)
     player_registration_open = db.Column(db.Boolean, default=False, nullable=False)
-    terms_link = db.Column(db.String(500))
+    terms_link = db.Column(db.String(LONG_URL_LEN))
     # Waiver file uploaded by TOs for this event (standalone tournament or league).
     # Stored as a relative filepath so the frontend can link consistently.
-    waiver_filepath = db.Column(db.String(500))
+    waiver_filepath = db.Column(db.String(LONG_URL_LEN))
     # SHA-256 of the waiver file bytes (hex string).
-    waiver_sha256 = db.Column(db.String(64))
+    waiver_sha256 = db.Column(db.String(SHA256_HEX_LEN))
     n_max_teams = db.Column(db.Integer)
     max_team_size_roster = db.Column(db.Integer)
     max_team_size_field = db.Column(db.Integer)

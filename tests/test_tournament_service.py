@@ -1,3 +1,5 @@
+"""Tests for TournamentService.get_homepage_context."""
+
 from datetime import datetime, timezone
 
 import pytest
@@ -9,6 +11,7 @@ from tests.utils import make_registrable_config
 
 @pytest.mark.unit
 def test_homepage_context_includes_only_published_for_anonymous(test_db):
+    """Anonymous users only see published tournaments in the homepage context."""
     pub = Tournament(
         url="pub",
         name="Published",
@@ -34,6 +37,7 @@ def test_homepage_context_includes_only_published_for_anonymous(test_db):
 
 @pytest.mark.unit
 def test_homepage_context_team_counts_grouped_query(test_db):
+    """team_counts only counts CONFIRMED registrations, not CANCELLED ones."""
     t_url = "counted"
     t = Tournament(
         url=t_url,
@@ -64,6 +68,7 @@ def test_homepage_context_team_counts_grouped_query(test_db):
 
 @pytest.mark.unit
 def test_homepage_context_includes_unpublished_for_to(test_db, player):
+    """TOs can see their own unpublished tournaments in the homepage context."""
     # Ensure the player is a TO for an unpublished tournament
     priv_url = "priv-to"
     p = db.session.merge(player)

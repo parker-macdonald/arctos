@@ -26,8 +26,24 @@ bp = Blueprint("registration", __name__, url_prefix="/_api")
 
 @bp.route("/<tournament_url>/register-team", methods=["POST"])
 @login_required
-def register_team_for_tournament(tournament_url):
-    """Register a team for a tournament."""
+def register_team_for_tournament(tournament_url: str):
+    """Register the current team account for a tournament.
+
+    ``POST /_api/<tournament_url>/register-team``
+
+    Only :class:`~app.models.user.Team` accounts may call this endpoint.
+    Delegates to :class:`~app.services.registration_service.RegistrationService`.
+
+    Args:
+        tournament_url: Tournament URL slug from the path.
+
+    Form Data:
+        pseudonym (str): Team display name for this tournament.
+
+    Returns:
+        JSON ``{"success": true, "message": "..."}`` on success, or
+        ``{"success": false, "error": "..."}`` with HTTP 400/403 on failure.
+    """
     if not is_team(current_user):
         return (
             jsonify(
@@ -51,8 +67,29 @@ def register_team_for_tournament(tournament_url):
 
 @bp.route("/<tournament_url>/register-player", methods=["POST"])
 @login_required
-def register_player_for_tournament(tournament_url):
-    """Register a player for a tournament."""
+def register_player_for_tournament(tournament_url: str):
+    """Register the current player account for a tournament.
+
+    ``POST /_api/<tournament_url>/register-player``
+
+    Only :class:`~app.models.user.Player` accounts may call this endpoint.
+    When a *team* is supplied the registration starts as
+    ``PENDING_TEAM_APPROVAL``; without a team it is immediately
+    ``CONFIRMED``.
+
+    Args:
+        tournament_url: Tournament URL slug from the path.
+
+    Form Data:
+        team (str | None): Team ID to register under, or empty for unattached.
+        jersey_number (str): Jersey number for this tournament.
+        jersey_name (str): Name to print on the jersey.
+        waiver_legal_name_signature (str): Player's legal-name signature.
+
+    Returns:
+        JSON ``{"success": true, "message": "..."}`` on success, or
+        ``{"success": false, "error": "..."}`` with HTTP 400/403 on failure.
+    """
     if not is_player(current_user):
         return (
             jsonify(
@@ -83,8 +120,19 @@ def register_player_for_tournament(tournament_url):
 
 @bp.route("/<tournament_url>/deregister-team", methods=["POST"])
 @login_required
-def deregister_team_from_tournament(tournament_url):
-    """Deregister a team from a tournament."""
+def deregister_team_from_tournament(tournament_url: str):
+    """Cancel the current team's registration for a tournament.
+
+    ``POST /_api/<tournament_url>/deregister-team``
+
+    Only :class:`~app.models.user.Team` accounts may call this endpoint.
+
+    Args:
+        tournament_url: Tournament URL slug from the path.
+
+    Returns:
+        JSON success or error body.
+    """
     if not is_team(current_user):
         return (
             jsonify(
@@ -114,8 +162,19 @@ def deregister_team_from_tournament(tournament_url):
 
 @bp.route("/<tournament_url>/deregister-player", methods=["POST"])
 @login_required
-def deregister_player_from_tournament(tournament_url):
-    """Deregister a player from a tournament."""
+def deregister_player_from_tournament(tournament_url: str):
+    """Cancel the current player's registration for a tournament.
+
+    ``POST /_api/<tournament_url>/deregister-player``
+
+    Only :class:`~app.models.user.Player` accounts may call this endpoint.
+
+    Args:
+        tournament_url: Tournament URL slug from the path.
+
+    Returns:
+        JSON success or error body.
+    """
     if not is_player(current_user):
         return (
             jsonify(
@@ -145,8 +204,28 @@ def deregister_player_from_tournament(tournament_url):
 
 @bp.route("/<tournament_url>/mark-team-paid", methods=["POST"])
 @login_required
-def mark_team_paid(tournament_url):
-    """Mark team payment status."""
+def mark_team_paid(tournament_url: str):
+    """Update payment status for a team registration (TO only).
+
+    ``POST /_api/<tournament_url>/mark-team-paid``
+
+    Requires the caller to be a Tournament Organiser for the event.
+
+    Args:
+        tournament_url: Tournament URL slug from the path.
+
+    Form Data:
+        registration_id (int): Primary key of the
+            :class:`~app.models.registration.TeamRegistration`.
+        paid (str): ``"on"`` to mark paid, any other value to mark unpaid.
+        amount_paid (float): Total amount paid.
+        payment_method (str): Payment method description.
+        payment_reference (str): Transaction reference number.
+        payment_notes (str): Free-text notes.
+
+    Returns:
+        JSON ``{"success": true, "message": "..."}`` on success, or 403/404.
+    """
     tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
     is_to = TO.query.filter_by(
         user_id=current_user.id,
@@ -186,8 +265,28 @@ def mark_team_paid(tournament_url):
 
 @bp.route("/<tournament_url>/mark-player-paid", methods=["POST"])
 @login_required
-def mark_player_paid(tournament_url):
-    """Mark player payment status."""
+def mark_player_paid(tournament_url: str):
+    """Update payment status for a player registration (TO only).
+
+    ``POST /_api/<tournament_url>/mark-player-paid``
+
+    Requires the caller to be a Tournament Organiser for the event.
+
+    Args:
+        tournament_url: Tournament URL slug from the path.
+
+    Form Data:
+        registration_id (int): Primary key of the
+            :class:`~app.models.registration.PlayerRegistration`.
+        paid (str): ``"on"`` to mark paid, any other value to mark unpaid.
+        amount_paid (float): Total amount paid.
+        payment_method (str): Payment method description.
+        payment_reference (str): Transaction reference number.
+        payment_notes (str): Free-text notes.
+
+    Returns:
+        JSON ``{"success": true, "message": "..."}`` on success, or 403/404.
+    """
     tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
     is_to = TO.query.filter_by(
         user_id=current_user.id,
@@ -227,8 +326,23 @@ def mark_player_paid(tournament_url):
 
 @bp.route("/<tournament_url>/deregister-any-team", methods=["POST"])
 @login_required
-def deregister_any_team(tournament_url):
-    """Deregister any team (TO only)."""
+def deregister_any_team(tournament_url: str):
+    """Forcibly cancel a team's registration (TO only).
+
+    ``POST /_api/<tournament_url>/deregister-any-team``
+
+    Cancels the team registration and all associated player registrations.
+    Requires the caller to be a Tournament Organiser for the event.
+
+    Args:
+        tournament_url: Tournament URL slug from the path.
+
+    Form Data:
+        team_id (str): ID of the team to deregister.
+
+    Returns:
+        JSON success or error body.
+    """
     tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
 
     is_to = TO.query.filter_by(
@@ -279,8 +393,23 @@ def deregister_any_team(tournament_url):
 
 @bp.route("/<tournament_url>/deregister-any-player", methods=["POST"])
 @login_required
-def deregister_any_player(tournament_url):
-    """Deregister any player (TO only)."""
+def deregister_any_player(tournament_url: str):
+    """Forcibly cancel a player's registration (TO only).
+
+    ``POST /_api/<tournament_url>/deregister-any-player``
+
+    Cancels the player's registration regardless of its current status.
+    Requires the caller to be a Tournament Organiser for the event.
+
+    Args:
+        tournament_url: Tournament URL slug from the path.
+
+    Form Data:
+        player_id (str): ID of the player to deregister.
+
+    Returns:
+        JSON success or error body.
+    """
     tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
 
     is_to = TO.query.filter_by(
@@ -333,8 +462,23 @@ def deregister_any_player(tournament_url):
 
 @bp.route("/<tournament_url>/invitation/<int:invitation_id>/accept", methods=["POST"])
 @login_required
-def accept_invitation(tournament_url, invitation_id):
-    """Accept a pending player registration."""
+def accept_invitation(tournament_url: str, invitation_id: int):
+    """Accept a player's pending registration request.
+
+    ``POST /_api/<tournament_url>/invitation/<invitation_id>/accept``
+
+    Only :class:`~app.models.user.Team` accounts may call this endpoint.
+    Transitions the player's registration from ``PENDING_TEAM_APPROVAL`` to
+    ``CONFIRMED``.
+
+    Args:
+        tournament_url: Tournament URL slug from the path.
+        invitation_id: Primary key of the
+            :class:`~app.models.registration.PlayerRegistration` to approve.
+
+    Returns:
+        JSON success or 403/404 error body.
+    """
     if current_user.__class__.__name__ != "Team":
         return (
             jsonify({"success": False, "error": "Only teams can accept invitations"}),
@@ -360,8 +504,23 @@ def accept_invitation(tournament_url, invitation_id):
 
 @bp.route("/<tournament_url>/invitation/<int:invitation_id>/decline", methods=["POST"])
 @login_required
-def decline_invitation(tournament_url, invitation_id):
-    """Decline a pending player registration."""
+def decline_invitation(tournament_url: str, invitation_id: int):
+    """Decline a player's pending registration request.
+
+    ``POST /_api/<tournament_url>/invitation/<invitation_id>/decline``
+
+    Only :class:`~app.models.user.Team` accounts may call this endpoint.
+    Transitions the player's registration from ``PENDING_TEAM_APPROVAL`` to
+    ``REJECTED``.
+
+    Args:
+        tournament_url: Tournament URL slug from the path.
+        invitation_id: Primary key of the
+            :class:`~app.models.registration.PlayerRegistration` to reject.
+
+    Returns:
+        JSON success or 403/404 error body.
+    """
     if current_user.__class__.__name__ != "Team":
         return (
             jsonify({"success": False, "error": "Only teams can decline invitations"}),

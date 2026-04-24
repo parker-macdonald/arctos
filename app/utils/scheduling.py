@@ -27,6 +27,17 @@ _locks_lock = threading.Lock()
 
 
 def _get_tournament_lock(tournament_url: str) -> threading.Lock:
+    """Return the per-tournament reentrant lock, creating it on first access.
+
+    Each tournament has its own lock to prevent concurrent scheduling runs
+    from producing inconsistent results.
+
+    Args:
+        tournament_url: Tournament URL slug used as the lock key.
+
+    Returns:
+        The :class:`threading.Lock` for *tournament_url*.
+    """
     with _locks_lock:
         if tournament_url not in _tournament_locks:
             _tournament_locks[tournament_url] = threading.Lock()
@@ -34,16 +45,35 @@ def _get_tournament_lock(tournament_url: str) -> threading.Lock:
 
 
 def _now_utc() -> datetime:
+    """Return the current UTC time as a timezone-naive :class:`~datetime.datetime`."""
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def _csv_tokens(raw: Optional[str]) -> List[str]:
+    """Split a comma-separated string into a stripped, non-empty token list.
+
+    Args:
+        raw: Comma-separated string, or ``None``.
+
+    Returns:
+        List of non-empty stripped tokens.
+    """
     if not raw:
         return []
     return [part.strip() for part in str(raw).split(",") if part.strip()]
 
 
 def _match_participant_team_ids(match: object) -> set[str]:
+    """Return the set of team IDs actively assigned to a match.
+
+    Includes ``team1``, ``team2``, and all non-empty ``refs`` tokens.
+
+    Args:
+        match: Any object with ``team1``, ``team2``, and ``refs`` attributes.
+
+    Returns:
+        Set of non-empty team ID strings.
+    """
     participants = set()
     for team_id in (getattr(match, "team1", None), getattr(match, "team2", None)):
         if team_id and str(team_id).strip():
@@ -53,6 +83,15 @@ def _match_participant_team_ids(match: object) -> set[str]:
 
 
 def _matches_share_any_team(match_a: object, match_b: object) -> bool:
+    """Return ``True`` if *match_a* and *match_b* share at least one team/ref.
+
+    Args:
+        match_a: First match object.
+        match_b: Second match object.
+
+    Returns:
+        ``True`` if the participant team-ID sets intersect.
+    """
     return bool(
         _match_participant_team_ids(match_a) & _match_participant_team_ids(match_b)
     )
@@ -64,6 +103,18 @@ def _intervals_overlap(
     start_b: Optional[datetime],
     length_b: Optional[int],
 ) -> bool:
+    """Return ``True`` if two time intervals overlap (exclusive endpoints).
+
+    Args:
+        start_a: Start of interval A, or ``None``.
+        length_a: Duration of interval A in minutes, or ``None``.
+        start_b: Start of interval B, or ``None``.
+        length_b: Duration of interval B in minutes, or ``None``.
+
+    Returns:
+        ``True`` when both intervals are fully defined and share at least
+        one moment; ``False`` when any argument is ``None``.
+    """
     if start_a is None or start_b is None or length_a is None or length_b is None:
         return False
     end_a = start_a + timedelta(minutes=length_a)

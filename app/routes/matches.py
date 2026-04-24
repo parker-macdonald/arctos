@@ -459,8 +459,25 @@ def scoreboard_state():
 
 
 @bp.route("/<tournament_url>/match")
-def match_page(tournament_url):
-    """Match viewing page."""
+def match_page(tournament_url: str):
+    """Return full match data for the match-view SPA page.
+
+    ``GET /_api/<tournament_url>/match?id=<uuid>`` or
+    ``GET /_api/<tournament_url>/match?name=<name>``
+
+    Returns match details, scored points, notes (for head refs), penalty
+    types, field camera info, and footage links.
+
+    Args:
+        tournament_url: Tournament URL slug from the path.
+
+    Query Args:
+        id (str): Match UUID.
+        name (str): Match name (alternative to *id*).
+
+    Returns:
+        JSON match detail object, or error with HTTP 400/403/404.
+    """
     match_id = request.args.get("id")
     match_name = request.args.get("name")
 
@@ -805,8 +822,25 @@ def match_page(tournament_url):
 
 @bp.route("/<tournament_url>/start-match")
 @login_required
-def start_match(tournament_url):
-    """Match setup page for head refs."""
+def start_match(tournament_url: str):
+    """Return setup data needed before starting a match.
+
+    ``GET /_api/<tournament_url>/start-match?id=<uuid>``
+
+    Checks eligibility via
+    :func:`~app.services.match_start_eligibility.get_can_start_and_reasons`
+    and, if the match can be started, returns roster lists, injury records,
+    penalty types, and field/camera information.
+
+    Args:
+        tournament_url: Tournament URL slug from the path.
+
+    Query Args:
+        id (str): UUID of the match to prepare.
+
+    Returns:
+        JSON object with match setup data, or error with HTTP 400/404.
+    """
     match_id = request.args.get("id")
     if not match_id:
         return jsonify({"success": False, "error": "Match ID required"}), 400

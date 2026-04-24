@@ -14,16 +14,41 @@ login_manager = LoginManager()
 from flask import url_for as _url_for
 
 
-def url_for(endpoint, **values):
-    """Custom url_for that handles subpath deployment"""
+def url_for(endpoint: str, **values) -> str:
+    """Return a URL for *endpoint*, prepending ``SCRIPT_NAME`` for subpath deployments.
+
+    Wraps Flask's :func:`~flask.url_for` so that the URL includes the
+    ``SCRIPT_NAME`` environment variable prefix when the application is
+    served at a non-root path (e.g. behind a reverse proxy).
+
+    Args:
+        endpoint: The name of the Flask endpoint.
+        **values: Values passed directly to :func:`~flask.url_for`.
+
+    Returns:
+        The generated URL, possibly prefixed with ``SCRIPT_NAME``.
+    """
     url = _url_for(endpoint, **values)
     if "SCRIPT_NAME" in os.environ and not url.startswith(os.environ["SCRIPT_NAME"]):
         url = os.environ["SCRIPT_NAME"] + url
     return url
 
 
-def create_app(config=None):
-    """Application factory."""
+def create_app(config: dict | None = None) -> Flask:
+    """Create and configure the Arctos Flask application.
+
+    Wires together SQLAlchemy, Flask-Login, OAuth (Google), CORS (dev mode),
+    all route blueprints, error handlers, Jinja filters, and Executor.  Also
+    triggers a boot-time schedule recomputation and resumes any interrupted
+    YouTube uploads when configured to do so.
+
+    Args:
+        config: Optional dict of configuration overrides.  Currently
+            supports ``"SQLALCHEMY_DATABASE_URI"`` for test isolation.
+
+    Returns:
+        A fully configured :class:`~flask.Flask` application instance.
+    """
     global db
 
     app = Flask(__name__, static_folder="../static", template_folder="../templates")

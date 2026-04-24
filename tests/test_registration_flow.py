@@ -1,3 +1,5 @@
+"""Integration tests for team/player registration and deregistration flows."""
+
 import pytest
 
 from app.domain.enums import RegistrationStatus, TeamRegistrationStatus
@@ -8,6 +10,7 @@ from datetime import datetime
 
 @pytest.mark.integration
 def test_team_register_and_deregister_flow(app, client, tournament, team):
+    """A team can register with a pseudonym and then deregister via the API."""
     with app.app_context():
         t = db.session.merge(tournament)
         tm = db.session.merge(team)

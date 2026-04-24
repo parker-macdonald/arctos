@@ -8,8 +8,23 @@ from app.domain.enums import ScheduleType
 from app.services.registration_resolver import team_registrations_for_tournament
 
 
-def _pseudonym_and_photo_maps(team_id, reg_by_team, team_by_id):
-    """Resolve display name and photo using preloaded registration and Team maps."""
+def _pseudonym_and_photo_maps(
+    team_id: str, reg_by_team: dict, team_by_id: dict
+) -> tuple[str | None, str | None]:
+    """Resolve a team's display name and profile photo from preloaded maps.
+
+    Args:
+        team_id: The team's unique identifier.
+        reg_by_team: Mapping of team ID →
+            :class:`~app.models.registration.TeamRegistration`.
+        team_by_id: Mapping of team ID →
+            :class:`~app.models.user.Team`.
+
+    Returns:
+        A ``(pseudonym, profile_photo)`` tuple.  *pseudonym* falls back to
+        the team name, then the team ID.  *profile_photo* is ``None`` when
+        the team record is not found.
+    """
     if not team_id:
         return None, None
     reg = reg_by_team.get(team_id)
@@ -23,11 +38,26 @@ def _pseudonym_and_photo_maps(team_id, reg_by_team, team_by_id):
     return pseudonym, profile_photo
 
 
-def compute_team_stats(matches, tournament, include_ribbon=False):
-    """
-    Compute aggregate team stats from matches.
-    Returns list of dicts: {id, pseudonym, profile_photo, matches_won, matches_lost, points_won, points_lost}.
-    tournament is used for pseudonym lookup (any tournament in the league works for league results).
+def compute_team_stats(
+    matches: list, tournament, include_ribbon: bool = False
+) -> list[dict]:
+    """Compute aggregate win/loss and point statistics for all teams in a set of matches.
+
+    Skips ``BREAK`` and ``JOIN`` schedule-type matches, and optionally skips
+    ribbon (exhibition) games.
+
+    Args:
+        matches: List of :class:`~app.models.match.Match` instances to
+            aggregate over.
+        tournament: Any :class:`~app.models.tournament.Tournament` in the
+            same event or league; used for pseudonym/photo lookup.
+        include_ribbon: When ``True``, ribbon games are included in
+            stats; otherwise they are excluded.
+
+    Returns:
+        List of dicts, each with keys: ``id``, ``pseudonym``,
+        ``profile_photo``, ``matches_won``, ``matches_lost``,
+        ``points_won``, ``points_lost``.
     """
     from models import Point, Team
 

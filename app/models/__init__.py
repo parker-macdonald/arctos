@@ -7,6 +7,9 @@ compatibility layer that re-exports from here.
 """
 
 from app.models.base import db, init_db
+from app.models import (
+    constants,
+)  # noqa: F401 — re-export for ``from app.models import constants``
 from app.models.user import Player, Team
 from app.models.registrable_config import RegistrableConfig
 from app.models.league import League

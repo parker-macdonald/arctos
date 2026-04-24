@@ -16,16 +16,35 @@ from app.error_values import Some
 
 @dataclass(frozen=True)
 class TournamentService:
+    """Application-level service for tournament homepage data.
+
+    All methods are static; the class acts as a typed namespace.
+    """
+
     @staticmethod
     def get_homepage_context(user=None) -> Dict[str, Any]:
-        """
-        Build the homepage context for `templates/index.html`.
+        """Build the homepage context dict for the ``index.html`` template.
 
-        Keeps current template contract stable:
-        - tournaments
-        - to_tournaments (legacy, unused)
-        - team_counts
-        - user_reg_status
+        Queries published tournaments visible to *user*, computes per-tournament
+        team registration counts, and determines the current user's registration
+        and waiver status for each tournament.
+
+        Args:
+            user: Authenticated Flask-Login user (player or team), or ``None``
+                for unauthenticated requests.
+
+        Returns:
+            A dict with the following keys:
+
+            * ``tournaments``: All accessible tournaments (legacy; prefer
+              ``upcoming_tournaments`` / ``past_tournaments``).
+            * ``upcoming_tournaments``: Tournaments that have not yet ended.
+            * ``past_tournaments``: Tournaments that have already ended, sorted
+              most-recent-first.
+            * ``to_tournaments``: Empty list (legacy placeholder).
+            * ``team_counts``: Mapping of tournament URL → confirmed team count.
+            * ``user_reg_status``: Mapping of tournament URL → registration
+              status dict for the current user.
         """
         from models import Tournament, TeamRegistration, PlayerRegistration, TO, db
 

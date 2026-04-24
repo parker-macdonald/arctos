@@ -1,6 +1,18 @@
-"""
-New application entry point using the factory pattern.
-This is the refactored version - once complete, rename to app.py.
+"""WSGI entry point for the Arctos Flask application.
+
+Creates the application instance via the factory pattern and exposes it
+as ``app`` for WSGI servers (gunicorn, uWSGI, etc.).  When invoked
+directly it starts the built-in development server on the port specified
+by the ``ARCTOS_PORT`` environment variable (default ``5006``).
+
+Example:
+    Run the development server::
+
+        ARCTOS_PORT=5006 python run_app.py
+
+    Then point the Dioxus frontend at it::
+
+        ARCTOS_API_BASE=http://127.0.0.1:5006 dx serve
 """
 
 import os
