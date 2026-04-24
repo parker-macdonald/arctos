@@ -25,6 +25,9 @@ dependencies = [
     "wtforms==3.2.1",
 ]
 
+[tool.setuptools.packages.find]
+include = ["app*"]
+
 [[tool.uv.index]]
 name = "pypi"
 url = "https://pypi.org/simple"
