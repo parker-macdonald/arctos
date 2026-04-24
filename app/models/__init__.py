@@ -20,6 +20,14 @@ from app.models.penalty_type import PenaltyType
 from app.models.records import Injury, HeadRef
 from app.models.sidecomp import SideComp, SideCompResult
 from app.models.camera import Camera
+from app.models.normalised import (
+    CameraTimepoint,
+    FieldCamera,
+    HeadRefAllowList,
+    MatchCameraStreamStart,
+    MatchPlayer,
+    MatchReferee,
+)
 
 __all__ = [
     "db",
@@ -43,4 +51,11 @@ __all__ = [
     "HeadRef",
     "SideComp",
     "SideCompResult",
+    # Normalised join tables (added by the additive schema migration).
+    "HeadRefAllowList",
+    "MatchReferee",
+    "MatchPlayer",
+    "FieldCamera",
+    "MatchCameraStreamStart",
+    "CameraTimepoint",
 ]

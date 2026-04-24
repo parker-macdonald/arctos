@@ -115,6 +115,15 @@ class TO(db.Model):
     event = db.Column(db.String(URL_SLUG_LEN), db.ForeignKey("tournaments.url"), nullable=True)
     league_id = db.Column(db.String(URL_SLUG_LEN), db.ForeignKey("leagues.url"), nullable=True)
 
+    __table_args__ = (
+        # Same exactly-one-of-(event, league_id) invariant as Tournament,
+        # PenaltyType, and the registration tables.
+        db.CheckConstraint(
+            "(event IS NOT NULL AND league_id IS NULL) OR (event IS NULL     AND league_id IS NOT NULL)",
+            name="ck_tos_event_league_mutual_exclusive",
+        ),
+    )
+
 
 class Field(db.Model):
     """A playing field (court) within a tournament.

@@ -15,8 +15,12 @@ class RegistrableConfig(db.Model):  # type: ignore[misc]
 
     Attributes:
         id: Auto-increment primary key.
-        team_reg_fee: Registration fee charged per team (≥ 0).
-        player_reg_fee: Registration fee charged per player (≥ 0).
+        team_reg_fee: Registration fee charged per team (≥ 0). Stored as
+            an exact ``DECIMAL(10, 2)`` value — never as a binary float —
+            so monetary arithmetic does not accumulate IEEE-754 rounding
+            errors across many payments.
+        player_reg_fee: Registration fee charged per player (≥ 0). Same
+            ``DECIMAL(10, 2)`` storage rationale as ``team_reg_fee``.
         payment_info: Free-text payment instructions shown to registrants.
         registration_open: Deprecated global toggle; prefer the per-type
             toggles below.
@@ -35,8 +39,8 @@ class RegistrableConfig(db.Model):  # type: ignore[misc]
     __tablename__ = "registrable_configs"
 
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    team_reg_fee = db.Column(db.Float, default=0.0, nullable=False)
-    player_reg_fee = db.Column(db.Float, default=0.0, nullable=False)
+    team_reg_fee = db.Column(db.Numeric(10, 2), default=0, nullable=False)
+    player_reg_fee = db.Column(db.Numeric(10, 2), default=0, nullable=False)
     payment_info = db.Column(db.Text)
     # Deprecated: use team_registration_open / player_registration_open instead.
     # Kept for backward compatibility and migration scripts.
