@@ -14,8 +14,20 @@ from app.utils.responses import json_error, json_success
 bp = Blueprint("notes", __name__, url_prefix="/_api")
 
 
-def _match_in_tournament_scope(match, tournament_url):
-    """True if match belongs to this event or (for league) any event in the league."""
+def _match_in_tournament_scope(match, tournament_url: str) -> bool:
+    """Return ``True`` if *match* falls within the scope of *tournament_url*.
+
+    For standalone tournaments the match must belong to that event.  For
+    league-affiliated tournaments the match may belong to any event in the
+    same league.
+
+    Args:
+        match: A :class:`~app.models.match.Match` instance to check.
+        tournament_url: The URL slug of the tournament being accessed.
+
+    Returns:
+        ``True`` if the match is in scope; ``False`` otherwise.
+    """
     tournament = Tournament.query.filter_by(url=tournament_url).first()
     if not tournament:
         return False
@@ -25,8 +37,25 @@ def _match_in_tournament_scope(match, tournament_url):
 
 @bp.route("/<tournament_url>/get-notes")
 @login_required
-def get_notes(tournament_url):
-    """Get notes for a match. For league events, match may be from any event in the league."""
+def get_notes(tournament_url: str):
+    """Return all notes for a match, optionally filtered by point.
+
+    ``GET /_api/<tournament_url>/get-notes?match_id=<uuid>[&point_id=<uuid>]``
+
+    Requires the caller to be a head ref for the match.  For league events
+    the match may belong to any tournament in the league.
+
+    Args:
+        tournament_url: Tournament URL slug from the path.
+
+    Query Args:
+        match_id: UUID of the match to retrieve notes for.
+        point_id: Optional UUID; when supplied, returns notes for that point
+            plus any unassigned notes on the match.
+
+    Returns:
+        JSON ``{"success": true, "notes": [...]}``, or an error body.
+    """
     match_id = request.args.get("match_id")
 
     if not match_id:
@@ -66,8 +95,25 @@ def get_notes(tournament_url):
 
 @bp.route("/<tournament_url>/add-note", methods=["POST"])
 @login_required
-def add_note(tournament_url):
-    """Add a note to a match."""
+def add_note(tournament_url: str):
+    """Add a new note to a match.
+
+    ``POST /_api/<tournament_url>/add-note``
+
+    Requires the caller to be a head ref for the match.
+
+    Args:
+        tournament_url: Tournament URL slug from the path.
+
+    Request JSON:
+        match_id (str): UUID of the target match.
+        text (str): Note content.
+        target (str): Note target (default ``"MATCH"``).
+        player_id (str | None): Optional player the note concerns.
+
+    Returns:
+        JSON ``{"success": true, "note_id": "<uuid>"}``, or an error body.
+    """
     match_id = request.json.get("match_id")
     text = request.json.get("text")
     target = request.json.get("target", "MATCH")
@@ -98,8 +144,24 @@ def add_note(tournament_url):
 
 @bp.route("/<tournament_url>/assign-notes-to-point", methods=["POST"])
 @login_required
-def assign_notes_to_point(tournament_url):
-    """Assign selected notes to a specific point."""
+def assign_notes_to_point(tournament_url: str):
+    """Assign one or more unassigned match notes to a specific point.
+
+    ``POST /_api/<tournament_url>/assign-notes-to-point``
+
+    Requires head-ref status for the tournament.  Only notes not yet linked
+    to a point (``point_id IS NULL``) are modified.
+
+    Args:
+        tournament_url: Tournament URL slug from the path.
+
+    Request JSON:
+        point_id (str): UUID of the target point.
+        note_ids (list[str]): UUIDs of notes to assign.
+
+    Returns:
+        JSON ``{"success": true, "assigned_count": int}``, or an error body.
+    """
     point_id = request.json.get("point_id")
     note_ids = request.json.get("note_ids", [])
 
@@ -130,9 +192,24 @@ def assign_notes_to_point(tournament_url):
 
 
 @bp.route("/<tournament_url>/get-point-notes")
-def get_point_notes(tournament_url):
-    """Get notes for a specific point. Point notes (target='match') are visible to everyone.
-    Team and player notes are only visible to authorized users."""
+def get_point_notes(tournament_url: str):
+    """Return notes associated with a specific point.
+
+    ``GET /_api/<tournament_url>/get-point-notes?match_id=<uuid>&point_id=<uuid>``
+
+    Match-target notes (``target == "match"``) are visible to all users.
+    Team and player notes are only returned when the caller is a head ref.
+
+    Args:
+        tournament_url: Tournament URL slug from the path.
+
+    Query Args:
+        match_id: UUID of the parent match.
+        point_id: UUID of the target point.
+
+    Returns:
+        JSON ``{"success": true, "notes": [...]}``, or an error body.
+    """
     match_id = request.args.get("match_id")
     point_id = request.args.get("point_id")
 
@@ -170,8 +247,28 @@ def get_point_notes(tournament_url):
 
 @bp.route("/<tournament_url>/add-point-note", methods=["POST"])
 @login_required
-def add_point_note(tournament_url):
-    """Add a note directly to a point."""
+def add_point_note(tournament_url: str):
+    """Add a note directly linked to a scored point.
+
+    ``POST /_api/<tournament_url>/add-point-note``
+
+    Requires head-ref status.  Either *text* or *penalty_type_id* must be
+    supplied.
+
+    Args:
+        tournament_url: Tournament URL slug from the path.
+
+    Request JSON:
+        match_id (str): UUID of the parent match.
+        point_id (str): UUID of the target point.
+        text (str): Note content (optional if penalty_type_id supplied).
+        target (str): Note target (default ``"MATCH"``).
+        player_id (str | None): Optional player the note concerns.
+        penalty_type_id (int | None): Optional penalty type FK.
+
+    Returns:
+        JSON ``{"success": true, "note_id": "<uuid>"}``, or an error body.
+    """
     match_id = request.json.get("match_id")
     point_id = request.json.get("point_id")
     text = request.json.get("text", "")
@@ -213,8 +310,25 @@ def add_point_note(tournament_url):
 
 @bp.route("/<tournament_url>/set-point-note", methods=["POST"])
 @login_required
-def set_point_note(tournament_url):
-    """Set the single point note for a point (target=match). Replaces any existing one."""
+def set_point_note(tournament_url: str):
+    """Replace the single match-target note on a point.
+
+    ``POST /_api/<tournament_url>/set-point-note``
+
+    Deletes any existing ``target=match`` notes for the point, then creates
+    a new one when *text* is non-empty.  Requires head-ref status.
+
+    Args:
+        tournament_url: Tournament URL slug from the path.
+
+    Request JSON:
+        match_id (str): UUID of the parent match.
+        point_id (str): UUID of the target point.
+        text (str): Replacement text (empty string removes the note).
+
+    Returns:
+        JSON ``{"success": true}``, or an error body.
+    """
     match_id = request.json.get("match_id")
     point_id = request.json.get("point_id")
     text = (request.json.get("text") or "").strip()
@@ -256,8 +370,22 @@ def set_point_note(tournament_url):
 
 @bp.route("/<tournament_url>/delete-point-note", methods=["POST"])
 @login_required
-def delete_point_note(tournament_url):
-    """Delete a note from a point."""
+def delete_point_note(tournament_url: str):
+    """Permanently delete a match note.
+
+    ``POST /_api/<tournament_url>/delete-point-note``
+
+    Requires head-ref status for the match.
+
+    Args:
+        tournament_url: Tournament URL slug from the path.
+
+    Request JSON:
+        note_id (str): UUID of the note to delete.
+
+    Returns:
+        JSON ``{"success": true}``, or an error body.
+    """
     note_id = request.json.get("note_id")
 
     if not note_id:
@@ -284,8 +412,23 @@ def delete_point_note(tournament_url):
 
 @bp.route("/<tournament_url>/unassign-notes-from-point", methods=["POST"])
 @login_required
-def unassign_notes_from_point(tournament_url):
-    """Unassign notes from a point."""
+def unassign_notes_from_point(tournament_url: str):
+    """Detach one or more notes from a point, returning them to the match level.
+
+    ``POST /_api/<tournament_url>/unassign-notes-from-point``
+
+    Requires head-ref status for the tournament.
+
+    Args:
+        tournament_url: Tournament URL slug from the path.
+
+    Request JSON:
+        point_id (str): UUID of the point to unassign from.
+        note_ids (list[str]): UUIDs of notes to detach.
+
+    Returns:
+        JSON ``{"success": true, "unassigned_count": int}``, or an error body.
+    """
     point_id = request.json.get("point_id")
     note_ids = request.json.get("note_ids", [])
 

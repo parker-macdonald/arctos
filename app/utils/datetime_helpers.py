@@ -10,10 +10,18 @@ from app.error_values import Null, Option, Some
 
 
 def normalize_datetime(dt: datetime | None) -> Option[datetime]:
-    """
-    Normalize a datetime for JSON output:
-    - If naive, assume UTC
-    - Remove microseconds
+    """Normalise a datetime for JSON serialisation.
+
+    * Naive datetimes are treated as UTC.
+    * Microseconds are stripped (sub-second precision is not needed for API
+      timestamps).
+
+    Args:
+        dt: A :class:`~datetime.datetime` instance, or ``None``.
+
+    Returns:
+        :class:`~app.error_values.Some` wrapping the normalised UTC datetime,
+        or :class:`~app.error_values.Null` when *dt* is ``None``.
     """
     if dt is None:
         return Null()
@@ -23,7 +31,16 @@ def normalize_datetime(dt: datetime | None) -> Option[datetime]:
 
 
 def to_aware_utc(dt: datetime | None) -> Option[datetime]:
-    """Convert possibly-naive datetime to timezone-aware UTC datetime."""
+    """Convert a possibly-naive datetime to a timezone-aware UTC datetime.
+
+    Args:
+        dt: A :class:`~datetime.datetime` instance (naive or aware), or
+            ``None``.
+
+    Returns:
+        :class:`~app.error_values.Some` wrapping the UTC-aware datetime, or
+        :class:`~app.error_values.Null` when *dt* is ``None``.
+    """
     if dt is None:
         return Null()
     if dt.tzinfo is None:
@@ -32,7 +49,18 @@ def to_aware_utc(dt: datetime | None) -> Option[datetime]:
 
 
 def to_iso_z(dt: datetime | None) -> Option[str]:
-    """Convert datetime to ISO string with 'Z' suffix (UTC), tolerant of naive dt."""
+    """Convert a datetime to a UTC ISO-8601 string ending with ``"Z"``.
+
+    Tolerates naive datetimes by treating them as UTC.
+
+    Args:
+        dt: A :class:`~datetime.datetime` instance, or ``None``.
+
+    Returns:
+        :class:`~app.error_values.Some` wrapping an ISO string like
+        ``"2024-06-01T14:30:00Z"``, or :class:`~app.error_values.Null` when
+        *dt* is ``None``.
+    """
     match to_aware_utc(dt):
         case Some(d):
             return Some(d.isoformat().replace("+00:00", "Z"))
@@ -41,11 +69,18 @@ def to_iso_z(dt: datetime | None) -> Option[str]:
 
 
 def parse_datetime_local_to_utc(dt_string: str) -> datetime:
-    """
-    Parse a datetime-local input string (YYYY-MM-DDTHH:MM) and convert to UTC.
+    """Parse a ``datetime-local`` HTML input string and convert it to UTC.
 
-    Assumes the input represents a time in the server's local timezone.
-    Returns a naive datetime representing UTC time (for storage in DB).
+    The input is assumed to represent a time in the server's local timezone
+    (as set by the OS).  The result is a timezone-naive datetime representing
+    UTC time, suitable for storage in the database.
+
+    Args:
+        dt_string: A string in ``"YYYY-MM-DDTHH:MM"`` format as produced by
+            ``<input type="datetime-local">``.
+
+    Returns:
+        A naive :class:`~datetime.datetime` in UTC.
     """
     # Parse as naive datetime (assumed to be server-local)
     naive_dt = datetime.strptime(dt_string, "%Y-%m-%dT%H:%M")

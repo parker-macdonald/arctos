@@ -9,9 +9,30 @@ import logging
 log = logging.getLogger(__name__)
 
 
-def upload_video(local_path, bucket, key, content_type, region=None, endpoint_url=None):
-    """
-    Upload a file to S3 (or S3-compatible storage). Returns True on success, False on failure.
+def upload_video(
+    local_path: str,
+    bucket: str,
+    key: str,
+    content_type: str,
+    region: str | None = None,
+    endpoint_url: str | None = None,
+) -> bool:
+    """Upload a file to an S3 or S3-compatible storage bucket.
+
+    Credentials are read from the environment (``AWS_ACCESS_KEY_ID`` /
+    ``AWS_SECRET_ACCESS_KEY``) or an attached IAM role.
+
+    Args:
+        local_path: Absolute path to the file to upload.
+        bucket: Target S3 bucket name.
+        key: Destination object key within the bucket.
+        content_type: MIME type of the file (e.g. ``"video/mp4"``).
+        region: AWS region name, or ``None`` to use the default.
+        endpoint_url: Custom S3-compatible endpoint URL (e.g. Backblaze B2),
+            or ``None`` for the standard AWS endpoint.
+
+    Returns:
+        ``True`` on success, ``False`` if the upload raises an exception.
     """
     try:
         import boto3
@@ -34,9 +55,26 @@ def upload_video(local_path, bucket, key, content_type, region=None, endpoint_ur
         return False
 
 
-def get_presigned_url(bucket, key, region=None, expiry_seconds=3600, endpoint_url=None):
-    """
-    Return a presigned GET URL for the S3 object, or None on failure.
+def get_presigned_url(
+    bucket: str,
+    key: str,
+    region: str | None = None,
+    expiry_seconds: int = 3600,
+    endpoint_url: str | None = None,
+) -> str | None:
+    """Generate a presigned GET URL for an S3 object.
+
+    Args:
+        bucket: S3 bucket name.
+        key: Object key within the bucket.
+        region: AWS region name, or ``None`` for the default.
+        expiry_seconds: How long (in seconds) the URL is valid for.
+            Defaults to 3600 (1 hour).
+        endpoint_url: Custom S3-compatible endpoint URL, or ``None`` for
+            the standard AWS endpoint.
+
+    Returns:
+        A presigned HTTPS URL string, or ``None`` if URL generation fails.
     """
     try:
         import boto3

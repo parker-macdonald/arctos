@@ -16,9 +16,25 @@ from app.error_values import Null, Option, Some
 
 @dataclass(frozen=True)
 class PermissionService:
+    """Flask-agnostic authorization and permission checks.
+
+    All methods are static; the class acts as a typed namespace.  Methods
+    never reference ``current_user``, ``request``, or ``flash`` — those
+    concerns belong in route handlers and decorators.
+    """
+
     @staticmethod
     def user_type(user) -> Option[str]:
-        """Return Some('player'|'team') for supported users; otherwise Null()."""
+        """Return the account type string for *user*.
+
+        Args:
+            user: Any Flask-Login user object, or ``None``.
+
+        Returns:
+            :class:`~app.error_values.Some` containing ``"player"`` or
+            ``"team"``, or :class:`~app.error_values.Null` for ``None`` /
+            unsupported types.
+        """
         if user is None:
             return Null()
         if is_player(user):
@@ -29,7 +45,16 @@ class PermissionService:
 
     @staticmethod
     def is_tournament_organizer(tournament_url: str, user) -> bool:
-        """True if user is a TO for the tournament."""
+        """Return whether *user* is a Tournament Organiser for this event.
+
+        Args:
+            tournament_url: URL slug of the tournament.
+            user: Flask-Login user object (player or team), or ``None``.
+
+        Returns:
+            ``True`` if a :class:`~app.models.tournament.TO` record exists
+            for *user* and *tournament_url*.
+        """
         if not tournament_url or user is None:
             return False
         match PermissionService.user_type(user):
@@ -49,7 +74,15 @@ class PermissionService:
 
     @staticmethod
     def can_view_tournament(tournament_url: str, user) -> bool:
-        """True if tournament is published or user is a TO."""
+        """Return whether *user* may view the tournament.
+
+        Args:
+            tournament_url: URL slug of the tournament.
+            user: Flask-Login user, or ``None`` for unauthenticated requests.
+
+        Returns:
+            ``True`` if the tournament is published, or if *user* is a TO.
+        """
         from models import Tournament
 
         tournament = Tournament.query.get(tournament_url)
@@ -61,7 +94,20 @@ class PermissionService:
 
     @staticmethod
     def can_head_ref_match(tournament_url: str, user, match=None) -> bool:
-        """Delegate to existing head-ref policy logic for now (to avoid behavior drift)."""
+        """Return whether *user* may head-ref *match* in this tournament.
+
+        Delegates to :func:`~app.utils.helpers.can_head_ref_match` to avoid
+        diverging from the authoritative policy implementation.
+
+        Args:
+            tournament_url: URL slug of the tournament.
+            user: Flask-Login user, or ``None``.
+            match: The :class:`~app.models.match.Match` to check, or ``None``
+                for a general head-ref eligibility check.
+
+        Returns:
+            ``True`` if *user* is a player with head-ref permission.
+        """
         if user is None or not is_player(user):
             return False
         from app.utils.helpers import can_head_ref_match as _can_head_ref_match

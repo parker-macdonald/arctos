@@ -34,9 +34,7 @@ from models import Camera, Field, Match, Team, Tournament, db
 
 
 YOUTUBE_TOKEN_URL = "https://oauth2.googleapis.com/token"
-YOUTUBE_UPLOAD_INIT_URL = (
-    "https://www.googleapis.com/upload/youtube/v3/videos"
-)
+YOUTUBE_UPLOAD_INIT_URL = "https://www.googleapis.com/upload/youtube/v3/videos"
 
 
 @dataclass(frozen=True)
@@ -244,7 +242,9 @@ def _cleanup_recording_artifacts_after_success(camera: Camera) -> None:
     )
 
 
-def _team_label_for_youtube_title(tournament_url: str, team_id: str | None, fallback: str) -> str:
+def _team_label_for_youtube_title(
+    tournament_url: str, team_id: str | None, fallback: str
+) -> str:
     """Prefer tournament/league registration pseudonym; else team account name; else id."""
     if not team_id:
         return fallback
@@ -347,9 +347,7 @@ def _youtube_init_request(
     )
     # YouTube returns 200 or 201 with Location header for resumable session.
     if resp.status_code not in (200, 201):
-        raise RuntimeError(
-            f"YouTube init failed: {resp.status_code} {resp.text[:300]}"
-        )
+        raise RuntimeError(f"YouTube init failed: {resp.status_code} {resp.text[:300]}")
     location = resp.headers.get("Location")
     if not location:
         raise RuntimeError(f"YouTube init missing Location header: {resp.headers}")
@@ -424,7 +422,9 @@ def upload_camera_to_youtube(camera_uuid: str) -> None:
     cfg = _get_config()
     camera: Camera = Camera.query.filter_by(uuid=camera_uuid).first()
     if not camera:
-        current_app.logger.warning("youtube_upload: camera not found uuid=%s", camera_uuid)
+        current_app.logger.warning(
+            "youtube_upload: camera not found uuid=%s", camera_uuid
+        )
         return
 
     if camera.status != "UPLOADING":
@@ -523,4 +523,3 @@ def upload_camera_to_youtube(camera_uuid: str) -> None:
             camera_uuid,
             _recording_artifact_dir_abs(camera),
         )
-

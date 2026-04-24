@@ -1,3 +1,5 @@
+"""Tests for ORM model helper properties (winner_team_id, loser_team_id)."""
+
 import pytest
 
 from app.domain.enums import MatchStatus
@@ -6,6 +8,7 @@ from models import Match
 
 @pytest.mark.unit
 def test_match_winner_loser_team_id_properties():
+    """Match.winner_team_id and loser_team_id resolve correctly for TEAM1/TEAM2/None."""
     m = Match(
         team1="a",
         team2="b",

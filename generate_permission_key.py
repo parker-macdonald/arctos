@@ -1,10 +1,20 @@
 #!/usr/bin/env python3
-"""
-generate permission keys to create new tournaments. uses app secret key. if none is passed.
+"""CLI utility that generates a tournament permission key.
+
+The permission key is an HMAC-SHA256 digest of the tournament URL slug
+signed with the application ``SECRET_KEY``.  Tournament Organisers
+share this key with players so they can self-register for a tournament
+that has restricted registration.
+
+An explicit secret key may be provided as a second argument; otherwise
+the key is read from the running Flask application configuration.
 
 Usage:
     uv run generate_permission_key.py <url_slug> [secret_key]
 
+Example:
+    uv run generate_permission_key.py my-tournament
+    uv run generate_permission_key.py my-tournament my-secret-key
 """
 
 import sys
@@ -18,7 +28,16 @@ from app import create_app
 from app.utils.helpers import generate_permission_key
 
 
-def main():
+def main() -> None:
+    """Parse CLI arguments and print the generated permission key.
+
+    Reads ``url_slug`` and an optional ``secret_key`` from ``sys.argv``.
+    When no secret key is supplied the Flask application is created so
+    that ``SECRET_KEY`` can be read from the environment / config.
+
+    Raises:
+        SystemExit: If fewer than one positional argument is provided.
+    """
     if len(sys.argv) < 2:
         print("Usage: python generate_permission_key.py <url_slug> [secret_key]")
         print("\nExample:")

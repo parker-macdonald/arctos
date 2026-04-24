@@ -20,7 +20,16 @@ class MatchScheduleSerializer:
 
     @staticmethod
     def tag_to_dict(tag) -> dict[str, Any]:
-        """Convert Tag model to TOML dict, omitting empty values."""
+        """Serialise a :class:`~app.models.tournament.Tag` to a TOML-compatible dict.
+
+        Omits keys whose values are empty or ``None``.
+
+        Args:
+            tag: The :class:`~app.models.tournament.Tag` ORM instance.
+
+        Returns:
+            Dict with up to three keys: ``id``, ``name``, ``team``.
+        """
         result = {}
         if tag.id is not None:
             result["id"] = tag.id
@@ -32,7 +41,16 @@ class MatchScheduleSerializer:
 
     @staticmethod
     def field_to_dict(field) -> dict[str, Any]:
-        """Convert Field model to TOML dict, omitting empty values."""
+        """Serialise a :class:`~app.models.tournament.Field` to a TOML-compatible dict.
+
+        Omits keys whose values are empty or ``None``.
+
+        Args:
+            field: The :class:`~app.models.tournament.Field` ORM instance.
+
+        Returns:
+            Dict with up to three keys: ``id``, ``name``, ``camera``.
+        """
         result = {}
         if field.id is not None:
             result["id"] = field.id
@@ -44,7 +62,19 @@ class MatchScheduleSerializer:
 
     @staticmethod
     def match_to_dict(match) -> dict[str, Any]:
-        """Convert Match model to TOML dict, omitting empty values."""
+        """Serialise a :class:`~app.models.match.Match` to a TOML-compatible dict.
+
+        Prefers ``_initial`` fields (which carry the user's symbolic tokens
+        such as ``tag::PoolA`` or ``MatchName::winner``) over the resolved
+        ``team1`` / ``team2`` / ``refs`` columns.  Omits keys whose values are
+        empty or ``None``.
+
+        Args:
+            match: The :class:`~app.models.match.Match` ORM instance.
+
+        Returns:
+            Dict with match attributes suitable for TOML serialisation.
+        """
         result = {}
 
         # Always include uuid and name

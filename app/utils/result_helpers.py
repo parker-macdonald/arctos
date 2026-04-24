@@ -8,8 +8,17 @@ from app.utils.responses import json_error, json_success
 
 
 def public_error_message(err: Any) -> str:
-    """
-    Convert an error value into a safe end-user message.
+    """Convert an error value into a safe end-user message string.
+
+    For :class:`~app.exceptions.ArctosError` instances the human-readable
+    ``message`` is returned when ``public`` is ``True``; otherwise a generic
+    fallback is used.  All other error types are coerced to ``str``.
+
+    Args:
+        err: The error value to convert.
+
+    Returns:
+        A string safe to show in an API response body.
     """
     if isinstance(err, ArctosError):
         return err.message if err.public else "Request failed"
@@ -29,14 +38,22 @@ def json_from_result(
     ok_status_code: int = 200,
     err_status_code: int | None = None,
 ):
-    """
-    Convert a Result into the standard {success: bool, ...} JSON response.
+    """Convert a :class:`~app.error_values.Result` into a JSON HTTP response.
 
-    - Ok -> json_success(payload)
-    - Err -> json_error(message, status_code)
+    Args:
+        res: The result to convert.
+        ok_to_payload: Callable that converts the success value to a dict
+            merged into the JSON body.  Defaults to passing dicts through
+            unchanged and wrapping other values as ``{"value": v}``.
+        ok_status_code: HTTP status code for success responses (default 200).
+        err_status_code: HTTP status code for error responses.  When ``None``,
+            uses the ``status_code`` attribute of
+            :class:`~app.exceptions.ArctosError` errors, or ``200`` for all
+            others (historical compatibility).
 
-    If err_status_code is None and the error is an ArctosError, its status_code is used.
-    Otherwise defaults to 200 (historical API compatibility).
+    Returns:
+        A ``(Response, status_code)`` tuple from :func:`~app.utils.responses.json_success`
+        or :func:`~app.utils.responses.json_error`.
     """
     match res:
         case Ok(val):

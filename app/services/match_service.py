@@ -21,6 +21,14 @@ if TYPE_CHECKING:  # pragma: no cover
 
 
 def _dedup(seq: Iterable[str]) -> List[str]:
+    """Return a deduplicated list preserving insertion order, skipping falsy values.
+
+    Args:
+        seq: Iterable of strings to deduplicate.
+
+    Returns:
+        A new list with duplicates and empty strings removed.
+    """
     seen = set()
     out: List[str] = []
     for x in seq:
@@ -32,6 +40,13 @@ def _dedup(seq: Iterable[str]) -> List[str]:
 
 @dataclass(frozen=True)
 class MatchService:
+    """Service encapsulating high-level match operations.
+
+    All methods are static; the class acts as a namespace.  Each method
+    returns a :class:`~app.error_values.Result` so that callers can handle
+    errors without exceptions.
+    """
+
     @staticmethod
     @allow_Q
     def start_match(
@@ -44,6 +59,29 @@ class MatchService:
         match_notes: str = "",
         stones_per_set: Optional[str] = None,
     ) -> Result["Match", ArctosError]:
+        """Validate and transition a match into the ``IN_PROGRESS`` state.
+
+        Performs eligibility checks, deduplicates player rosters, records
+        the starting timestamp and camera stream-start times, then triggers
+        a schedule recomputation.
+
+        Args:
+            tournament_url: Tournament URL slug scoping the match.
+            match_id: UUID of the match to start.
+            user: Authenticated user initiating the start.
+            team1_players_csv: Comma-separated player IDs for team1's
+                field roster.
+            team2_players_csv: Comma-separated player IDs for team2's
+                field roster.
+            match_notes: Optional free-text notes recorded at start.
+            stones_per_set: Override stones per set for ``STONES``-mode
+                matches; ``None`` falls back to the match's stored value.
+
+        Returns:
+            :class:`~app.error_values.Ok` wrapping the started
+            :class:`~app.models.match.Match`, or
+            :class:`~app.error_values.Err` wrapping a domain error.
+        """
         from models import Match, Tournament, Field, db
         from app.domain.enums import MatchStatus
         from app.utils.scheduling import recompute_all_match_times
@@ -79,6 +117,7 @@ class MatchService:
 
         tournament_obj = Tournament.query.get(tournament_url)
         from app.utils.helpers import get_registrable_config
+
         cfg = get_registrable_config(tournament_obj)
         max_roster = getattr(cfg, "max_team_size_field", None) if cfg else None
         try:
