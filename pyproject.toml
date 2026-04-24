@@ -32,9 +32,7 @@ url = "https://pypi.org/simple"
 default = true
 
 [dependency-groups]
-dev = [
-    "eralchemy2>=1.4.1",
-]
+dev = []
 test = [
     "pytest==9.0.2",
     "pytest-cov==7.0.0",
