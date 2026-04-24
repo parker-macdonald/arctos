@@ -8,7 +8,7 @@ import re
 from flask import current_app
 from flask_login import current_user
 from app.domain.enums import RegistrationStatus
-from models import Tournament, PlayerRegistration, Match, TeamRegistration, Team
+from models import Tournament, PlayerRegistration, TeamRegistration, Team
 
 
 def get_registrable_config(tournament):
@@ -55,10 +55,7 @@ def match_event_urls_for_penalties(tournament):
     tournaments, returns just this event's URL.
     """
     if getattr(tournament, "league_id", None):
-        return [
-            t.url
-            for t in Tournament.query.filter_by(league_id=tournament.league_id).all()
-        ]
+        return [t.url for t in Tournament.query.filter_by(league_id=tournament.league_id).all()]
     return [tournament.url]
 
 
@@ -118,11 +115,7 @@ def can_head_ref_match(tournament_url: str, player_id: str, match=None) -> bool:
 
     # Check explicit allowed list
     if tournament.head_refs_allowed_list:
-        allowed_list = [
-            ref.strip()
-            for ref in tournament.head_refs_allowed_list.split(",")
-            if ref.strip()
-        ]
+        allowed_list = [ref.strip() for ref in tournament.head_refs_allowed_list.split(",") if ref.strip()]
         if player_id in allowed_list:
             return True
 

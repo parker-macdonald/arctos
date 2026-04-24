@@ -9,13 +9,10 @@ from models import (
     Tournament,
     TeamRegistration,
     PlayerRegistration,
-    Team,
-    Player,
     TO,
     db,
 )
 from app.domain.enums import RegistrationStatus
-from app.utils.decorators import require_tournament_organizer
 from app.services.registration_service import RegistrationService
 from app.utils.user_helpers import is_player, is_team
 from app.error_values import Ok, Err
@@ -46,15 +43,11 @@ def register_team_for_tournament(tournament_url: str):
     """
     if not is_team(current_user):
         return (
-            jsonify(
-                {"success": False, "error": "Only teams can register for tournaments"}
-            ),
+            jsonify({"success": False, "error": "Only teams can register for tournaments"}),
             403,
         )
 
-    res = RegistrationService.register_team(
-        tournament_url, current_user.id, request.form.get("pseudonym", "")
-    )
+    res = RegistrationService.register_team(tournament_url, current_user.id, request.form.get("pseudonym", ""))
     match res:
         case Ok(_):
             return (
@@ -92,9 +85,7 @@ def register_player_for_tournament(tournament_url: str):
     """
     if not is_player(current_user):
         return (
-            jsonify(
-                {"success": False, "error": "Only players can register for tournaments"}
-            ),
+            jsonify({"success": False, "error": "Only players can register for tournaments"}),
             403,
         )
 
@@ -250,9 +241,7 @@ def mark_team_paid(tournament_url: str):
     payment_reference = request.form.get("payment_reference", "")
     payment_notes = request.form.get("payment_notes", "")
 
-    reg = TeamRegistration.query.filter_by(
-        id=reg_id, event=tournament_url
-    ).first_or_404()
+    reg = TeamRegistration.query.filter_by(id=reg_id, event=tournament_url).first_or_404()
     reg.paid = paid
     reg.amount_paid = amount_paid
     reg.payment_method = payment_method
@@ -311,9 +300,7 @@ def mark_player_paid(tournament_url: str):
     payment_reference = request.form.get("payment_reference", "")
     payment_notes = request.form.get("payment_notes", "")
 
-    reg = PlayerRegistration.query.filter_by(
-        id=reg_id, event=tournament_url
-    ).first_or_404()
+    reg = PlayerRegistration.query.filter_by(id=reg_id, event=tournament_url).first_or_404()
     reg.paid = paid
     reg.amount_paid = amount_paid
     reg.payment_method = payment_method
@@ -384,9 +371,7 @@ def deregister_any_team(tournament_url: str):
         )
     else:
         return (
-            jsonify(
-                {"success": False, "error": "Team not found or already deregistered"}
-            ),
+            jsonify({"success": False, "error": "Team not found or already deregistered"}),
             404,
         )
 
@@ -435,11 +420,7 @@ def deregister_any_player(tournament_url: str):
 
     player_registration = (
         PlayerRegistration.query.filter_by(event=tournament_url, player=player_id)
-        .filter(
-            PlayerRegistration.status.in_(
-                [RegistrationStatus.PENDING_TEAM_APPROVAL, RegistrationStatus.CONFIRMED]
-            )
-        )
+        .filter(PlayerRegistration.status.in_([RegistrationStatus.PENDING_TEAM_APPROVAL, RegistrationStatus.CONFIRMED]))
         .first()
     )
 
@@ -453,9 +434,7 @@ def deregister_any_player(tournament_url: str):
         )
     else:
         return (
-            jsonify(
-                {"success": False, "error": "Player not found or already deregistered"}
-            ),
+            jsonify({"success": False, "error": "Player not found or already deregistered"}),
             404,
         )
 
@@ -495,9 +474,7 @@ def accept_invitation(tournament_url: str, invitation_id: int):
     player_registration.status = RegistrationStatus.CONFIRMED
     db.session.commit()
     return (
-        jsonify(
-            {"success": True, "message": "Player approved! They are now on your team."}
-        ),
+        jsonify({"success": True, "message": "Player approved! They are now on your team."}),
         200,
     )
 

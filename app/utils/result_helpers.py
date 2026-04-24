@@ -32,9 +32,7 @@ E = TypeVar("E")
 def json_from_result(
     res: Result[T, E],
     *,
-    ok_to_payload: Callable[[T], dict] = lambda v: (
-        v if isinstance(v, dict) else {"value": v}
-    ),
+    ok_to_payload: Callable[[T], dict] = lambda v: v if isinstance(v, dict) else {"value": v},
     ok_status_code: int = 200,
     err_status_code: int | None = None,
 ):

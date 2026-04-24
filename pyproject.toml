@@ -7,7 +7,6 @@ requires-python = ">=3.12"
 dependencies = [
     "authlib==1.6.5",
     "bcrypt==5.0.0",
-    "black>=25.12.0",
     "bleach==6.3.0",
     "boto3>=1.42.59",
     "cowponder>=0.1.8",
@@ -34,6 +33,9 @@ default = true
 [dependency-groups]
 dev = [
     "eralchemy2>=1.4.1",
+    "mypy>=1.20.2",
+    "pre-commit>=4.6.0",
+    "ruff>=0.15.11",
 ]
 test = [
     "pytest==9.0.2",
@@ -52,3 +54,32 @@ markers = [
     "integration: Integration tests",
     "slow: Slow running tests",
 ]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+# https://docs.astral.sh/ruff/configuration/
+[tool.ruff.lint]
+# E402: Module level import not at top of file
+#   Module level imports should normally go at the top of the file, but moving them should be kept for a separate PR
+# E722: Do not use bare `except`
+#   Bare Exceptions should not be used generally, but removal of the bare exceptions should be handled in a separate PR
+# E712: comparison to True should be 'if cond is True:' or 'if cond:'
+#   (this is incompatible with idiomatic query syntax)
+# E741: Ambiguous variable name
+#   Really just a matter of taste, I find that certain disciplines care about this more than others, but as long as the code is readable it shouldn't matter.
+# F841: Local variable assigned but never used
+#   Should be addressed and fixed in separate PR
+# F821: Undefined name
+#   Should be addressed and fixed in separate PR
+ignore = ["E402", "E712", "E722", "E741", "F841", "F821"]
+
+[tool.ruff.lint.per-file-ignores]
+# __init__.py: F401 imported but unused
+#   (it's useful to import from submodules in __init__.py to exposed a consistent module-level API regardless of file organization)
+"__init__.py" = ["F401"]

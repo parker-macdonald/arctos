@@ -40,8 +40,7 @@ stuff is all set up):
     - make sure there are no merge conflicts before submitting. i dont
       care if you merge or rebase.
     - all tests must pass before the PR is merged (`make test`)
-    - **important:** all code must be formatted with black (run `uv run
-      black .` or `make format`) before it gets merged.
+    - **important:** all code must be formatted with [ruff](https://docs.astral.sh/ruff/)
 5. maintainer approves PR and changes go live to dev server
 6. final testing on dev server to ensure everything works (mostly
    important for changes requiring nonzero migration effort)

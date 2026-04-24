@@ -91,9 +91,7 @@ def test_start_match_post_rejects_overlap(app, client, tournament, head_ref_play
 
 
 @pytest.mark.integration
-def test_start_match_post_rejects_when_another_in_progress_on_same_field(
-    app, client, tournament, head_ref_player
-):
+def test_start_match_post_rejects_when_another_in_progress_on_same_field(app, client, tournament, head_ref_player):
     """Starting a match on a field that has another match IN_PROGRESS returns 400 with field-busy reason."""
     with app.app_context():
         t = db.session.merge(tournament)
@@ -153,9 +151,7 @@ def test_start_match_post_rejects_when_another_in_progress_on_same_field(
     assert data is not None
     assert "error" in data or "reasons" in data
     if "error" in data:
-        assert (
-            "in progress" in data["error"].lower() or "field" in data["error"].lower()
-        )
+        assert "in progress" in data["error"].lower() or "field" in data["error"].lower()
 
     with app.app_context():
         m2 = Match.query.get(match_id)

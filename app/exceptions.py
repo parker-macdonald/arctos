@@ -28,9 +28,7 @@ class ArctosError(Exception):
 class NotFoundError(ArctosError):
     """Raised when a requested resource does not exist (HTTP 404)."""
 
-    def __init__(
-        self, message: str = "Not found", *, status_code: int = 404, public: bool = True
-    ) -> None:
+    def __init__(self, message: str = "Not found", *, status_code: int = 404, public: bool = True) -> None:
         """Initialise the error.
 
         Args:
@@ -111,9 +109,5 @@ class TournamentNotFoundError(NotFoundError):
             tournament_url: The URL slug that was not found, or ``None`` for a
                 generic "tournament not found" message.
         """
-        msg = (
-            "Tournament not found"
-            if not tournament_url
-            else f"Tournament not found: {tournament_url}"
-        )
+        msg = "Tournament not found" if not tournament_url else f"Tournament not found: {tournament_url}"
         super().__init__(msg)

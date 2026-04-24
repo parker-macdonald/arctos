@@ -9,9 +9,7 @@ from tests.utils import login_as, make_registrable_config
 
 
 @pytest.mark.unit
-def test_permission_service_is_tournament_organizer_false_when_missing_to(
-    app, test_db, tournament, player
-):
+def test_permission_service_is_tournament_organizer_false_when_missing_to(app, test_db, tournament, player):
     """is_tournament_organizer returns False when no TO row exists for the player."""
     with app.app_context():
         t = db.session.merge(tournament)
@@ -23,9 +21,7 @@ def test_permission_service_is_tournament_organizer_false_when_missing_to(
 
 
 @pytest.mark.unit
-def test_permission_service_is_tournament_organizer_true_when_to_exists(
-    app, test_db, tournament, player
-):
+def test_permission_service_is_tournament_organizer_true_when_to_exists(app, test_db, tournament, player):
     """is_tournament_organizer returns True when a matching TO row is present."""
     with app.app_context():
         t = db.session.merge(tournament)
@@ -36,9 +32,7 @@ def test_permission_service_is_tournament_organizer_true_when_to_exists(
 
 
 @pytest.mark.unit
-def test_permission_service_can_view_unpublished_tournament_for_to(
-    app, test_db, player
-):
+def test_permission_service_can_view_unpublished_tournament_for_to(app, test_db, player):
     """can_view_tournament returns True for an unpublished tournament when the user is its TO."""
     with app.app_context():
         p = db.session.merge(player)

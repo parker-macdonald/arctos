@@ -38,7 +38,7 @@ return Null(). Otherwise unwrap.
 """
 
 from abc import ABC, abstractmethod
-from typing import Callable, ParamSpec, TypeVar, Generic
+from typing import Callable, ParamSpec, TypeVar
 from functools import wraps
 
 
@@ -317,7 +317,7 @@ class Null[T](Option[T]):
         Raises:
             ValueError: Always.
         """
-        raise ValueError(f"`.unwrap()` called on a `Null` value")
+        raise ValueError("`.unwrap()` called on a `Null` value")
 
     def unwrap_or[U](self, default: U) -> T | U:
         """Return *default* because no value is present."""
@@ -468,9 +468,7 @@ class Err[T, E](Result[T, E]):
             ValueError: When the contained error is not an exception.
         """
         if isinstance(self.val, Exception):
-            self.val.add_note(
-                f"Caused by .expect(...) call on `Err` value raised above"
-            )
+            self.val.add_note("Caused by .expect(...) call on `Err` value raised above")
             raise self.val
         else:
             e = ValueError(msg)
@@ -489,7 +487,7 @@ class Err[T, E](Result[T, E]):
             ValueError: When the contained error is not an exception.
         """
         if isinstance(self.val, Exception):
-            self.val.add_note(f"Caused by `.unwrap()` call on `Err` value raised above")
+            self.val.add_note("Caused by `.unwrap()` call on `Err` value raised above")
             raise self.val
         else:
             e = ValueError("`.unwrap()` called on `Err` value")
@@ -535,9 +533,7 @@ class PropagationError(Exception):
             val: The :class:`Err` or :class:`Null` instance being propagated.
         """
         self.val = val
-        super().__init__(
-            "if you're seeing this it means you forgot the @allow_Q decorator"
-        )
+        super().__init__("if you're seeing this it means you forgot the @allow_Q decorator")
 
 
 P = ParamSpec("P")

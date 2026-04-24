@@ -101,11 +101,7 @@ class RegistrationService:
         tournament,
     ) -> Result[None, ArctosError]:
         if not RegistrationService._tournament_team_reg_open(tournament):
-            return Err(
-                RegistrationClosedError(
-                    "Team registration is not open for this tournament"
-                )
-            )
+            return Err(RegistrationClosedError("Team registration is not open for this tournament"))
         return Ok(None)
 
     @staticmethod
@@ -113,11 +109,7 @@ class RegistrationService:
         tournament,
     ) -> Result[None, ArctosError]:
         if not RegistrationService._tournament_player_reg_open(tournament):
-            return Err(
-                RegistrationClosedError(
-                    "Player registration is not open for this tournament"
-                )
-            )
+            return Err(RegistrationClosedError("Player registration is not open for this tournament"))
         return Ok(None)
 
     @staticmethod
@@ -125,11 +117,7 @@ class RegistrationService:
         tournament,
     ) -> Result[None, ArctosError]:
         if not RegistrationService._tournament_team_reg_open(tournament):
-            return Err(
-                ValidationError(
-                    "Registration changes are locked. You can no longer deregister teams."
-                )
-            )
+            return Err(ValidationError("Registration changes are locked. You can no longer deregister teams."))
         return Ok(None)
 
     @staticmethod
@@ -137,18 +125,12 @@ class RegistrationService:
         tournament,
     ) -> Result[None, ArctosError]:
         if not RegistrationService._tournament_player_reg_open(tournament):
-            return Err(
-                ValidationError(
-                    "Registration changes are locked. You can no longer deregister players."
-                )
-            )
+            return Err(ValidationError("Registration changes are locked. You can no longer deregister players."))
         return Ok(None)
 
     @staticmethod
     @allow_Q
-    def register_team(
-        tournament_url: str, team_id: str, pseudonym: str
-    ) -> Result["TeamRegistration", ArctosError]:
+    def register_team(tournament_url: str, team_id: str, pseudonym: str) -> Result["TeamRegistration", ArctosError]:
         from models import TeamRegistration, db
 
         tournament = RegistrationService._get_tournament(tournament_url).Q()
@@ -161,13 +143,9 @@ class RegistrationService:
         if pn_err:
             return Err(ValidationError(pn_err))
 
-        existing_reg = TeamRegistration.query.filter_by(
-            event=tournament_url, team=team_id, status="CONFIRMED"
-        ).first()
+        existing_reg = TeamRegistration.query.filter_by(event=tournament_url, team=team_id, status="CONFIRMED").first()
         if existing_reg:
-            return Err(
-                ValidationError("Your team is already registered for this tournament")
-            )
+            return Err(ValidationError("Your team is already registered for this tournament"))
 
         from app.utils.helpers import get_registrable_config
 
@@ -186,15 +164,9 @@ class RegistrationService:
                     status=TeamRegistrationStatus.CONFIRMED,
                 ).count()
             if current_team_count >= n_max:
-                return Err(
-                    ValidationError(
-                        f"Maximum number of teams ({n_max}) already registered"
-                    )
-                )
+                return Err(ValidationError(f"Maximum number of teams ({n_max}) already registered"))
 
-        team_registration = TeamRegistration(
-            event=tournament_url, team=team_id, pseudonym=pseudonym
-        )
+        team_registration = TeamRegistration(event=tournament_url, team=team_id, pseudonym=pseudonym)
 
         # Auto-mark as paid if registration fee is zero
         from app.utils.helpers import get_registrable_config
@@ -223,20 +195,12 @@ class RegistrationService:
         from models import PlayerRegistration, db
 
         tournament = RegistrationService._get_tournament(tournament_url).Q()
-        RegistrationService._require_player_registration_open_for_register(
-            tournament
-        ).Q()
+        RegistrationService._require_player_registration_open_for_register(tournament).Q()
 
-        existing_reg = PlayerRegistration.query.filter_by(
-            event=tournament_url, player=player_id
-        ).first()
+        existing_reg = PlayerRegistration.query.filter_by(event=tournament_url, player=player_id).first()
 
         team_id = (team_id or "").strip() or None
-        status = (
-            RegistrationStatus.CONFIRMED
-            if not team_id
-            else RegistrationStatus.PENDING_TEAM_APPROVAL
-        )
+        status = RegistrationStatus.CONFIRMED if not team_id else RegistrationStatus.PENDING_TEAM_APPROVAL
 
         # Enforce exactly one PlayerRegistration row per (event, player).
         # If a player was previously rejected/cancelled, allow resubmission by updating that row.
@@ -245,11 +209,7 @@ class RegistrationService:
                 RegistrationStatus.REJECTED,
                 RegistrationStatus.CANCELLED,
             ):
-                return Err(
-                    ValidationError(
-                        "You already have a registration for this tournament"
-                    )
-                )
+                return Err(ValidationError("You already have a registration for this tournament"))
             player_registration = existing_reg
             player_registration.team = team_id
             player_registration.jersey_number = jersey_number or ""
@@ -272,9 +232,7 @@ class RegistrationService:
         if not cfg or not cfg.player_reg_fee or cfg.player_reg_fee == 0:
             player_registration.paid = True
             player_registration.amount_paid = 0.0
-            player_registration.paid_at = datetime.now(timezone.utc).replace(
-                tzinfo=None
-            )
+            player_registration.paid_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
         # If a waiver is configured, players must sign it.
         waiver_filepath = getattr(cfg, "waiver_filepath", None) if cfg else None
@@ -299,12 +257,10 @@ class RegistrationService:
     @staticmethod
     @allow_Q
     def deregister_team(tournament_url: str, team_id: str) -> Result[None, ArctosError]:
-        from models import Match, Tournament, TeamRegistration, PlayerRegistration, db
+        from models import Match, TeamRegistration, PlayerRegistration, db
 
         tournament = RegistrationService._get_tournament(tournament_url).Q()
-        RegistrationService._require_team_registration_open_for_deregister(
-            tournament
-        ).Q()
+        RegistrationService._require_team_registration_open_for_deregister(tournament).Q()
 
         team_registration = TeamRegistration.query.filter_by(
             event=tournament_url, team=team_id, status=RegistrationStatus.CONFIRMED
@@ -318,11 +274,7 @@ class RegistrationService:
             .first()
         )
         if in_progress:
-            return Err(
-                ValidationError(
-                    "Cannot deregister once your team has played in a match that is in progress."
-                )
-            )
+            return Err(ValidationError("Cannot deregister once your team has played in a match that is in progress."))
 
         team_registration.status = RegistrationStatus.CANCELLED
 
@@ -335,15 +287,11 @@ class RegistrationService:
 
     @staticmethod
     @allow_Q
-    def deregister_player(
-        tournament_url: str, player_id: str
-    ) -> Result[None, ArctosError]:
-        from models import Match, Tournament, PlayerRegistration, db
+    def deregister_player(tournament_url: str, player_id: str) -> Result[None, ArctosError]:
+        from models import Match, PlayerRegistration, db
 
         tournament = RegistrationService._get_tournament(tournament_url).Q()
-        RegistrationService._require_player_registration_open_for_deregister(
-            tournament
-        ).Q()
+        RegistrationService._require_player_registration_open_for_deregister(tournament).Q()
 
         player_registration = (
             PlayerRegistration.query.filter_by(event=tournament_url, player=player_id)
@@ -363,18 +311,12 @@ class RegistrationService:
         player_team = player_registration.team
         if player_team:
             in_progress = (
-                Match.query.filter_by(
-                    event=tournament_url, status=MatchStatus.IN_PROGRESS
-                )
+                Match.query.filter_by(event=tournament_url, status=MatchStatus.IN_PROGRESS)
                 .filter((Match.team1 == player_team) | (Match.team2 == player_team))
                 .first()
             )
             if in_progress:
-                return Err(
-                    ValidationError(
-                        "Cannot deregister once you have played in a match that is in progress."
-                    )
-                )
+                return Err(ValidationError("Cannot deregister once you have played in a match that is in progress."))
 
         player_registration.status = RegistrationStatus.CANCELLED
 
@@ -393,9 +335,7 @@ class RegistrationService:
             return Err(ValidationError("League not found"))
         rc = league.registrable_config
         if not (rc and getattr(rc, "team_registration_open", rc.registration_open)):
-            return Err(
-                RegistrationClosedError("Registration is not open for this league")
-            )
+            return Err(RegistrationClosedError("Registration is not open for this league"))
 
         pseudonym = (pseudonym or "").strip()
         if not pseudonym:
@@ -404,13 +344,9 @@ class RegistrationService:
         if pn_err:
             return Err(ValidationError(pn_err))
 
-        existing_reg = TeamRegistration.query.filter_by(
-            league_id=league_id, team=team_id, status="CONFIRMED"
-        ).first()
+        existing_reg = TeamRegistration.query.filter_by(league_id=league_id, team=team_id, status="CONFIRMED").first()
         if existing_reg:
-            return Err(
-                ValidationError("Your team is already registered for this league")
-            )
+            return Err(ValidationError("Your team is already registered for this league"))
 
         n_max = getattr(rc, "n_max_teams", None) if rc else None
         if n_max is not None:
@@ -419,11 +355,7 @@ class RegistrationService:
                 status=TeamRegistrationStatus.CONFIRMED,
             ).count()
             if current_team_count >= n_max:
-                return Err(
-                    ValidationError(
-                        f"Maximum number of teams ({n_max}) already registered"
-                    )
-                )
+                return Err(ValidationError(f"Maximum number of teams ({n_max}) already registered"))
 
         team_registration = TeamRegistration(
             event=None,
@@ -460,29 +392,19 @@ class RegistrationService:
             return Err(ValidationError("League not found"))
         rc = league.registrable_config
         if not (rc and getattr(rc, "player_registration_open", rc.registration_open)):
-            return Err(
-                RegistrationClosedError("Registration is not open for this league")
-            )
+            return Err(RegistrationClosedError("Registration is not open for this league"))
 
         team_id = (team_id or "").strip() or None
-        status = (
-            RegistrationStatus.CONFIRMED
-            if not team_id
-            else RegistrationStatus.PENDING_TEAM_APPROVAL
-        )
+        status = RegistrationStatus.CONFIRMED if not team_id else RegistrationStatus.PENDING_TEAM_APPROVAL
 
-        existing_reg = PlayerRegistration.query.filter_by(
-            league_id=league_id, player=player_id
-        ).first()
+        existing_reg = PlayerRegistration.query.filter_by(league_id=league_id, player=player_id).first()
 
         if existing_reg:
             if existing_reg.status not in (
                 RegistrationStatus.REJECTED,
                 RegistrationStatus.CANCELLED,
             ):
-                return Err(
-                    ValidationError("You already have a registration for this league")
-                )
+                return Err(ValidationError("You already have a registration for this league"))
             player_registration = existing_reg
             player_registration.team = team_id
             player_registration.jersey_number = jersey_number or ""
@@ -503,9 +425,7 @@ class RegistrationService:
         if not rc or not rc.player_reg_fee or rc.player_reg_fee == 0:
             player_registration.paid = True
             player_registration.amount_paid = 0.0
-            player_registration.paid_at = datetime.now(timezone.utc).replace(
-                tzinfo=None
-            )
+            player_registration.paid_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
         # If a waiver is configured, players must sign it.
         waiver_filepath = getattr(rc, "waiver_filepath", None) if rc else None
@@ -528,9 +448,7 @@ class RegistrationService:
 
     @staticmethod
     @allow_Q
-    def deregister_team_from_league(
-        league_id: str, team_id: str
-    ) -> Result[None, ArctosError]:
+    def deregister_team_from_league(league_id: str, team_id: str) -> Result[None, ArctosError]:
         from models import TeamRegistration, PlayerRegistration, League, db
 
         league = League.query.get(league_id)
@@ -538,9 +456,7 @@ class RegistrationService:
             return Err(ValidationError("League not found"))
         rc = league.registrable_config
         if not (rc and getattr(rc, "team_registration_open", rc.registration_open)):
-            return Err(
-                ValidationError("Registration changes are locked for this league")
-            )
+            return Err(ValidationError("Registration changes are locked for this league"))
 
         team_registration = TeamRegistration.query.filter_by(
             league_id=league_id, team=team_id, status="CONFIRMED"
@@ -550,9 +466,7 @@ class RegistrationService:
 
         from models import Match, Tournament
 
-        tournament_urls = [
-            t.url for t in Tournament.query.filter_by(league_id=league_id).all()
-        ]
+        tournament_urls = [t.url for t in Tournament.query.filter_by(league_id=league_id).all()]
         in_progress = (
             Match.query.filter(
                 Match.event.in_(tournament_urls),
@@ -562,11 +476,7 @@ class RegistrationService:
             .first()
         )
         if in_progress:
-            return Err(
-                ValidationError(
-                    "Cannot deregister once your team has played in a match that is in progress."
-                )
-            )
+            return Err(ValidationError("Cannot deregister once your team has played in a match that is in progress."))
 
         team_registration.status = TeamRegistrationStatus.CANCELLED
 
@@ -579,9 +489,7 @@ class RegistrationService:
 
     @staticmethod
     @allow_Q
-    def deregister_player_from_league(
-        league_id: str, player_id: str
-    ) -> Result[None, ArctosError]:
+    def deregister_player_from_league(league_id: str, player_id: str) -> Result[None, ArctosError]:
         from models import PlayerRegistration, League, db
 
         league = League.query.get(league_id)
@@ -589,9 +497,7 @@ class RegistrationService:
             return Err(ValidationError("League not found"))
         rc = league.registrable_config
         if not (rc and getattr(rc, "player_registration_open", rc.registration_open)):
-            return Err(
-                ValidationError("Registration changes are locked for this league")
-            )
+            return Err(ValidationError("Registration changes are locked for this league"))
 
         player_registration = (
             PlayerRegistration.query.filter_by(league_id=league_id, player=player_id)
@@ -612,9 +518,7 @@ class RegistrationService:
         if player_team:
             from models import Match, Tournament
 
-            tournament_urls = [
-                t.url for t in Tournament.query.filter_by(league_id=league_id).all()
-            ]
+            tournament_urls = [t.url for t in Tournament.query.filter_by(league_id=league_id).all()]
             in_progress = (
                 Match.query.filter(
                     Match.event.in_(tournament_urls),
@@ -624,11 +528,7 @@ class RegistrationService:
                 .first()
             )
             if in_progress:
-                return Err(
-                    ValidationError(
-                        "Cannot deregister once you have played in a match that is in progress."
-                    )
-                )
+                return Err(ValidationError("Cannot deregister once you have played in a match that is in progress."))
 
         player_registration.status = RegistrationStatus.CANCELLED
 

@@ -18,11 +18,18 @@ KEYFILE  ?= key.pem
 CERT_DAYS    ?= 365
 CERT_SUBJECT ?= /CN=localhost
 
-.PHONY: help setup setup-os setup-macos setup-ubuntu setup-python setup-frontend install all run certs
+.PHONY: help \
+        all \
+        setup setup-os setup-macos setup-ubuntu setup-python install setup-frontend \
+        lint format \
+        test unit integration \
+        run certs
 
 help: ## Show available targets
 	@awk 'BEGIN {FS = ":.*##"; printf "Usage: make <target>\n\nTargets:\n"} \
 		/^[a-zA-Z_-]+:.*?##/ { printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
+
+# ── Setup ─────────────────────────────────────────────────────────────────────
 
 all: setup install setup-frontend ## Run full setup: system deps, python deps, and frontend tools
 
@@ -49,24 +56,33 @@ setup-python: ## Install the project's Python toolchain via uv
 	@chmod +x $(SETUP_DIR)/setup-python.sh
 	@$(SETUP_DIR)/setup-python.sh
 
-install: ## Sync backend Python dependencies with uv
+install: ## Sync Python dependencies and install pre-commit hooks
 	@uv sync
+	@uv run pre-commit install
 
 setup-frontend: ## Install the Dioxus CLI required to build/serve the frontend
 	@cargo install dioxus-cli
 
-certs: ## Generate self-signed SSL certs at $(CERTFILE)/$(KEYFILE) (use FORCE=1 to overwrite)
-	@if [ -z "$(FORCE)" ] && { [ -f "$(CERTFILE)" ] || [ -f "$(KEYFILE)" ]; }; then \
-		echo "refusing to overwrite existing $(CERTFILE) / $(KEYFILE); pass FORCE=1 to regenerate"; \
-		exit 1; \
-	fi
-	@command -v openssl >/dev/null || { echo "openssl not found in PATH"; exit 1; }
-	@openssl req -x509 -newkey rsa:4096 \
-		-keyout "$(KEYFILE)" -out "$(CERTFILE)" \
-		-sha256 -days $(CERT_DAYS) -nodes \
-		-subj "$(CERT_SUBJECT)"
-	@chmod 600 "$(KEYFILE)"
-	@echo "Generated $(CERTFILE) and $(KEYFILE) (valid $(CERT_DAYS) days, subject $(CERT_SUBJECT))"
+# ── Lint & Format ─────────────────────────────────────────────────────────────
+
+lint: ## Run ruff
+	@uv run ruff check .
+
+format: ## Auto-format code with ruff
+	@uv run ruff format .
+
+# ── Test ──────────────────────────────────────────────────────────────────────
+
+test: ## Run all tests
+	@uv run pytest tests/
+
+unit: ## Run unit tests only
+	@uv run pytest tests/ -m unit
+
+integration: ## Run integration tests only
+	@uv run pytest tests/ -m integration
+
+# ── Run ───────────────────────────────────────────────────────────────────────
 
 run: ## Run the backend with gunicorn (loads $(ENV_FILE) if present)
 	@uv sync
@@ -85,14 +101,15 @@ run: ## Run the backend with gunicorn (loads $(ENV_FILE) if present)
 		$(if $(strip $(KEYFILE)),--keyfile=$(KEYFILE)) \
 		run_app:app
 
-test:
-	uv run pytest tests/
-
-unit:
-	uv run pytest tests/ -m unit
-
-integration:
-	uv run pytest tests/ -m integration
-
-format:
-	uv run black .
+certs: ## Generate self-signed SSL certs at $(CERTFILE)/$(KEYFILE) (use FORCE=1 to overwrite)
+	@if [ -z "$(FORCE)" ] && { [ -f "$(CERTFILE)" ] || [ -f "$(KEYFILE)" ]; }; then \
+		echo "refusing to overwrite existing $(CERTFILE) / $(KEYFILE); pass FORCE=1 to regenerate"; \
+		exit 1; \
+	fi
+	@command -v openssl >/dev/null || { echo "openssl not found in PATH"; exit 1; }
+	@openssl req -x509 -newkey rsa:4096 \
+		-keyout "$(KEYFILE)" -out "$(CERTFILE)" \
+		-sha256 -days $(CERT_DAYS) -nodes \
+		-subj "$(CERT_SUBJECT)"
+	@chmod 600 "$(KEYFILE)"
+	@echo "Generated $(CERTFILE) and $(KEYFILE) (valid $(CERT_DAYS) days, subject $(CERT_SUBJECT))"

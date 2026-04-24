@@ -8,7 +8,6 @@ This service is intentionally Flask-agnostic: it does not use `current_user`,
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
 
 from app.utils.user_helpers import is_player, is_team
 from app.error_values import Null, Option, Some
@@ -65,12 +64,7 @@ class PermissionService:
 
         from models import TO
 
-        return (
-            TO.query.filter_by(
-                user_id=user.id, user_type=user_type, event=tournament_url
-            ).first()
-            is not None
-        )
+        return TO.query.filter_by(user_id=user.id, user_type=user_type, event=tournament_url).first() is not None
 
     @staticmethod
     def can_view_tournament(tournament_url: str, user) -> bool:

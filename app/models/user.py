@@ -9,7 +9,6 @@ from app.models.base import db
 from app.models.constants import (
     AUTH_STRING_LEN,
     LONG_NAME_LEN,
-    LONG_URL_LEN,
     PHONE_LEN,
     SHORT_NAME_LEN,
     USER_ID_LEN,
@@ -39,12 +38,8 @@ class Player(UserMixin, db.Model):
 
     id = db.Column(db.String(USER_ID_LEN), primary_key=True)
     name = db.Column(db.String(SHORT_NAME_LEN), nullable=False)
-    pw_hash = db.Column(
-        db.String(AUTH_STRING_LEN), nullable=True
-    )  # Nullable for Google OAuth users
-    google_id = db.Column(
-        db.String(AUTH_STRING_LEN), unique=True, nullable=True
-    )  # Google OAuth ID
+    pw_hash = db.Column(db.String(AUTH_STRING_LEN), nullable=True)  # Nullable for Google OAuth users
+    google_id = db.Column(db.String(AUTH_STRING_LEN), unique=True, nullable=True)  # Google OAuth ID
     email = db.Column(db.String(AUTH_STRING_LEN), nullable=True)  # Email from Google
     phone = db.Column(db.String(PHONE_LEN))
     profile_photo = db.Column(db.String(AUTH_STRING_LEN))
@@ -101,16 +96,10 @@ class Team(UserMixin, db.Model):
 
     id = db.Column(db.String(USER_ID_LEN), primary_key=True)
     name = db.Column(db.String(SHORT_NAME_LEN), nullable=False)
-    pw_hash = db.Column(
-        db.String(AUTH_STRING_LEN), nullable=True
-    )  # Nullable for Google OAuth users
-    google_id = db.Column(
-        db.String(AUTH_STRING_LEN), unique=True, nullable=True
-    )  # Google OAuth ID
+    pw_hash = db.Column(db.String(AUTH_STRING_LEN), nullable=True)  # Nullable for Google OAuth users
+    google_id = db.Column(db.String(AUTH_STRING_LEN), unique=True, nullable=True)  # Google OAuth ID
     phone = db.Column(db.String(PHONE_LEN))
-    email = db.Column(
-        db.String(AUTH_STRING_LEN), nullable=True
-    )  # Updated to match Player, can be from Google
+    email = db.Column(db.String(AUTH_STRING_LEN), nullable=True)  # Updated to match Player, can be from Google
     icon = db.Column(db.Text)  # base64 image
     profile_photo = db.Column(db.String(AUTH_STRING_LEN))  # Path to uploaded photo
     socials = db.Column(db.Text)

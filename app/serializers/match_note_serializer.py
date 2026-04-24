@@ -16,9 +16,7 @@ class MatchNoteSerializer:
     """Serialiser for :class:`~app.models.match.MatchNote` instances."""
 
     @staticmethod
-    def to_dict(
-        note, tournament_url: str, match: Optional[Any] = None
-    ) -> Dict[str, Any]:
+    def to_dict(note, tournament_url: str, match: Optional[Any] = None) -> Dict[str, Any]:
         """Serialise a :class:`~app.models.match.MatchNote` to a JSON-safe dict.
 
         Resolves the author's display name, the referenced player's
@@ -39,13 +37,9 @@ class MatchNoteSerializer:
         player_name = None
         player_display = None
         if getattr(note, "player_id", None):
-            player_name, player_display = get_player_display_name(
-                note.player_id, tournament_url
-            )
+            player_name, player_display = get_player_display_name(note.player_id, tournament_url)
 
-        created_ts = normalize_datetime(getattr(note, "created_at", None)).unwrap_or(
-            None
-        )
+        created_ts = normalize_datetime(getattr(note, "created_at", None)).unwrap_or(None)
 
         team_id = None
         target = getattr(note, "target", None)

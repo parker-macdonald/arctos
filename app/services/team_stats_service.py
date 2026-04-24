@@ -8,9 +8,7 @@ from app.domain.enums import ScheduleType
 from app.services.registration_resolver import team_registrations_for_tournament
 
 
-def _pseudonym_and_photo_maps(
-    team_id: str, reg_by_team: dict, team_by_id: dict
-) -> tuple[str | None, str | None]:
+def _pseudonym_and_photo_maps(team_id: str, reg_by_team: dict, team_by_id: dict) -> tuple[str | None, str | None]:
     """Resolve a team's display name and profile photo from preloaded maps.
 
     Args:
@@ -38,9 +36,7 @@ def _pseudonym_and_photo_maps(
     return pseudonym, profile_photo
 
 
-def compute_team_stats(
-    matches: list, tournament, include_ribbon: bool = False
-) -> list[dict]:
+def compute_team_stats(matches: list, tournament, include_ribbon: bool = False) -> list[dict]:
     """Compute aggregate win/loss and point statistics for all teams in a set of matches.
 
     Skips ``BREAK`` and ``JOIN`` schedule-type matches, and optionally skips
@@ -64,8 +60,7 @@ def compute_team_stats(
     count_matches = [
         m
         for m in matches
-        if getattr(m, "schedule_type", None)
-        not in (ScheduleType.BREAK, ScheduleType.JOIN)
+        if getattr(m, "schedule_type", None) not in (ScheduleType.BREAK, ScheduleType.JOIN)
         and (include_ribbon or not getattr(m, "ribbon", False))
     ]
 
@@ -82,9 +77,7 @@ def compute_team_stats(
     reg_by_team = {r.team: r for r in regs}
     team_by_id = {}
     if real_team_ids:
-        team_by_id = {
-            t.id: t for t in Team.query.filter(Team.id.in_(real_team_ids)).all()
-        }
+        team_by_id = {t.id: t for t in Team.query.filter(Team.id.in_(real_team_ids)).all()}
 
     points_by_match = {}
     if count_matches:
@@ -102,9 +95,7 @@ def compute_team_stats(
                 if str(tid).startswith("tag::") or "::" in str(tid):
                     pseudonym, profile_photo = tid, None
                 else:
-                    pseudonym, profile_photo = _pseudonym_and_photo_maps(
-                        tid, reg_by_team, team_by_id
-                    )
+                    pseudonym, profile_photo = _pseudonym_and_photo_maps(tid, reg_by_team, team_by_id)
                 team_stats[tid] = {
                     "id": tid,
                     "pseudonym": pseudonym or tid,
@@ -123,18 +114,8 @@ def compute_team_stats(
                 team_stats[t2]["matches_won"] += 1
                 team_stats[t1]["matches_lost"] += 1
         points_list = points_by_match.get(m.uuid, [])
-        t1p = sum(
-            1
-            for p in points_list
-            if getattr(p, "winner", None) == "TEAM1"
-            and not getattr(p, "rerolled", False)
-        )
-        t2p = sum(
-            1
-            for p in points_list
-            if getattr(p, "winner", None) == "TEAM2"
-            and not getattr(p, "rerolled", False)
-        )
+        t1p = sum(1 for p in points_list if getattr(p, "winner", None) == "TEAM1" and not getattr(p, "rerolled", False))
+        t2p = sum(1 for p in points_list if getattr(p, "winner", None) == "TEAM2" and not getattr(p, "rerolled", False))
         if t1 and t1 != "TBA":
             team_stats[t1]["points_won"] += t1p
             team_stats[t1]["points_lost"] += t2p

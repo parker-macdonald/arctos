@@ -43,29 +43,19 @@ class TeamRegistration(db.Model):  # type: ignore[misc]
     __tablename__ = "team_registrations"
 
     id = db.Column(db.Integer, primary_key=True)
-    event = db.Column(
-        db.String(URL_SLUG_LEN), db.ForeignKey("tournaments.url"), nullable=True
-    )
-    league_id = db.Column(
-        db.String(URL_SLUG_LEN), db.ForeignKey("leagues.url"), nullable=True
-    )
+    event = db.Column(db.String(URL_SLUG_LEN), db.ForeignKey("tournaments.url"), nullable=True)
+    league_id = db.Column(db.String(URL_SLUG_LEN), db.ForeignKey("leagues.url"), nullable=True)
     team = db.Column(db.String(USER_ID_LEN), db.ForeignKey("teams.id"), nullable=False)
-    pseudonym = db.Column(
-        db.String(SHORT_NAME_LEN), nullable=False
-    )  # Team name for this tournament
+    pseudonym = db.Column(db.String(SHORT_NAME_LEN), nullable=False)  # Team name for this tournament
     status = db.Column(
         db.Enum(TeamRegistrationStatus), default=TeamRegistrationStatus.CONFIRMED
     )  # CONFIRMED, CANCELLED
-    registered_at = db.Column(
-        db.DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None)
-    )
+    registered_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
     # Payment fields
     paid = db.Column(db.Boolean, default=False)
     amount_paid = db.Column(db.Float, default=0.0)
     paid_at = db.Column(db.DateTime, nullable=True)
-    payment_method = db.Column(
-        db.String(SHORT_LABEL_LEN)
-    )  # e.g., cash, check, venmo, stripe
+    payment_method = db.Column(db.String(SHORT_LABEL_LEN))  # e.g., cash, check, venmo, stripe
     payment_reference = db.Column(db.String(SHORT_NAME_LEN))  # txn id, check #, etc
     payment_notes = db.Column(db.Text)
 
@@ -105,28 +95,14 @@ class PlayerRegistration(db.Model):  # type: ignore[misc]
     __tablename__ = "player_registrations"
 
     id = db.Column(db.Integer, primary_key=True)
-    event = db.Column(
-        db.String(URL_SLUG_LEN), db.ForeignKey("tournaments.url"), nullable=True
-    )
-    league_id = db.Column(
-        db.String(URL_SLUG_LEN), db.ForeignKey("leagues.url"), nullable=True
-    )
-    player = db.Column(
-        db.String(USER_ID_LEN), db.ForeignKey("players.id"), nullable=False
-    )
-    team = db.Column(
-        db.String(USER_ID_LEN), db.ForeignKey("teams.id"), nullable=True
-    )  # null for unattached
+    event = db.Column(db.String(URL_SLUG_LEN), db.ForeignKey("tournaments.url"), nullable=True)
+    league_id = db.Column(db.String(URL_SLUG_LEN), db.ForeignKey("leagues.url"), nullable=True)
+    player = db.Column(db.String(USER_ID_LEN), db.ForeignKey("players.id"), nullable=False)
+    team = db.Column(db.String(USER_ID_LEN), db.ForeignKey("teams.id"), nullable=True)  # null for unattached
     jersey_number = db.Column(db.String(SHORT_CODE_LEN))
-    jersey_name = db.Column(
-        db.String(SHORT_NAME_LEN)
-    )  # Player name for this tournament
-    status = db.Column(
-        db.Enum(RegistrationStatus), default=RegistrationStatus.PENDING_TEAM_APPROVAL
-    )
-    registered_at = db.Column(
-        db.DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None)
-    )
+    jersey_name = db.Column(db.String(SHORT_NAME_LEN))  # Player name for this tournament
+    status = db.Column(db.Enum(RegistrationStatus), default=RegistrationStatus.PENDING_TEAM_APPROVAL)
+    registered_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
     # Payment fields
     paid = db.Column(db.Boolean, default=False)
     amount_paid = db.Column(db.Float, default=0.0)

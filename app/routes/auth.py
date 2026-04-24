@@ -15,7 +15,7 @@ from flask import (
     current_app,
     url_for,
 )
-from flask_login import login_user, logout_user, login_required, current_user
+from flask_login import login_user, logout_user, login_required
 from models import Player, Team
 from app.utils.helpers import is_valid_url_username
 from authlib.integrations.flask_client import OAuth
@@ -145,9 +145,7 @@ def google_login():
         A redirect response to Google's authorisation endpoint, or to the
         frontend home page on configuration error.
     """
-    if not current_app.config.get("GOOGLE_CLIENT_ID") or not current_app.config.get(
-        "GOOGLE_CLIENT_SECRET"
-    ):
+    if not current_app.config.get("GOOGLE_CLIENT_ID") or not current_app.config.get("GOOGLE_CLIENT_SECRET"):
         flash(
             "Google sign-in is not configured. Please contact the administrator.",
             "error",
@@ -180,9 +178,7 @@ def google_callback():
         google = oauth.google
         token = google.authorize_access_token()
 
-        userinfo_endpoint = getattr(google, "server_metadata", {}).get(
-            "userinfo_endpoint"
-        )
+        userinfo_endpoint = getattr(google, "server_metadata", {}).get("userinfo_endpoint")
         if not userinfo_endpoint:
             try:
                 google.load_server_metadata()
@@ -190,9 +186,7 @@ def google_callback():
             except Exception:
                 userinfo_endpoint = None
         if not userinfo_endpoint:
-            raise RuntimeError(
-                "Google userinfo endpoint not found in provider metadata"
-            )
+            raise RuntimeError("Google userinfo endpoint not found in provider metadata")
         resp = google.get(userinfo_endpoint)
         user_info = resp.json()
 
