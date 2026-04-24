@@ -29,7 +29,7 @@ myst_enable_extensions = [
 # Auto-generate heading anchors so that same-page fragment links resolve correctly.
 myst_heading_anchors = 4
 
-exclude_patterns = ["_build", "README.md"]
+exclude_patterns = ["_build", "README.md", "uploads/videos/**"]
 
 # Make the project's static assets available so that image references in the
 # Markdown docs (which are written for the Flask app's root-relative paths) resolve.
