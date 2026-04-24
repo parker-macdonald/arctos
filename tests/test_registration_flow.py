@@ -19,23 +19,28 @@ def test_team_register_and_deregister_flow(app, client, tournament, team):
         login_as(client, tm)
 
     resp = client.post(
-        f"/{tournament_url}/register-team",
+        f"/_api/{tournament_url}/register-team",
         data={"pseudonym": "Team Pseudonym"},
-        follow_redirects=False,
     )
-    assert resp.status_code in (301, 302, 303, 307, 308)
+    assert resp.status_code == 200
 
-    reg = TeamRegistration.query.filter_by(event=tournament_url, team=team_id).first()
-    assert reg is not None
-    assert reg.status == TeamRegistrationStatus.CONFIRMED
-    assert reg.pseudonym == "Team Pseudonym"
+    with app.app_context():
+        reg = TeamRegistration.query.filter_by(
+            event=tournament_url, team=team_id
+        ).first()
+        assert reg is not None
+        assert reg.status == TeamRegistrationStatus.CONFIRMED
+        assert reg.pseudonym == "Team Pseudonym"
 
-    resp2 = client.post(f"/{tournament_url}/deregister-team", follow_redirects=False)
-    assert resp2.status_code in (301, 302, 303, 307, 308)
+    resp2 = client.post(f"/_api/{tournament_url}/deregister-team")
+    assert resp2.status_code == 200
 
-    reg2 = TeamRegistration.query.filter_by(event=tournament_url, team=team_id).first()
-    assert reg2 is not None
-    assert reg2.status == TeamRegistrationStatus.CANCELLED
+    with app.app_context():
+        reg2 = TeamRegistration.query.filter_by(
+            event=tournament_url, team=team_id
+        ).first()
+        assert reg2 is not None
+        assert reg2.status == TeamRegistrationStatus.CANCELLED
 
 
 @pytest.mark.integration
@@ -48,39 +53,41 @@ def test_player_register_and_deregister_flow(app, client, tournament, player):
         login_as(client, p)
 
     resp = client.post(
-        f"/{tournament_url}/register-player",
+        f"/_api/{tournament_url}/register-player",
         data={"jersey_name": "Alice", "jersey_number": "7"},
-        follow_redirects=False,
     )
-    assert resp.status_code in (301, 302, 303, 307, 308)
+    assert resp.status_code == 200
 
-    reg = PlayerRegistration.query.filter_by(
-        event=tournament_url, player=player_id
-    ).first()
-    assert reg is not None
-    assert reg.status == "CONFIRMED"
-    assert reg.jersey_name == "Alice"
-    assert reg.jersey_number == "7"
-    assert reg.paid is True
-    assert (reg.paid_at is None) or isinstance(reg.paid_at, datetime)
+    with app.app_context():
+        reg = PlayerRegistration.query.filter_by(
+            event=tournament_url, player=player_id
+        ).first()
+        assert reg is not None
+        assert reg.status == "CONFIRMED"
+        assert reg.jersey_name == "Alice"
+        assert reg.jersey_number == "7"
+        assert reg.paid is True
+        assert (reg.paid_at is None) or isinstance(reg.paid_at, datetime)
 
-    # Registering again should NOT create a second registration row.
+    # Registering again while already CONFIRMED should return 400 (already registered).
     resp_dup = client.post(
-        f"/{tournament_url}/register-player",
+        f"/_api/{tournament_url}/register-player",
         data={"jersey_name": "Alice2", "jersey_number": "8"},
-        follow_redirects=False,
     )
-    assert resp_dup.status_code in (301, 302, 303, 307, 308)
-    regs = PlayerRegistration.query.filter_by(
-        event=tournament_url, player=player_id
-    ).all()
-    assert len(regs) == 1
+    assert resp_dup.status_code == 400
+    with app.app_context():
+        # Still only one row
+        regs = PlayerRegistration.query.filter_by(
+            event=tournament_url, player=player_id
+        ).all()
+        assert len(regs) == 1
 
-    resp2 = client.post(f"/{tournament_url}/deregister-player", follow_redirects=False)
-    assert resp2.status_code in (301, 302, 303, 307, 308)
+    resp2 = client.post(f"/_api/{tournament_url}/deregister-player")
+    assert resp2.status_code == 200
 
-    reg2 = PlayerRegistration.query.filter_by(
-        event=tournament_url, player=player_id
-    ).first()
-    assert reg2 is not None
-    assert reg2.status == RegistrationStatus.CANCELLED
+    with app.app_context():
+        reg2 = PlayerRegistration.query.filter_by(
+            event=tournament_url, player=player_id
+        ).first()
+        assert reg2 is not None
+        assert reg2.status == RegistrationStatus.CANCELLED

@@ -44,8 +44,7 @@ def test_update_tags_recomputes_schedule(app, client, test_db, tournament, playe
         db.session.commit()
         match_id = m.uuid
         tag_id = tag.id
-
-    login_as(client, p)
+        login_as(client, p)
 
     # Assign tag to team1
     resp = client.post(

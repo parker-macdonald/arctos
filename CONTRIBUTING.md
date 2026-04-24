@@ -29,18 +29,19 @@ stuff is all set up):
     - branch names should follow the pattern `category/name`.
       categories are `feat` (feature), `bugfix`, or `refactor`.
     - branch off the latest `dev` (the staging branch)
-3. implementation!!
-    - write tests! (the current test suite is insufficient; don't use
-      it as a reference for rigor)
+3. Implementation
+    - Always write tests. See [`TESTING.md`](TESTING.md)
+    - run `make test` (or `uv run pytest tests/`) to make sure all
+      tests pass before submitting
 4. PR to `dev` submitted
     - describes everything that changed and any potential high level
       system impacts
     - describes any migration changes needed!!
     - make sure there are no merge conflicts before submitting. i dont
       care if you merge or rebase.
-    - all tests must pass before the PR is merged
-    - **important:** all code must beformatted with black (run `uv run
-      black .` in the root directory) before it gets merged.
+    - all tests must pass before the PR is merged (`make test`)
+    - **important:** all code must be formatted with black (run `uv run
+      black .` or `make format`) before it gets merged.
 5. maintainer approves PR and changes go live to dev server
 6. final testing on dev server to ensure everything works (mostly
    important for changes requiring nonzero migration effort)
@@ -66,4 +67,3 @@ the TLDR here is that this codebase is very much still moving out of
 the prototype phase and so a) i'd like to keep the standards for new
 code higher than the quality of the existing code, and b) if you see
 something horrible, i'd love you forever if you helped fix it.
-

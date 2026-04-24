@@ -6,7 +6,6 @@ import pytest
 import tempfile
 import os
 from datetime import datetime, timedelta, timezone
-from flask import Flask
 from flask_login import FlaskLoginClient
 
 # Import app components
@@ -23,16 +22,16 @@ from models import (
     PlayerRegistration,
     Point,
     HeadRef,
+    Field,
 )
+from tests.utils import make_registrable_config
 
 
 @pytest.fixture(scope="session")
 def app():
     """Create app instance with testing configuration and temporary database."""
-    # Create temporary database file for the entire test session
     db_fd, db_path = tempfile.mkstemp(suffix=".db")
 
-    # Create app with test database from the start
     app_instance = create_app(
         config={
             "TESTING": True,
@@ -42,7 +41,6 @@ def app():
         }
     )
 
-    # Initialize database
     with app_instance.app_context():
         db.create_all()
         init_db(db)
@@ -50,7 +48,6 @@ def app():
 
     yield app_instance
 
-    # Cleanup
     with app_instance.app_context():
         db.session.remove()
         db.drop_all()
@@ -62,9 +59,12 @@ def app():
 
 @pytest.fixture(scope="function")
 def test_db(app):
-    """Ensure clean database state for each test."""
+    """Ensure clean database state for each test.
+
+    Keeps the app context open for the duration of the test so that ORM
+    instances created by other fixtures remain attached to the session.
+    """
     with app.app_context():
-        # Drop all and recreate to ensure clean state for each test
         db.drop_all()
         db.create_all()
         init_db(db)
@@ -76,94 +76,106 @@ def test_db(app):
 
 @pytest.fixture
 def client(app, test_db):
-    """Create a test client."""
+    """Create a test client.
+
+    test_db already holds an active app context for the current test, so no
+    extra context push is needed here.
+    """
     app.test_client_class = FlaskLoginClient
-    with app.test_client() as client:
-        with app.app_context():
-            yield client
+    with app.test_client() as c:
+        yield c
+
+
+# ---------------------------------------------------------------------------
+# Fixtures – all depend on test_db which already provides an app context,
+# so no nested `with app.app_context()` is needed.
+# ---------------------------------------------------------------------------
 
 
 @pytest.fixture
-def tournament(app, test_db):
-    """Create a test tournament."""
-    with app.app_context():
-        tourn = Tournament(
-            url="test-tournament",
-            name="Test Tournament",
-            start_date=datetime.now(timezone.utc),
-            end_date=datetime.now(timezone.utc) + timedelta(days=1),
-            location="Test Location",
-            num_fields=2,
-            n_max_teams=8,
-            max_team_size_roster=10,
-            max_team_size_field=7,
-            max_field_size=14,
-            published=True,
-            schedule_published=True,
-            registration_open=True,
-            head_refs_allowed_list="test_ref1,test_ref2",
-        )
-        db.session.add(tourn)
-        db.session.commit()
-        # Store the URL as a simple attribute (already loaded)
-        tourn_url = tourn.url
-        # Make tournament accessible by storing URL as instance attribute
-        # This prevents DetachedInstanceError when accessed in different app contexts
-        return tourn
+def tournament(test_db):
+    """Create a test tournament with two fields and open registration."""
+    cfg = make_registrable_config(
+        team_registration_open=True,
+        player_registration_open=True,
+        registration_open=True,
+        n_max_teams=8,
+        max_team_size_roster=10,
+        max_team_size_field=7,
+    )
+    tourn = Tournament(
+        url="test-tournament",
+        name="Test Tournament",
+        start_date=datetime.now(timezone.utc),
+        end_date=datetime.now(timezone.utc) + timedelta(days=1),
+        location="Test Location",
+        max_field_size=14,
+        published=True,
+        schedule_published=True,
+        head_refs_allowed_list="test_ref1,test_ref2",
+        registrable_config_id=cfg.id,
+    )
+    db.session.add(tourn)
+    db.session.flush()
+    db.session.add(Field(event=tourn.url, name="Field 1"))
+    db.session.add(Field(event=tourn.url, name="Field 2"))
+    db.session.commit()
+    db.session.refresh(tourn)
+    return tourn
 
 
 @pytest.fixture
-def player(app, test_db):
+def player(test_db):
     """Create a test player."""
-    with app.app_context():
-        player = Player(
-            id="test_player",
-            name="Test Player",
-            pw_hash="dummy_hash",
-            phone="1234567890",
-        )
-        player.set_password("testpass")
-        db.session.add(player)
-        db.session.commit()
-        return player
+    p = Player(
+        id="test_player",
+        name="Test Player",
+        pw_hash="dummy_hash",
+        phone="1234567890",
+    )
+    p.set_password("testpass")
+    db.session.add(p)
+    db.session.commit()
+    db.session.refresh(p)
+    return p
 
 
 @pytest.fixture
-def team(app, test_db):
+def team(test_db):
     """Create a test team."""
-    with app.app_context():
-        team = Team(id="test_team", name="Test Team", pw_hash="dummy_hash")
-        team.set_password("testpass")
-        db.session.add(team)
-        db.session.commit()
-        return team
+    t = Team(id="test_team", name="Test Team", pw_hash="dummy_hash")
+    t.set_password("testpass")
+    db.session.add(t)
+    db.session.commit()
+    db.session.refresh(t)
+    return t
 
 
 @pytest.fixture
-def team_registration(app, test_db, tournament, team):
+def team_registration(test_db, tournament, team):
     """Create a team registration."""
-    with app.app_context():
-        reg = TeamRegistration(
-            event=tournament.url,
-            team=team.id,
-            pseudonym="Test Team Pseudonym",
-            status="CONFIRMED",
-            paid=True,
-        )
-        db.session.add(reg)
-        db.session.commit()
-        return reg
+    reg = TeamRegistration(
+        event=tournament.url,
+        team=team.id,
+        pseudonym="Test Team Pseudonym",
+        status="CONFIRMED",
+        paid=True,
+    )
+    db.session.add(reg)
+    db.session.commit()
+    db.session.refresh(reg)
+    return reg
 
 
 @pytest.fixture
-def head_ref_player(app, test_db, tournament):
-    """Create a head ref player."""
-    with app.app_context():
-        player = Player(id="test_ref1", name="Head Ref Player", pw_hash="dummy_hash")
-        player.set_password("testpass")
-        db.session.add(player)
-        db.session.commit()
-        return player
+def head_ref_player(test_db, tournament):
+    """Create a head ref player (listed in tournament.head_refs_allowed_list)."""
+    p = Player(id="test_ref1", name="Head Ref Player", pw_hash="dummy_hash")
+    p.set_password("testpass")
+    db.session.add(p)
+    db.session.commit()
+    db.session.refresh(p)
+    return p
 
 
 def create_match(
@@ -176,7 +188,7 @@ def create_match(
     team2_initial=None,
     nominal_length=60,
 ):
-    """Helper function to create a match."""
+    """Helper function to create a match within the current session."""
     match = Match(
         name=name,
         event=tournament_url,

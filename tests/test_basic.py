@@ -13,10 +13,7 @@ def test_app_exists(app):
 
 
 @pytest.mark.unit
-def test_homepage(client):
-    """Test that the homepage loads."""
-    response = client.get("/")
-    assert response.status_code in [
-        200,
-        302,
-    ]  # 200 OK or 302 redirect if login required
+def test_api_server_time(client):
+    """Test that the unauthenticated server-time endpoint responds."""
+    response = client.get("/_api/server-time")
+    assert response.status_code == 200

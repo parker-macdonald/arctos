@@ -84,3 +84,15 @@ run: ## Run the backend with gunicorn (loads $(ENV_FILE) if present)
 		$(if $(strip $(CERTFILE)),--certfile=$(CERTFILE)) \
 		$(if $(strip $(KEYFILE)),--keyfile=$(KEYFILE)) \
 		run_app:app
+
+test:
+	uv run pytest tests/
+
+unit:
+	uv run pytest tests/ -m unit
+
+integration:
+	uv run pytest tests/ -m integration
+
+format:
+	uv run black .

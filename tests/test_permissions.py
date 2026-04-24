@@ -5,7 +5,7 @@ import pytest
 from app.services.permission_service import PermissionService
 from models import TO, Tournament, db
 from datetime import datetime, timezone
-from tests.utils import login_as
+from tests.utils import login_as, make_registrable_config
 
 
 @pytest.mark.unit
@@ -42,12 +42,13 @@ def test_permission_service_can_view_unpublished_tournament_for_to(
     """can_view_tournament returns True for an unpublished tournament when the user is its TO."""
     with app.app_context():
         p = db.session.merge(player)
+        cfg = make_registrable_config()
         t = Tournament(
             url="private-tournament",
             name="Private Tournament",
             start_date=datetime.now(timezone.utc),
             published=False,
-            registration_open=False,
+            registrable_config_id=cfg.id,
         )
         db.session.add(t)
         db.session.add(TO(user_id=p.id, user_type="player", event=t.url))
@@ -65,7 +66,7 @@ def test_tournament_manage_requires_to(app, client, tournament, player, test_db)
         p = db.session.merge(player)
         login_as(client, p)
 
-    resp = client.get(f"/{t.url}/manage", follow_redirects=False)
+    resp = client.get(f"/_api/{t.url}/export-schedule", follow_redirects=False)
     assert resp.status_code in (301, 302, 303, 307, 308)
 
 
@@ -80,5 +81,5 @@ def test_tournament_manage_allows_to(app, client, tournament, player, test_db):
         login_as(client, p)
         tournament_url = t.url
 
-    resp = client.get(f"/{tournament_url}/manage")
+    resp = client.get(f"/_api/{tournament_url}/export-schedule")
     assert resp.status_code == 200

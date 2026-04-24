@@ -1,17 +1,26 @@
-"""Shared test utility helpers."""
+from models import RegistrableConfig, db
 
 
-def login_as(client, user) -> None:
-    """Authenticate *user* in the test client's session.
+def make_registrable_config(**kwargs) -> RegistrableConfig:
+    """Create a RegistrableConfig with defaults suitable for testing.
 
-    Directly sets Flask-Login session keys rather than going through the
-    login endpoint, so no password or network round-trip is needed.
+    Must be called within an active app context (e.g. inside a test_db scope).
+    """
+    defaults = {
+        "registration_open": False,
+        "team_registration_open": False,
+        "player_registration_open": False,
+    }
+    defaults.update(kwargs)
+    cfg = RegistrableConfig(**defaults)
+    db.session.add(cfg)
+    db.session.flush()
+    return cfg
 
-    Args:
-        client: A Flask test client instance.
-        user: A :class:`~app.models.user.Player` or
-            :class:`~app.models.user.Team` instance with a ``get_id()``
-            method.
+
+def login_as(client, user):
+    """
+    Log in a user for tests using Flask-Login's session keys.
     """
     with client.session_transaction() as sess:
         sess["_user_id"] = user.get_id()

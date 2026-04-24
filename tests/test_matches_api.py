@@ -16,7 +16,7 @@ def test_update_set_missing_fields_returns_400(
         ref = db.session.merge(head_ref_player)
         login_as(client, ref)
 
-    resp = client.post(f"/{t.url}/match-actions/update-set", json={})
+    resp = client.post(f"/_api/{t.url}/match-actions/update-set", json={})
     assert resp.status_code == 400
     data = resp.get_json()
     assert data["success"] is False
@@ -31,7 +31,7 @@ def test_get_points_requires_match_id(app, client, tournament, head_ref_player):
         ref = db.session.merge(head_ref_player)
         login_as(client, ref)
 
-    resp = client.get(f"/{t.url}/get-points")
+    resp = client.get(f"/_api/{t.url}/get-points")
     assert resp.status_code == 200
     data = resp.get_json()
     assert data["success"] is False
