@@ -32,7 +32,6 @@ default = true
 
 [dependency-groups]
 dev = [
-    "eralchemy2>=1.4.1",
     "mypy>=1.20.2",
     "pre-commit>=4.6.0",
     "ruff>=0.15.11",
