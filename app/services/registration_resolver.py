@@ -12,27 +12,45 @@ from typing import List, Optional
 from app.domain.enums import RegistrationStatus, TeamRegistrationStatus
 
 
-def _registrable_filter(tournament):
-    """Return (event, league_id) for querying. Exactly one is non-None."""
+def _registrable_filter(tournament) -> tuple[str | None, str | None]:
+    """Determine the appropriate registration scope for a tournament.
+
+    Args:
+        tournament: A :class:`~app.models.tournament.Tournament` instance.
+
+    Returns:
+        A ``(event, league_id)`` tuple where exactly one value is non-``None``:
+        ``(tournament.url, None)`` for standalone tournaments, or
+        ``(None, tournament.league_id)`` for league tournaments.
+    """
     if tournament.league_id:
         return None, tournament.league_id
     return tournament.url, None
 
 
 def team_registration_for_tournament(tournament, team_id: str):
-    """Single team registration for (tournament, team_id), or None."""
+    """Return the confirmed :class:`~app.models.registration.TeamRegistration` for a team.
+
+    Handles both standalone (event-scoped) and league-scoped registration
+    lookup transparently.
+
+    Args:
+        tournament: The :class:`~app.models.tournament.Tournament` instance.
+        team_id: ID of the team to look up.
+
+    Returns:
+        The :class:`~app.models.registration.TeamRegistration` with
+        ``CONFIRMED`` status, or ``None`` if not found.
+    """
     from models import TeamRegistration
 
     event, league_id = _registrable_filter(tournament)
     if league_id is not None:
-        return (
-            TeamRegistration.query.filter_by(
-                league_id=league_id,
-                team=team_id,
-                status=TeamRegistrationStatus.CONFIRMED,
-            )
-            .first()
-        )
+        return TeamRegistration.query.filter_by(
+            league_id=league_id,
+            team=team_id,
+            status=TeamRegistrationStatus.CONFIRMED,
+        ).first()
     return TeamRegistration.query.filter_by(
         event=event, team=team_id, status=TeamRegistrationStatus.CONFIRMED
     ).first()
@@ -41,7 +59,19 @@ def team_registration_for_tournament(tournament, team_id: str):
 def team_registrations_for_tournament(
     tournament, status=TeamRegistrationStatus.CONFIRMED, exclude_cancelled=False
 ):
-    """Team registrations for this tournament (event or league)."""
+    """Return a list of team registrations for a tournament or league.
+
+    Args:
+        tournament: The :class:`~app.models.tournament.Tournament` instance.
+        status: Filter by this
+            :class:`~app.domain.enums.TeamRegistrationStatus` (default
+            ``CONFIRMED``).  Ignored when *exclude_cancelled* is ``True``.
+        exclude_cancelled: When ``True``, returns all statuses except
+            ``CANCELLED``, ignoring the *status* argument.
+
+    Returns:
+        List of :class:`~app.models.registration.TeamRegistration` records.
+    """
     from models import TeamRegistration
 
     event, league_id = _registrable_filter(tournament)
@@ -63,11 +93,28 @@ def player_registrations_for_tournament(
     unattached_only=False,
     statuses=None,
 ):
-    """Player registrations for this tournament. If team_id given, filter by team. If unattached_only, filter for team IS NULL."""
+    """Return player registrations for a tournament, with optional filters.
+
+    Args:
+        tournament: The :class:`~app.models.tournament.Tournament` instance.
+        team_id: When supplied, limit results to players registered for this
+            team.  Ignored when *unattached_only* is ``True``.
+        unattached_only: When ``True``, return only players without a team
+            (``team IS NULL``).
+        statuses: List of
+            :class:`~app.domain.enums.RegistrationStatus` values to include.
+            Defaults to ``[PENDING_TEAM_APPROVAL, CONFIRMED]``.
+
+    Returns:
+        List of :class:`~app.models.registration.PlayerRegistration` records.
+    """
     from models import PlayerRegistration
 
     if statuses is None:
-        statuses = [RegistrationStatus.PENDING_TEAM_APPROVAL, RegistrationStatus.CONFIRMED]
+        statuses = [
+            RegistrationStatus.PENDING_TEAM_APPROVAL,
+            RegistrationStatus.CONFIRMED,
+        ]
 
     event, league_id = _registrable_filter(tournament)
     q = PlayerRegistration.query
@@ -128,17 +175,14 @@ def is_player_registered(tournament, player_id: str) -> bool:
 
     event, league_id = _registrable_filter(tournament)
     if league_id is not None:
-        q = (
-            PlayerRegistration.query.filter_by(
-                league_id=league_id, player=player_id
-            )
-            .filter(
-                PlayerRegistration.status.in_(
-                    [
-                        RegistrationStatus.PENDING_TEAM_APPROVAL,
-                        RegistrationStatus.CONFIRMED,
-                    ]
-                )
+        q = PlayerRegistration.query.filter_by(
+            league_id=league_id, player=player_id
+        ).filter(
+            PlayerRegistration.status.in_(
+                [
+                    RegistrationStatus.PENDING_TEAM_APPROVAL,
+                    RegistrationStatus.CONFIRMED,
+                ]
             )
         )
     else:

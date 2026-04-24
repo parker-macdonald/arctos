@@ -58,9 +58,9 @@ def _epoch_ms_to_iso_utc(ms):
 
 
 def _session_world_start_ms(chunk):
-    return _parse_timestamp_ms(chunk.get("chunk_start_timestamp")) or _parse_timestamp_ms(
-        chunk.get("recording_session_start_time")
-    )
+    return _parse_timestamp_ms(
+        chunk.get("chunk_start_timestamp")
+    ) or _parse_timestamp_ms(chunk.get("recording_session_start_time"))
 
 
 def _is_init_segment(chunk):
@@ -292,7 +292,9 @@ def _get_first_video_keyframe_time_sec(file_path, cwd=None):
     return 0.0
 
 
-def _remux_fragment_stream(input_path, output_basename, chunk_dir, codec_name, logger, label):
+def _remux_fragment_stream(
+    input_path, output_basename, chunk_dir, codec_name, logger, label
+):
     tag_args = _codec_tag_args(codec_name)
     result = _run_subprocess(
         [
@@ -314,7 +316,11 @@ def _remux_fragment_stream(input_path, output_basename, chunk_dir, codec_name, l
         cwd=chunk_dir,
     )
     output_path = path.join(chunk_dir, output_basename)
-    if result.returncode != 0 or not path.exists(output_path) or path.getsize(output_path) == 0:
+    if (
+        result.returncode != 0
+        or not path.exists(output_path)
+        or path.getsize(output_path) == 0
+    ):
         logger.warning(
             "finalize_recording: %s remux failed returncode=%s stderr=%s",
             label,
@@ -440,16 +446,19 @@ def _build_playable_session(session_id, session_chunks, chunk_dir, logger):
     init_chunks = [
         chunk
         for chunk in session_chunks
-        if _is_init_segment(chunk) and path.exists(path.join(chunk_dir, chunk["filename"]))
+        if _is_init_segment(chunk)
+        and path.exists(path.join(chunk_dir, chunk["filename"]))
     ]
     media_chunks = [
         chunk
         for chunk in session_chunks
-        if not _is_init_segment(chunk) and path.exists(path.join(chunk_dir, chunk["filename"]))
+        if not _is_init_segment(chunk)
+        and path.exists(path.join(chunk_dir, chunk["filename"]))
     ]
     if not media_chunks:
         logger.warning(
-            "finalize_recording: session %s has no media chunk files on disk", session_id
+            "finalize_recording: session %s has no media chunk files on disk",
+            session_id,
         )
         return None
 
@@ -535,7 +544,8 @@ def _build_playable_session(session_id, session_chunks, chunk_dir, logger):
     session_world_start_ms = _session_world_start_ms(earliest_chunk)
     if session_world_start_ms is None:
         logger.warning(
-            "finalize_recording: session %s missing world timestamp metadata", session_id
+            "finalize_recording: session %s missing world timestamp metadata",
+            session_id,
         )
         return None
     session_world_start_ms += clip_start_sec * 1000.0
@@ -594,7 +604,11 @@ def _concat_session_outputs(session_outputs, chunk_dir, logger):
         ],
         cwd=chunk_dir,
     )
-    if concat_result.returncode != 0 or not path.exists(final_path) or path.getsize(final_path) == 0:
+    if (
+        concat_result.returncode != 0
+        or not path.exists(final_path)
+        or path.getsize(final_path) == 0
+    ):
         logger.warning(
             "finalize_recording: match concat failed returncode=%s stderr=%s",
             concat_result.returncode,
@@ -626,7 +640,11 @@ def _concat_session_outputs(session_outputs, chunk_dir, logger):
         ],
         cwd=chunk_dir,
     )
-    if remux_result.returncode == 0 and path.exists(remux_path) and path.getsize(remux_path) > 0:
+    if (
+        remux_result.returncode == 0
+        and path.exists(remux_path)
+        and path.getsize(remux_path) > 0
+    ):
         try:
             os.remove(final_path)
         except OSError:
@@ -795,19 +813,26 @@ def finalize_recording_worker(
 
     with open(chunks_meta_path, "r") as handle:
         payload = json.load(handle)
-    all_meta = list(payload.values()) if isinstance(payload, dict) else list(payload or [])
+    all_meta = (
+        list(payload.values()) if isinstance(payload, dict) else list(payload or [])
+    )
     if not all_meta:
         _log.warning("finalize_recording: no chunks in chunks_meta.json")
         return
 
     pts = Point.query.filter_by(match=match_id).order_by(Point.stamp.asc()).all()
-    pts_rows = [{"uuid": str(pt.uuid), "stamp": pt.stamp, "end_stamp": pt.end_stamp} for pt in pts]
+    pts_rows = [
+        {"uuid": str(pt.uuid), "stamp": pt.stamp, "end_stamp": pt.end_stamp}
+        for pt in pts
+    ]
     db.session.remove()
 
     def session_key(chunk):
         return chunk.get("session_id") or ""
 
-    sorted_meta = sorted(all_meta, key=lambda chunk: (session_key(chunk), _chunk_sort_key(chunk)))
+    sorted_meta = sorted(
+        all_meta, key=lambda chunk: (session_key(chunk), _chunk_sort_key(chunk))
+    )
     grouped_sessions = []
     for session_id, group in groupby(sorted_meta, key=session_key):
         if not session_id:
@@ -815,7 +840,9 @@ def finalize_recording_worker(
         chunks = sorted(list(group), key=_chunk_sort_key)
         if chunks:
             grouped_sessions.append((session_id, chunks))
-    grouped_sessions.sort(key=lambda entry: _chunk_sort_key(entry[1][0]) if entry[1] else 0.0)
+    grouped_sessions.sort(
+        key=lambda entry: _chunk_sort_key(entry[1][0]) if entry[1] else 0.0
+    )
 
     if not grouped_sessions:
         _log.warning("finalize_recording: no sessions with session_id in chunks_meta")
@@ -872,7 +899,9 @@ def finalize_recording_worker(
             point_timestamps,
         )
     except Exception as exc:
-        _log.exception("finalize_recording: failed to persist match/camera outputs: %s", exc)
+        _log.exception(
+            "finalize_recording: failed to persist match/camera outputs: %s", exc
+        )
         return
 
     app_obj = current_app._get_current_object()

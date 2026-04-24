@@ -67,12 +67,6 @@ def test_update_tags_preserves_explicit_teams_and_match_references(
     db.session.add(test_match)
     db.session.commit()
 
-    # Simulate update_tags by calling the route logic
-    from app.routes.tournaments import update_tags
-    from flask import Flask
-    from flask_login import current_user
-    from unittest.mock import Mock
-
     # Build tag_to_team mapping
     tag_to_team = {
         "tag::Pool A": "resolved_team_a",

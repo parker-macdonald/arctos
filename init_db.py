@@ -1,4 +1,14 @@
 #!/usr/bin/env python3
+"""Legacy standalone database initialisation script.
+
+Creates a bare Flask application, wires up SQLAlchemy, and calls
+``db.create_all()`` to materialise the full schema in a local SQLite
+file (``tournament.db``).
+
+Note:
+    Prefer the factory-based ``create_app()`` flow for all new usage.
+    This script is retained for one-off local set-up only.
+"""
 
 from flask import Flask
 from flask_sqlalchemy import SQLAlchemy

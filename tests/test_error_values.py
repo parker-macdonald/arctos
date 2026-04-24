@@ -1,9 +1,12 @@
+"""Tests for the error-as-values module (Option / Result / allow_Q)."""
+
 import pytest
 
 from app.error_values import Err, Null, Ok, Some, option
 
 
 def test_option_ok_or_some():
+    """Some.ok_or returns Ok wrapping the contained value."""
     res = Some(123).ok_or("nope")
     match res:
         case Ok(v):
@@ -13,6 +16,7 @@ def test_option_ok_or_some():
 
 
 def test_option_ok_or_null():
+    """Null.ok_or returns Err wrapping the provided error value."""
     res = Null().ok_or("nope")
     match res:
         case Err(e):
@@ -22,6 +26,7 @@ def test_option_ok_or_null():
 
 
 def test_option_ok_or_else_is_lazy():
+    """Some.ok_or_else never calls the factory; Null.ok_or_else does call it."""
     called = False
 
     def mk():
@@ -39,5 +44,6 @@ def test_option_ok_or_else_is_lazy():
 
 
 def test_option_helper():
+    """option() converts None to Null and non-None values to Some."""
     assert option(None).is_null()
     assert option(5).unwrap() == 5
