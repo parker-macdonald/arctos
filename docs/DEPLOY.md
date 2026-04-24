@@ -105,8 +105,9 @@ module docstring tells you what to verify after it finishes (usually a
 few SQL queries that compare row counts between the old and new
 representations).
 
-**If the script fails partway:** re-running is safe. Backfill scripts use
-`session.merge()` so duplicate rows are not created.
+**If the script fails partway:** re-running is safe. Backfill scripts are
+written to be idempotent — every insert is guarded by a uniqueness check,
+so existing rows are skipped on the second run rather than duplicated.
 
 **If validation queries report a mismatch:** stop. Do not proceed to any
 later phase that depends on the new tables being correct. Talk to the PR
