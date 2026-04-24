@@ -5359,7 +5359,6 @@ def markdown_page(slug):
             "arctos-schedule-script.md",
             "Arctos Schedule Script",
         ),
-        "thanks": ("thanks.md", "Thanks"),
         "license": ("license.md", "License"),
         "terms": ("terms.md", "Terms and Conditions"),
     }

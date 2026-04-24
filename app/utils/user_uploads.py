@@ -226,6 +226,30 @@ class UserUploadMediaProfile:
     channels: Optional[int]
 
 
+def _source_label(file_path: str) -> str:
+    norm = path.normpath(file_path)
+    parent = path.basename(path.dirname(norm))
+    name = path.basename(norm)
+    if parent and parent != path.sep:
+        return f"{parent}/{name}"
+    return name
+
+
+def _media_profile_summary(profile: UserUploadMediaProfile) -> str:
+    audio_bits = []
+    if profile.audio_codec:
+        audio_bits.append(profile.audio_codec)
+    if profile.sample_rate:
+        audio_bits.append(f"{profile.sample_rate}Hz")
+    if profile.channels:
+        audio_bits.append(f"{profile.channels}ch")
+    audio_part = ", ".join(audio_bits) if audio_bits else "no audio"
+    return (
+        f"video={profile.video_codec} {profile.width}x{profile.height} {profile.pix_fmt}; "
+        f"audio={audio_part}"
+    )
+
+
 def build_clip_plans_for_points(
     *,
     video_start_world: datetime,
@@ -335,7 +359,7 @@ def _validate_compatible_source_media_profiles(
     baseline_path = source_paths[0]
     baseline_profile = _get_media_profile(baseline_path)
     if baseline_profile is None:
-        return None, f"could not read media streams from {path.basename(baseline_path)}"
+        return None, f"could not read media streams from {_source_label(baseline_path)}"
 
     for source_path in source_paths[1:]:
         profile = _get_media_profile(source_path)
@@ -349,7 +373,9 @@ def _validate_compatible_source_media_profiles(
                 None,
                 "Uploaded source videos must use the same video/audio stream format to "
                 "auto-merge without re-encoding. "
-                f"{path.basename(baseline_path)} is incompatible with {path.basename(source_path)}.",
+                f"{_source_label(baseline_path)} ({_media_profile_summary(baseline_profile)}) "
+                f"is incompatible with "
+                f"{_source_label(source_path)} ({_media_profile_summary(profile)}).",
             )
 
     return baseline_profile, None
