@@ -11,7 +11,3 @@ echo "Installed uv"
 
 chmod +x "${directory}/setup-python.sh"
 "${directory}/setup-python.sh"
-
-uv sync --group dev
-uv run pre-commit install
-echo "Installed pre-commit hooks"

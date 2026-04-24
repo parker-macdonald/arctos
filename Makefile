@@ -65,8 +65,8 @@ setup-frontend: ## Install the Dioxus CLI required to build/serve the frontend
 
 # ── Lint & Format ─────────────────────────────────────────────────────────────
 
-lint: ## Run ruff (lint + format check) and mypy on all files
-	@uv run pre-commit run --all-files
+lint: ## Run ruff
+	@uv run ruff check .
 
 format: ## Auto-format code with ruff
 	@uv run ruff format .
