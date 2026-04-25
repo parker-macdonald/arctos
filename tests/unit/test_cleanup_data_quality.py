@@ -40,22 +40,10 @@ def _drop_unique_indexes_for_dirty_seeding():
     """Drop the model-declared UNIQUE indexes so dirty data can be inserted.
 
     The ``test_db`` fixture creates a fresh DB from the current models,
-    which already include the Phase-1 UNIQUE(email) and dedupe indexes.
-    Tests that need to seed *pre-Phase-1*-shaped dirty data drop those
-    indexes first, then re-create them at the end if they want to verify
-    the cleanup script unblocks re-creation.
+    which already include the dedupe indexes. Tests that need to
+    seed pre-existing dirty data drop those indexes first.
     """
-    # Two name conventions: the migration creates these as ``uq_*``;
-    # ``db.create_all`` from the model declarations creates them as
-    # ``ix_*`` (because the model uses ``unique=True, index=True`` for
-    # emails, which collapses to a single unique index named ``ix_*``).
-    # Cover both so this helper works regardless of which path the DB
-    # was built from.
     for ix in (
-        "uq_teams_email",
-        "uq_players_email",
-        "ix_teams_email",
-        "ix_players_email",
         "uq_team_registrations_team_event",
         "uq_team_registrations_team_league",
         "uq_player_registrations_player_event",
@@ -393,13 +381,13 @@ def test_cli_normalize_emails_apply_writes(test_db, capsys):
 
 @pytest.mark.unit
 def test_full_cleanup_then_unique_index_succeeds(test_db, tournament, team):
-    """After running all three cleanup operations, adding UNIQUE(email) succeeds.
+    """After running all three cleanup operations, an ad-hoc UNIQUE(email) becomes possible.
 
-    This is the integration-shaped test: it proves the cleanup script's
-    output is sufficient to unblock the additive migration's UNIQUE
-    constraints and the surrounding FK/email checks. Anchor against a
-    realistic dirty state (duplicate registrations + duplicate emails)
-    and confirm a UNIQUE index can be created at the end.
+    This test still proves the cleanup
+    script brings emails to a state where uniqueness *could* be enforced
+    if anyone ever wanted to: it seeds a dirty state, runs the cleanup,
+    and confirms an ad-hoc unique index can then be created without a
+    constraint violation.
     """
     # Drop the model-declared UNIQUE indexes so we can seed the dirty
     # pre-Phase-1-shaped state.

@@ -3,7 +3,7 @@
 
 Several columns in the Arctos schema historically encoded multiple values
 inside a single cell (comma-separated text or JSON arrays). The additive
-schema migration introduced six normalised join tables that store the same
+schema migration introduced four normalised join tables that store the same
 data with proper foreign-key, uniqueness, and ordering constraints. The
 running application still reads from the old columns; this script copies
 the data into the new tables so a future code change can switch the reads
@@ -11,12 +11,12 @@ over without losing anything.
 
 Source → destination mappings:
 
-    Tournament.head_refs_allowed_list   →  headref_allowlist
-    Match.refs / Match.refs_initial     →  match_referees
-    Match.team1_players / team2_players →  match_players
-    Field.camera                        →  field_cameras
-    Match.camera_stream_starts          →  match_camera_stream_starts
+    Tournament.head_refs_allowed_list     →  headref_allowlist
+    Match.refs / Match.refs_initial       →  match_referees
+    Match.team1_players / team2_players   →  match_players
     Camera.time_world / Camera.time_video →  camera_timepoints
+
+
 
 Behaviour:
 
@@ -28,16 +28,10 @@ Behaviour:
 * **Tolerant of dirty data.** Orphan FK references (e.g. a player ID in
   ``head_refs_allowed_list`` that doesn't exist in ``players``) are
   reported as warnings and skipped; the script continues.
-* **Tolerant of legacy format variants.** ``Field.camera`` may be a JSON
-  array, a JSON-encoded single string, or a bare URL. ``Match.camera_stream_starts``
-  may be the simple ``{"0": "iso_str"}`` form or the richer
-  ``{"camera_id": {"video_path": ..., "stream_start_time": ...}}`` form.
-  The script extracts what it can and skips entries that don't yield a
-  usable timestamp.
 
 Pre-conditions:
 
-* The additive schema migration is applied (the six destination tables exist).
+* The additive schema migration is applied (the four destination tables exist).
   Run ``make db-current`` to confirm; should print ``0002_phase1_additive (head)``.
 * A backup has been taken (``make db-backup pre-backfill``). Although this
   script does not modify the legacy columns, having a snapshot lets you
@@ -45,7 +39,7 @@ Pre-conditions:
 
 Post-conditions:
 
-* All six destination tables are populated from their corresponding source
+* All four destination tables are populated from their corresponding source
   columns.
 * Source columns are untouched; the application continues to read from them.
 * Running ``--validate`` (the default after a backfill) confirms row counts
@@ -78,7 +72,6 @@ import os
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 # scripts/ is not a Python package and the repo root is not on sys.path when
 # invoked as ``python scripts/backfill_normalised_tables.py``. Add it so the
@@ -101,15 +94,15 @@ def _resolve_database_url() -> str | None:
     leaves the application's default in place.
     """
     return os.environ.get("SQLALCHEMY_DATABASE_URI")
+
+
 from app.domain.enums import WinnerSide  # noqa: E402
 from app.models import (  # noqa: E402
     Camera,
     CameraTimepoint,
     Field,
-    FieldCamera,
     HeadRefAllowList,
     Match,
-    MatchCameraStreamStart,
     MatchPlayer,
     MatchReferee,
     Player,
@@ -117,7 +110,6 @@ from app.models import (  # noqa: E402
     Tournament,
     db,
 )
-from app.utils.camera_helpers import parse_camera_urls  # noqa: E402
 
 
 @dataclass
@@ -324,120 +316,6 @@ def backfill_match_players(targets: FkTargets, verbose: bool = False) -> Backfil
     return stats
 
 
-def backfill_field_cameras(targets: FkTargets, verbose: bool = False) -> BackfillStats:
-    """Populate ``field_cameras`` from ``Field.camera``.
-
-    Uses :func:`app.utils.camera_helpers.parse_camera_urls` so every legacy
-    storage variant (JSON array, JSON-encoded string, bare URL) is handled
-    consistently with how the live application reads the column.
-
-    Slots are assigned by enumeration order — ``slot=0`` is the first URL,
-    ``slot=1`` the second, and so on. This must match how
-    ``Match.camera_stream_starts`` and ``Camera.field`` reference cameras
-    by integer index.
-    """
-    stats = BackfillStats()
-    existing = {(r.field_id, r.slot) for r in FieldCamera.query.all()}
-
-    for f in Field.query.all():
-        urls = parse_camera_urls(f.camera)
-        for slot, url in enumerate(urls):
-            if not url:
-                continue
-            if (f.id, slot) in existing:
-                stats.skipped_existing += 1
-                continue
-            db.session.add(FieldCamera(field_id=f.id, slot=slot, stream_url=url))
-            existing.add((f.id, slot))
-            stats.inserted += 1
-    return stats
-
-
-def _extract_stream_start(value: Any) -> str | None:
-    """Pull a usable ISO timestamp out of one camera_stream_starts entry.
-
-    The live column has at least three observed shapes per entry:
-
-    * A plain ISO string (the original simple format).
-    * A dict with a ``stream_start_time`` field (the rich recording format).
-    * A list of such dicts when a single camera produced multiple recordings.
-
-    Returns the first usable timestamp string, or ``None`` if the entry
-    contains no extractable timestamp.
-    """
-    if isinstance(value, str) and value:
-        return value
-    if isinstance(value, dict):
-        ts = value.get("stream_start_time") or value.get("start_time")
-        if isinstance(ts, str) and ts:
-            return ts
-    if isinstance(value, list):
-        for item in value:
-            ts = _extract_stream_start(item)
-            if ts:
-                return ts
-    return None
-
-
-def backfill_match_camera_stream_starts(targets: FkTargets, verbose: bool = False) -> BackfillStats:
-    """Populate ``match_camera_stream_starts`` from ``Match.camera_stream_starts``.
-
-    The source column is a JSON object whose keys are camera identifiers.
-    Historically two key conventions exist:
-
-    * Integer-as-string slot indices (e.g. ``"0"``, ``"1"``) that map
-      directly to ``FieldCamera.slot``.
-    * Camera names — these don't fit the new
-      ``MatchCameraStreamStart.camera_slot`` integer column and are skipped
-      with a warning rather than guessed-at.
-
-    Each value is then unpacked via :func:`_extract_stream_start` to handle
-    the simple-string vs rich-dict vs list-of-recordings shapes.
-    """
-    stats = BackfillStats()
-    existing = {(r.match_uuid, r.camera_slot) for r in MatchCameraStreamStart.query.all()}
-
-    for match in Match.query.all():
-        if not match.camera_stream_starts:
-            continue
-        try:
-            payload = json.loads(match.camera_stream_starts)
-        except (json.JSONDecodeError, TypeError):
-            stats.skipped_invalid += 1
-            if verbose:
-                print(f"  WARN stream_starts: match={match.uuid} has unparseable JSON")
-            continue
-        if not isinstance(payload, dict):
-            stats.skipped_invalid += 1
-            continue
-
-        for key, raw in payload.items():
-            try:
-                slot = int(key)
-            except (TypeError, ValueError):
-                stats.skipped_invalid += 1
-                if verbose:
-                    print(
-                        f"  WARN stream_starts: match={match.uuid} camera key={key!r} is not an integer slot — skipped"
-                    )
-                continue
-            ts = _extract_stream_start(raw)
-            if not ts:
-                stats.skipped_invalid += 1
-                if verbose:
-                    print(
-                        f"  WARN stream_starts: match={match.uuid} slot={slot} has no extractable timestamp — skipped"
-                    )
-                continue
-            if (match.uuid, slot) in existing:
-                stats.skipped_existing += 1
-                continue
-            db.session.add(MatchCameraStreamStart(match_uuid=match.uuid, camera_slot=slot, stream_start=ts))
-            existing.add((match.uuid, slot))
-            stats.inserted += 1
-    return stats
-
-
 def backfill_camera_timepoints(targets: FkTargets, verbose: bool = False) -> BackfillStats:
     """Populate ``camera_timepoints`` from ``Camera.time_world`` / ``Camera.time_video``.
 
@@ -557,23 +435,6 @@ def validate(verbose: bool = False) -> list[ValidationResult]:
         )
     )
 
-    # 4. Per-field FieldCamera count matches the parsed Field.camera list length.
-    mismatches = []
-    for f in Field.query.all():
-        if not f.camera:
-            continue
-        old_len = len([u for u in parse_camera_urls(f.camera) if u])
-        new_len = db.session.query(FieldCamera).filter(FieldCamera.field_id == f.id).count()
-        if old_len != new_len:
-            mismatches.append(f"field_id={f.id} old={old_len} new={new_len}")
-    results.append(
-        ValidationResult(
-            label="field_cameras count matches Field.camera array length",
-            ok=not mismatches,
-            detail="; ".join(mismatches[:5]) + (f" (+{len(mismatches) - 5} more)" if len(mismatches) > 5 else ""),
-        )
-    )
-
     return results
 
 
@@ -589,8 +450,6 @@ def _check_preconditions() -> str | None:
         "headref_allowlist",
         "match_referees",
         "match_players",
-        "field_cameras",
-        "match_camera_stream_starts",
         "camera_timepoints",
     }
     missing = required - set(inspector.get_table_names())
@@ -621,8 +480,6 @@ def run_backfill(verbose: bool = False, dry_run: bool = False) -> dict[str, Back
         ("headref_allowlist", backfill_head_ref_allowlist),
         ("match_referees", backfill_match_referees),
         ("match_players", backfill_match_players),
-        ("field_cameras", backfill_field_cameras),
-        ("match_camera_stream_starts", backfill_match_camera_stream_starts),
         ("camera_timepoints", backfill_camera_timepoints),
     ):
         runs[label] = fn(targets, verbose=verbose)

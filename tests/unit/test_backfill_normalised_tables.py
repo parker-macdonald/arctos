@@ -32,10 +32,8 @@ from models import (  # noqa: E402
     Camera,
     CameraTimepoint,
     Field,
-    FieldCamera,
     HeadRefAllowList,
     Match,
-    MatchCameraStreamStart,
     MatchPlayer,
     MatchReferee,
     Player,
@@ -266,105 +264,6 @@ def test_backfill_match_players_skips_invalid_json(test_db, tournament, seeded_t
     db.session.commit()
 
     assert stats.skipped_invalid == 1
-
-
-# ---------------------------------------------------------------------------
-# field_cameras
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.unit
-def test_backfill_field_cameras_handles_json_array(test_db, tournament):
-    """A standard JSON array on Field.camera produces one row per URL."""
-    f = Field.query.filter_by(event=tournament.url, name="Field 1").one()
-    f.camera = json.dumps(["rtmp://a/0", "rtmp://b/1"])
-    db.session.commit()
-
-    targets = backfill.FkTargets.load()
-    backfill.backfill_field_cameras(targets)
-    db.session.commit()
-
-    rows = FieldCamera.query.filter_by(field_id=f.id).order_by(FieldCamera.slot).all()
-    assert [r.slot for r in rows] == [0, 1]
-    assert [r.stream_url for r in rows] == ["rtmp://a/0", "rtmp://b/1"]
-
-
-@pytest.mark.unit
-def test_backfill_field_cameras_handles_bare_url_legacy(test_db, tournament):
-    """A bare URL string (legacy single-camera format) produces one row at slot 0."""
-    f = Field.query.filter_by(event=tournament.url, name="Field 1").one()
-    f.camera = "rtmp://legacy/single"
-    db.session.commit()
-
-    targets = backfill.FkTargets.load()
-    backfill.backfill_field_cameras(targets)
-    db.session.commit()
-
-    rows = FieldCamera.query.filter_by(field_id=f.id).all()
-    assert len(rows) == 1
-    assert rows[0].slot == 0
-    assert rows[0].stream_url == "rtmp://legacy/single"
-
-
-# ---------------------------------------------------------------------------
-# match_camera_stream_starts
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.unit
-def test_backfill_stream_starts_simple_format(test_db, tournament):
-    """``{"0": "iso_string"}`` (the simple format) round-trips into one row per slot."""
-    m = _make_match(tournament.url)
-    m.camera_stream_starts = json.dumps({"0": "2026-01-01T10:00:00Z", "1": "2026-01-01T10:30:00Z"})
-    db.session.commit()
-
-    targets = backfill.FkTargets.load()
-    backfill.backfill_match_camera_stream_starts(targets)
-    db.session.commit()
-
-    rows = MatchCameraStreamStart.query.filter_by(match_uuid=m.uuid).order_by(MatchCameraStreamStart.camera_slot).all()
-    assert [r.camera_slot for r in rows] == [0, 1]
-    assert rows[0].stream_start == "2026-01-01T10:00:00Z"
-    assert rows[1].stream_start == "2026-01-01T10:30:00Z"
-
-
-@pytest.mark.unit
-def test_backfill_stream_starts_rich_format(test_db, tournament):
-    """``{"0": {"stream_start_time": "iso", "video_path": "..."}}`` extracts the timestamp."""
-    m = _make_match(tournament.url)
-    m.camera_stream_starts = json.dumps(
-        {
-            "0": {
-                "video_path": "static/uploads/foo.mp4",
-                "stream_start_time": "2026-01-01T11:00:00Z",
-                "type": "recorded",
-            }
-        }
-    )
-    db.session.commit()
-
-    targets = backfill.FkTargets.load()
-    backfill.backfill_match_camera_stream_starts(targets)
-    db.session.commit()
-
-    row = MatchCameraStreamStart.query.filter_by(match_uuid=m.uuid).one()
-    assert row.camera_slot == 0
-    assert row.stream_start == "2026-01-01T11:00:00Z"
-
-
-@pytest.mark.unit
-def test_backfill_stream_starts_skips_non_integer_keys(test_db, tournament):
-    """Camera-name keys (not integer slot indices) are skipped with a warning."""
-    m = _make_match(tournament.url)
-    m.camera_stream_starts = json.dumps({"main_cam": "2026-01-01T12:00:00Z"})
-    db.session.commit()
-
-    targets = backfill.FkTargets.load()
-    stats = backfill.backfill_match_camera_stream_starts(targets)
-    db.session.commit()
-
-    assert stats.inserted == 0
-    assert stats.skipped_invalid >= 1
 
 
 # ---------------------------------------------------------------------------
