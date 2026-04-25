@@ -8,7 +8,7 @@ from models import Match, db
 
 
 @pytest.mark.unit
-def test_apply_match_dependencies_substitutes_winner_loser_and_refs(test_db, tournament):
+def test_apply_match_dependencies_substitutes_winner_loser_and_refs(test_db, tournament, seeded_teams):
     """apply_match_dependencies replaces winner/loser placeholders in dependent matches."""
     tournament_url = tournament.url
     completed = Match(
@@ -46,7 +46,7 @@ def test_apply_match_dependencies_substitutes_winner_loser_and_refs(test_db, tou
 
 
 @pytest.mark.unit
-def test_apply_match_dependencies_noop_when_no_winner(test_db, tournament):
+def test_apply_match_dependencies_noop_when_no_winner(test_db, tournament, seeded_teams):
     tournament_url = tournament.url
     completed = Match(
         name="Match A",

@@ -22,6 +22,7 @@ instance/*
 static/uploads/*
 preview/*
 dioxus/
+backups/
 
 
 # certs

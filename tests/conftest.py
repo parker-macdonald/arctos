@@ -175,6 +175,48 @@ def head_ref_player(test_db, tournament):
     return p
 
 
+@pytest.fixture
+def seeded_teams(test_db):
+    """Seed the dummy ``Team`` rows that older tests reference by string ID.
+
+    Many tests insert ``Match.team1``/``team2`` or ``TeamRegistration.team``
+    values like ``"team1"``, ``"team_1"``, etc. without ever creating the
+    corresponding ``Team`` row. SQLite enforces the foreign keys on those
+    columns (see ``app.set_sqlite_pragmas``), so the inserts raise
+    ``IntegrityError`` unless the parent ``Team`` rows already exist.
+
+    Opting into this fixture seeds a superset of the IDs those tests use, so
+    they can keep referencing string literals without each one having to
+    create teams individually. New tests should prefer the explicit ``team``
+    fixture (or build their own teams).
+
+    Returns:
+        The tuple of team IDs that were ensured to exist.
+    """
+    ids = (
+        "team1",
+        "team2",
+        "team3",
+        "team_1",
+        "team_2",
+        "t1",
+        "t2",
+        "t3",
+        "explicit_team",
+        "tag_resolved_team",
+        "resolved_team_a",
+        "resolved_team_b",
+        "resolved_tag_team",
+    )
+    existing = {t.id for t in Team.query.filter(Team.id.in_(ids)).all()}
+    for tid in ids:
+        if tid in existing:
+            continue
+        db.session.add(Team(id=tid, name=tid, pw_hash="dummy_hash"))
+    db.session.commit()
+    return ids
+
+
 def create_match(
     tournament_url,
     name,

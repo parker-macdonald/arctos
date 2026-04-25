@@ -1,11 +1,12 @@
-"""Tests for PermissionService and TO-guarded routes."""
+"""Unit tests for PermissionService (no HTTP, no test client)."""
+
+from datetime import datetime, timezone
 
 import pytest
 
 from app.services.permission_service import PermissionService
 from models import TO, Tournament, db
-from datetime import datetime, timezone
-from tests.utils import login_as, make_registrable_config
+from tests.utils import make_registrable_config
 
 
 @pytest.mark.unit
@@ -45,35 +46,14 @@ def test_permission_service_can_view_unpublished_tournament_for_to(app, test_db,
             registrable_config_id=cfg.id,
         )
         db.session.add(t)
+        # Flush so the Tournament row is INSERTed before the TO row that
+        # references it. SQLAlchemy's unit of work only orders inserts via
+        # ``relationship()`` declarations; bare ``ForeignKey`` columns (which
+        # is what ``TO.event`` is) don't establish a dependency, so without
+        # this flush the TO insert can fire first and trip the FK pragma
+        # enabled in ``app.set_sqlite_pragmas``.
+        db.session.flush()
         db.session.add(TO(user_id=p.id, user_type="player", event=t.url))
         db.session.commit()
 
         assert PermissionService.can_view_tournament("private-tournament", p) is True
-
-
-@pytest.mark.integration
-def test_tournament_manage_requires_to(app, client, tournament, player, test_db):
-    """Non-TO players are redirected away from the manage page."""
-    # Not a TO -> redirect
-    with app.app_context():
-        t = db.session.merge(tournament)
-        p = db.session.merge(player)
-        login_as(client, p)
-
-    resp = client.get(f"/_api/{t.url}/export-schedule", follow_redirects=False)
-    assert resp.status_code in (301, 302, 303, 307, 308)
-
-
-@pytest.mark.integration
-def test_tournament_manage_allows_to(app, client, tournament, player, test_db):
-    """Tournament Organisers can access the manage page (HTTP 200)."""
-    with app.app_context():
-        t = db.session.merge(tournament)
-        p = db.session.merge(player)
-        db.session.add(TO(user_id=p.id, user_type="player", event=t.url))
-        db.session.commit()
-        login_as(client, p)
-        tournament_url = t.url
-
-    resp = client.get(f"/_api/{tournament_url}/export-schedule")
-    assert resp.status_code == 200

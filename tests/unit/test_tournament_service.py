@@ -36,7 +36,7 @@ def test_homepage_context_includes_only_published_for_anonymous(test_db):
 
 
 @pytest.mark.unit
-def test_homepage_context_team_counts_grouped_query(test_db):
+def test_homepage_context_team_counts_grouped_query(test_db, seeded_teams):
     """team_counts only counts CONFIRMED registrations, not CANCELLED ones."""
     t_url = "counted"
     t = Tournament(
@@ -47,6 +47,11 @@ def test_homepage_context_team_counts_grouped_query(test_db):
         registrable_config_id=make_registrable_config().id,
     )
     db.session.add(t)
+    # Flush so the FK from team_registrations.event -> tournaments.url is
+    # satisfied when the TeamRegistration rows are inserted. SQLAlchemy does
+    # not auto-order bare-ForeignKey dependencies (only relationship() does),
+    # and the FK pragma in ``app.set_sqlite_pragmas`` enforces the constraint.
+    db.session.flush()
     db.session.add_all(
         [
             TeamRegistration(event=t_url, team="t1", pseudonym="T1", status="CONFIRMED"),
@@ -74,6 +79,10 @@ def test_homepage_context_includes_unpublished_for_to(test_db, player):
         registrable_config_id=make_registrable_config().id,
     )
     db.session.add(priv)
+    # SA does not auto-order bare-ForeignKey dependencies (only relationship()
+    # does), so the parent Tournament row must be INSERTed before the dependent
+    # TO row to satisfy the FK pragma in ``app.set_sqlite_pragmas``.
+    db.session.flush()
     db.session.add(TO(user_id=p.id, user_type="player", event=priv_url))
     db.session.commit()
 

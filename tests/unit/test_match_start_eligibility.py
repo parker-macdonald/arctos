@@ -8,7 +8,7 @@ from models import Field, Match, db
 
 
 @pytest.mark.unit
-def test_can_start_true_when_ref_ready_no_conflict(app, test_db, tournament, head_ref_player):
+def test_can_start_true_when_ref_ready_no_conflict(app, test_db, tournament, head_ref_player, seeded_teams):
     """When user is ref, match is READY_TO_START, and no other match on field, can_start is True."""
     with app.app_context():
         t = db.session.merge(tournament)
@@ -35,7 +35,7 @@ def test_can_start_true_when_ref_ready_no_conflict(app, test_db, tournament, hea
 
 
 @pytest.mark.unit
-def test_can_start_false_field_busy(app, test_db, tournament, head_ref_player):
+def test_can_start_false_field_busy(app, test_db, tournament, head_ref_player, seeded_teams):
     """When another match is IN_PROGRESS on same field, can_start is False with field-busy reason."""
     with app.app_context():
         t = db.session.merge(tournament)
@@ -75,7 +75,7 @@ def test_can_start_false_field_busy(app, test_db, tournament, head_ref_player):
 
 
 @pytest.mark.unit
-def test_can_start_false_user_not_ref(app, test_db, tournament, player):
+def test_can_start_false_user_not_ref(app, test_db, tournament, player, seeded_teams):
     """When user is not in allowed refs list, can_start is False with perms reason."""
     with app.app_context():
         t = db.session.merge(tournament)
@@ -104,7 +104,7 @@ def test_can_start_false_user_not_ref(app, test_db, tournament, player):
 
 
 @pytest.mark.unit
-def test_can_start_false_status_not_ready(app, test_db, tournament, head_ref_player):
+def test_can_start_false_status_not_ready(app, test_db, tournament, head_ref_player, seeded_teams):
     """When match status is NOT_STARTED, can_start is False."""
     with app.app_context():
         t = db.session.merge(tournament)
@@ -131,7 +131,7 @@ def test_can_start_false_status_not_ready(app, test_db, tournament, head_ref_pla
 
 
 @pytest.mark.unit
-def test_can_start_completed_returns_false_no_reasons(app, test_db, tournament, head_ref_player):
+def test_can_start_completed_returns_false_no_reasons(app, test_db, tournament, head_ref_player, seeded_teams):
     """When match is COMPLETED, can_start is False and reasons are empty (match is over)."""
     with app.app_context():
         t = db.session.merge(tournament)
