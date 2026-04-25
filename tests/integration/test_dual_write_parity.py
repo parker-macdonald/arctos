@@ -19,7 +19,7 @@ import pytest
 
 from app.domain.enums import MatchStatus
 from app.services import dual_write
-from models import Field, Match, db
+from models import Match, db
 from tests.utils import login_as
 
 
@@ -112,29 +112,3 @@ def test_update_tournament_route_keeps_head_ref_allowlist_in_parity(app, client,
         t_db = Tournament.query.get(tournament_url)
         assert t_db.head_refs_allowed_list == "ref_a, ref_b"
         dual_write.assert_head_ref_allowlist_parity(t_db)
-
-
-@pytest.mark.integration
-def test_field_create_route_keeps_field_cameras_in_parity(app, client, tournament, player):
-    """Creating a field with cameras through the API must populate ``field_cameras``."""
-    from models import TO
-
-    with app.app_context():
-        t = db.session.merge(tournament)
-        p = db.session.merge(player)
-        db.session.add(TO(user_id=p.id, user_type="player", event=t.url))
-        db.session.commit()
-        tournament_url = t.url
-        login_as(client, p)
-
-    resp = client.post(
-        f"/_api/tournaments/{tournament_url}/fields",
-        json={"name": "Field With Cameras", "camera_urls": ["rtmp://a/0", "rtmp://b/1"]},
-        content_type="application/json",
-    )
-    assert resp.status_code == 200, f"unexpected status {resp.status_code}: {resp.data!r}"
-
-    with app.app_context():
-        f = Field.query.filter_by(event=tournament_url, name="Field With Cameras").one()
-        assert f.camera  # legacy column populated
-        dual_write.assert_field_cameras_parity(f)

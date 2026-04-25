@@ -2250,10 +2250,6 @@ def update_field(tournament_url):
 
     # Store as JSON array
     field.camera = json.dumps(camera_urls) if camera_urls else ""
-    # Mirror the new ``field_cameras`` join table.
-    from app.services.dual_write import sync_field_cameras
-
-    sync_field_cameras(field)
 
     # Get all matches that reference this field (for both name and camera updates)
     # Use old field name if name changed, otherwise use current name
@@ -2277,8 +2273,6 @@ def update_field(tournament_url):
                 pass
 
         # Update matches that reference this field
-        from app.services.dual_write import sync_match_camera_stream_starts
-
         for match in matches_to_update:
             if match.camera_stream_starts:
                 try:
@@ -2291,13 +2285,11 @@ def update_field(tournament_url):
                             new_stream_starts[new_idx_str] = start_time
                         # If old index not in map, camera was removed - don't include it
                     match.camera_stream_starts = json.dumps(new_stream_starts) if new_stream_starts else None
-                    sync_match_camera_stream_starts(match)
                     camera_update_count += 1
                 except (json.JSONDecodeError, TypeError) as e:
                     print(f"Error updating camera_stream_starts for match {match.uuid}: {e}")
                     # If parsing fails, clear it
                     match.camera_stream_starts = None
-                    sync_match_camera_stream_starts(match)
 
         # Update points that reference this field (via the match)
         # Get all points for matches on this field

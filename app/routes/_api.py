@@ -2888,10 +2888,6 @@ def finalize_match_post_api(tournament_url):
                         pass
                 existing_starts.update(stream_starts)
                 match.camera_stream_starts = json.dumps(existing_starts)
-                # Mirror the new ``match_camera_stream_starts`` join table.
-                from app.services.dual_write import sync_match_camera_stream_starts
-
-                sync_match_camera_stream_starts(match)
 
     team1_signature = data.get("team1_signature")
     team2_signature = data.get("team2_signature")
@@ -4871,10 +4867,6 @@ def update_field_api(tournament_url, field_id):
             old_camera_urls = [field.camera]
 
     field.camera = json.dumps(camera_urls) if camera_urls else ""
-    # Mirror the new ``field_cameras`` join table.
-    from app.services.dual_write import sync_field_cameras, sync_match_camera_stream_starts
-
-    sync_field_cameras(field)
 
     # Update matches and points (logic copied from tournaments.py)
     field_name_for_query = old_field_name if old_field_name != new_field_name else new_field_name
@@ -4901,10 +4893,8 @@ def update_field_api(tournament_url, field_id):
                             new_idx_str = old_to_new_index_map[old_idx_str]
                             new_stream_starts[new_idx_str] = start_time
                     match.camera_stream_starts = json.dumps(new_stream_starts) if new_stream_starts else None
-                    sync_match_camera_stream_starts(match)
                 except:
                     match.camera_stream_starts = None
-                    sync_match_camera_stream_starts(match)
 
         from app.utils.camera_helpers import calculate_stream_timestamp
 
@@ -4970,7 +4960,6 @@ def update_field_api(tournament_url, field_id):
                 elif str(idx) in stream_starts:
                     del stream_starts[str(idx)]
             match.camera_stream_starts = json.dumps(stream_starts) if stream_starts else None
-            sync_match_camera_stream_starts(match)
         # Recompute point stream_timestamp for matches we updated
         for match in matches_to_update:
             points = Point.query.filter_by(match=match.uuid).all()
@@ -5250,12 +5239,6 @@ def create_field_api(tournament_url):
         field.camera = json.dumps(camera_urls)
 
     db.session.add(field)
-    db.session.flush()  # so field.id is available before sync_field_cameras
-    if camera_urls:
-        # Mirror the new ``field_cameras`` join table.
-        from app.services.dual_write import sync_field_cameras
-
-        sync_field_cameras(field)
     db.session.commit()
     return jsonify({"success": True, "id": field.id})
 

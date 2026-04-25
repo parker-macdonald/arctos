@@ -34,10 +34,8 @@ from models import (
     Camera,
     CameraTimepoint,
     Field,
-    FieldCamera,
     HeadRefAllowList,
     Match,
-    MatchCameraStreamStart,
     MatchPlayer,
     MatchReferee,
     Player,
@@ -322,122 +320,6 @@ def test_sync_match_players_is_idempotent(test_db, tournament, seeded_teams):
 
 
 # ---------------------------------------------------------------------------
-# sync_field_cameras
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.unit
-def test_sync_field_cameras_initial_populate_json_array(test_db, tournament):
-    """JSON-array Field.camera produces one row per URL, in slot order."""
-    f = Field.query.filter_by(event=tournament.url, name="Field 1").one()
-    f.camera = json.dumps(["rtmp://a/0", "rtmp://b/1"])
-    db.session.commit()
-
-    dual_write.sync_field_cameras(f)
-    db.session.commit()
-
-    rows = FieldCamera.query.filter_by(field_id=f.id).order_by(FieldCamera.slot).all()
-    assert [(r.slot, r.stream_url) for r in rows] == [(0, "rtmp://a/0"), (1, "rtmp://b/1")]
-
-
-@pytest.mark.unit
-def test_sync_field_cameras_handles_bare_url_legacy(test_db, tournament):
-    """Bare-URL legacy format yields a single row at slot 0."""
-    f = Field.query.filter_by(event=tournament.url, name="Field 1").one()
-    f.camera = "rtmp://legacy"
-    db.session.commit()
-
-    dual_write.sync_field_cameras(f)
-    db.session.commit()
-
-    rows = FieldCamera.query.filter_by(field_id=f.id).all()
-    assert len(rows) == 1
-    assert rows[0].slot == 0
-    assert rows[0].stream_url == "rtmp://legacy"
-
-
-@pytest.mark.unit
-def test_sync_field_cameras_clear(test_db, tournament):
-    """Clearing Field.camera deletes all destination rows."""
-    f = Field.query.filter_by(event=tournament.url, name="Field 1").one()
-    f.camera = json.dumps(["rtmp://a/0"])
-    db.session.commit()
-    dual_write.sync_field_cameras(f)
-    db.session.commit()
-
-    f.camera = ""
-    db.session.commit()
-    dual_write.sync_field_cameras(f)
-    db.session.commit()
-
-    assert FieldCamera.query.filter_by(field_id=f.id).count() == 0
-
-
-# ---------------------------------------------------------------------------
-# sync_match_camera_stream_starts
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.unit
-def test_sync_match_camera_stream_starts_simple_format(test_db, tournament):
-    """Simple ``{"0": "iso"}`` format mirrors directly."""
-    m = _make_match(tournament.url)
-    m.camera_stream_starts = json.dumps({"0": "2026-01-01T10:00:00Z"})
-    db.session.commit()
-
-    dual_write.sync_match_camera_stream_starts(m)
-    db.session.commit()
-
-    row = MatchCameraStreamStart.query.filter_by(match_uuid=m.uuid).one()
-    assert row.camera_slot == 0
-    assert row.stream_start == "2026-01-01T10:00:00Z"
-
-
-@pytest.mark.unit
-def test_sync_match_camera_stream_starts_rich_format(test_db, tournament):
-    """Rich-format dict's stream_start_time is extracted."""
-    m = _make_match(tournament.url)
-    m.camera_stream_starts = json.dumps({"0": {"stream_start_time": "2026-01-01T11:00:00Z", "video_path": "x"}})
-    db.session.commit()
-
-    dual_write.sync_match_camera_stream_starts(m)
-    db.session.commit()
-
-    row = MatchCameraStreamStart.query.filter_by(match_uuid=m.uuid).one()
-    assert row.stream_start == "2026-01-01T11:00:00Z"
-
-
-@pytest.mark.unit
-def test_sync_match_camera_stream_starts_skips_camera_name_keys(test_db, tournament):
-    """Camera-name keys (not integer slots) don't fit the new column; skipped."""
-    m = _make_match(tournament.url)
-    m.camera_stream_starts = json.dumps({"main_cam": "2026-01-01T12:00:00Z"})
-    db.session.commit()
-
-    dual_write.sync_match_camera_stream_starts(m)
-    db.session.commit()
-
-    assert MatchCameraStreamStart.query.filter_by(match_uuid=m.uuid).count() == 0
-
-
-@pytest.mark.unit
-def test_sync_match_camera_stream_starts_clear(test_db, tournament):
-    """Setting blob to None deletes destination rows."""
-    m = _make_match(tournament.url)
-    m.camera_stream_starts = json.dumps({"0": "2026-01-01T10:00:00Z"})
-    db.session.commit()
-    dual_write.sync_match_camera_stream_starts(m)
-    db.session.commit()
-
-    m.camera_stream_starts = None
-    db.session.commit()
-    dual_write.sync_match_camera_stream_starts(m)
-    db.session.commit()
-
-    assert MatchCameraStreamStart.query.filter_by(match_uuid=m.uuid).count() == 0
-
-
-# ---------------------------------------------------------------------------
 # sync_camera_timepoints
 # ---------------------------------------------------------------------------
 
@@ -545,28 +427,6 @@ def test_assert_match_players_parity_passes_when_in_sync(test_db, tournament, se
     db.session.commit()
 
     dual_write.assert_match_players_parity(m)
-
-
-@pytest.mark.unit
-def test_assert_field_cameras_parity_passes_when_in_sync(test_db, tournament):
-    f = Field.query.filter_by(event=tournament.url, name="Field 1").one()
-    f.camera = json.dumps(["rtmp://a/0"])
-    db.session.commit()
-    dual_write.sync_field_cameras(f)
-    db.session.commit()
-
-    dual_write.assert_field_cameras_parity(f)
-
-
-@pytest.mark.unit
-def test_assert_match_camera_stream_starts_parity_passes_when_in_sync(test_db, tournament):
-    m = _make_match(tournament.url)
-    m.camera_stream_starts = json.dumps({"0": "2026-01-01T10:00:00Z"})
-    db.session.commit()
-    dual_write.sync_match_camera_stream_starts(m)
-    db.session.commit()
-
-    dual_write.assert_match_camera_stream_starts_parity(m)
 
 
 @pytest.mark.unit

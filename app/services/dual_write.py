@@ -2,7 +2,7 @@
 
 The application currently authoritative reads come from the historical
 blob columns (``Tournament.head_refs_allowed_list``, ``Match.refs``,
-``Match.team1_players``, ``Field.camera``, ``Match.camera_stream_starts``,
+``Match.team1_players`` / ``team2_players``,
 ``Camera.time_world`` / ``Camera.time_video``). The corresponding new
 join tables — populated initially by ``scripts/backfill_normalised_tables.py``
 — must continue to track every subsequent write so that switching reads
@@ -36,7 +36,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Iterable
+from typing import Iterable
 
 from sqlalchemy import select
 
@@ -44,11 +44,8 @@ from app.domain.enums import WinnerSide
 from app.models import (
     Camera,
     CameraTimepoint,
-    Field,
-    FieldCamera,
     HeadRefAllowList,
     Match,
-    MatchCameraStreamStart,
     MatchPlayer,
     MatchReferee,
     Player,
@@ -56,7 +53,6 @@ from app.models import (
     Tournament,
     db,
 )
-from app.utils.camera_helpers import parse_camera_urls
 
 logger = logging.getLogger(__name__)
 
@@ -91,28 +87,6 @@ def _parse_json_list(raw: str | None) -> list:
     except (json.JSONDecodeError, TypeError):
         return []
     return parsed if isinstance(parsed, list) else []
-
-
-def _extract_stream_start(value: Any) -> str | None:
-    """Pull a usable ISO timestamp out of one ``camera_stream_starts`` entry.
-
-    Mirrors the same multi-format tolerance used by the backfill script:
-    accepts a plain string, a dict with ``stream_start_time`` or
-    ``start_time``, or a list of either. Returns the first usable
-    timestamp or ``None``.
-    """
-    if isinstance(value, str) and value:
-        return value
-    if isinstance(value, dict):
-        ts = value.get("stream_start_time") or value.get("start_time")
-        if isinstance(ts, str) and ts:
-            return ts
-    if isinstance(value, list):
-        for item in value:
-            ts = _extract_stream_start(item)
-            if ts:
-                return ts
-    return None
 
 
 def _existing_ids(model, query_filter) -> set:
@@ -252,64 +226,6 @@ def sync_match_players(match: Match) -> None:
             db.session.delete(row)
 
 
-def sync_field_cameras(field: Field) -> None:
-    """Reconcile ``field_cameras`` to match ``Field.camera``.
-
-    Parses the legacy column with the same helper the live application
-    uses (``parse_camera_urls`` — handles JSON-array, JSON-string, and
-    bare-URL forms) so the two representations cannot drift due to a
-    parser disagreement. ``slot`` mirrors the position in the parsed list.
-    """
-    urls = parse_camera_urls(field.camera)
-    desired = {slot: url for slot, url in enumerate(urls) if url}
-
-    existing = {r.slot: r for r in FieldCamera.query.filter_by(field_id=field.id).all()}
-    for slot, url in desired.items():
-        if slot in existing:
-            existing[slot].stream_url = url
-        else:
-            db.session.add(FieldCamera(field_id=field.id, slot=slot, stream_url=url))
-    for slot, row in existing.items():
-        if slot not in desired:
-            db.session.delete(row)
-
-
-def sync_match_camera_stream_starts(match: Match) -> None:
-    """Reconcile ``match_camera_stream_starts`` to match ``Match.camera_stream_starts``.
-
-    The legacy column is a JSON object whose keys may be integer slot
-    indices (the simple format) or camera names (the rich recording
-    format). Only integer-keyed entries are mirrored — camera-name keys
-    cannot fit the new ``camera_slot`` integer column, so they are left
-    in the legacy JSON for the live app to read and skipped here.
-    """
-    desired: dict[int, str] = {}
-    if match.camera_stream_starts:
-        try:
-            payload = json.loads(match.camera_stream_starts)
-        except (json.JSONDecodeError, TypeError):
-            payload = None
-        if isinstance(payload, dict):
-            for key, value in payload.items():
-                try:
-                    slot = int(key)
-                except (TypeError, ValueError):
-                    continue
-                ts = _extract_stream_start(value)
-                if ts:
-                    desired[slot] = ts
-
-    existing = {r.camera_slot: r for r in MatchCameraStreamStart.query.filter_by(match_uuid=match.uuid).all()}
-    for slot, ts in desired.items():
-        if slot in existing:
-            existing[slot].stream_start = ts
-        else:
-            db.session.add(MatchCameraStreamStart(match_uuid=match.uuid, camera_slot=slot, stream_start=ts))
-    for slot, row in existing.items():
-        if slot not in desired:
-            db.session.delete(row)
-
-
 def sync_camera_timepoints(camera: Camera) -> None:
     """Reconcile ``camera_timepoints`` to match ``Camera.time_world`` / ``Camera.time_video``.
 
@@ -431,45 +347,6 @@ def assert_match_players_parity(match: Match) -> None:
 
     actual = {r.player_id: r.side for r in MatchPlayer.query.filter_by(match_uuid=match.uuid).all()}
     assert expected == actual, f"match_players parity drift on {match.uuid}: legacy={expected} new={actual}"
-
-
-def assert_field_cameras_parity(field: Field) -> None:
-    """``field_cameras`` rows for ``field`` match its parsed camera URL list."""
-    urls = parse_camera_urls(field.camera)
-    expected = {slot: url for slot, url in enumerate(urls) if url}
-    actual = {r.slot: r.stream_url for r in FieldCamera.query.filter_by(field_id=field.id).all()}
-    assert expected == actual, f"field_cameras parity drift on field_id={field.id}: legacy={expected} new={actual}"
-
-
-def assert_match_camera_stream_starts_parity(match: Match) -> None:
-    """``match_camera_stream_starts`` rows match the integer-keyed entries of ``camera_stream_starts``.
-
-    Camera-name-keyed entries in the legacy JSON are intentionally not
-    mirrored (they don't fit the integer ``camera_slot`` column), so this
-    assertion ignores them.
-    """
-    expected: dict[int, str] = {}
-    if match.camera_stream_starts:
-        try:
-            payload = json.loads(match.camera_stream_starts)
-        except (json.JSONDecodeError, TypeError):
-            payload = None
-        if isinstance(payload, dict):
-            for key, value in payload.items():
-                try:
-                    slot = int(key)
-                except (TypeError, ValueError):
-                    continue
-                ts = _extract_stream_start(value)
-                if ts:
-                    expected[slot] = ts
-
-    actual = {
-        r.camera_slot: r.stream_start for r in MatchCameraStreamStart.query.filter_by(match_uuid=match.uuid).all()
-    }
-    assert expected == actual, (
-        f"match_camera_stream_starts parity drift on {match.uuid}: legacy={expected} new={actual}"
-    )
 
 
 def assert_camera_timepoints_parity(camera: Camera) -> None:

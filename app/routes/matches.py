@@ -1171,10 +1171,6 @@ def finalize_match_post(tournament_url):
                 # Update with any new stream starts
                 existing_starts.update(stream_starts)
                 match.camera_stream_starts = json.dumps(existing_starts)
-                # Mirror the new ``match_camera_stream_starts`` join table.
-                from app.services.dual_write import sync_match_camera_stream_starts
-
-                sync_match_camera_stream_starts(match)
 
     team1_signature = request.form.get("team1_signature")
     team2_signature = request.form.get("team2_signature")

@@ -162,10 +162,6 @@ class MatchService:
                 stream_starts = get_all_camera_stream_starts(field_obj)
                 if stream_starts:
                     match.camera_stream_starts = json.dumps(stream_starts)
-                    # Mirror the new ``match_camera_stream_starts`` join table.
-                    from app.services.dual_write import sync_match_camera_stream_starts
-
-                    sync_match_camera_stream_starts(match)
 
         db.session.commit()
 
