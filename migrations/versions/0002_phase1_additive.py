@@ -22,8 +22,7 @@ Concretely, this migration does five things:
    754) to ``Numeric(10, 2)``. Floats cannot represent ``$10.00`` exactly;
    reconciliation across many partial payments accumulates rounding error.
 
-3. **UNIQUE constraints on logically-unique column pairs** (the nine pairs
-   from §2 of the design doc). Adding these requires the live data to be
+3. **UNIQUE constraints on logically-unique column pairs**. Adding these requires the live data to be
    free of duplicates first — operators run ``make db-check-duplicates``
    as a pre-flight gate. Constraints are implemented as ``UNIQUE`` indexes
    (``op.create_index(..., unique=True)``) because SQLite supports adding
@@ -67,8 +66,8 @@ Deliberately deferred:
 
 Pre-conditions for this migration:
 
-* ``make db-check-duplicates`` exits 0. If it reports duplicate groups
-  (the §2 unique-constraint targets), they MUST be resolved in SQL
+* ``make db-check-duplicates`` exits 0. If it reports duplicate groups,
+  they MUST be resolved in SQL
   first, otherwise the ``UNIQUE`` index creation will fail.
 
 * ``sqlite3 instance/tournament.db "PRAGMA foreign_key_check;"``
@@ -199,7 +198,7 @@ def upgrade() -> None:
         )
 
     # ------------------------------------------------------------------
-    # 4. UNIQUE indexes on logically-unique column pairs (§2 of the doc).
+    # 4. UNIQUE indexes on logically-unique column pairs.
     #    SQLite supports CREATE UNIQUE INDEX directly — no batch needed,
     #    no table rebuild.
     # ------------------------------------------------------------------
