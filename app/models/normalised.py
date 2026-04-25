@@ -1,7 +1,7 @@
 """Normalised join tables that replace previously-encoded list/blob columns.
 
-These six models normalise columns that historically stored multiple values
-in a single cell (comma-separated strings or JSON arrays). Each model has a
+These models normalise columns that historically stored multiple values in
+a single cell (comma-separated strings or JSON arrays). Each model has a
 unique constraint that enforces invariants the application code previously
 had to maintain in Python, plus real foreign keys so deletes cascade
 correctly and orphan rows cannot exist.
@@ -12,6 +12,7 @@ that happens the new tables are populated by a backfill script and kept in
 sync by dual-write code (none of which exists yet — that is later work).
 The schema definitions here are intentionally additive; nothing on the
 existing schema is modified.
+
 """
 
 from __future__ import annotations
@@ -20,7 +21,6 @@ from app.domain.enums import WinnerSide
 from app.models.base import db
 from app.models.constants import (
     LONG_NAME_LEN,
-    LONG_URL_LEN,
     URL_SLUG_LEN,
     USER_ID_LEN,
     UUID_LEN,
@@ -130,67 +130,6 @@ class MatchPlayer(db.Model):  # type: ignore[misc]
     side = db.Column(db.Enum(WinnerSide), nullable=False)
 
     __table_args__ = (db.UniqueConstraint("match_uuid", "player_id", name="uq_match_players_match_player"),)
-
-
-class FieldCamera(db.Model):  # type: ignore[misc]
-    """A single camera stream slot for a field.
-
-    Normalises ``Field.camera`` (formerly a JSON array of URLs) into a
-    join table. ``slot`` is the 0-based index from the original array and
-    must be preserved because ``Match.camera_stream_starts`` and
-    ``Camera.field`` both reference cameras by this integer index. Do not
-    reorder or renumber slots after creation.
-
-    Attributes:
-        id: Auto-increment primary key.
-        field_id: ID of the parent field.
-        slot: 0-based slot index. Stable identifier; never reuse or
-            renumber.
-        stream_url: Camera stream URL for this slot, or ``NULL`` if the
-            slot exists but no stream is currently configured.
-    """
-
-    __tablename__ = "field_cameras"
-
-    id = db.Column(db.Integer, primary_key=True)
-    field_id = db.Column(db.Integer, db.ForeignKey("fields.id"), nullable=False)
-    slot = db.Column(db.Integer, nullable=False)
-    stream_url = db.Column(db.String(LONG_URL_LEN))
-
-    __table_args__ = (db.UniqueConstraint("field_id", "slot", name="uq_field_cameras_field_slot"),)
-
-
-class MatchCameraStreamStart(db.Model):  # type: ignore[misc]
-    """The wall-clock time a camera stream began for a specific match.
-
-    Normalises ``Match.camera_stream_starts`` (formerly a JSON object
-    mapping camera slot index to ISO timestamp string). Used by the
-    footage pipeline to synchronise point timestamps against video
-    timecodes. ``camera_slot`` corresponds to ``FieldCamera.slot`` for
-    the field this match is played on.
-
-    Attributes:
-        id: Auto-increment primary key.
-        match_uuid: UUID of the parent match.
-        camera_slot: 0-based slot index of the camera on the match's
-            field. Matches ``FieldCamera.slot``.
-        stream_start: ISO 8601 wall-clock timestamp string.
-    """
-
-    __tablename__ = "match_camera_stream_starts"
-
-    id = db.Column(db.Integer, primary_key=True)
-    match_uuid = db.Column(
-        db.String(UUID_LEN),
-        db.ForeignKey("matches.uuid"),
-        nullable=False,
-    )
-    camera_slot = db.Column(db.Integer, nullable=False)
-    stream_start = db.Column(db.String(50), nullable=False)
-
-    __table_args__ = (
-        db.UniqueConstraint("match_uuid", "camera_slot", name="uq_match_camera_stream_starts_match_slot"),
-    )
 
 
 class CameraTimepoint(db.Model):  # type: ignore[misc]

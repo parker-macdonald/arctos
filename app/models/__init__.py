@@ -22,9 +22,7 @@ from app.models.sidecomp import SideComp, SideCompResult
 from app.models.camera import Camera
 from app.models.normalised import (
     CameraTimepoint,
-    FieldCamera,
     HeadRefAllowList,
-    MatchCameraStreamStart,
     MatchPlayer,
     MatchReferee,
 )
@@ -55,7 +53,5 @@ __all__ = [
     "HeadRefAllowList",
     "MatchReferee",
     "MatchPlayer",
-    "FieldCamera",
-    "MatchCameraStreamStart",
     "CameraTimepoint",
 ]

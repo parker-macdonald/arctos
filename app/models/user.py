@@ -27,10 +27,11 @@ class Player(UserMixin, db.Model):
         name: Display name.
         pw_hash: Werkzeug password hash; ``None`` for OAuth-only accounts.
         google_id: Google OAuth subject identifier.
-        email: Email address supplied by Google OAuth. Unique across all
-            players (and indexed) so a future password-reset flow cannot
-            be exploited by registering an attacker account with a
-            victim's email and triggering a reset.
+        email: Contact email address. Captured from Google OAuth on
+            account creation but never used to authenticate the user —
+            login is by ``id`` + password or by ``google_id``. Not
+            unique: two players may share an address (e.g. shared club
+            inbox).
         phone: Optional contact phone number.
         profile_photo: Server-relative path to the uploaded profile image.
         bio: Free-text biography.
@@ -43,7 +44,7 @@ class Player(UserMixin, db.Model):
     name = db.Column(db.String(SHORT_NAME_LEN), nullable=False)
     pw_hash = db.Column(db.String(AUTH_STRING_LEN), nullable=True)  # Nullable for Google OAuth users
     google_id = db.Column(db.String(AUTH_STRING_LEN), unique=True, nullable=True)  # Google OAuth ID
-    email = db.Column(db.String(AUTH_STRING_LEN), unique=True, index=True, nullable=True)
+    email = db.Column(db.String(AUTH_STRING_LEN), nullable=True)
     phone = db.Column(db.String(PHONE_LEN))
     profile_photo = db.Column(db.String(AUTH_STRING_LEN))
     bio = db.Column(db.Text)
@@ -86,10 +87,10 @@ class Team(UserMixin, db.Model):
         pw_hash: Werkzeug password hash; ``None`` for OAuth-only accounts.
         google_id: Google OAuth subject identifier.
         phone: Optional contact phone number.
-        email: Email address (may come from Google OAuth). Unique across
-            all teams (and indexed) so a future password-reset flow
-            cannot be exploited by registering an attacker account with
-            a victim's email and triggering a reset.
+        email: Contact email address (may come from Google OAuth).
+            Never used to authenticate the team — login is by ``id`` +
+            password or by ``google_id``. Not unique: multiple teams in
+            the same club may share an inbox.
         icon: Base64-encoded team icon image.
         profile_photo: Server-relative path to the uploaded profile photo.
         socials: Free-text social media links.
@@ -105,7 +106,7 @@ class Team(UserMixin, db.Model):
     pw_hash = db.Column(db.String(AUTH_STRING_LEN), nullable=True)  # Nullable for Google OAuth users
     google_id = db.Column(db.String(AUTH_STRING_LEN), unique=True, nullable=True)  # Google OAuth ID
     phone = db.Column(db.String(PHONE_LEN))
-    email = db.Column(db.String(AUTH_STRING_LEN), unique=True, index=True, nullable=True)
+    email = db.Column(db.String(AUTH_STRING_LEN), nullable=True)
     icon = db.Column(db.Text)  # base64 image
     profile_photo = db.Column(db.String(AUTH_STRING_LEN))  # Path to uploaded photo
     socials = db.Column(db.Text)

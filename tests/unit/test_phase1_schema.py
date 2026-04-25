@@ -3,13 +3,11 @@
 These tests exercise the constraints added by the additive schema migration
 through the live ORM models, verifying that:
 
-* The six normalised join tables exist and accept valid rows.
+* The four normalised join tables exist and accept valid rows.
 * Their UNIQUE constraints reject duplicate (parent, child) pairs.
 * Their FOREIGN KEY columns are enforced.
 * The mutual-exclusivity CHECKs on TeamRegistration / PlayerRegistration / TO
   reject "both set" and "both NULL" rows.
-* The new email-uniqueness constraints reject duplicates but allow multiple
-  NULLs (SQL-standard ``UNIQUE`` semantics).
 * The monetary type change preserves exact decimal values through the ORM.
 
 The tests use the in-process test database fixture (``test_db``) which calls
@@ -30,13 +28,10 @@ from app.domain.enums import TeamRegistrationStatus, WinnerSide
 from models import (
     TO,
     CameraTimepoint,
-    FieldCamera,
     HeadRefAllowList,
-    MatchCameraStreamStart,
     MatchPlayer,
     MatchReferee,
     PlayerRegistration,
-    Team,
     TeamRegistration,
     db,
 )
@@ -123,35 +118,8 @@ def test_match_players_unique_per_player(test_db, tournament, player, seeded_tea
 
 
 # ---------------------------------------------------------------------------
-# field_cameras / match_camera_stream_starts / camera_timepoints — slot/seq
-# invariants.
+# camera_timepoints — sequence invariant.
 # ---------------------------------------------------------------------------
-
-
-@pytest.mark.unit
-def test_field_cameras_unique_per_slot(test_db, tournament):
-    """FieldCamera enforces UNIQUE(field_id, slot)."""
-    from models import Field
-
-    field = Field.query.filter_by(event=tournament.url, name="Field 1").one()
-    db.session.add(FieldCamera(field_id=field.id, slot=0, stream_url="rtmp://example/0"))
-    db.session.commit()
-    db.session.add(FieldCamera(field_id=field.id, slot=0, stream_url="rtmp://other/0"))
-    with pytest.raises(sa.exc.IntegrityError):
-        db.session.commit()
-    db.session.rollback()
-
-
-@pytest.mark.unit
-def test_match_camera_stream_starts_unique_per_slot(test_db, tournament):
-    """MatchCameraStreamStart enforces UNIQUE(match_uuid, camera_slot)."""
-    m = _make_match(test_db, tournament.url)
-    db.session.add(MatchCameraStreamStart(match_uuid=m.uuid, camera_slot=0, stream_start="2026-01-01T00:00:00Z"))
-    db.session.commit()
-    db.session.add(MatchCameraStreamStart(match_uuid=m.uuid, camera_slot=0, stream_start="2026-01-01T01:00:00Z"))
-    with pytest.raises(sa.exc.IntegrityError):
-        db.session.commit()
-    db.session.rollback()
 
 
 @pytest.mark.unit
@@ -242,31 +210,6 @@ def test_to_rejects_neither_event_nor_league(test_db, player):
     with pytest.raises(sa.exc.IntegrityError):
         db.session.commit()
     db.session.rollback()
-
-
-# ---------------------------------------------------------------------------
-# Email uniqueness — duplicate rejected, NULLs allowed to repeat.
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.unit
-def test_team_email_unique_rejects_duplicate(test_db):
-    """Inserting two teams with the same email raises IntegrityError."""
-    db.session.add(Team(id="ta", name="A", pw_hash="h", email="dup@example.com"))
-    db.session.commit()
-    db.session.add(Team(id="tb", name="B", pw_hash="h", email="dup@example.com"))
-    with pytest.raises(sa.exc.IntegrityError):
-        db.session.commit()
-    db.session.rollback()
-
-
-@pytest.mark.unit
-def test_team_email_unique_allows_multiple_nulls(test_db):
-    """Multiple teams with NULL email are allowed (SQL-standard UNIQUE)."""
-    db.session.add(Team(id="t1", name="A", pw_hash="h"))
-    db.session.add(Team(id="t2", name="B", pw_hash="h"))
-    db.session.commit()
-    assert Team.query.filter(Team.email.is_(None)).count() >= 2
 
 
 # ---------------------------------------------------------------------------

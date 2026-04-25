@@ -1,4 +1,4 @@
-"""Additive schema changes — six normalised join tables, monetary precision, integrity constraints, indexes.
+"""Additive schema changes — four normalised join tables, monetary precision, integrity constraints, indexes.
 
 This migration is purely additive: no existing column is renamed or dropped,
 and no existing column type is changed in a way that loses data
@@ -7,15 +7,14 @@ running application continues to work against the schema unchanged after
 this migration is applied; the new tables sit empty until a separate
 backfill populates them.
 
-Concretely, this migration does six things:
+Concretely, this migration does five things:
 
 1. **New normalised tables** (``headref_allowlist``, ``match_referees``,
-   ``match_players``, ``field_cameras``, ``match_camera_stream_starts``,
-   ``camera_timepoints``). Each replaces a column that previously stored
-   multiple values encoded as a comma-separated string or JSON array. The
-   new tables let the database enforce uniqueness, foreign-key integrity,
-   and cascade semantics that application code previously had to maintain
-   in Python.
+   ``match_players``, ``camera_timepoints``). Each replaces a column that
+   previously stored multiple values encoded as a comma-separated string
+   or JSON array. The new tables let the database enforce uniqueness,
+   foreign-key integrity, and cascade semantics that application code
+   previously had to maintain in Python.
 
 2. **Monetary columns become exact decimals.** ``RegistrableConfig.team_reg_fee``,
    ``RegistrableConfig.player_reg_fee``, ``TeamRegistration.amount_paid``,
@@ -31,17 +30,13 @@ Concretely, this migration does six things:
    those directly, whereas adding a table-level ``UNIQUE`` constraint
    would require rebuilding the whole table.
 
-4. **Email uniqueness** on ``players.email`` and ``teams.email``. Without
-   this, a future password-reset flow could be exploited by registering
-   an attacker account with a victim's email.
-
-5. **Mutual-exclusivity CHECK constraints** on ``team_registrations``,
+4. **Mutual-exclusivity CHECK constraints** on ``team_registrations``,
    ``player_registrations``, and ``tos`` enforcing that exactly one of
    ``(event, league_id)`` is non-null. ``Tournament`` and ``PenaltyType``
    already had this; the registration / TO tables did not, and rows with
    both set or neither set silently broke any query that filtered by one.
 
-6. **Performance indexes** on the eight columns that are filtered on
+5. **Performance indexes** on the eight columns that are filtered on
    every hot path (``matches.event``, ``points.match``,
    ``match_notes.match``, ``team_registrations.event``,
    ``(player_registrations.event, player)``, ``(headrefs.player, event)``,
@@ -49,6 +44,11 @@ Concretely, this migration does six things:
    checks, and live-scoring reads all pay for these.
 
 Deliberately deferred:
+
+* **Email uniqueness** on ``players.email`` / ``teams.email``. Email is
+  contact information only — login is by ``id`` + password or by
+  ``google_id``, and no code path queries users by email. Two players or
+  two teams from the same club may legitimately share an inbox.
 
 * **Polymorphic user-ID FKs** (``TO.user_id`` / ``Match.started_by`` /
   ``Match.finalized_by`` / ``Camera.uploaded_by_user_id``). Replacing
@@ -61,10 +61,9 @@ Deliberately deferred:
   both the league config and the tournament fields; adding the CHECK now
   would reject perfectly normal writes from existing code.
 
+
 * **Replacing ``Match.field`` (name string) and ``Camera.field`` (slot
-  index) with proper FKs to ``fields.id`` / ``field_cameras.id``**.
-  These depend on ``field_cameras`` first being populated by backfill
-  and on application reads being switched over.
+  index) with proper FKs**.
 
 Pre-conditions for this migration:
 
@@ -82,7 +81,7 @@ Pre-conditions for this migration:
   constraints added here will reject such rows.
 
 Rollback: ``alembic downgrade 0001_baseline`` reverses every operation
-in this file (drops the six tables, drops the constraints and indexes,
+in this file (drops the four tables, drops the constraints and indexes,
 reverts the type changes). The downgrade is safe as long as no
 application code or data has come to depend on the new structures yet.
 
@@ -113,8 +112,6 @@ URL_SLUG_LEN = 100
 USER_ID_LEN = 50
 UUID_LEN = 36
 LONG_NAME_LEN = 200
-LONG_URL_LEN = 500
-AUTH_STRING_LEN = 255
 
 # Reused mutual-exclusivity CHECK clause — exactly one of the columns set.
 _EVENT_OR_LEAGUE = "(event IS NOT NULL AND league_id IS NULL) OR (event IS NULL AND league_id IS NOT NULL)"
@@ -158,28 +155,6 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["player_id"], ["players.id"]),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("match_uuid", "player_id", name="uq_match_players_match_player"),
-    )
-
-    op.create_table(
-        "field_cameras",
-        sa.Column("id", sa.Integer(), nullable=False),
-        sa.Column("field_id", sa.Integer(), nullable=False),
-        sa.Column("slot", sa.Integer(), nullable=False),
-        sa.Column("stream_url", sa.String(LONG_URL_LEN), nullable=True),
-        sa.ForeignKeyConstraint(["field_id"], ["fields.id"]),
-        sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("field_id", "slot", name="uq_field_cameras_field_slot"),
-    )
-
-    op.create_table(
-        "match_camera_stream_starts",
-        sa.Column("id", sa.Integer(), nullable=False),
-        sa.Column("match_uuid", sa.String(UUID_LEN), nullable=False),
-        sa.Column("camera_slot", sa.Integer(), nullable=False),
-        sa.Column("stream_start", sa.String(50), nullable=False),
-        sa.ForeignKeyConstraint(["match_uuid"], ["matches.uuid"]),
-        sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("match_uuid", "camera_slot", name="uq_match_camera_stream_starts_match_slot"),
     )
 
     op.create_table(
@@ -244,13 +219,7 @@ def upgrade() -> None:
     op.create_index("uq_sidecompresults_comp_player", "sidecompresults", ["comp", "player"], unique=True)
 
     # ------------------------------------------------------------------
-    # 5. Email uniqueness + index. Same single-statement approach as above.
-    # ------------------------------------------------------------------
-    op.create_index("uq_players_email", "players", ["email"], unique=True)
-    op.create_index("uq_teams_email", "teams", ["email"], unique=True)
-
-    # ------------------------------------------------------------------
-    # 6. Non-unique performance indexes (§5 of the doc).
+    # 5. Non-unique performance indexes
     # ------------------------------------------------------------------
     op.create_index("ix_matches_event", "matches", ["event"])
     op.create_index("ix_points_match", "points", ["match"])
@@ -274,9 +243,6 @@ def downgrade() -> None:
     op.drop_index("ix_match_notes_match", table_name="match_notes")
     op.drop_index("ix_points_match", table_name="points")
     op.drop_index("ix_matches_event", table_name="matches")
-
-    op.drop_index("uq_teams_email", table_name="teams")
-    op.drop_index("uq_players_email", table_name="players")
 
     op.drop_index("uq_sidecompresults_comp_player", table_name="sidecompresults")
     op.drop_index("uq_fields_name_event", table_name="fields")
@@ -304,8 +270,6 @@ def downgrade() -> None:
         batch.alter_column("team_reg_fee", existing_type=sa.Numeric(10, 2), type_=sa.Float())
 
     op.drop_table("camera_timepoints")
-    op.drop_table("match_camera_stream_starts")
-    op.drop_table("field_cameras")
     op.drop_table("match_players")
     op.drop_table("match_referees")
     op.drop_table("headref_allowlist")
