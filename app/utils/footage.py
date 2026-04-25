@@ -702,6 +702,13 @@ def _create_camera_outputs(
         "stream_start_time": session_outputs[0]["world_start_iso"],
     }
     match.camera_stream_starts = json.dumps(stream_starts)
+    # Mirror the new ``match_camera_stream_starts`` join table. Note: the
+    # rich-format payload here has a camera-name key (not an integer slot),
+    # so this entry is intentionally not mirrored — only integer-keyed
+    # entries land in the new table.
+    from app.services.dual_write import sync_match_camera_stream_starts
+
+    sync_match_camera_stream_starts(match)
     db.session.commit()
 
     field_obj = Field.query.filter_by(event=tournament_url, name=field_name).first()
@@ -741,6 +748,11 @@ def _create_camera_outputs(
     camera_row.file = video_path
     camera_row.time_world = json.dumps(time_world)
     camera_row.time_video = json.dumps(time_video)
+    db.session.flush()  # so camera_row.uuid is assigned before sync
+    # Mirror the new ``camera_timepoints`` join table.
+    from app.services.dual_write import sync_camera_timepoints
+
+    sync_camera_timepoints(camera_row)
     db.session.commit()
     return camera_row
 

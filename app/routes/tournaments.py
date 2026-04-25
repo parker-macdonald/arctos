@@ -1879,6 +1879,11 @@ def update_tournament_settings(tournament_url):
     tournament.location = request.form.get("location", "")
     tournament.about = request.form.get("about", "")
     tournament.head_refs_allowed_list = request.form.get("head_refs_allowed_list", "")
+    # Mirror the new ``headref_allowlist`` join table to the legacy CSV column.
+    # Removed in Phase 4 once application reads have switched over.
+    from app.services.dual_write import sync_head_ref_allowlist
+
+    sync_head_ref_allowlist(tournament)
     tournament.head_refs_allow_reffing_teams = "head_refs_allow_reffing_teams" in request.form
     tournament.head_refs_allow_anyone = "head_refs_allow_anyone" in request.form
     tournament.published = "published" in request.form
@@ -2245,6 +2250,10 @@ def update_field(tournament_url):
 
     # Store as JSON array
     field.camera = json.dumps(camera_urls) if camera_urls else ""
+    # Mirror the new ``field_cameras`` join table.
+    from app.services.dual_write import sync_field_cameras
+
+    sync_field_cameras(field)
 
     # Get all matches that reference this field (for both name and camera updates)
     # Use old field name if name changed, otherwise use current name
@@ -2268,6 +2277,8 @@ def update_field(tournament_url):
                 pass
 
         # Update matches that reference this field
+        from app.services.dual_write import sync_match_camera_stream_starts
+
         for match in matches_to_update:
             if match.camera_stream_starts:
                 try:
@@ -2280,11 +2291,13 @@ def update_field(tournament_url):
                             new_stream_starts[new_idx_str] = start_time
                         # If old index not in map, camera was removed - don't include it
                     match.camera_stream_starts = json.dumps(new_stream_starts) if new_stream_starts else None
+                    sync_match_camera_stream_starts(match)
                     camera_update_count += 1
                 except (json.JSONDecodeError, TypeError) as e:
                     print(f"Error updating camera_stream_starts for match {match.uuid}: {e}")
                     # If parsing fails, clear it
                     match.camera_stream_starts = None
+                    sync_match_camera_stream_starts(match)
 
         # Update points that reference this field (via the match)
         # Get all points for matches on this field
@@ -2665,6 +2678,8 @@ def update_match(tournament_url):
     match.skip_condition = skip_condition_raw if schedule_type in (ScheduleType.SAFE, ScheduleType.FAST) else None
 
     # If refs_initial changed, clear refs and repopulate with explicit team IDs and resolved tag references
+    from app.services.dual_write import sync_match_referees
+
     old_refs_initial = match.refs_initial or ""
     match.refs_initial = refs_initial
     if old_refs_initial != refs_initial:
@@ -2691,6 +2706,8 @@ def update_match(tournament_url):
                 match.refs = None
         else:
             match.refs = None
+        # Mirror the new ``match_referees`` join table.
+        sync_match_referees(match)
 
     # For dynamic matches, set previous_match from form and compute start time from it
     # For static matches, ensure previous_match is cleared and use provided start_time

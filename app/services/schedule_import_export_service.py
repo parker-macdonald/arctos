@@ -457,6 +457,10 @@ class ScheduleImportExportService:
                     if field:
                         field.name = field_dict["name"]
                         field.camera = field_dict["camera"]
+                        # Mirror the new ``field_cameras`` join table.
+                        from app.services.dual_write import sync_field_cameras
+
+                        sync_field_cameras(field)
                         fields_updated += 1
                     else:
                         # ID doesn't exist, create new (don't include id in creation)
@@ -547,6 +551,10 @@ class ScheduleImportExportService:
                                         match.refs = None
                                 else:
                                     match.refs = None
+                                # Mirror the new ``match_referees`` join table.
+                                from app.services.dual_write import sync_match_referees
+
+                                sync_match_referees(match)
                         match_name_to_uuid[match_name] = match.uuid
                         # Also add to field-based mapping for duplicate resolution (use actual match field)
                         match_field = match.field or ""

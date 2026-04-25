@@ -1079,6 +1079,11 @@ def user_autoclips_from_uploaded_batch_worker(
             time_video=json.dumps(time_video),
         )
         db.session.add(camera_row)
+        db.session.flush()  # so camera_row.uuid is assigned before sync
+        # Mirror the new ``camera_timepoints`` join table.
+        from app.services.dual_write import sync_camera_timepoints
+
+        sync_camera_timepoints(camera_row)
         db.session.commit()
 
         app_obj = current_app._get_current_object()

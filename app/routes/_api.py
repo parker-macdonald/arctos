@@ -2888,6 +2888,10 @@ def finalize_match_post_api(tournament_url):
                         pass
                 existing_starts.update(stream_starts)
                 match.camera_stream_starts = json.dumps(existing_starts)
+                # Mirror the new ``match_camera_stream_starts`` join table.
+                from app.services.dual_write import sync_match_camera_stream_starts
+
+                sync_match_camera_stream_starts(match)
 
     team1_signature = data.get("team1_signature")
     team2_signature = data.get("team2_signature")
@@ -4483,6 +4487,10 @@ def update_match_api(tournament_url, match_id):
         match.team2_initial = None
         match.refs = None
         match.refs_initial = None
+        # Mirror the new ``match_referees`` join table.
+        from app.services.dual_write import sync_match_referees
+
+        sync_match_referees(match)
     else:
         # Helper to check if a value is an explicit team ID (not a tag or match reference)
         def is_explicit_team_id(val: str) -> bool:
@@ -4548,6 +4556,10 @@ def update_match_api(tournament_url, match_id):
                 r_csv, i_csv = resolve_refs_slots(toks, tournament_url)
                 match.refs = r_csv
                 match.refs_initial = i_csv
+            # Mirror the new ``match_referees`` join table.
+            from app.services.dual_write import sync_match_referees
+
+            sync_match_referees(match)
 
     # Set Type
     if set_type_str:
@@ -4745,6 +4757,10 @@ def force_start_match_api(tournament_url, match_id):
     r_csv, i_csv = resolve_refs_slots(refs_list, tournament_url)
     match.refs = r_csv
     match.refs_initial = i_csv
+    # Mirror the new ``match_referees`` join table.
+    from app.services.dual_write import sync_match_referees
+
+    sync_match_referees(match)
 
     # Convert to static
     match.schedule_type = ScheduleType.STATIC
@@ -4855,6 +4871,10 @@ def update_field_api(tournament_url, field_id):
             old_camera_urls = [field.camera]
 
     field.camera = json.dumps(camera_urls) if camera_urls else ""
+    # Mirror the new ``field_cameras`` join table.
+    from app.services.dual_write import sync_field_cameras, sync_match_camera_stream_starts
+
+    sync_field_cameras(field)
 
     # Update matches and points (logic copied from tournaments.py)
     field_name_for_query = old_field_name if old_field_name != new_field_name else new_field_name
@@ -4881,8 +4901,10 @@ def update_field_api(tournament_url, field_id):
                             new_idx_str = old_to_new_index_map[old_idx_str]
                             new_stream_starts[new_idx_str] = start_time
                     match.camera_stream_starts = json.dumps(new_stream_starts) if new_stream_starts else None
+                    sync_match_camera_stream_starts(match)
                 except:
                     match.camera_stream_starts = None
+                    sync_match_camera_stream_starts(match)
 
         from app.utils.camera_helpers import calculate_stream_timestamp
 
@@ -4948,6 +4970,7 @@ def update_field_api(tournament_url, field_id):
                 elif str(idx) in stream_starts:
                     del stream_starts[str(idx)]
             match.camera_stream_starts = json.dumps(stream_starts) if stream_starts else None
+            sync_match_camera_stream_starts(match)
         # Recompute point stream_timestamp for matches we updated
         for match in matches_to_update:
             points = Point.query.filter_by(match=match.uuid).all()
@@ -5115,6 +5138,10 @@ def create_match_api(tournament_url):
         r_csv, i_csv = resolve_refs_slots(refs, tournament_url)
         match.refs = r_csv
         match.refs_initial = i_csv
+        # Mirror the new ``match_referees`` join table.
+        from app.services.dual_write import sync_match_referees
+
+        sync_match_referees(match)
 
     # Format
     set_type_str = data.get("set_type")
@@ -5223,6 +5250,12 @@ def create_field_api(tournament_url):
         field.camera = json.dumps(camera_urls)
 
     db.session.add(field)
+    db.session.flush()  # so field.id is available before sync_field_cameras
+    if camera_urls:
+        # Mirror the new ``field_cameras`` join table.
+        from app.services.dual_write import sync_field_cameras
+
+        sync_field_cameras(field)
     db.session.commit()
     return jsonify({"success": True, "id": field.id})
 
@@ -5885,6 +5918,10 @@ def update_tags_api(tournament_url):
 
             if changed:
                 m.refs = ",".join(current_refs)
+                # Mirror the new ``match_referees`` join table.
+                from app.services.dual_write import sync_match_referees
+
+                sync_match_referees(m)
 
     db.session.commit()
     recompute_all_match_times(tournament_url)
