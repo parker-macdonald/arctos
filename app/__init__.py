@@ -14,31 +14,52 @@ login_manager = LoginManager()
 from flask import url_for as _url_for
 
 
-def url_for(endpoint, **values):
-    """Custom url_for that handles subpath deployment"""
+def url_for(endpoint: str, **values) -> str:
+    """Return a URL for *endpoint*, prepending ``SCRIPT_NAME`` for subpath deployments.
+
+    Wraps Flask's :func:`~flask.url_for` so that the URL includes the
+    ``SCRIPT_NAME`` environment variable prefix when the application is
+    served at a non-root path (e.g. behind a reverse proxy).
+
+    Args:
+        endpoint: The name of the Flask endpoint.
+        **values: Values passed directly to :func:`~flask.url_for`.
+
+    Returns:
+        The generated URL, possibly prefixed with ``SCRIPT_NAME``.
+    """
     url = _url_for(endpoint, **values)
     if "SCRIPT_NAME" in os.environ and not url.startswith(os.environ["SCRIPT_NAME"]):
         url = os.environ["SCRIPT_NAME"] + url
     return url
 
 
-def create_app(config=None):
-    """Application factory."""
+def create_app(config: dict | None = None) -> Flask:
+    """Create and configure the Arctos Flask application.
+
+    Wires together SQLAlchemy, Flask-Login, OAuth (Google), CORS (dev mode),
+    all route blueprints, error handlers, Jinja filters, and Executor.  Also
+    triggers a boot-time schedule recomputation and resumes any interrupted
+    YouTube uploads when configured to do so.
+
+    Args:
+        config: Optional dict of configuration overrides.  Currently
+            supports ``"SQLALCHEMY_DATABASE_URI"`` for test isolation.
+
+    Returns:
+        A fully configured :class:`~flask.Flask` application instance.
+    """
     global db
 
     app = Flask(__name__, static_folder="../static", template_folder="../templates")
     config = config or dict()
     # Default configuration
     app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev-key")
-    app.config["SQLALCHEMY_DATABASE_URI"] = config.get(
-        "SQLALCHEMY_DATABASE_URI", "sqlite:///tournament.db"
-    )
+    app.config["SQLALCHEMY_DATABASE_URI"] = config.get("SQLALCHEMY_DATABASE_URI", "sqlite:///tournament.db")
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
     # Record / footage uploads use multi-MB POST bodies; set explicitly so Werkzeug does not reject large chunks.
     # Reverse proxies (nginx client_max_body_size, etc.) may still need raising in deployment.
-    app.config["MAX_CONTENT_LENGTH"] = int(
-        os.environ.get("MAX_CONTENT_LENGTH_BYTES", str(100 * 1024 * 1024))
-    )
+    app.config["MAX_CONTENT_LENGTH"] = int(os.environ.get("MAX_CONTENT_LENGTH_BYTES", str(100 * 1024 * 1024)))
     app.config["SESSION_COOKIE_HTTPONLY"] = True
     # For cross-origin SPA (e.g. dx serve on port 8080, Flask on 5006), set ARCTOS_CORS_DEV=1
     # so the session cookie is sent with credentialed requests. SameSite=None requires Secure
@@ -63,17 +84,13 @@ def create_app(config=None):
     app.config["S3_ENDPOINT_URL"] = os.environ.get("S3_ENDPOINT_URL", "").strip() or None
     app.config["AWS_REGION"] = os.environ.get("AWS_REGION", "us-east-1").strip()
     app.config["S3_VIDEO_PREFIX"] = os.environ.get("S3_VIDEO_PREFIX", "").strip() or None
-    app.config["S3_PRESIGNED_EXPIRY_SECONDS"] = int(
-        os.environ.get("S3_PRESIGNED_EXPIRY_SECONDS", "3600")
-    )
+    app.config["S3_PRESIGNED_EXPIRY_SECONDS"] = int(os.environ.get("S3_PRESIGNED_EXPIRY_SECONDS", "3600"))
     app.config["RECORDING_ARTIFACTS_AFTER_UPLOAD"] = (
-        os.environ.get("RECORDING_ARTIFACTS_AFTER_UPLOAD", "delete").strip().lower()
-        or "delete"
+        os.environ.get("RECORDING_ARTIFACTS_AFTER_UPLOAD", "delete").strip().lower() or "delete"
     )
-    app.config["ENABLE_MANUAL_FOOTAGE_UPLOADS"] = (
-        os.environ.get("ENABLE_MANUAL_FOOTAGE_UPLOADS", "").strip().lower()
-        in ("1", "true", "yes", "on")
-    )
+    app.config["ENABLE_MANUAL_FOOTAGE_UPLOADS"] = os.environ.get(
+        "ENABLE_MANUAL_FOOTAGE_UPLOADS", ""
+    ).strip().lower() in ("1", "true", "yes", "on")
 
     # Handle subpath deployment
     if "SCRIPT_NAME" in os.environ:
@@ -84,6 +101,8 @@ def create_app(config=None):
         app.config.update(config)
 
     # SQLite: increase busy timeout; finalize workers and HTTP handlers share one file.
+    # The same timeout is also re-asserted via PRAGMA in `set_sqlite_pragmas` below so
+    # that every new DBAPI connection gets it regardless of how the engine was built.
     uri = app.config.get("SQLALCHEMY_DATABASE_URI") or ""
     if isinstance(uri, str) and uri.startswith("sqlite"):
         opts = dict(app.config.get("SQLALCHEMY_ENGINE_OPTIONS") or {})
@@ -115,7 +134,10 @@ def create_app(config=None):
     db = db_instance
     db.init_app(app)
     init_db(db)
-    # WAL + busy_timeout: readers/writers interleave better than default rollback journal.
+    # Per-connection SQLite pragmas. WAL + busy_timeout let readers/writers interleave
+    # better than the default rollback journal; foreign-key enforcement is added here
+    # because SQLite ships with it OFF by default and only honours it when the pragma
+    # is set on EVERY new connection.
     try:
         with app.app_context():
             eng = db.engine
@@ -123,13 +145,30 @@ def create_app(config=None):
                 from sqlalchemy import event
 
                 @event.listens_for(eng, "connect")
-                def _sqlite_pragma(dbapi_connection, _connection_record):
+                def set_sqlite_pragmas(dbapi_connection, _connection_record):
+                    """Apply Arctos-required SQLite pragmas to a fresh DBAPI connection.
+
+                    Runs once per new connection that SQLAlchemy's pool hands out:
+
+                    * ``journal_mode=WAL`` — readers and writers do not block each
+                      other; required because finalize workers and HTTP handlers
+                      share a single database file.
+                    * ``busy_timeout=30000`` — wait up to 30 s for a competing writer
+                      instead of failing immediately with ``SQLITE_BUSY``.
+                    * ``foreign_keys=ON`` — SQLite disables FK enforcement by default
+                      and only checks it when this pragma is set on the connection.
+                      Without this every ``ForeignKey`` in the schema is decorative
+                      and deletes silently orphan child rows. This is the one
+                      non-obvious pragma; do not remove it.
+                    """
                     cur = dbapi_connection.cursor()
                     try:
                         cur.execute("PRAGMA journal_mode=WAL")
                         cur.execute("PRAGMA busy_timeout=30000")
+                        cur.execute("PRAGMA foreign_keys=ON")
                     finally:
                         cur.close()
+
     except Exception:
         pass
     # Ensure tables exist (safe to call on startup)
@@ -217,11 +256,7 @@ def create_app(config=None):
         # Otherwise only for /_api and (in dev) /static/
         cors_dev_all = os.environ.get("ARCTOS_CORS_DEV") == "1"
         is_api = "/_api" in request.path
-        is_static_cors = (
-            cors_dev_all
-            and request.endpoint == "static"
-            and request.path.startswith("/static/")
-        )
+        is_static_cors = cors_dev_all and request.endpoint == "static" and request.path.startswith("/static/")
         if not cors_dev_all and not is_api and not is_static_cors:
             return response
         origin_header = request.headers.get("Origin")
@@ -239,9 +274,7 @@ def create_app(config=None):
         cors_dev_all = os.environ.get("ARCTOS_CORS_DEV") == "1"
         is_api = "/_api" in request.path
         is_static_cors = cors_dev_all and request.path.startswith("/static/")
-        if request.method != "OPTIONS" or (
-            not cors_dev_all and not is_api and not is_static_cors
-        ):
+        if request.method != "OPTIONS" or (not cors_dev_all and not is_api and not is_static_cors):
             return None
         origin_header = request.headers.get("Origin")
         origin = _cors_allowed_origin(origin_header) if origin_header else None
@@ -258,9 +291,7 @@ def create_app(config=None):
         # Check if this is a static file request
         if response.status_code == 200 and request.endpoint == "static":
             # Cache images and other static assets for 1 hour
-            if request.path.startswith("/static/uploads/") or request.path.startswith(
-                "/static/"
-            ):
+            if request.path.startswith("/static/uploads/") or request.path.startswith("/static/"):
                 response.cache_control.max_age = 3600
                 response.cache_control.public = True
         return response
@@ -282,11 +313,7 @@ def create_app(config=None):
                 if t.end_date is None:
                     not_complete = True
                 else:
-                    end_utc = (
-                        t.end_date.replace(tzinfo=timezone.utc)
-                        if t.end_date.tzinfo is None
-                        else t.end_date
-                    )
+                    end_utc = t.end_date.replace(tzinfo=timezone.utc) if t.end_date.tzinfo is None else t.end_date
                     not_complete = end_utc >= now
                 if not_complete:
                     try:

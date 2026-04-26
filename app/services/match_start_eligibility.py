@@ -52,11 +52,7 @@ def get_who_allowed_explanation(tournament_url: str, match=None) -> List[str]:
     lines: List[str] = []
 
     if tournament.head_refs_allowed_list:
-        allowed_list = [
-            ref.strip()
-            for ref in tournament.head_refs_allowed_list.split(",")
-            if ref.strip()
-        ]
+        allowed_list = [ref.strip() for ref in tournament.head_refs_allowed_list.split(",") if ref.strip()]
         if allowed_list:
             lines.append(f"{', '.join(allowed_list)} are allowed.")
 
@@ -182,16 +178,12 @@ def _reasons_teams_refs(match, tournament_url: str) -> List[str]:
                 tag_name = initial[5:].strip()
                 tag = Tag.query.filter_by(event=tournament_url, name=tag_name).first()
                 if not tag or not getattr(tag, "team", None):
-                    reasons.append(
-                        f"Ref slot {i + 1} is set by tag '{tag_name}', which is not yet assigned."
-                    )
+                    reasons.append(f"Ref slot {i + 1} is set by tag '{tag_name}', which is not yet assigned.")
             elif "::winner" in initial or "::loser" in initial:
                 base = initial.split("::")[0].strip()
                 dep = Match.query.filter_by(name=base, event=tournament_url).first()
                 if not dep or getattr(dep, "match_winner", None) is None:
-                    reasons.append(
-                        f"Ref slot {i + 1} depends on match '{base}', which is not yet completed."
-                    )
+                    reasons.append(f"Ref slot {i + 1} depends on match '{base}', which is not yet completed.")
             else:
                 reasons.append(f"Ref slot {i + 1} is not yet set.")
     return reasons
@@ -211,9 +203,7 @@ def _reasons_status_and_deps(tournament_url: str, match) -> List[str]:
     if prev_uuid:
         prev = Match.query.filter_by(uuid=prev_uuid, event=tournament_url).first()
         if prev and prev.status not in (MatchStatus.COMPLETED, MatchStatus.SKIPPED):
-            reasons.append(
-                f"Previous match '{getattr(prev, 'name', prev_uuid)}' is not completed."
-            )
+            reasons.append(f"Previous match '{getattr(prev, 'name', prev_uuid)}' is not completed.")
 
     if getattr(match, "schedule_type", None) != ScheduleType.STATIC:
         try:
@@ -221,14 +211,10 @@ def _reasons_status_and_deps(tournament_url: str, match) -> List[str]:
         except Exception:
             deps = []
         if deps:
-            not_finished = [
-                d for d in deps if d.status not in (MatchStatus.COMPLETED, MatchStatus.SKIPPED)
-            ]
+            not_finished = [d for d in deps if d.status not in (MatchStatus.COMPLETED, MatchStatus.SKIPPED)]
             if not_finished and not (getattr(match, "ready_to_start", False)):
                 names = [getattr(d, "name", d.uuid) for d in not_finished]
-                reasons.append(
-                    f"Dependency match(es) not completed: {', '.join(names)}."
-                )
+                reasons.append(f"Dependency match(es) not completed: {', '.join(names)}.")
 
     for attr, label in [
         ("team1_initial", "Team 1"),
@@ -253,9 +239,7 @@ def _reasons_status_and_deps(tournament_url: str, match) -> List[str]:
     return reasons
 
 
-def _build_why_sections(
-    tournament_url: str, match, user
-) -> WhySections:
+def _build_why_sections(tournament_url: str, match, user) -> WhySections:
     """Build the three-section structure for the why modal."""
     from app.utils.user_helpers import is_player
 
@@ -270,7 +254,9 @@ def _build_why_sections(
     if status in (MatchStatus.COMPLETED, MatchStatus.SKIPPED):
         match_ready_reasons.append(f"Match status is {status_str}. The match is already over.")
     elif status == MatchStatus.READY_TO_START:
-        match_ready_reasons.append("Match status is READY_TO_START. The match can be started once ref permissions and conflicts are satisfied.")
+        match_ready_reasons.append(
+            "Match status is READY_TO_START. The match can be started once ref permissions and conflicts are satisfied."
+        )
     elif status in (MatchStatus.NOT_STARTED, MatchStatus.TIME_FINALIZED):
         match_ready_reasons.append(f"Match status is {status_str}. The match is not yet ready to start.")
         match_ready_reasons.extend(_reasons_status_and_deps(tournament_url, match))
@@ -309,9 +295,7 @@ def _build_why_sections(
     return sections
 
 
-def get_can_start_and_reasons(
-    tournament_url: str, match, user
-) -> Tuple[bool, List[str], WhySections]:
+def get_can_start_and_reasons(tournament_url: str, match, user) -> Tuple[bool, List[str], WhySections]:
     """
     Single source of truth: can the given user start this match, and why not if not?
 

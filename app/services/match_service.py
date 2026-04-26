@@ -21,6 +21,14 @@ if TYPE_CHECKING:  # pragma: no cover
 
 
 def _dedup(seq: Iterable[str]) -> List[str]:
+    """Return a deduplicated list preserving insertion order, skipping falsy values.
+
+    Args:
+        seq: Iterable of strings to deduplicate.
+
+    Returns:
+        A new list with duplicates and empty strings removed.
+    """
     seen = set()
     out: List[str] = []
     for x in seq:
@@ -32,6 +40,13 @@ def _dedup(seq: Iterable[str]) -> List[str]:
 
 @dataclass(frozen=True)
 class MatchService:
+    """Service encapsulating high-level match operations.
+
+    All methods are static; the class acts as a namespace.  Each method
+    returns a :class:`~app.error_values.Result` so that callers can handle
+    errors without exceptions.
+    """
+
     @staticmethod
     @allow_Q
     def start_match(
@@ -44,6 +59,29 @@ class MatchService:
         match_notes: str = "",
         stones_per_set: Optional[str] = None,
     ) -> Result["Match", ArctosError]:
+        """Validate and transition a match into the ``IN_PROGRESS`` state.
+
+        Performs eligibility checks, deduplicates player rosters, records
+        the starting timestamp and camera stream-start times, then triggers
+        a schedule recomputation.
+
+        Args:
+            tournament_url: Tournament URL slug scoping the match.
+            match_id: UUID of the match to start.
+            user: Authenticated user initiating the start.
+            team1_players_csv: Comma-separated player IDs for team1's
+                field roster.
+            team2_players_csv: Comma-separated player IDs for team2's
+                field roster.
+            match_notes: Optional free-text notes recorded at start.
+            stones_per_set: Override stones per set for ``STONES``-mode
+                matches; ``None`` falls back to the match's stored value.
+
+        Returns:
+            :class:`~app.error_values.Ok` wrapping the started
+            :class:`~app.models.match.Match`, or
+            :class:`~app.error_values.Err` wrapping a domain error.
+        """
         from models import Match, Tournament, Field, db
         from app.domain.enums import MatchStatus
         from app.utils.scheduling import recompute_all_match_times
@@ -57,21 +95,15 @@ class MatchService:
 
         from app.services.match_start_eligibility import get_can_start_and_reasons
 
-        can_start, block_reasons, _ = get_can_start_and_reasons(
-            tournament_url, match, user
-        )
+        can_start, block_reasons, _ = get_can_start_and_reasons(tournament_url, match, user)
         if not can_start:
             msg = block_reasons[0] if block_reasons else "Cannot start this match."
             return Err(ValidationError(msg))
 
         raw_team1 = (team1_players_csv or "").strip()
         raw_team2 = (team2_players_csv or "").strip()
-        team1_players = [
-            pid for pid in (raw_team1.split(",") if raw_team1 else []) if pid
-        ]
-        team2_players = [
-            pid for pid in (raw_team2.split(",") if raw_team2 else []) if pid
-        ]
+        team1_players = [pid for pid in (raw_team1.split(",") if raw_team1 else []) if pid]
+        team2_players = [pid for pid in (raw_team2.split(",") if raw_team2 else []) if pid]
 
         overlap = set(team1_players) & set(team2_players)
         if overlap:
@@ -79,15 +111,14 @@ class MatchService:
 
         tournament_obj = Tournament.query.get(tournament_url)
         from app.utils.helpers import get_registrable_config
+
         cfg = get_registrable_config(tournament_obj)
         max_roster = getattr(cfg, "max_team_size_field", None) if cfg else None
         try:
             max_roster = int(max_roster) if max_roster is not None else None
         except Exception:
             max_roster = None
-        if max_roster and (
-            len(team1_players) > max_roster or len(team2_players) > max_roster
-        ):
+        if max_roster and (len(team1_players) > max_roster or len(team2_players) > max_roster):
             return Err(ValidationError("Too many players selected for a team"))
 
         team1_players = _dedup(team1_players)
@@ -118,9 +149,7 @@ class MatchService:
 
         # Get camera stream start times for all cameras on this field
         if match.field:
-            field_obj = Field.query.filter_by(
-                event=tournament_url, name=match.field
-            ).first()
+            field_obj = Field.query.filter_by(event=tournament_url, name=match.field).first()
             if field_obj and field_obj.camera:
                 from app.utils.camera_helpers import get_all_camera_stream_starts
 

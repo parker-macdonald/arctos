@@ -17,7 +17,18 @@ from app.domain.enums import ScheduleType, MatchStatus
 
 
 def _node_key(name: str, field: Optional[str]) -> Tuple[str, str]:
-    """Canonical key for a node: (name, field or ''). Matches with same name on different fields get different keys."""
+    """Return the canonical graph key for a match node.
+
+    Matches on different fields with the same name are treated as distinct
+    nodes.
+
+    Args:
+        name: Match name.
+        field: Field (court) name, or ``None``.
+
+    Returns:
+        A ``(name, field_or_empty)`` tuple used as the dict key.
+    """
     return (name, field or "")
 
 
@@ -65,9 +76,7 @@ class MatchGraphNode:
         """
         from app.utils.MatchGraph import endOfMatchDep
 
-        return set(
-            dep.node for dep in self.dependencies if isinstance(dep, endOfMatchDep)
-        )
+        return set(dep.node for dep in self.dependencies if isinstance(dep, endOfMatchDep))
 
     def get_schedule_dependencies(self) -> Set["MatchGraphNode"]:
         """
@@ -84,8 +93,7 @@ class MatchGraphNode:
                 return
             visited.add(node)
             if (
-                node.schedule_type
-                in (ScheduleType.STATIC, ScheduleType.SAFE, ScheduleType.FAST)
+                node.schedule_type in (ScheduleType.STATIC, ScheduleType.SAFE, ScheduleType.FAST)
                 # and node.status != MatchStatus.SKIPPED # idt we should do this bc we know skipping only happens at match start
             ):
                 result.add(node)
@@ -97,9 +105,7 @@ class MatchGraphNode:
             traverse(dep.node)
         return result
 
-    def get_direct_deps_latest_end_time(
-        self, for_safe_nominal: bool = False
-    ) -> Optional[datetime]:
+    def get_direct_deps_latest_end_time(self, for_safe_nominal: bool = False) -> Optional[datetime]:
         """
         Latest end time from direct (end-of-match) dependencies only.
 
@@ -222,9 +228,7 @@ class MatchGraph:
         else:
             self.key_to_uuids[key].add(node.uuid)
 
-    def get_node(
-        self, name: str, field: Optional[str] = None
-    ) -> Optional[MatchGraphNode]:
+    def get_node(self, name: str, field: Optional[str] = None) -> Optional[MatchGraphNode]:
         """Get a node by match name and field. field defaults to ''."""
         key = _node_key(name, field)
         return self.nodes_by_key.get(key)
@@ -248,11 +252,7 @@ class MatchGraph:
         dependency_node = self.nodes_by_key.get(dependency_key)
 
         if dependent and dependency_node:
-            dep: Dependency = (
-                startOfMatchDep(dependency_node)
-                if is_skip_condition
-                else endOfMatchDep(dependency_node)
-            )
+            dep: Dependency = startOfMatchDep(dependency_node) if is_skip_condition else endOfMatchDep(dependency_node)
             dependent.dependencies.add(dep)
             dependency_node.dependents.add(dependent)
 
@@ -278,14 +278,10 @@ class MatchGraph:
         """
         # Kahn's algorithm for topological sort
         # Calculate in-degree for each node
-        in_degree: Dict[MatchGraphNode, int] = {
-            node: len(node.dependencies) for node in self.nodes_by_key.values()
-        }
+        in_degree: Dict[MatchGraphNode, int] = {node: len(node.dependencies) for node in self.nodes_by_key.values()}
 
         # Queue of nodes with no incoming edges
-        queue: List[MatchGraphNode] = [
-            node for node, degree in in_degree.items() if degree == 0
-        ]
+        queue: List[MatchGraphNode] = [node for node, degree in in_degree.items() if degree == 0]
 
         result: List[Tuple[str, str]] = []
 
@@ -302,9 +298,7 @@ class MatchGraph:
         # Check for cycles
         if len(result) != len(self.nodes_by_key):
             remaining = set(self.nodes_by_key.keys()) - set(result)
-            raise ValueError(
-                f"Cycle detected in match dependencies. Remaining nodes: {remaining}"
-            )
+            raise ValueError(f"Cycle detected in match dependencies. Remaining nodes: {remaining}")
 
         return result
 
@@ -343,6 +337,14 @@ def _is_match_resolved(match: Match) -> bool:
 
 
 def _csv_tokens(raw: Optional[str]) -> List[str]:
+    """Split a comma-separated string into a trimmed list, dropping empty parts.
+
+    Args:
+        raw: A comma-separated string, or ``None``.
+
+    Returns:
+        List of non-empty stripped tokens.
+    """
     if not raw:
         return []
     return [part.strip() for part in str(raw).split(",") if part.strip()]
@@ -455,9 +457,7 @@ def build_match_graph(
                     all_dep_keys.add(dep_key_for_match(prev_match))
 
             skip_deps = join_match.get_skip_condition_dependencies()
-            for dep_name in skip_deps.get("direct", set()) | skip_deps.get(
-                "skip_condition", set()
-            ):
+            for dep_name in skip_deps.get("direct", set()) | skip_deps.get("skip_condition", set()):
                 if dep_name in join_names:
                     dep_key = (dep_name, "")
                 else:
@@ -530,15 +530,9 @@ def build_match_graph(
                     latest_shared_match = None
                     for candidate in field_matches:
                         candidate_start = getattr(candidate, "nominal_start_time", None)
-                        if (
-                            candidate.uuid == match.uuid
-                            or candidate_start is None
-                            or candidate_start >= match_start
-                        ):
+                        if candidate.uuid == match.uuid or candidate_start is None or candidate_start >= match_start:
                             continue
-                        if not (
-                            participants & _match_participant_team_ids(candidate)
-                        ):
+                        if not (participants & _match_participant_team_ids(candidate)):
                             continue
                         if latest_shared_match is None or (
                             candidate_start,
@@ -560,11 +554,7 @@ def build_match_graph(
         direct_skip_deps = skip_deps.get("direct", set())
         skip_condition_deps = skip_deps.get("skip_condition", set())
         for dep_name in direct_skip_deps:
-            dep_key = (
-                (dep_name, match_field)
-                if dep_name not in join_names
-                else (dep_name, "")
-            )
+            dep_key = (dep_name, match_field) if dep_name not in join_names else (dep_name, "")
             if dep_key not in graph.nodes_by_key:
                 for k in graph.nodes_by_key:
                     if k[0] == dep_name:
@@ -573,11 +563,7 @@ def build_match_graph(
             if dep_key in graph.nodes_by_key:
                 graph.add_dependency(dependent_key, dep_key, is_skip_condition=False)
         for dep_name in skip_condition_deps:
-            dep_key = (
-                (dep_name, match_field)
-                if dep_name not in join_names
-                else (dep_name, "")
-            )
+            dep_key = (dep_name, match_field) if dep_name not in join_names else (dep_name, "")
             if dep_key not in graph.nodes_by_key:
                 for k in graph.nodes_by_key:
                     if k[0] == dep_name:

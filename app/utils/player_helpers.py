@@ -16,8 +16,22 @@ def format_jersey_display(
     jersey_number: Optional[str],
     fallback: str,
 ) -> str:
-    """
-    Format a tournament display string based on jersey info.
+    """Format a player's display name using their jersey information.
+
+    Priority:
+
+    1. ``jersey_name`` + ``#jersey_number`` (e.g. ``"Alice #7"``).
+    2. ``jersey_name`` alone.
+    3. ``#jersey_number`` alone.
+    4. *fallback* (typically the player's account name).
+
+    Args:
+        jersey_name: Player's jersey / tournament name, or ``None``.
+        jersey_number: Jersey number string, or ``None``.
+        fallback: Value returned when both jersey fields are empty.
+
+    Returns:
+        Formatted display string.
     """
     jn = (jersey_name or "").strip()
     jnum = (jersey_number or "").strip()
@@ -31,37 +45,43 @@ def format_jersey_display(
 
 
 def get_player_display_from_registration(player, registration) -> str:
-    """
-    Return a display string for a player using a known PlayerRegistration (no DB queries).
-    """
-    fallback = getattr(player, "name", "") or getattr(player, "id", "") or ""
-    jersey_name = (
-        getattr(registration, "jersey_name", None) if registration is not None else None
-    )
-    jersey_number = (
-        getattr(registration, "jersey_number", None)
-        if registration is not None
-        else None
-    )
-    return format_jersey_display(
-        jersey_name=jersey_name, jersey_number=jersey_number, fallback=fallback
-    )
+    """Return a player's tournament display string from pre-fetched objects.
 
+    Avoids additional database queries because *player* and *registration*
+    are already in memory.
 
-def get_player_display_name(
-    player_id: str, tournament_url: str
-) -> Tuple[Optional[str], Optional[str]]:
-    """
-    Get a player's canonical name and a tournament-specific display string.
-
-    Display string preference:
-    1) jersey_name + jersey_number (e.g. "Alice #7")
-    2) jersey_name
-    3) jersey_number (e.g. "#7")
-    4) Player.name
+    Args:
+        player: A :class:`~app.models.user.Player` ORM instance.
+        registration: A :class:`~app.models.registration.PlayerRegistration`
+            ORM instance, or ``None`` for unregistered players.
 
     Returns:
-        (player_name, player_display) or (None, None) if player not found.
+        Formatted display string (see :func:`format_jersey_display`).
+    """
+    fallback = getattr(player, "name", "") or getattr(player, "id", "") or ""
+    jersey_name = getattr(registration, "jersey_name", None) if registration is not None else None
+    jersey_number = getattr(registration, "jersey_number", None) if registration is not None else None
+    return format_jersey_display(jersey_name=jersey_name, jersey_number=jersey_number, fallback=fallback)
+
+
+def get_player_display_name(player_id: str, tournament_url: str) -> Tuple[Optional[str], Optional[str]]:
+    """Look up a player's canonical name and tournament display string.
+
+    Display string priority:
+
+    1. ``jersey_name`` + ``#jersey_number`` (e.g. ``"Alice #7"``).
+    2. ``jersey_name`` alone.
+    3. ``#jersey_number`` alone.
+    4. :attr:`~app.models.user.Player.name`.
+
+    Args:
+        player_id: The player's account ID.
+        tournament_url: Tournament URL slug used to find the
+            :class:`~app.models.registration.PlayerRegistration`.
+
+    Returns:
+        A ``(player_name, player_display)`` tuple, or ``(None, None)`` when
+        the player account is not found.
     """
     if not player_id:
         return None, None
@@ -77,9 +97,7 @@ def get_player_display_name(
     player_display: Optional[str] = None
 
     if tournament_url:
-        reg = PlayerRegistration.query.filter_by(
-            event=tournament_url, player=player_id
-        ).first()
+        reg = PlayerRegistration.query.filter_by(event=tournament_url, player=player_id).first()
         if reg:
             player_display = format_jersey_display(
                 jersey_name=getattr(reg, "jersey_name", None),

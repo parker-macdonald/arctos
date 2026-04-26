@@ -58,10 +58,9 @@ data types:
 
 """
 
-from lark import Lark, Tree, Token
-from functools import lru_cache
+from lark import Lark, Tree
 from sqlalchemy import or_, and_
-from app.models import Match as MatchDB, Point as PointDB, Team as TeamDB, db, Tag
+from app.models import Match as MatchDB, Point as PointDB, Team as TeamDB, Tag
 from app.domain.enums import WinnerSide
 
 
@@ -213,22 +212,14 @@ class Team:
 
     def wins(self):
         return (
-            MatchDB.query.filter_by(
-                event=self.url, team1=self.obj.id, match_winner=WinnerSide.TEAM1
-            ).count()
-            + MatchDB.query.filter_by(
-                event=self.url, team2=self.obj.id, match_winner=WinnerSide.TEAM2
-            ).count()
+            MatchDB.query.filter_by(event=self.url, team1=self.obj.id, match_winner=WinnerSide.TEAM1).count()
+            + MatchDB.query.filter_by(event=self.url, team2=self.obj.id, match_winner=WinnerSide.TEAM2).count()
         )
 
     def losses(self):
         return (
-            MatchDB.query.filter_by(
-                event=self.url, team1=self.obj.id, match_winner=WinnerSide.TEAM2
-            ).count()
-            + MatchDB.query.filter_by(
-                event=self.url, team2=self.obj.id, match_winner=WinnerSide.TEAM1
-            ).count()
+            MatchDB.query.filter_by(event=self.url, team1=self.obj.id, match_winner=WinnerSide.TEAM2).count()
+            + MatchDB.query.filter_by(event=self.url, team2=self.obj.id, match_winner=WinnerSide.TEAM1).count()
         )
 
     def __hash__(self):
@@ -262,9 +253,6 @@ class Match:
 
     def __hash__(self):
         return hash((self.url, self.obj.uuid))
-
-
-from typing import Any, Optional
 
 
 class Simplifier:
@@ -359,9 +347,7 @@ class Simplifier:
             if isinstance(param, str):
                 params.append(param)
             else:
-                raise DSLValidationError(
-                    f"Lambda parameter names must be identifiers, got {type(param).__name__}"
-                )
+                raise DSLValidationError(f"Lambda parameter names must be identifiers, got {type(param).__name__}")
 
         return params
 
@@ -375,13 +361,9 @@ class Simplifier:
         max_count = expected_count
         actual_count = len(args)
         if actual_count < min_count or actual_count > max_count:
-            raise DSLValidationError(
-                f"({head} ...) expects {expected_count} argument(s), got {actual_count}"
-            )
+            raise DSLValidationError(f"({head} ...) expects {expected_count} argument(s), got {actual_count}")
 
-    def _validate_type(
-        self, value, expected_type, type_name, arg_position, allow_none=False
-    ):
+    def _validate_type(self, value, expected_type, type_name, arg_position, allow_none=False):
         """Validate argument type. Raises DSLValidationError if invalid.
 
         Args:
@@ -397,29 +379,19 @@ class Simplifier:
 
         if expected_type == "TEAM":
             if not isinstance(value, Team):
-                raise DSLValidationError(
-                    f"Argument {arg_position} must be a TEAM, got {type(value).__name__}"
-                )
+                raise DSLValidationError(f"Argument {arg_position} must be a TEAM, got {type(value).__name__}")
         elif expected_type == "MATCH":
             if not isinstance(value, Match):
-                raise DSLValidationError(
-                    f"Argument {arg_position} must be a MATCH, got {type(value).__name__}"
-                )
+                raise DSLValidationError(f"Argument {arg_position} must be a MATCH, got {type(value).__name__}")
         elif expected_type == "INT":
             if not isinstance(value, int):
-                raise DSLValidationError(
-                    f"Argument {arg_position} must be an INT, got {type(value).__name__}"
-                )
+                raise DSLValidationError(f"Argument {arg_position} must be an INT, got {type(value).__name__}")
         elif expected_type == "BOOL":
             if not isinstance(value, bool):
-                raise DSLValidationError(
-                    f"Argument {arg_position} must be a BOOL, got {type(value).__name__}"
-                )
+                raise DSLValidationError(f"Argument {arg_position} must be a BOOL, got {type(value).__name__}")
         elif expected_type == "LIST":
             if not isinstance(value, list):
-                raise DSLValidationError(
-                    f"Argument {arg_position} must be a LIST, got {type(value).__name__}"
-                )
+                raise DSLValidationError(f"Argument {arg_position} must be a LIST, got {type(value).__name__}")
         elif expected_type == "ANY":
             pass  # No validation needed
 
@@ -487,9 +459,7 @@ class Simplifier:
         # Handle lambda special form - DON'T evaluate the body
         if isinstance(head, str) and head == "lambda":
             if len(tree.children) != 3:
-                raise DSLValidationError(
-                    "lambda expects 2 arguments: (params) and body"
-                )
+                raise DSLValidationError("lambda expects 2 arguments: (params) and body")
 
             # Evaluate params (second child) - this should be a list like (x) or (x y)
             params_tree = tree.children[1]
@@ -506,9 +476,7 @@ class Simplifier:
         # Handle if special form - evaluate condition first, then choose branch
         if isinstance(head, str) and head == "if":
             if len(tree.children) != 4:
-                raise DSLValidationError(
-                    "if expects 3 arguments: condition, if_true, if_false"
-                )
+                raise DSLValidationError("if expects 3 arguments: condition, if_true, if_false")
 
             # Evaluate condition
             cond_tree = tree.children[1]
@@ -603,18 +571,14 @@ class Simplifier:
     def _call_lambda(self, lambda_func, args):
         """Call a lambda function with arguments."""
         if not isinstance(lambda_func, Lambda):
-            raise DSLValidationError(
-                f"Expected Lambda, got {type(lambda_func).__name__}"
-            )
+            raise DSLValidationError(f"Expected Lambda, got {type(lambda_func).__name__}")
 
         # Create new environment with closure
         new_env = lambda_func.env.copy()
 
         # Validate argument count
         if len(args) != len(lambda_func.params):
-            raise DSLValidationError(
-                f"Lambda expects {len(lambda_func.params)} argument(s), got {len(args)}"
-            )
+            raise DSLValidationError(f"Lambda expects {len(lambda_func.params)} argument(s), got {len(args)}")
 
         # Bind arguments to parameters
         for param, arg in zip(lambda_func.params, args):
@@ -622,9 +586,7 @@ class Simplifier:
 
         # Evaluate body in new environment by visiting the Tree node
         # Create a new simplifier with the new environment
-        simplifier = Simplifier(
-            lambda_func.parse_team_literal, lambda_func.parse_match_literal, env=new_env
-        )
+        simplifier = Simplifier(lambda_func.parse_team_literal, lambda_func.parse_match_literal, env=new_env)
         # Visit the Tree node with the new environment
         result = simplifier.visit(lambda_func.body_tree)
 
@@ -690,11 +652,7 @@ class Simplifier:
             raise DSLValidationError("Lambda parameters must be a list")
 
         # Check for variadic (*args) syntax
-        if (
-            len(params_expr) == 1
-            and isinstance(params_expr[0], str)
-            and params_expr[0].startswith("*")
-        ):
+        if len(params_expr) == 1 and isinstance(params_expr[0], str) and params_expr[0].startswith("*"):
             # Variadic parameter
             param_name = params_expr[0][1:]  # Remove *
             params = [param_name]
@@ -707,9 +665,7 @@ class Simplifier:
                     params.append(p)
                 else:
                     # If it was evaluated to something else, that's an error
-                    raise DSLValidationError(
-                        f"Lambda parameter names must be identifiers, got {type(p).__name__}"
-                    )
+                    raise DSLValidationError(f"Lambda parameter names must be identifiers, got {type(p).__name__}")
 
         # Create lambda closure with current environment, storing the Tree node
         lambda_obj = Lambda(
@@ -730,9 +686,7 @@ class Simplifier:
 
         # Check for symbolic values or preserved expressions (lists) - preserve expression if found
         # But distinguish between data lists (like [1, 2, 3]) and preserved expressions (like ['+', x, y])
-        if isinstance(a, (SymbolicTeam, SymbolicMatch)) or isinstance(
-            b, (SymbolicTeam, SymbolicMatch)
-        ):
+        if isinstance(a, (SymbolicTeam, SymbolicMatch)) or isinstance(b, (SymbolicTeam, SymbolicMatch)):
             return [op, a, b]
         # Check if it's a preserved expression (starts with function name) vs a data list
         # Preserved expressions are lists that start with a function name (string)
@@ -740,16 +694,12 @@ class Simplifier:
             if self._is_preserved_expression(a):
                 return [op, a, b]
             # It's a data list - can't do arithmetic on it
-            raise DSLValidationError(
-                f"Argument 1 of ({op} ...) must be an INT, got LIST"
-            )
+            raise DSLValidationError(f"Argument 1 of ({op} ...) must be an INT, got LIST")
         if isinstance(b, list):
             if self._is_preserved_expression(b):
                 return [op, a, b]
             # It's a data list - can't do arithmetic on it
-            raise DSLValidationError(
-                f"Argument 2 of ({op} ...) must be an INT, got LIST"
-            )
+            raise DSLValidationError(f"Argument 2 of ({op} ...) must be an INT, got LIST")
 
         # Check for unresolved identifiers (strings that aren't builtins or in environment)
         # These might be lambda parameters that will be resolved when the lambda is called
@@ -762,13 +712,9 @@ class Simplifier:
         # Note: bool is a subclass of int in Python, so we need to check type explicitly
         if op in {"+", "-", "*", "/", ">", "<", ">=", "<="}:
             if type(a) is not int:  # Use 'is' to check exact type, not isinstance
-                raise DSLValidationError(
-                    f"Argument 1 of ({op} ...) must be an INT, got {type(a).__name__}"
-                )
+                raise DSLValidationError(f"Argument 1 of ({op} ...) must be an INT, got {type(a).__name__}")
             if type(b) is not int:  # Use 'is' to check exact type, not isinstance
-                raise DSLValidationError(
-                    f"Argument 2 of ({op} ...) must be an INT, got {type(b).__name__}"
-                )
+                raise DSLValidationError(f"Argument 2 of ({op} ...) must be an INT, got {type(b).__name__}")
             if op == "+":
                 return a + b
             elif op == "-":
@@ -789,9 +735,7 @@ class Simplifier:
                 return a <= b
         elif op == "==":
             # == works on any comparable values
-            if isinstance(a, (int, bool, type(None))) and isinstance(
-                b, (int, bool, type(None))
-            ):
+            if isinstance(a, (int, bool, type(None))) and isinstance(b, (int, bool, type(None))):
                 return a == b
             # For team objects, compare by team id (same team can be produced by different code paths)
             elif isinstance(a, Team) and isinstance(b, Team):
@@ -816,9 +760,7 @@ class Simplifier:
         a, b = args
 
         # Check for symbolic values or preserved expressions - preserve if found
-        if isinstance(a, (SymbolicTeam, SymbolicMatch)) or isinstance(
-            b, (SymbolicTeam, SymbolicMatch)
-        ):
+        if isinstance(a, (SymbolicTeam, SymbolicMatch)) or isinstance(b, (SymbolicTeam, SymbolicMatch)):
             return [op, a, b]
         if isinstance(a, list) or isinstance(b, list):
             # One of the operands is a preserved expression
@@ -844,9 +786,7 @@ class Simplifier:
             # Can't evaluate, preserve expression
             return [head, team]
         if not isinstance(team, Team):
-            raise DSLValidationError(
-                f"Argument 1 must be a TEAM, got {type(team).__name__}"
-            )
+            raise DSLValidationError(f"Argument 1 must be a TEAM, got {type(team).__name__}")
         return team.wins()
 
     def _evaluate_losses(self, head, args):
@@ -857,9 +797,7 @@ class Simplifier:
             # Can't evaluate, preserve expression
             return [head, team]
         if not isinstance(team, Team):
-            raise DSLValidationError(
-                f"Argument 1 must be a TEAM, got {type(team).__name__}"
-            )
+            raise DSLValidationError(f"Argument 1 must be a TEAM, got {type(team).__name__}")
         return team.losses()
 
     def _evaluate_winner(self, head, args):
@@ -870,9 +808,7 @@ class Simplifier:
             # Can't evaluate, preserve expression
             return [head, match]
         if not isinstance(match, Match):
-            raise DSLValidationError(
-                f"Argument 1 must be a MATCH, got {type(match).__name__}"
-            )
+            raise DSLValidationError(f"Argument 1 must be a MATCH, got {type(match).__name__}")
         winner = match.winner()
         # winner() returns SymbolicTeam if unknown, which is fine
         return winner
@@ -885,9 +821,7 @@ class Simplifier:
             # Can't evaluate, preserve expression
             return [head, match]
         if not isinstance(match, Match):
-            raise DSLValidationError(
-                f"Argument 1 must be a MATCH, got {type(match).__name__}"
-            )
+            raise DSLValidationError(f"Argument 1 must be a MATCH, got {type(match).__name__}")
         loser = match.loser()
         # loser() returns SymbolicTeam if unknown, which is fine
         return loser
@@ -901,9 +835,7 @@ class Simplifier:
                 # Can't evaluate, preserve expression
                 return [head, team]
             if not isinstance(team, Team):
-                raise DSLValidationError(
-                    f"Argument 1 must be a TEAM, got {type(team).__name__}"
-                )
+                raise DSLValidationError(f"Argument 1 must be a TEAM, got {type(team).__name__}")
             return team.points_won()
         elif len(args) == 2:
             # (points-won TEAM MATCH)
@@ -912,18 +844,12 @@ class Simplifier:
                 # Can't evaluate, preserve expression
                 return [head, team, match]
             if not isinstance(team, Team):
-                raise DSLValidationError(
-                    f"Argument 1 must be a TEAM, got {type(team).__name__}"
-                )
+                raise DSLValidationError(f"Argument 1 must be a TEAM, got {type(team).__name__}")
             if not isinstance(match, Match):
-                raise DSLValidationError(
-                    f"Argument 2 must be a MATCH, got {type(match).__name__}"
-                )
+                raise DSLValidationError(f"Argument 2 must be a MATCH, got {type(match).__name__}")
             return team.points_won(match)
         else:
-            raise DSLValidationError(
-                f"({head} ...) expects 1 or 2 arguments, got {len(args)}"
-            )
+            raise DSLValidationError(f"({head} ...) expects 1 or 2 arguments, got {len(args)}")
 
     def _evaluate_points_lost(self, head, args):
         """Evaluate (points-lost TEAM MATCH?) expression."""
@@ -934,9 +860,7 @@ class Simplifier:
                 # Can't evaluate, preserve expression
                 return [head, team]
             if not isinstance(team, Team):
-                raise DSLValidationError(
-                    f"Argument 1 must be a TEAM, got {type(team).__name__}"
-                )
+                raise DSLValidationError(f"Argument 1 must be a TEAM, got {type(team).__name__}")
             return team.points_lost()
         elif len(args) == 2:
             # (points-lost TEAM MATCH)
@@ -945,18 +869,12 @@ class Simplifier:
                 # Can't evaluate, preserve expression
                 return [head, team, match]
             if not isinstance(team, Team):
-                raise DSLValidationError(
-                    f"Argument 1 must be a TEAM, got {type(team).__name__}"
-                )
+                raise DSLValidationError(f"Argument 1 must be a TEAM, got {type(team).__name__}")
             if not isinstance(match, Match):
-                raise DSLValidationError(
-                    f"Argument 2 must be a MATCH, got {type(match).__name__}"
-                )
+                raise DSLValidationError(f"Argument 2 must be a MATCH, got {type(match).__name__}")
             return team.points_lost(match)
         else:
-            raise DSLValidationError(
-                f"({head} ...) expects 1 or 2 arguments, got {len(args)}"
-            )
+            raise DSLValidationError(f"({head} ...) expects 1 or 2 arguments, got {len(args)}")
 
     def _evaluate_is_skipped(self, head, args):
         """Evaluate (is-skipped MATCH) expression.
@@ -988,9 +906,7 @@ class Simplifier:
         """Evaluate (cons ...) expression - creates a list from arguments."""
         # Check if any argument is a preserved expression
         for arg in args:
-            if self._is_preserved_expression(arg) or isinstance(
-                arg, (SymbolicTeam, SymbolicMatch)
-            ):
+            if self._is_preserved_expression(arg) or isinstance(arg, (SymbolicTeam, SymbolicMatch)):
                 return [head] + args
         return list(args)
 
@@ -1002,9 +918,7 @@ class Simplifier:
         if self._is_preserved_expression(lst):
             return [head, lst]
         if not isinstance(lst, list):
-            raise DSLValidationError(
-                f"Argument 1 must be a LIST, got {type(lst).__name__}"
-            )
+            raise DSLValidationError(f"Argument 1 must be a LIST, got {type(lst).__name__}")
         if not lst:
             raise DSLValidationError("Cannot take car of empty list")
         return lst[0]
@@ -1017,9 +931,7 @@ class Simplifier:
         if self._is_preserved_expression(lst):
             return [head, lst]
         if not isinstance(lst, list):
-            raise DSLValidationError(
-                f"Argument 1 must be a LIST, got {type(lst).__name__}"
-            )
+            raise DSLValidationError(f"Argument 1 must be a LIST, got {type(lst).__name__}")
         if not lst:
             raise DSLValidationError("Cannot take cdr of empty list")
         return lst[1:]
@@ -1032,13 +944,9 @@ class Simplifier:
         if self._is_preserved_expression(index) or self._is_preserved_expression(lst):
             return [head, index, lst]
         if not isinstance(index, int):
-            raise DSLValidationError(
-                f"Argument 1 must be an INT, got {type(index).__name__}"
-            )
+            raise DSLValidationError(f"Argument 1 must be an INT, got {type(index).__name__}")
         if not isinstance(lst, list):
-            raise DSLValidationError(
-                f"Argument 2 must be a LIST, got {type(lst).__name__}"
-            )
+            raise DSLValidationError(f"Argument 2 must be a LIST, got {type(lst).__name__}")
         if 0 <= index < len(lst):
             return lst[index]
         else:
@@ -1065,9 +973,7 @@ class Simplifier:
         if self._is_preserved_expression(lst):
             return [head, lst]
         if not isinstance(lst, list):
-            raise DSLValidationError(
-                f"Argument 1 must be a LIST, got {type(lst).__name__}"
-            )
+            raise DSLValidationError(f"Argument 1 must be a LIST, got {type(lst).__name__}")
         return len(lst)
 
     def _evaluate_max(self, head, args):
@@ -1078,9 +984,7 @@ class Simplifier:
         if self._is_preserved_expression(lst):
             return [head, lst]
         if not isinstance(lst, list):
-            raise DSLValidationError(
-                f"Argument 1 must be a LIST, got {type(lst).__name__}"
-            )
+            raise DSLValidationError(f"Argument 1 must be a LIST, got {type(lst).__name__}")
         if not lst:
             raise DSLValidationError("Cannot find max of empty list")
         if not all(isinstance(x, int) for x in lst):
@@ -1095,9 +999,7 @@ class Simplifier:
         if self._is_preserved_expression(lst):
             return [head, lst]
         if not isinstance(lst, list):
-            raise DSLValidationError(
-                f"Argument 1 must be a LIST, got {type(lst).__name__}"
-            )
+            raise DSLValidationError(f"Argument 1 must be a LIST, got {type(lst).__name__}")
         if not lst:
             raise DSLValidationError("Cannot find min of empty list")
         if not all(isinstance(x, int) for x in lst):
@@ -1113,13 +1015,9 @@ class Simplifier:
         if self._is_preserved_expression(lst):
             return [head, lst, func]
         if not isinstance(lst, list):
-            raise DSLValidationError(
-                f"Argument 1 must be a LIST, got {type(lst).__name__}"
-            )
+            raise DSLValidationError(f"Argument 1 must be a LIST, got {type(lst).__name__}")
         if not isinstance(func, Lambda):
-            raise DSLValidationError(
-                f"Argument 2 must be a Lambda, got {type(func).__name__}"
-            )
+            raise DSLValidationError(f"Argument 2 must be a Lambda, got {type(func).__name__}")
 
         # Apply function to each element
         result = []
@@ -1136,13 +1034,9 @@ class Simplifier:
         if self._is_preserved_expression(lst):
             return [head, lst, func]
         if not isinstance(lst, list):
-            raise DSLValidationError(
-                f"Argument 1 must be a LIST, got {type(lst).__name__}"
-            )
+            raise DSLValidationError(f"Argument 1 must be a LIST, got {type(lst).__name__}")
         if not isinstance(func, Lambda):
-            raise DSLValidationError(
-                f"Argument 2 must be a Lambda, got {type(func).__name__}"
-            )
+            raise DSLValidationError(f"Argument 2 must be a Lambda, got {type(func).__name__}")
 
         if not lst:
             raise DSLValidationError("Cannot reduce empty list")
@@ -1168,13 +1062,9 @@ class Simplifier:
                 if isinstance(item, (SymbolicTeam, SymbolicMatch)):
                     return [head, lst, func]
         if not isinstance(lst, list):
-            raise DSLValidationError(
-                f"Argument 1 must be a LIST, got {type(lst).__name__}"
-            )
+            raise DSLValidationError(f"Argument 1 must be a LIST, got {type(lst).__name__}")
         if not isinstance(func, Lambda):
-            raise DSLValidationError(
-                f"Argument 2 must be a Lambda, got {type(func).__name__}"
-            )
+            raise DSLValidationError(f"Argument 2 must be a Lambda, got {type(func).__name__}")
 
         if not lst:
             raise DSLValidationError("Cannot find max_by of empty list")
@@ -1200,13 +1090,9 @@ class Simplifier:
         if self._is_preserved_expression(lst):
             return [head, lst, func]
         if not isinstance(lst, list):
-            raise DSLValidationError(
-                f"Argument 1 must be a LIST, got {type(lst).__name__}"
-            )
+            raise DSLValidationError(f"Argument 1 must be a LIST, got {type(lst).__name__}")
         if not isinstance(func, Lambda):
-            raise DSLValidationError(
-                f"Argument 2 must be a Lambda, got {type(func).__name__}"
-            )
+            raise DSLValidationError(f"Argument 2 must be a Lambda, got {type(func).__name__}")
 
         if not lst:
             raise DSLValidationError("Cannot find min_by of empty list")
@@ -1238,11 +1124,7 @@ def get_parser(event: str, match_resolver=None):
     with open(grammar_path, "r") as g:
         parser = Lark(g, parser="lalr")
 
-        parse_match = (
-            match_resolver
-            if match_resolver is not None
-            else (lambda x: parse_match_literal(x, event))
-        )
+        parse_match = match_resolver if match_resolver is not None else (lambda x: parse_match_literal(x, event))
 
         def parse(text):
             tree = parser.parse(text)

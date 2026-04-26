@@ -13,20 +13,33 @@ from app.utils.player_helpers import get_player_display_name
 
 @dataclass(frozen=True)
 class MatchNoteSerializer:
+    """Serialiser for :class:`~app.models.match.MatchNote` instances."""
+
     @staticmethod
-    def to_dict(
-        note, tournament_url: str, match: Optional[Any] = None
-    ) -> Dict[str, Any]:
+    def to_dict(note, tournament_url: str, match: Optional[Any] = None) -> Dict[str, Any]:
+        """Serialise a :class:`~app.models.match.MatchNote` to a JSON-safe dict.
+
+        Resolves the author's display name, the referenced player's
+        tournament name, and the team ID when the note targets ``team1`` or
+        ``team2``.
+
+        Args:
+            note: A :class:`~app.models.match.MatchNote` ORM instance.
+            tournament_url: Tournament URL slug used for display-name lookups.
+            match: Optional :class:`~app.models.match.Match` instance; required
+                to resolve ``team_id`` for ``team1``/``team2`` targets.
+
+        Returns:
+            A JSON-serialisable dict with keys: ``uuid``, ``text``, ``target``,
+            ``created_by``, ``created_at``, ``player_id``, ``player_name``,
+            ``player_display``, ``team_id``, ``penalty_type_id``.
+        """
         player_name = None
         player_display = None
         if getattr(note, "player_id", None):
-            player_name, player_display = get_player_display_name(
-                note.player_id, tournament_url
-            )
+            player_name, player_display = get_player_display_name(note.player_id, tournament_url)
 
-        created_ts = normalize_datetime(getattr(note, "created_at", None)).unwrap_or(
-            None
-        )
+        created_ts = normalize_datetime(getattr(note, "created_at", None)).unwrap_or(None)
 
         team_id = None
         target = getattr(note, "target", None)

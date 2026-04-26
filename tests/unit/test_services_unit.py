@@ -1,3 +1,5 @@
+"""Unit tests for RegistrationService and MatchService behaviour."""
+
 import pytest
 
 from app.domain.enums import MatchStatus
@@ -7,16 +9,21 @@ from app.services.match_service import MatchService
 from app.services.registration_service import RegistrationService
 from models import Match, Tournament, db
 from datetime import datetime, timezone
+from tests.utils import make_registrable_config
 
 
 @pytest.mark.unit
 def test_registration_service_register_team_closed_raises(test_db, team):
+    """register_team returns Err(RegistrationClosedError) when team registration is closed."""
     t = Tournament(
         url="closed",
         name="Closed",
         start_date=datetime.now(timezone.utc),
         published=True,
-        registration_open=False,
+        registrable_config_id=make_registrable_config(
+            registration_open=False,
+            team_registration_open=False,
+        ).id,
     )
     db.session.add(t)
     db.session.commit()
@@ -31,9 +38,8 @@ def test_registration_service_register_team_closed_raises(test_db, team):
 
 
 @pytest.mark.unit
-def test_match_service_overlap_raises_without_mutating_match(
-    test_db, tournament, head_ref_player
-):
+def test_match_service_overlap_raises_without_mutating_match(test_db, tournament, head_ref_player):
+    """start_match returns Err(ValidationError) for overlapping player rosters and leaves match unchanged."""
     tournament_url = tournament.url
     ref = db.session.merge(head_ref_player)
     m = Match(

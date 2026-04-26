@@ -27,6 +27,17 @@ _locks_lock = threading.Lock()
 
 
 def _get_tournament_lock(tournament_url: str) -> threading.Lock:
+    """Return the per-tournament reentrant lock, creating it on first access.
+
+    Each tournament has its own lock to prevent concurrent scheduling runs
+    from producing inconsistent results.
+
+    Args:
+        tournament_url: Tournament URL slug used as the lock key.
+
+    Returns:
+        The :class:`threading.Lock` for *tournament_url*.
+    """
     with _locks_lock:
         if tournament_url not in _tournament_locks:
             _tournament_locks[tournament_url] = threading.Lock()
@@ -34,16 +45,35 @@ def _get_tournament_lock(tournament_url: str) -> threading.Lock:
 
 
 def _now_utc() -> datetime:
+    """Return the current UTC time as a timezone-naive :class:`~datetime.datetime`."""
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def _csv_tokens(raw: Optional[str]) -> List[str]:
+    """Split a comma-separated string into a stripped, non-empty token list.
+
+    Args:
+        raw: Comma-separated string, or ``None``.
+
+    Returns:
+        List of non-empty stripped tokens.
+    """
     if not raw:
         return []
     return [part.strip() for part in str(raw).split(",") if part.strip()]
 
 
 def _match_participant_team_ids(match: object) -> set[str]:
+    """Return the set of team IDs actively assigned to a match.
+
+    Includes ``team1``, ``team2``, and all non-empty ``refs`` tokens.
+
+    Args:
+        match: Any object with ``team1``, ``team2``, and ``refs`` attributes.
+
+    Returns:
+        Set of non-empty team ID strings.
+    """
     participants = set()
     for team_id in (getattr(match, "team1", None), getattr(match, "team2", None)):
         if team_id and str(team_id).strip():
@@ -53,6 +83,15 @@ def _match_participant_team_ids(match: object) -> set[str]:
 
 
 def _matches_share_any_team(match_a: object, match_b: object) -> bool:
+    """Return ``True`` if *match_a* and *match_b* share at least one team/ref.
+
+    Args:
+        match_a: First match object.
+        match_b: Second match object.
+
+    Returns:
+        ``True`` if the participant team-ID sets intersect.
+    """
     return bool(_match_participant_team_ids(match_a) & _match_participant_team_ids(match_b))
 
 
@@ -62,12 +101,19 @@ def _intervals_overlap(
     start_b: Optional[datetime],
     length_b: Optional[int],
 ) -> bool:
-    if (
-        start_a is None
-        or start_b is None
-        or length_a is None
-        or length_b is None
-    ):
+    """Return ``True`` if two time intervals overlap (exclusive endpoints).
+
+    Args:
+        start_a: Start of interval A, or ``None``.
+        length_a: Duration of interval A in minutes, or ``None``.
+        start_b: Start of interval B, or ``None``.
+        length_b: Duration of interval B in minutes, or ``None``.
+
+    Returns:
+        ``True`` when both intervals are fully defined and share at least
+        one moment; ``False`` when any argument is ``None``.
+    """
+    if start_a is None or start_b is None or length_a is None or length_b is None:
         return False
     end_a = start_a + timedelta(minutes=length_a)
     end_b = start_b + timedelta(minutes=length_b)
@@ -100,9 +146,7 @@ def _evaluate_skip_condition(
         return False
 
 
-def _all_schedule_deps_in(
-    node: MatchGraphNode, statuses: Tuple[MatchStatus, ...]
-) -> bool:
+def _all_schedule_deps_in(node: MatchGraphNode, statuses: Tuple[MatchStatus, ...]) -> bool:
     deps = node.get_schedule_dependencies()
     if not deps:
         return True
@@ -182,9 +226,7 @@ def _all_participating_teams_resolved(
         initial = refs_initial_parts[i] if i < len(refs_initial_parts) else None
         if not team_id and not initial:
             continue
-        if not _slot_resolved(
-            team_id, initial, tournament_url, name_to_match, tag_by_name
-        ):
+        if not _slot_resolved(team_id, initial, tournament_url, name_to_match, tag_by_name):
             return False
 
     return True
@@ -222,27 +264,19 @@ def _procedure_with_match(
 
     elif node.schedule_type == ScheduleType.SAFE:
         if node.status == MatchStatus.NOT_STARTED:
-            node.nominal_start_time = node.get_direct_deps_latest_end_time(
-                for_safe_nominal=True
-            )
-            nominal_start_if_skipped = node.get_direct_deps_latest_end_time(
-                for_safe_nominal=False
-            )
+            node.nominal_start_time = node.get_direct_deps_latest_end_time(for_safe_nominal=True)
+            nominal_start_if_skipped = node.get_direct_deps_latest_end_time(for_safe_nominal=False)
 
     elif node.schedule_type == ScheduleType.FAST:
         if node.status == MatchStatus.NOT_STARTED:
-            node.nominal_start_time = node.get_direct_deps_latest_end_time(
-                for_safe_nominal=False
-            )
+            node.nominal_start_time = node.get_direct_deps_latest_end_time(for_safe_nominal=False)
 
     if _all_schedule_deps_in(node, (MatchStatus.COMPLETED, MatchStatus.SKIPPED)):
         skip_cond = _evaluate_skip_condition(tournament_url, node, name_to_match)
         if skip_cond:
             node.status = MatchStatus.SKIPPED
             node.nominal_start_time = (
-                nominal_start_if_skipped
-                if nominal_start_if_skipped is not None
-                else node.nominal_start_time
+                nominal_start_if_skipped if nominal_start_if_skipped is not None else node.nominal_start_time
             )
         else:
             if node.schedule_type in (
@@ -271,9 +305,7 @@ def _procedure_with_match(
 def _write_graph_to_db(graph: MatchGraph, uuid_to_match: Dict[str, object]) -> None:
     """Persist graph state to in-memory Match objects (no DB read). Caller commits once."""
     for node in graph.get_all_nodes():
-        uuids_to_update = (
-            list(node.component_uuids) if node.component_uuids else [node.uuid]
-        )
+        uuids_to_update = list(node.component_uuids) if node.component_uuids else [node.uuid]
         for uid in uuids_to_update:
             m = uuid_to_match.get(uid)
             if m is not None:
@@ -305,9 +337,7 @@ def run_scheduling(tournament_url: str) -> None:
         for name, field in order:
             node = graph.get_node(name, field)
             if node:
-                _procedure_with_match(
-                    graph, node, tournament_url, name_to_match, tag_by_name
-                )
+                _procedure_with_match(graph, node, tournament_url, name_to_match, tag_by_name)
         _write_graph_to_db(graph, uuid_to_match)
         db.session.commit()
     finally:
@@ -327,11 +357,7 @@ def get_match_dependencies(match, tournament_url: str) -> List:
     from app.models.match import Match
 
     graph = build_match_graph(tournament_url)
-    field = (
-        ""
-        if getattr(match, "schedule_type", None) == ScheduleType.JOIN
-        else getattr(match, "field", None)
-    )
+    field = "" if getattr(match, "schedule_type", None) == ScheduleType.JOIN else getattr(match, "field", None)
     node = graph.get_node(match.name, field)
     if not node:
         return []
@@ -345,19 +371,13 @@ def get_match_dependencies(match, tournament_url: str) -> List:
     ).all()
 
 
-def compute_dynamic_match_nominal_start_time(
-    match, tournament_url: str
-) -> Optional[datetime]:
+def compute_dynamic_match_nominal_start_time(match, tournament_url: str) -> Optional[datetime]:
     """
     Compute nominal_start_time for a SAFE/FAST/BREAK/JOIN match from the graph
     (for use when adding/editing a match before commit). Does not write to DB.
     """
     graph = build_match_graph(tournament_url)
-    field = (
-        ""
-        if getattr(match, "schedule_type", None) == ScheduleType.JOIN
-        else getattr(match, "field", None)
-    )
+    field = "" if getattr(match, "schedule_type", None) == ScheduleType.JOIN else getattr(match, "field", None)
     node = graph.get_node(match.name, field)
     if not node:
         return None
@@ -389,9 +409,7 @@ def validate_match_input(match, tournament_url: str) -> Tuple[bool, Optional[str
     # For BREAK/JOIN, only check uniqueness on the same field and same type
     if schedule_type in (ScheduleType.BREAK, ScheduleType.JOIN):
         field = (getattr(match, "field", None) or "").strip()
-        existing = existing.filter(
-            Match.field == field, Match.schedule_type == schedule_type
-        )
+        existing = existing.filter(Match.field == field, Match.schedule_type == schedule_type)
     if match.uuid:
         existing = existing.filter(Match.uuid != match.uuid)
     if existing.first():
@@ -449,11 +467,7 @@ def detect_match_conflicts(tournament_url: str) -> List[dict]:
                 continue
             if not other.nominal_start_time or not other.nominal_length:
                 continue
-            other_end = other.nominal_start_time + timedelta(
-                minutes=other.nominal_length
-            )
+            other_end = other.nominal_start_time + timedelta(minutes=other.nominal_length)
             if m.nominal_start_time < other_end and end > other.nominal_start_time:
-                conflicts.append(
-                    {"match1": m.name, "match2": other.name, "field": m.field}
-                )
+                conflicts.append({"match1": m.name, "match2": other.name, "field": m.field})
     return conflicts

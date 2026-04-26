@@ -6,6 +6,7 @@ __pycache__/
 *.py[cod]
 
 # secrets
+.env
 .env.*
 run
 
@@ -21,12 +22,14 @@ instance/*
 static/uploads/*
 preview/*
 dioxus/
+backups/
 
 
 # certs
 *.csr
 *.key
 *.crt
+*.pem
 
 
 # cargo (i sure hope it does)
@@ -39,6 +42,8 @@ Cargo.lock
 /frontend/pkg/
 /frontend/.parcel-cache/
 /frontend/node_modules/
+/docs/_build/
+*.egg-info/
 
 # stupid
 .DS_Store

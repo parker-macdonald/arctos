@@ -11,13 +11,11 @@ import pytest
 
 from app.domain.enums import MatchStatus
 from app.utils.dependencies import apply_match_dependencies
-from models import Field, Match, Tag, Tournament, db
+from models import Field, Match, Tag, db
 
 
 @pytest.mark.unit
-def test_update_tags_preserves_explicit_teams_and_match_references(
-    test_db, tournament, app
-):
+def test_update_tags_preserves_explicit_teams_and_match_references(test_db, tournament, app, seeded_teams):
     """update_tags should only update tag references, preserving explicit teams and match references."""
     tournament_url = tournament.url
 
@@ -66,12 +64,6 @@ def test_update_tags_preserves_explicit_teams_and_match_references(
     )
     db.session.add(test_match)
     db.session.commit()
-
-    # Simulate update_tags by calling the route logic
-    from app.routes.tournaments import update_tags
-    from flask import Flask
-    from flask_login import current_user
-    from unittest.mock import Mock
 
     # Build tag_to_team mapping
     tag_to_team = {
@@ -127,9 +119,7 @@ def test_update_tags_preserves_explicit_teams_and_match_references(
 
 
 @pytest.mark.unit
-def test_apply_match_dependencies_preserves_explicit_teams_and_tag_resolutions(
-    test_db, tournament, app
-):
+def test_apply_match_dependencies_preserves_explicit_teams_and_tag_resolutions(test_db, tournament, app, seeded_teams):
     """apply_match_dependencies should only resolve match references, preserving explicit teams and tag resolutions."""
     tournament_url = tournament.url
 
@@ -193,7 +183,7 @@ def test_apply_match_dependencies_preserves_explicit_teams_and_tag_resolutions(
 
 
 @pytest.mark.unit
-def test_mixed_refs_all_three_types(test_db, tournament, app):
+def test_mixed_refs_all_three_types(test_db, tournament, app, seeded_teams):
     """Test refs_initial with all three types: explicit team, tag reference, and match reference."""
     tournament_url = tournament.url
 
@@ -278,9 +268,7 @@ def test_mixed_refs_all_three_types(test_db, tournament, app):
     assert len(refs_list) == 3
     assert refs_list[0] == explicit_team  # explicit team ID preserved
     assert refs_list[1] == tag_resolved_team  # tag resolution preserved
-    assert (
-        refs_list[2] == winner_team
-    )  # match reference resolved (winner_team is "team1")
+    assert refs_list[2] == winner_team  # match reference resolved (winner_team is "team1")
 
 
 @pytest.mark.unit
@@ -414,7 +402,7 @@ def test_refs_cleared_when_refs_initial_changes(test_db, tournament, app):
 
 
 @pytest.mark.unit
-def test_team1_team2_with_mixed_references(test_db, tournament, app):
+def test_team1_team2_with_mixed_references(test_db, tournament, app, seeded_teams):
     """Test team1 and team2 fields with explicit teams, tag references, and match references."""
     tournament_url = tournament.url
 

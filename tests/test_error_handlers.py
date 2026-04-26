@@ -1,3 +1,5 @@
+"""Tests for the Flask ArctosError handler (JSON vs. redirect behaviour)."""
+
 import pytest
 
 from app import create_app
@@ -6,6 +8,7 @@ from app.exceptions import ValidationError
 
 @pytest.mark.unit
 def test_arctos_error_handler_returns_json_for_api_paths():
+    """Errors raised on /_api/* paths are serialised as JSON with HTTP 200."""
     app = create_app(config={"TESTING": True, "SECRET_KEY": "test"})
 
     @app.get("/_api/test-error")
@@ -22,6 +25,7 @@ def test_arctos_error_handler_returns_json_for_api_paths():
 
 @pytest.mark.unit
 def test_arctos_error_handler_redirects_for_html_paths():
+    """Errors raised on non-API paths trigger a flash-and-redirect response."""
     app = create_app(config={"TESTING": True, "SECRET_KEY": "test"})
 
     @app.get("/test-error")

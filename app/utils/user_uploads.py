@@ -52,10 +52,7 @@ def _get_media_duration_sec(file_path: str) -> float:
 def _get_media_profile(file_path: str) -> Optional[UserUploadMediaProfile]:
     args = [
         "-show_entries",
-        (
-            "stream=index,codec_type,codec_name,width,height,pix_fmt,"
-            "sample_rate,channels"
-        ),
+        ("stream=index,codec_type,codec_name,width,height,pix_fmt,sample_rate,channels"),
         "-show_streams",
         file_path,
     ]
@@ -132,9 +129,7 @@ def _get_video_keyframe_times_sec(file_path: str) -> list[float]:
     return out
 
 
-def _effective_stream_copy_clip_start_sec(
-    requested_start_sec: float, keyframe_times_sec: list[float]
-) -> float:
+def _effective_stream_copy_clip_start_sec(requested_start_sec: float, keyframe_times_sec: list[float]) -> float:
     if requested_start_sec <= 0 or not keyframe_times_sec:
         return 0.0
     idx = bisect.bisect_right(keyframe_times_sec, requested_start_sec) - 1
@@ -229,6 +224,30 @@ class UserUploadMediaProfile:
     audio_codec: Optional[str]
     sample_rate: Optional[str]
     channels: Optional[int]
+
+
+def _source_label(file_path: str) -> str:
+    norm = path.normpath(file_path)
+    parent = path.basename(path.dirname(norm))
+    name = path.basename(norm)
+    if parent and parent != path.sep:
+        return f"{parent}/{name}"
+    return name
+
+
+def _media_profile_summary(profile: UserUploadMediaProfile) -> str:
+    audio_bits = []
+    if profile.audio_codec:
+        audio_bits.append(profile.audio_codec)
+    if profile.sample_rate:
+        audio_bits.append(f"{profile.sample_rate}Hz")
+    if profile.channels:
+        audio_bits.append(f"{profile.channels}ch")
+    audio_part = ", ".join(audio_bits) if audio_bits else "no audio"
+    return (
+        f"video={profile.video_codec} {profile.width}x{profile.height} {profile.pix_fmt}; "
+        f"audio={audio_part}"
+    )
 
 
 def build_clip_plans_for_points(
@@ -340,18 +359,23 @@ def _validate_compatible_source_media_profiles(
     baseline_path = source_paths[0]
     baseline_profile = _get_media_profile(baseline_path)
     if baseline_profile is None:
-        return None, f"could not read media streams from {path.basename(baseline_path)}"
+        return None, f"could not read media streams from {_source_label(baseline_path)}"
 
     for source_path in source_paths[1:]:
         profile = _get_media_profile(source_path)
         if profile is None:
-            return None, f"could not read media streams from {path.basename(source_path)}"
+            return (
+                None,
+                f"could not read media streams from {path.basename(source_path)}",
+            )
         if profile != baseline_profile:
             return (
                 None,
                 "Uploaded source videos must use the same video/audio stream format to "
                 "auto-merge without re-encoding. "
-                f"{path.basename(baseline_path)} is incompatible with {path.basename(source_path)}.",
+                f"{_source_label(baseline_path)} ({_media_profile_summary(baseline_profile)}) "
+                f"is incompatible with "
+                f"{_source_label(source_path)} ({_media_profile_summary(profile)}).",
             )
 
     return baseline_profile, None
@@ -660,9 +684,7 @@ def register_batch_upload_completion(
         data = dict(data)
         data["files"] = files
 
-        ready = len(files) >= batch_total and all(
-            str(i) in files for i in range(batch_total)
-        )
+        ready = len(files) >= batch_total and all(str(i) in files for i in range(batch_total))
         if ready and data.get("status") == "pending":
             data["status"] = "processing"
             spawned = True
@@ -710,9 +732,7 @@ def list_batch_manifest_rows(tournament_url: str) -> list[dict[str, Any]]:
 
     rows: list[dict[str, Any]] = []
     for field_name in os.listdir(tournament_root):
-        batches_root = path.join(
-            tournament_root, field_name, "user_uploads", "_batches"
-        )
+        batches_root = path.join(tournament_root, field_name, "user_uploads", "_batches")
         if not path.isdir(batches_root):
             continue
         for batch_id in os.listdir(batches_root):
@@ -731,7 +751,10 @@ def list_batch_manifest_rows(tournament_url: str) -> list[dict[str, Any]]:
 
             files_map = manifest.get("files") or {}
             world_start = None
-            for idx in sorted(files_map.keys(), key=lambda raw: int(raw) if str(raw).isdigit() else raw):
+            for idx in sorted(
+                files_map.keys(),
+                key=lambda raw: int(raw) if str(raw).isdigit() else raw,
+            ):
                 entry = files_map.get(idx) or {}
                 sw = (entry.get("start_world_override") or "").strip()
                 if sw:
@@ -833,9 +856,7 @@ def user_autoclips_from_uploaded_batch_worker(
             start_world_override_iso=video_start_world_override_iso,
         )
         if window is None:
-            _log.error(
-                "user_autoclips batch: bad duration for %s", user_video_abs_path
-            )
+            _log.error("user_autoclips batch: bad duration for %s", user_video_abs_path)
             _finalize_batch_status(
                 manifest_path,
                 status="failed",
@@ -884,9 +905,7 @@ def user_autoclips_from_uploaded_batch_worker(
     keyframes_by_source: dict[str, list[float]] = {}
     for source_window in source_windows:
         try:
-            keyframes_by_source[source_window.source_path] = _get_video_keyframe_times_sec(
-                source_window.source_path
-            )
+            keyframes_by_source[source_window.source_path] = _get_video_keyframe_times_sec(source_window.source_path)
         except Exception:
             _log.exception(
                 "user_autoclips batch: failed to read keyframes for %s",
@@ -905,7 +924,11 @@ def user_autoclips_from_uploaded_batch_worker(
 
     field_obj = Field.query.filter_by(event=tournament_url, name=field_name).first()
     if not field_obj:
-        _log.error("user_autoclips batch: field not found event=%s field=%s", tournament_url, field_name)
+        _log.error(
+            "user_autoclips batch: field not found event=%s field=%s",
+            tournament_url,
+            field_name,
+        )
         _finalize_batch_status(
             manifest_path,
             status="failed",
@@ -916,7 +939,11 @@ def user_autoclips_from_uploaded_batch_worker(
 
     matches = Match.query.filter_by(event=tournament_url, field=field_name).all()
     if not matches:
-        _log.warning("user_autoclips batch: no matches field=%s event=%s", field_name, tournament_url)
+        _log.warning(
+            "user_autoclips batch: no matches field=%s event=%s",
+            field_name,
+            tournament_url,
+        )
         _finalize_batch_status(
             manifest_path,
             status="failed",
@@ -1019,9 +1046,7 @@ def user_autoclips_from_uploaded_batch_worker(
 
             point_start_in_clip_sec = max(
                 0.0,
-                plan.clip_start_file_sec
-                + plan.point_start_in_clip_sec
-                - effective_clip_start_sec,
+                plan.clip_start_file_sec + plan.point_start_in_clip_sec - effective_clip_start_sec,
             )
             point_start_in_highlight = concat_offset + point_start_in_clip_sec
             time_world.append(_dt_to_iso_z(plan.point_start_world))
@@ -1030,9 +1055,7 @@ def user_autoclips_from_uploaded_batch_worker(
             concat_offset += _get_media_duration_sec(clip_abs_path)
 
         final_highlight_abs_path = path.join(match_out_dir, "final_video.mkv")
-        _ffmpeg_concat_without_reencode(
-            clip_paths=clip_paths, output_path=final_highlight_abs_path
-        )
+        _ffmpeg_concat_without_reencode(clip_paths=clip_paths, output_path=final_highlight_abs_path)
 
         final_highlight_rel = path.join(
             "static",
@@ -1128,9 +1151,7 @@ def create_direct_user_upload_camera(
     if not field_obj:
         raise ValueError("Match field not found")
 
-    display_name = (camera_name or "").strip() or (
-        path.splitext(path.basename(saved_abs_path))[0] or "upload"
-    )
+    display_name = (camera_name or "").strip() or (path.splitext(path.basename(saved_abs_path))[0] or "upload")
     if len(display_name) > 200:
         display_name = display_name[:200]
 
@@ -1202,4 +1223,3 @@ def create_direct_user_upload_camera(
         match_uuid,
     )
     return str(camera_row.uuid)
-

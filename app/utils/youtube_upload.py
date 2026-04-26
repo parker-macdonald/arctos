@@ -20,7 +20,6 @@ import mimetypes
 import os
 import shutil
 from dataclasses import dataclass
-from datetime import datetime
 from os import path
 from typing import Optional
 
@@ -34,9 +33,7 @@ from models import Camera, Field, Match, Team, Tournament, db
 
 
 YOUTUBE_TOKEN_URL = "https://oauth2.googleapis.com/token"
-YOUTUBE_UPLOAD_INIT_URL = (
-    "https://www.googleapis.com/upload/youtube/v3/videos"
-)
+YOUTUBE_UPLOAD_INIT_URL = "https://www.googleapis.com/upload/youtube/v3/videos"
 
 
 @dataclass(frozen=True)
@@ -120,11 +117,7 @@ def _video_file_abs_path(camera: Camera) -> str:
 
 
 def _recording_artifact_policy() -> str:
-    return (
-        str(current_app.config.get("RECORDING_ARTIFACTS_AFTER_UPLOAD") or "delete")
-        .strip()
-        .lower()
-    )
+    return str(current_app.config.get("RECORDING_ARTIFACTS_AFTER_UPLOAD") or "delete").strip().lower()
 
 
 def _recording_artifact_dir_abs(camera: Camera) -> str:
@@ -277,9 +270,7 @@ def _build_camera_title(camera: Camera) -> str:
     return f"[{event_name}] {match.name}: {t1} vs {t2} ({camera.name} on {field_name})"
 
 
-def _upload_failed_source_to_s3(
-    camera: Camera, file_path_abs: str, content_type: str
-) -> None:
+def _upload_failed_source_to_s3(camera: Camera, file_path_abs: str, content_type: str) -> None:
     """
     Best-effort fallback: upload source file to S3 only after YouTube failure.
     If successful, rewrite `camera.file` to the S3 key so API can serve presigned downloads.
@@ -347,9 +338,7 @@ def _youtube_init_request(
     )
     # YouTube returns 200 or 201 with Location header for resumable session.
     if resp.status_code not in (200, 201):
-        raise RuntimeError(
-            f"YouTube init failed: {resp.status_code} {resp.text[:300]}"
-        )
+        raise RuntimeError(f"YouTube init failed: {resp.status_code} {resp.text[:300]}")
     location = resp.headers.get("Location")
     if not location:
         raise RuntimeError(f"YouTube init missing Location header: {resp.headers}")
@@ -407,9 +396,7 @@ def _youtube_upload_resumable(
                 start = end + 1
                 continue
 
-            raise RuntimeError(
-                f"YouTube upload failed: {resp.status_code} {resp.text[:300]}"
-            )
+            raise RuntimeError(f"YouTube upload failed: {resp.status_code} {resp.text[:300]}")
 
     raise RuntimeError("YouTube upload ended without success")
 
@@ -505,9 +492,7 @@ def upload_camera_to_youtube(camera_uuid: str) -> None:
         except Exception:
             db.session.rollback()
             raise
-        current_app.logger.exception(
-            "youtube_upload: OAuth/init/upload failed camera uuid=%s", camera_uuid
-        )
+        current_app.logger.exception("youtube_upload: OAuth/init/upload failed camera uuid=%s", camera_uuid)
         return
 
     # SUCCESS
@@ -523,4 +508,3 @@ def upload_camera_to_youtube(camera_uuid: str) -> None:
             camera_uuid,
             _recording_artifact_dir_abs(camera),
         )
-

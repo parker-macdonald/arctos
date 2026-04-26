@@ -3,12 +3,12 @@
 import pytest
 
 from app.domain.enums import MatchStatus, ScheduleType
-from models import Field, Match, Tag, TO, Tournament, db
+from models import Field, Match, Tag, TO, db
 from tests.utils import login_as
 
 
 @pytest.mark.integration
-def test_update_tags_recomputes_schedule(app, client, test_db, tournament, player):
+def test_update_tags_recomputes_schedule(app, client, test_db, tournament, player, seeded_teams):
     """After update_tags, recompute_all_match_times runs so match status can transition to READY_TO_START."""
     with app.app_context():
         t = db.session.merge(tournament)
@@ -44,8 +44,7 @@ def test_update_tags_recomputes_schedule(app, client, test_db, tournament, playe
         db.session.commit()
         match_id = m.uuid
         tag_id = tag.id
-
-    login_as(client, p)
+        login_as(client, p)
 
     # Assign tag to team1
     resp = client.post(

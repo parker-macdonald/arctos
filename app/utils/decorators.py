@@ -15,11 +15,28 @@ from app.services.permission_service import PermissionService
 def require_tournament_organizer(
     message: str = "Only tournament organizers can access this page",
 ):
-    """
-    Require current user to be a TO for the given tournament.
+    """Decorator factory that guards a route to Tournament Organisers only.
 
-    Assumes the wrapped route has `tournament_url` as the first positional arg or
-    as a keyword arg.
+    Wraps the decorated view function with :func:`~flask_login.login_required`
+    and checks :meth:`~app.services.permission_service.PermissionService.is_tournament_organizer`.
+    On failure it flashes *message* and redirects to the referring page (or
+    ``/<tournament_url>``).
+
+    The decorated route **must** expose ``tournament_url`` either as its
+    first positional argument or as a keyword argument.
+
+    Args:
+        message: Flash message shown to unauthorised users.
+
+    Returns:
+        A decorator that wraps a Flask route function.
+
+    Example::
+
+        @bp.route("/<tournament_url>/settings", methods=["POST"])
+        @require_tournament_organizer()
+        def update_settings(tournament_url: str):
+            ...
     """
 
     def decorator(fn):
@@ -30,9 +47,7 @@ def require_tournament_organizer(
             if tournament_url is None and args:
                 tournament_url = args[0]
 
-            if not PermissionService.is_tournament_organizer(
-                tournament_url, current_user
-            ):
+            if not PermissionService.is_tournament_organizer(tournament_url, current_user):
                 flash(message, "error")
                 return redirect(request.referrer or f"/{tournament_url}")
 

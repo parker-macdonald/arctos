@@ -1,17 +1,34 @@
-"""League model."""
+"""SQLAlchemy model for Jugger leagues."""
 
 from __future__ import annotations
 
 from app.models.base import db
+from app.models.constants import LONG_NAME_LEN, URL_SLUG_LEN
 
 
 class League(db.Model):
-    """A league. Standalone entity; TOs create a new league for each season."""
+    """A Jugger league grouping multiple tournaments under a single registration.
+
+    TOs create a new ``League`` for each season.  All tournaments that belong
+    to the league share the league's
+    :class:`~app.models.registrable_config.RegistrableConfig` (registration
+    fees, open/close toggle, waiver, etc.) rather than maintaining individual
+    configs.
+
+    Attributes:
+        url: URL slug used as the primary key and public identifier.
+        name: Human-readable league name.
+        about: Markdown description shown on the league homepage.
+        published: Whether the league is publicly visible.
+        registrable_config_id: FK to the shared
+            :class:`~app.models.registrable_config.RegistrableConfig`.
+        registrable_config: Relationship to the registration config object.
+    """
 
     __tablename__ = "leagues"
 
-    url = db.Column(db.String(100), primary_key=True)
-    name = db.Column(db.String(200), nullable=False)
+    url = db.Column(db.String(URL_SLUG_LEN), primary_key=True)
+    name = db.Column(db.String(LONG_NAME_LEN), nullable=False)
     about = db.Column(db.Text)
     published = db.Column(db.Boolean, default=False, nullable=False)
 

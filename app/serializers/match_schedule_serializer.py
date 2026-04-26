@@ -4,7 +4,6 @@ Schedule serialization for import/export (tags, fields, matches).
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -20,7 +19,16 @@ class MatchScheduleSerializer:
 
     @staticmethod
     def tag_to_dict(tag) -> dict[str, Any]:
-        """Convert Tag model to TOML dict, omitting empty values."""
+        """Serialise a :class:`~app.models.tournament.Tag` to a TOML-compatible dict.
+
+        Omits keys whose values are empty or ``None``.
+
+        Args:
+            tag: The :class:`~app.models.tournament.Tag` ORM instance.
+
+        Returns:
+            Dict with up to three keys: ``id``, ``name``, ``team``.
+        """
         result = {}
         if tag.id is not None:
             result["id"] = tag.id
@@ -32,7 +40,16 @@ class MatchScheduleSerializer:
 
     @staticmethod
     def field_to_dict(field) -> dict[str, Any]:
-        """Convert Field model to TOML dict, omitting empty values."""
+        """Serialise a :class:`~app.models.tournament.Field` to a TOML-compatible dict.
+
+        Omits keys whose values are empty or ``None``.
+
+        Args:
+            field: The :class:`~app.models.tournament.Field` ORM instance.
+
+        Returns:
+            Dict with up to three keys: ``id``, ``name``, ``camera``.
+        """
         result = {}
         if field.id is not None:
             result["id"] = field.id
@@ -44,7 +61,19 @@ class MatchScheduleSerializer:
 
     @staticmethod
     def match_to_dict(match) -> dict[str, Any]:
-        """Convert Match model to TOML dict, omitting empty values."""
+        """Serialise a :class:`~app.models.match.Match` to a TOML-compatible dict.
+
+        Prefers ``_initial`` fields (which carry the user's symbolic tokens
+        such as ``tag::PoolA`` or ``MatchName::winner``) over the resolved
+        ``team1`` / ``team2`` / ``refs`` columns.  Omits keys whose values are
+        empty or ``None``.
+
+        Args:
+            match: The :class:`~app.models.match.Match` ORM instance.
+
+        Returns:
+            Dict with match attributes suitable for TOML serialisation.
+        """
         result = {}
 
         # Always include uuid and name
@@ -77,18 +106,14 @@ class MatchScheduleSerializer:
         if match.previous_match:
             from models import Match as MatchModel
 
-            prev_match = MatchModel.query.filter_by(
-                uuid=match.previous_match, event=match.event
-            ).first()
+            prev_match = MatchModel.query.filter_by(uuid=match.previous_match, event=match.event).first()
             if prev_match:
                 result["previous_match"] = prev_match.name
 
         if match.next_match:
             from models import Match as MatchModel
 
-            next_match = MatchModel.query.filter_by(
-                uuid=match.next_match, event=match.event
-            ).first()
+            next_match = MatchModel.query.filter_by(uuid=match.next_match, event=match.event).first()
             if next_match:
                 result["next_match"] = next_match.name
 
@@ -117,9 +142,7 @@ class MatchScheduleSerializer:
         return result
 
     @staticmethod
-    def tag_from_dict(
-        data: dict[str, Any], tournament_url: str
-    ) -> Result[dict[str, Any], ValidationError]:
+    def tag_from_dict(data: dict[str, Any], tournament_url: str) -> Result[dict[str, Any], ValidationError]:
         """Convert TOML dict to Tag creation data."""
         if "name" not in data:
             return Err(ValidationError("Tag missing required field: name"))
@@ -144,9 +167,7 @@ class MatchScheduleSerializer:
         return Ok(result)
 
     @staticmethod
-    def field_from_dict(
-        data: dict[str, Any], tournament_url: str
-    ) -> Result[dict[str, Any], ValidationError]:
+    def field_from_dict(data: dict[str, Any], tournament_url: str) -> Result[dict[str, Any], ValidationError]:
         """Convert TOML dict to Field creation data."""
         if "name" not in data:
             return Err(ValidationError("Field missing required field: name"))
@@ -217,18 +238,14 @@ class MatchScheduleSerializer:
 
         refs = None
         if refs_initial:
-            r_csv, _ = resolve_refs_slots(
-                refs_string_to_tokens(refs_initial), tournament_url
-            )
+            r_csv, _ = resolve_refs_slots(refs_string_to_tokens(refs_initial), tournament_url)
             if r_csv and any(s.strip() for s in r_csv.split(",")):
                 refs = r_csv
 
         schedule_type = str(data.get("schedule_type", "STATIC")).strip() or "STATIC"
         skip_condition_raw = str(data.get("skip_condition", "")).strip() or None
         # Only accept skip_condition for SAFE and FAST; ignore for other types
-        skip_condition = (
-            skip_condition_raw if schedule_type in ("SAFE", "FAST") else None
-        )
+        skip_condition = skip_condition_raw if schedule_type in ("SAFE", "FAST") else None
 
         result = {
             "event": tournament_url,
@@ -259,22 +276,14 @@ class MatchScheduleSerializer:
             elif isinstance(dt_value, str):
                 try:
                     # Try parsing ISO format
-                    result["nominal_start_time"] = datetime.fromisoformat(
-                        dt_value.replace("Z", "+00:00")
-                    )
+                    result["nominal_start_time"] = datetime.fromisoformat(dt_value.replace("Z", "+00:00"))
                 except ValueError:
                     return Err(ValidationError(f"Invalid datetime format: {dt_value}"))
             else:
-                return Err(
-                    ValidationError(
-                        f"Invalid nominal_start_time type: {type(dt_value)}"
-                    )
-                )
+                return Err(ValidationError(f"Invalid nominal_start_time type: {type(dt_value)}"))
 
         # Helper function to resolve match name to UUID
-        def resolve_match_name(
-            match_name: str, current_field: str | None
-        ) -> str | None:
+        def resolve_match_name(match_name: str, current_field: str | None) -> str | None:
             """Resolve a match name to UUID, using field-based resolution if duplicates exist."""
             if not match_name:
                 return None
@@ -299,16 +308,12 @@ class MatchScheduleSerializer:
             if "previous_match" in data and data["previous_match"]:
                 prev_match_name = str(data["previous_match"]).strip()
                 if prev_match_name:
-                    result["previous_match"] = resolve_match_name(
-                        prev_match_name, current_field
-                    )
+                    result["previous_match"] = resolve_match_name(prev_match_name, current_field)
 
             if "next_match" in data and data["next_match"]:
                 next_match_name = str(data["next_match"]).strip()
                 if next_match_name:
-                    result["next_match"] = resolve_match_name(
-                        next_match_name, current_field
-                    )
+                    result["next_match"] = resolve_match_name(next_match_name, current_field)
         else:
             # No mapping provided - try to resolve by name from database
             # This handles same-tournament imports where matches already exist
@@ -330,9 +335,7 @@ class MatchScheduleSerializer:
 
                     # Fall back to name-only if not found
                     if not prev_match:
-                        prev_match = MatchModel.query.filter_by(
-                            event=tournament_url, name=prev_match_name
-                        ).first()
+                        prev_match = MatchModel.query.filter_by(event=tournament_url, name=prev_match_name).first()
 
                     if prev_match:
                         result["previous_match"] = prev_match.uuid
@@ -352,9 +355,7 @@ class MatchScheduleSerializer:
 
                     # Fall back to name-only if not found
                     if not next_match:
-                        next_match = MatchModel.query.filter_by(
-                            event=tournament_url, name=next_match_name
-                        ).first()
+                        next_match = MatchModel.query.filter_by(event=tournament_url, name=next_match_name).first()
 
                     if next_match:
                         result["next_match"] = next_match.uuid

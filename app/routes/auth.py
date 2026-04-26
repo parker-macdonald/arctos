@@ -15,7 +15,7 @@ from flask import (
     current_app,
     url_for,
 )
-from flask_login import login_user, logout_user, login_required, current_user
+from flask_login import login_user, logout_user, login_required
 from models import Player, Team
 from app.utils.helpers import is_valid_url_username
 from authlib.integrations.flask_client import OAuth
@@ -28,24 +28,49 @@ oauth = OAuth()
 _SPA_BASE = "/"
 
 
-def _frontend_base():
-    """Base URL for redirecting to the frontend (no trailing slash)."""
+def _frontend_base() -> str | None:
+    """Return the configured external frontend base URL without a trailing slash.
+
+    Reads ``EXTERNAL_BASE_URL`` from the Flask application config.
+
+    Returns:
+        The stripped base URL, or ``None`` if not configured.
+    """
     base = current_app.config.get("EXTERNAL_BASE_URL", "").strip()
     if base:
         return base.rstrip("/")
     return None
 
 
-def _redirect_to_frontend(path=""):
-    """Redirect to the frontend; path should start with / (e.g. /auth/google/choose-account-type)."""
+def _redirect_to_frontend(path: str = ""):
+    """Build a Flask redirect response targeting the frontend SPA.
+
+    When ``EXTERNAL_BASE_URL`` is configured the redirect points there;
+    otherwise it falls back to the SPA base path (``/``).
+
+    Args:
+        path: Frontend path to append, should begin with ``/``
+            (e.g. ``"/auth/google/choose-account-type"``).
+
+    Returns:
+        A Flask :func:`~flask.redirect` response.
+    """
     base = _frontend_base()
     if base:
         return redirect(f"{base}{path}" if path.startswith("/") else f"{base}/{path}")
     return redirect(_SPA_BASE + path.lstrip("/") if path else _SPA_BASE)
 
 
-def _google_callback_uri():
-    """Redirect URI for Google OAuth; must match Google Cloud Console exactly."""
+def _google_callback_uri() -> str:
+    """Return the Google OAuth callback URI registered in Google Cloud Console.
+
+    Prefers an externally configured base URL so that the URI matches
+    exactly what was registered; falls back to Flask's ``url_for``
+    generation.
+
+    Returns:
+        Absolute callback URL string.
+    """
     base = _frontend_base()
     if base:
         script = os.environ.get("SCRIPT_NAME", "").rstrip("/")
@@ -55,7 +80,19 @@ def _google_callback_uri():
 
 @bp.route("/check-username", methods=["GET"])
 def check_username():
-    """Check if a username is available (not taken by any player or team)."""
+    """Check username availability.
+
+    ``GET /_api/check-username?username=<value>``
+
+    Validates that the username is URL-safe and not already registered by
+    any :class:`~app.models.user.Player` or :class:`~app.models.user.Team`.
+
+    Query Args:
+        username: The candidate username string.
+
+    Returns:
+        JSON ``{"available": bool, "message": str}``.
+    """
     username = request.args.get("username", "")
 
     if not username:
@@ -81,7 +118,15 @@ def check_username():
 @bp.route("/logout")
 @login_required
 def logout():
-    """User logout."""
+    """Log out the current user and redirect to the frontend home page.
+
+    ``GET /_api/logout``
+
+    Requires authentication.  Flashes a confirmation message after logout.
+
+    Returns:
+        A redirect response to the frontend root ``/``.
+    """
     logout_user()
     flash("You have been logged out", "info")
     return _redirect_to_frontend("/")
@@ -89,10 +134,18 @@ def logout():
 
 @bp.route("/auth/google/login")
 def google_login():
-    """Initiate Google OAuth login."""
-    if not current_app.config.get("GOOGLE_CLIENT_ID") or not current_app.config.get(
-        "GOOGLE_CLIENT_SECRET"
-    ):
+    """Initiate the Google OAuth 2.0 authorisation code flow.
+
+    ``GET /_api/auth/google/login``
+
+    Redirects the user to Google's consent screen.  Returns an error flash
+    and a redirect to the frontend if Google OAuth is not configured.
+
+    Returns:
+        A redirect response to Google's authorisation endpoint, or to the
+        frontend home page on configuration error.
+    """
+    if not current_app.config.get("GOOGLE_CLIENT_ID") or not current_app.config.get("GOOGLE_CLIENT_SECRET"):
         flash(
             "Google sign-in is not configured. Please contact the administrator.",
             "error",
@@ -106,14 +159,26 @@ def google_login():
 
 @bp.route("/auth/google/callback")
 def google_callback():
-    """Handle Google OAuth callback."""
+    """Handle the Google OAuth 2.0 callback.
+
+    ``GET /_api/auth/google/callback``
+
+    Exchanges the authorisation code for tokens, fetches user info, and:
+
+    * Logs in an existing account (player or team) if the ``google_id``
+      is already registered.
+    * Stores the Google profile in the session and redirects to the
+      account-type selection page for new users.
+
+    Returns:
+        A redirect to the frontend home page on success or error, or to
+        ``/auth/google/choose-account-type`` for new Google users.
+    """
     try:
         google = oauth.google
         token = google.authorize_access_token()
 
-        userinfo_endpoint = getattr(google, "server_metadata", {}).get(
-            "userinfo_endpoint"
-        )
+        userinfo_endpoint = getattr(google, "server_metadata", {}).get("userinfo_endpoint")
         if not userinfo_endpoint:
             try:
                 google.load_server_metadata()
@@ -121,9 +186,7 @@ def google_callback():
             except Exception:
                 userinfo_endpoint = None
         if not userinfo_endpoint:
-            raise RuntimeError(
-                "Google userinfo endpoint not found in provider metadata"
-            )
+            raise RuntimeError("Google userinfo endpoint not found in provider metadata")
         resp = google.get(userinfo_endpoint)
         user_info = resp.json()
 

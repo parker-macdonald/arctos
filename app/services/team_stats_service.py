@@ -8,8 +8,21 @@ from app.domain.enums import ScheduleType
 from app.services.registration_resolver import team_registrations_for_tournament
 
 
-def _pseudonym_and_photo_maps(team_id, reg_by_team, team_by_id):
-    """Resolve display name and photo using preloaded registration and Team maps."""
+def _pseudonym_and_photo_maps(team_id: str, reg_by_team: dict, team_by_id: dict) -> tuple[str | None, str | None]:
+    """Resolve a team's display name and profile photo from preloaded maps.
+
+    Args:
+        team_id: The team's unique identifier.
+        reg_by_team: Mapping of team ID →
+            :class:`~app.models.registration.TeamRegistration`.
+        team_by_id: Mapping of team ID →
+            :class:`~app.models.user.Team`.
+
+    Returns:
+        A ``(pseudonym, profile_photo)`` tuple.  *pseudonym* falls back to
+        the team name, then the team ID.  *profile_photo* is ``None`` when
+        the team record is not found.
+    """
     if not team_id:
         return None, None
     reg = reg_by_team.get(team_id)
@@ -23,11 +36,24 @@ def _pseudonym_and_photo_maps(team_id, reg_by_team, team_by_id):
     return pseudonym, profile_photo
 
 
-def compute_team_stats(matches, tournament, include_ribbon=False):
-    """
-    Compute aggregate team stats from matches.
-    Returns list of dicts: {id, pseudonym, profile_photo, matches_won, matches_lost, points_won, points_lost}.
-    tournament is used for pseudonym lookup (any tournament in the league works for league results).
+def compute_team_stats(matches: list, tournament, include_ribbon: bool = False) -> list[dict]:
+    """Compute aggregate win/loss and point statistics for all teams in a set of matches.
+
+    Skips ``BREAK`` and ``JOIN`` schedule-type matches, and optionally skips
+    ribbon (exhibition) games.
+
+    Args:
+        matches: List of :class:`~app.models.match.Match` instances to
+            aggregate over.
+        tournament: Any :class:`~app.models.tournament.Tournament` in the
+            same event or league; used for pseudonym/photo lookup.
+        include_ribbon: When ``True``, ribbon games are included in
+            stats; otherwise they are excluded.
+
+    Returns:
+        List of dicts, each with keys: ``id``, ``pseudonym``,
+        ``profile_photo``, ``matches_won``, ``matches_lost``,
+        ``points_won``, ``points_lost``.
     """
     from models import Point, Team
 
@@ -51,9 +77,7 @@ def compute_team_stats(matches, tournament, include_ribbon=False):
     reg_by_team = {r.team: r for r in regs}
     team_by_id = {}
     if real_team_ids:
-        team_by_id = {
-            t.id: t for t in Team.query.filter(Team.id.in_(real_team_ids)).all()
-        }
+        team_by_id = {t.id: t for t in Team.query.filter(Team.id.in_(real_team_ids)).all()}
 
     points_by_match = {}
     if count_matches:
@@ -71,9 +95,7 @@ def compute_team_stats(matches, tournament, include_ribbon=False):
                 if str(tid).startswith("tag::") or "::" in str(tid):
                     pseudonym, profile_photo = tid, None
                 else:
-                    pseudonym, profile_photo = _pseudonym_and_photo_maps(
-                        tid, reg_by_team, team_by_id
-                    )
+                    pseudonym, profile_photo = _pseudonym_and_photo_maps(tid, reg_by_team, team_by_id)
                 team_stats[tid] = {
                     "id": tid,
                     "pseudonym": pseudonym or tid,
@@ -92,18 +114,8 @@ def compute_team_stats(matches, tournament, include_ribbon=False):
                 team_stats[t2]["matches_won"] += 1
                 team_stats[t1]["matches_lost"] += 1
         points_list = points_by_match.get(m.uuid, [])
-        t1p = sum(
-            1
-            for p in points_list
-            if getattr(p, "winner", None) == "TEAM1"
-            and not getattr(p, "rerolled", False)
-        )
-        t2p = sum(
-            1
-            for p in points_list
-            if getattr(p, "winner", None) == "TEAM2"
-            and not getattr(p, "rerolled", False)
-        )
+        t1p = sum(1 for p in points_list if getattr(p, "winner", None) == "TEAM1" and not getattr(p, "rerolled", False))
+        t2p = sum(1 for p in points_list if getattr(p, "winner", None) == "TEAM2" and not getattr(p, "rerolled", False))
         if t1 and t1 != "TBA":
             team_stats[t1]["points_won"] += t1p
             team_stats[t1]["points_lost"] += t2p
