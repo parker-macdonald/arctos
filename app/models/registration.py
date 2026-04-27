@@ -33,7 +33,10 @@ class TeamRegistration(db.Model):  # type: ignore[misc]
             (:class:`~app.domain.enums.TeamRegistrationStatus`).
         registered_at: Timestamp of initial registration.
         paid: Whether the team registration fee has been paid.
-        amount_paid: Amount paid so far (may be partial).
+        amount_paid: Amount paid so far (may be partial). Stored as an
+            exact ``DECIMAL(10, 2)`` value — never as a binary float —
+            so reconciliation across many partial payments matches
+            penny-for-penny.
         paid_at: Timestamp of the most recent payment, or ``None``.
         payment_method: How payment was made (e.g. ``"cash"``, ``"stripe"``).
         payment_reference: Transaction ID, cheque number, etc.
@@ -53,11 +56,23 @@ class TeamRegistration(db.Model):  # type: ignore[misc]
     registered_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
     # Payment fields
     paid = db.Column(db.Boolean, default=False)
-    amount_paid = db.Column(db.Float, default=0.0)
+    amount_paid = db.Column(db.Numeric(10, 2), default=0)
     paid_at = db.Column(db.DateTime, nullable=True)
     payment_method = db.Column(db.String(SHORT_LABEL_LEN))  # e.g., cash, check, venmo, stripe
     payment_reference = db.Column(db.String(SHORT_NAME_LEN))  # txn id, check #, etc
     payment_notes = db.Column(db.Text)
+
+    __table_args__ = (
+        # Exactly one of (event, league_id) must be set. Mirrors the same
+        # invariant on Tournament/PenaltyType so every "scope" column pair
+        # in the schema is enforced identically. A row with both set, or
+        # neither set, is a data error and silently breaks any query that
+        # filters by one or the other.
+        db.CheckConstraint(
+            "(event IS NOT NULL AND league_id IS NULL) OR (event IS NULL     AND league_id IS NOT NULL)",
+            name="ck_team_registrations_event_league_mutual_exclusive",
+        ),
+    )
 
 
 class PlayerRegistration(db.Model):  # type: ignore[misc]
@@ -80,7 +95,10 @@ class PlayerRegistration(db.Model):  # type: ignore[misc]
             (:class:`~app.domain.enums.RegistrationStatus`).
         registered_at: Timestamp of initial registration.
         paid: Whether the player registration fee has been paid.
-        amount_paid: Amount paid so far.
+        amount_paid: Amount paid so far. Stored as an exact
+            ``DECIMAL(10, 2)`` value — never as a binary float — so
+            reconciliation across many partial payments matches
+            penny-for-penny.
         paid_at: Timestamp of the most recent payment, or ``None``.
         payment_method: How payment was made.
         payment_reference: Transaction ID or other reference.
@@ -105,7 +123,7 @@ class PlayerRegistration(db.Model):  # type: ignore[misc]
     registered_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
     # Payment fields
     paid = db.Column(db.Boolean, default=False)
-    amount_paid = db.Column(db.Float, default=0.0)
+    amount_paid = db.Column(db.Numeric(10, 2), default=0)
     paid_at = db.Column(db.DateTime, nullable=True)
     payment_method = db.Column(db.String(SHORT_LABEL_LEN))
     payment_reference = db.Column(db.String(SHORT_NAME_LEN))
@@ -121,4 +139,12 @@ class PlayerRegistration(db.Model):  # type: ignore[misc]
         db.DateTime,
         default=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
         nullable=True,
+    )
+
+    __table_args__ = (
+        # Same exactly-one-of-(event, league_id) invariant as TeamRegistration.
+        db.CheckConstraint(
+            "(event IS NOT NULL AND league_id IS NULL) OR (event IS NULL     AND league_id IS NOT NULL)",
+            name="ck_player_registrations_event_league_mutual_exclusive",
+        ),
     )

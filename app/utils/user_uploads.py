@@ -244,10 +244,7 @@ def _media_profile_summary(profile: UserUploadMediaProfile) -> str:
     if profile.channels:
         audio_bits.append(f"{profile.channels}ch")
     audio_part = ", ".join(audio_bits) if audio_bits else "no audio"
-    return (
-        f"video={profile.video_codec} {profile.width}x{profile.height} {profile.pix_fmt}; "
-        f"audio={audio_part}"
-    )
+    return f"video={profile.video_codec} {profile.width}x{profile.height} {profile.pix_fmt}; audio={audio_part}"
 
 
 def build_clip_plans_for_points(
