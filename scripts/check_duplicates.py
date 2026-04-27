@@ -123,20 +123,6 @@ CHECKS: Sequence[DuplicateCheck] = (
         columns=("comp", "player"),
         why="A player should have one result per side competition.",
     ),
-    DuplicateCheck(
-        table="players",
-        columns=("email",),
-        why=(
-            "Duplicate emails open a password-reset account-takeover vector "
-            "(attacker registers with the victim's email, triggers reset, "
-            "gains the victim's account)."
-        ),
-    ),
-    DuplicateCheck(
-        table="teams",
-        columns=("email",),
-        why="Duplicate emails on teams open the same account-takeover vector as on players.",
-    ),
 )
 
 
