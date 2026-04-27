@@ -135,9 +135,7 @@ def downgrade() -> None:
         bind.exec_driver_sql("PRAGMA foreign_keys = OFF")
     try:
         with op.batch_alter_table("registrable_configs") as batch:
-            batch.add_column(
-                sa.Column("registration_open", sa.Boolean(), nullable=False, server_default=sa.false())
-            )
+            batch.add_column(sa.Column("registration_open", sa.Boolean(), nullable=False, server_default=sa.false()))
 
         with op.batch_alter_table("cameras") as batch:
             batch.add_column(sa.Column("time_world", sa.Text(), nullable=True))

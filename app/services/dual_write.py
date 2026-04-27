@@ -72,9 +72,7 @@ def _split_csv_with_blanks(raw: str | None) -> list[str]:
 
 def get_head_ref_allowlist_ids(tournament: Tournament) -> list[str]:
     """Return the player IDs on this tournament's head-referee allow-list."""
-    rows = (
-        HeadRefAllowList.query.filter_by(event=tournament.url).order_by(HeadRefAllowList.id).all()
-    )
+    rows = HeadRefAllowList.query.filter_by(event=tournament.url).order_by(HeadRefAllowList.id).all()
     return [r.player_id for r in rows]
 
 
@@ -169,9 +167,7 @@ def set_match_referees(match: Match, refs: list[str], initials: list[str]) -> No
     initials = list(initials) + [""] * (n - len(initials))
 
     candidate_team_ids = {team_id for team_id in refs if team_id}
-    valid_team_ids = (
-        _existing_ids(Team, Team.id.in_(candidate_team_ids)) if candidate_team_ids else set()
-    )
+    valid_team_ids = _existing_ids(Team, Team.id.in_(candidate_team_ids)) if candidate_team_ids else set()
 
     existing = {r.slot: r for r in MatchReferee.query.filter_by(match_uuid=match.uuid).all()}
     desired_slots: set[int] = set()
@@ -200,13 +196,9 @@ def set_match_referees(match: Match, refs: list[str], initials: list[str]) -> No
             db.session.delete(row)
 
 
-def set_match_referees_from_csv(
-    match: Match, refs_csv: str | None, initials_csv: str | None
-) -> None:
+def set_match_referees_from_csv(match: Match, refs_csv: str | None, initials_csv: str | None) -> None:
     """Convenience wrapper that splits parallel CSV strings before reconciling."""
-    set_match_referees(
-        match, _split_csv_with_blanks(refs_csv), _split_csv_with_blanks(initials_csv)
-    )
+    set_match_referees(match, _split_csv_with_blanks(refs_csv), _split_csv_with_blanks(initials_csv))
 
 
 def clear_match_referees(match: Match) -> None:
@@ -222,17 +214,11 @@ def clear_match_referees(match: Match) -> None:
 
 def get_match_player_ids(match: Match, side: WinnerSide) -> list[str]:
     """Return the player IDs registered for *side* on *match*, in insertion order."""
-    rows = (
-        MatchPlayer.query.filter_by(match_uuid=match.uuid, side=side)
-        .order_by(MatchPlayer.id)
-        .all()
-    )
+    rows = MatchPlayer.query.filter_by(match_uuid=match.uuid, side=side).order_by(MatchPlayer.id).all()
     return [r.player_id for r in rows]
 
 
-def set_match_players(
-    match: Match, team1_players: Iterable[str], team2_players: Iterable[str]
-) -> None:
+def set_match_players(match: Match, team1_players: Iterable[str], team2_players: Iterable[str]) -> None:
     """Reconcile ``MatchPlayer`` rows for *match* from per-side player ID lists.
 
     A player who appears on both sides simultaneously is a data error: the
@@ -288,11 +274,7 @@ def get_camera_timepoint_arrays(
     camera: Camera,
 ) -> tuple[list[str | None], list[float | None]]:
     """Return ``(time_world, time_video)`` parallel arrays in sequence order."""
-    rows = (
-        CameraTimepoint.query.filter_by(camera_uuid=camera.uuid)
-        .order_by(CameraTimepoint.sequence)
-        .all()
-    )
+    rows = CameraTimepoint.query.filter_by(camera_uuid=camera.uuid).order_by(CameraTimepoint.sequence).all()
     return [r.time_world for r in rows], [r.time_video for r in rows]
 
 
@@ -309,16 +291,13 @@ def set_camera_timepoints(camera: Camera, worlds: list, videos: list) -> None:
             desired[seq] = (tw, tv)
     elif worlds or videos:
         logger.warning(
-            "camera_timepoints: camera=%s has mismatched array lengths "
-            "(world=%d, video=%d); destination rows cleared",
+            "camera_timepoints: camera=%s has mismatched array lengths (world=%d, video=%d); destination rows cleared",
             camera.uuid,
             len(worlds),
             len(videos),
         )
 
-    existing = {
-        r.sequence: r for r in CameraTimepoint.query.filter_by(camera_uuid=camera.uuid).all()
-    }
+    existing = {r.sequence: r for r in CameraTimepoint.query.filter_by(camera_uuid=camera.uuid).all()}
     for seq, (tw, tv) in desired.items():
         if seq in existing:
             existing[seq].time_world = tw
