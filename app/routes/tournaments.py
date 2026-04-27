@@ -290,7 +290,6 @@ def create_league():
     rc = RegistrableConfig(
         team_reg_fee=0.0,
         player_reg_fee=0.0,
-        registration_open=False,
     )
     db.session.add(rc)
     db.session.flush()
@@ -1886,11 +1885,8 @@ def update_tournament_settings(tournament_url):
         rc.team_reg_fee = float(request.form.get("team_reg_fee", 0))
         rc.player_reg_fee = float(request.form.get("player_reg_fee", 0))
         rc.terms_link = request.form.get("terms_link", "") or None
-        # Legacy combined flag; if provided, acts as default for team/player when
-        # more specific checkboxes are absent.
-        legacy_reg_open = "registration_open" in request.form
-        rc.team_registration_open = "team_registration_open" in request.form or legacy_reg_open
-        rc.player_registration_open = "player_registration_open" in request.form or legacy_reg_open
+        rc.team_registration_open = "team_registration_open" in request.form
+        rc.player_registration_open = "player_registration_open" in request.form
         n_max = request.form.get("n_max_teams", "").strip()
         rc.n_max_teams = int(n_max) if n_max else None
         roster = request.form.get("max_team_size_roster", "").strip()
@@ -2017,10 +2013,9 @@ def add_match(tournament_url):
                 400,
             )
 
-    # Get stones_per_set for STONES matches (with fallback to deprecated nstonesperset for backward compatibility)
     stones_per_set_value = None
     if set_type == SetType.STONES:
-        stones_per_set_str = request.form.get("stones_per_set") or request.form.get("nstonesperset")
+        stones_per_set_str = request.form.get("stones_per_set")
         if stones_per_set_str:
             try:
                 stones_per_set_value = int(stones_per_set_str)
@@ -2635,17 +2630,13 @@ def update_match(tournament_url):
     else:
         match.nsets = None
 
-    # Update stones_per_set for STONES matches (with fallback to deprecated nstonesperset for backward compatibility)
     if set_type == SetType.STONES:
-        stones_per_set_str = request.form.get("stones_per_set") or request.form.get("nstonesperset")
+        stones_per_set_str = request.form.get("stones_per_set")
         if stones_per_set_str:
             try:
                 match.stones_per_set = int(stones_per_set_str)
             except (ValueError, TypeError):
                 pass  # Keep existing value if invalid
-        # If not provided and match doesn't have stones_per_set, try to migrate from nstonesperset
-        elif match.nstonesperset and not match.stones_per_set:
-            match.stones_per_set = match.nstonesperset
     else:
         # Clear stones_per_set for non-STONES matches
         match.stones_per_set = None

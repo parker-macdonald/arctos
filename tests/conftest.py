@@ -95,7 +95,6 @@ def tournament(test_db):
     cfg = make_registrable_config(
         team_registration_open=True,
         player_registration_open=True,
-        registration_open=True,
         n_max_teams=8,
         max_team_size_roster=10,
         max_team_size_field=7,

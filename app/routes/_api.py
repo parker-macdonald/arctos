@@ -435,12 +435,8 @@ def _tournament_to_dict(t) -> dict:
     cfg = get_registrable_config(t)
     end = t.end_date.isoformat() if t.end_date else None
     start = t.start_date.isoformat() if t.start_date else None
-    # Prefer new per-role flags if present; fall back to legacy registration_open.
-    team_reg_open = False
-    player_reg_open = False
-    if cfg:
-        team_reg_open = getattr(cfg, "team_registration_open", cfg.registration_open)
-        player_reg_open = getattr(cfg, "player_registration_open", cfg.registration_open)
+    team_reg_open = bool(cfg.team_registration_open) if cfg else False
+    player_reg_open = bool(cfg.player_registration_open) if cfg else False
 
     out = {
         "url": t.url,
@@ -479,14 +475,14 @@ def _tournament_to_dict(t) -> dict:
         league = League.query.get(t.league_id)
         if league and league.registrable_config:
             rc = league.registrable_config
-            l_team_open = getattr(rc, "team_registration_open", rc.registration_open)
-            l_player_open = getattr(rc, "player_registration_open", rc.registration_open)
+            l_team_open = bool(rc.team_registration_open)
+            l_player_open = bool(rc.player_registration_open)
             out["league"] = {
                 "league_url": league.url,
                 "name": league.name,
-                "registration_open": bool(l_team_open or l_player_open),
-                "team_registration_open": bool(l_team_open),
-                "player_registration_open": bool(l_player_open),
+                "registration_open": l_team_open or l_player_open,
+                "team_registration_open": l_team_open,
+                "player_registration_open": l_player_open,
                 "team_reg_fee": rc.team_reg_fee,
                 "player_reg_fee": rc.player_reg_fee,
             }
@@ -545,11 +541,8 @@ def _league_to_dict(league) -> dict:
         A JSON-serialisable dictionary suitable for the SPA.
     """
     rc = league.registrable_config
-    team_reg_open = False
-    player_reg_open = False
-    if rc:
-        team_reg_open = getattr(rc, "team_registration_open", rc.registration_open)
-        player_reg_open = getattr(rc, "player_registration_open", rc.registration_open)
+    team_reg_open = bool(rc.team_registration_open) if rc else False
+    player_reg_open = bool(rc.player_registration_open) if rc else False
     wf = getattr(rc, "waiver_filepath", None) if rc else None
     return {
         "league_url": league.url,
@@ -969,17 +962,10 @@ def league_update_settings(league_url):
         if data.get("require_waiver_signature") is False:
             rc.waiver_filepath = None
             rc.waiver_sha256 = None
-        # Legacy combined flag; if provided, acts as default for team/player when
-        # more specific flags are absent.
-        legacy_reg_open = data.get("registration_open", None)
         if "team_registration_open" in data:
             rc.team_registration_open = bool(data["team_registration_open"])
-        elif legacy_reg_open is not None:
-            rc.team_registration_open = bool(legacy_reg_open)
         if "player_registration_open" in data:
             rc.player_registration_open = bool(data["player_registration_open"])
-        elif legacy_reg_open is not None:
-            rc.player_registration_open = bool(legacy_reg_open)
         if "terms_link" in data:
             rc.terms_link = data["terms_link"] or None
         if "payment_info" in data:
@@ -1382,11 +1368,7 @@ def update_my_player_registration_league(league_url):
     if err:
         return jsonify({"error": "Not found" if err == 404 else "Forbidden"}), err
 
-    if not league.registrable_config or not getattr(
-        league.registrable_config,
-        "player_registration_open",
-        league.registrable_config.registration_open,
-    ):
+    if not league.registrable_config or not league.registrable_config.player_registration_open:
         return jsonify({"error": "Registration changes are locked"}), 403
 
     class LeagueContext:
@@ -1481,11 +1463,7 @@ def update_my_team_registration_league(league_url):
     if err:
         return jsonify({"error": "Not found" if err == 404 else "Forbidden"}), err
 
-    if not league.registrable_config or not getattr(
-        league.registrable_config,
-        "team_registration_open",
-        league.registrable_config.registration_open,
-    ):
+    if not league.registrable_config or not league.registrable_config.team_registration_open:
         return jsonify({"error": "Registration changes are locked"}), 403
 
     class LeagueContext:
@@ -3168,7 +3146,7 @@ def tournament_schedule_setup(tournament_url):
                 "ribbon": m.ribbon,
                 "skip_condition": m.skip_condition,
                 "nsets": m.nsets,
-                "stones_per_set": m.stones_per_set or m.nstonesperset,
+                "stones_per_set": m.stones_per_set,
                 "stones_remaining": m.stones_remaining,
                 "match_winner": m.match_winner.value if m.match_winner else None,
             }
@@ -3635,7 +3613,7 @@ def tournament_match_detail(tournament_url):
                 "confirmed_start_time": _dt_iso(match.confirmed_start_time),
                 "completed_time": _dt_iso(match.completed_time),
                 "set_type": match.set_type.value if match.set_type else None,
-                "stones_per_set": match.stones_per_set or match.nstonesperset,
+                "stones_per_set": match.stones_per_set,
                 "stones_remaining": match.stones_remaining,
                 "match_winner": (match.match_winner.value if match.match_winner else None),
                 "schedule_type": (match.schedule_type.value if match.schedule_type else None),
@@ -4553,7 +4531,6 @@ def update_match_api(tournament_url, match_id):
 
     if stones_per_set is not None:
         match.stones_per_set = int(stones_per_set)
-        match.nstonesperset = int(stones_per_set)  # Legacy field
 
     if ribbon is not None:
         match.ribbon = bool(ribbon)
@@ -5120,7 +5097,6 @@ def create_match_api(tournament_url):
         match.nsets = int(data.get("nsets"))
     if match.set_type == SetType.STONES and data.get("stones_per_set") is not None:
         match.stones_per_set = int(data.get("stones_per_set"))
-        match.nstonesperset = match.stones_per_set
 
     if data.get("ribbon") is not None:
         match.ribbon = bool(data.get("ribbon"))
@@ -5670,7 +5646,7 @@ def update_my_player_registration(tournament_url):
 
     tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
     cfg = get_registrable_config(tournament)
-    reg_open = getattr(cfg, "player_registration_open", cfg.registration_open) if cfg else False
+    reg_open = bool(cfg.player_registration_open) if cfg else False
     if not reg_open:
         return jsonify({"error": "Registration changes are locked"}), 403
 
@@ -5750,7 +5726,7 @@ def update_my_team_registration(tournament_url):
 
     tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
     cfg = get_registrable_config(tournament)
-    reg_open = getattr(cfg, "team_registration_open", cfg.registration_open) if cfg else False
+    reg_open = bool(cfg.team_registration_open) if cfg else False
     if not reg_open:
         return jsonify({"error": "Registration changes are locked"}), 403
 

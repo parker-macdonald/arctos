@@ -143,8 +143,7 @@ class MatchService:
                 except ValueError:
                     return Err(ValidationError("Invalid stones per set value"))
             else:
-                # Use stones_per_set with fallback to deprecated nstonesperset for backward compatibility
-                spp = match.stones_per_set or match.nstonesperset or 100
+                spp = match.stones_per_set or 100
             match.stones_per_set = spp
             match.stones_remaining = spp
 

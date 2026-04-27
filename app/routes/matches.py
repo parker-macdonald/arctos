@@ -96,7 +96,7 @@ def scoreboard():
         stones_info = None
         if match.set_type == "STONES":
             stones_info = {
-                "stones_per_set": match.stones_per_set or match.nstonesperset or 100,
+                "stones_per_set": match.stones_per_set or 100,
                 "stones_remaining": match.stones_remaining,
             }
 
@@ -282,7 +282,7 @@ def scoreboard_state():
         points_for_stones = None
         if match.set_type == "STONES":
             stones_info = {
-                "stones_per_set": match.stones_per_set or match.nstonesperset or 100,
+                "stones_per_set": match.stones_per_set or 100,
                 "stones_remaining": match.stones_remaining,
             }
 
