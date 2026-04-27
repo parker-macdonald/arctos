@@ -109,15 +109,15 @@ def can_head_ref_match(tournament_url: str, player_id: str, match=None) -> bool:
     Returns:
         True if the player can head ref, False otherwise
     """
+    from app.services.dual_write import get_head_ref_allowlist_ids, get_match_ref_team_ids
+
     tournament = Tournament.query.get(tournament_url)
     if not tournament:
         return False
 
     # Check explicit allowed list
-    if tournament.head_refs_allowed_list:
-        allowed_list = [ref.strip() for ref in tournament.head_refs_allowed_list.split(",") if ref.strip()]
-        if player_id in allowed_list:
-            return True
+    if player_id in get_head_ref_allowlist_ids(tournament):
+        return True
 
     # If allow anyone is enabled, check if player is registered
     if tournament.head_refs_allow_anyone:
@@ -130,18 +130,17 @@ def can_head_ref_match(tournament_url: str, player_id: str, match=None) -> bool:
 
     # Check reffing teams (requires match context)
     if tournament.head_refs_allow_reffing_teams and match:
-        if match.refs:
-            ref_teams = [team.strip() for team in match.refs.split(",") if team.strip()]
-            # Check if player is registered on any of the ref teams
-            for team_id in ref_teams:
-                player_reg = PlayerRegistration.query.filter_by(
-                    event=tournament_url,
-                    player=player_id,
-                    team=team_id,
-                    status=RegistrationStatus.CONFIRMED,
-                ).first()
-                if player_reg:
-                    return True
+        for team_id in get_match_ref_team_ids(match):
+            if not team_id:
+                continue
+            player_reg = PlayerRegistration.query.filter_by(
+                event=tournament_url,
+                player=player_id,
+                team=team_id,
+                status=RegistrationStatus.CONFIRMED,
+            ).first()
+            if player_reg:
+                return True
 
     return False
 

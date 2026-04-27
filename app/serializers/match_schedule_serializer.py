@@ -85,6 +85,8 @@ class MatchScheduleSerializer:
         # Optional string fields - only include if non-empty.
         # Prefer _initial (user tokens: tag::X, Match::winner, or explicit id); fall back to
         # team1/team2/refs when set directly so export still includes team info.
+        from app.services.dual_write import get_match_refs_csv, get_match_refs_initial_csv
+
         if match.team1_initial:
             result["team1_initial"] = match.team1_initial
         elif getattr(match, "team1", False):
@@ -93,10 +95,13 @@ class MatchScheduleSerializer:
             result["team2_initial"] = match.team2_initial
         elif getattr(match, "team2", False):
             result["team2_initial"] = match.team2
-        if match.refs_initial:
-            result["refs_initial"] = match.refs_initial
-        elif getattr(match, "refs", False):
-            result["refs_initial"] = match.refs
+        refs_initial_csv = get_match_refs_initial_csv(match)
+        if refs_initial_csv:
+            result["refs_initial"] = refs_initial_csv
+        else:
+            refs_csv = get_match_refs_csv(match)
+            if refs_csv and any(s for s in refs_csv.split(",")):
+                result["refs_initial"] = refs_csv
         if match.field:
             result["field"] = match.field
         if match.skip_condition:

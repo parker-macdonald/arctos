@@ -10,6 +10,7 @@ Tests ensure correct behavior when refs_initial contains:
 import pytest
 
 from app.domain.enums import MatchStatus
+from app.services.dual_write import get_match_ref_team_ids, set_match_referees
 from app.utils.dependencies import apply_match_dependencies
 from models import Field, Match, Tag, db
 
@@ -154,8 +155,8 @@ def test_apply_match_dependencies_preserves_explicit_teams_and_tag_resolutions(t
     db.session.commit()
 
     # Create a test match with mixed refs_initial and partially populated refs:
-    # refs_initial = "team3, Match 1::winner, resolved_tag_team"
-    # refs = "team3, , resolved_tag_team"  (Match 1::winner not yet resolved)
+    # initials = "team3, Match 1::winner, resolved_tag_team"
+    # team_ids = "team3, , resolved_tag_team"  (Match 1::winner not yet resolved)
     test_match = Match(
         name="Test Match",
         event=tournament_url,
@@ -163,10 +164,14 @@ def test_apply_match_dependencies_preserves_explicit_teams_and_tag_resolutions(t
         schedule_type="STATIC",
         set_type="SETS",
         nominal_length=60,
-        refs_initial="team3, Match 1::winner, resolved_tag_team",
-        refs="team3, , resolved_tag_team",  # Empty string at index 1 for unresolved match reference
     )
     db.session.add(test_match)
+    db.session.flush()
+    set_match_referees(
+        test_match,
+        ["team3", "", "resolved_tag_team"],
+        ["team3", "Match 1::winner", "resolved_tag_team"],
+    )
     db.session.commit()
 
     # Apply match dependencies
@@ -174,8 +179,7 @@ def test_apply_match_dependencies_preserves_explicit_teams_and_tag_resolutions(t
     db.session.refresh(test_match)
 
     # Verify refs structure - match reference should be resolved, others preserved
-    assert test_match.refs is not None
-    refs_list = [r.strip() for r in test_match.refs.split(",")]
+    refs_list = get_match_ref_team_ids(test_match)
     assert len(refs_list) == 3
     assert refs_list[0] == "team3"  # explicit team ID preserved
     assert refs_list[1] == winner_team_id  # Match 1::winner resolved
@@ -227,33 +231,18 @@ def test_mixed_refs_all_three_types(test_db, tournament, app, seeded_teams):
         schedule_type="STATIC",
         set_type="SETS",
         nominal_length=60,
-        refs_initial=f"{explicit_team}, tag::Pool A, Match 1::winner",
     )
     db.session.add(test_match)
+    db.session.flush()
+    # Step 1: simulate update_tags resolving the tag reference
+    set_match_referees(
+        test_match,
+        [explicit_team, tag_resolved_team, ""],
+        [explicit_team, "tag::Pool A", "Match 1::winner"],
+    )
     db.session.commit()
 
-    # Step 1: Apply update_tags (simulate)
-    tag_to_team = {"tag::Pool A": tag_resolved_team}
-    if test_match.refs_initial:
-        refs_initial_list = [r.strip() for r in test_match.refs_initial.split(",")]
-        refs_list = [""] * len(refs_initial_list)
-
-        for i, initial_ref in enumerate(refs_initial_list):
-            if initial_ref in tag_to_team:
-                refs_list[i] = tag_to_team[initial_ref]
-            elif (
-                initial_ref
-                and not initial_ref.lower().startswith("tag::")
-                and "::winner" not in initial_ref.lower()
-                and "::loser" not in initial_ref.lower()
-            ):
-                refs_list[i] = initial_ref
-
-        test_match.refs = ", ".join(refs_list)
-    db.session.commit()
-
-    # Verify after update_tags
-    refs_list = [r.strip() for r in test_match.refs.split(",")]
+    refs_list = get_match_ref_team_ids(test_match)
     assert len(refs_list) == 3
     assert refs_list[0] == explicit_team  # explicit team ID
     assert refs_list[1] == tag_resolved_team  # tag resolved
@@ -263,8 +252,7 @@ def test_mixed_refs_all_three_types(test_db, tournament, app, seeded_teams):
     apply_match_dependencies(tournament_url, match1)
     db.session.refresh(test_match)
 
-    # Verify after apply_match_dependencies
-    refs_list = [r.strip() for r in test_match.refs.split(",")]
+    refs_list = get_match_ref_team_ids(test_match)
     assert len(refs_list) == 3
     assert refs_list[0] == explicit_team  # explicit team ID preserved
     assert refs_list[1] == tag_resolved_team  # tag resolution preserved

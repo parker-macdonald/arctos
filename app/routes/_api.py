@@ -29,6 +29,18 @@ from app.utils.match_ref_resolution import (
     resolve_team_slot,
 )
 from app.utils.dependencies import apply_match_dependencies
+from app.services.dual_write import (
+    clear_match_referees,
+    get_camera_timepoint_arrays,
+    get_head_ref_allowlist_ids,
+    get_match_player_ids,
+    get_match_ref_initials,
+    get_match_ref_team_ids,
+    get_match_referee_rows,
+    get_match_refs_csv,
+    get_match_refs_initial_csv,
+    set_match_referees_from_csv,
+)
 from app.serializers.match_note_serializer import MatchNoteSerializer
 from app.error_values import Ok, Err
 from app.routes.tournaments import update_match_previous_link
@@ -450,7 +462,7 @@ def _tournament_to_dict(t) -> dict:
         "max_team_size_roster": (getattr(cfg, "max_team_size_roster", None) if cfg else None),
         "max_team_size_field": (getattr(cfg, "max_team_size_field", None) if cfg else None),
         "terms_link": cfg.terms_link if cfg else None,
-        "head_refs_allowed_list": getattr(t, "head_refs_allowed_list", None),
+        "head_refs_allowed_list": ",".join(get_head_ref_allowlist_ids(t)) or None,
         "head_refs_allow_reffing_teams": bool(getattr(t, "head_refs_allow_reffing_teams", False)),
         "head_refs_allow_anyone": bool(getattr(t, "head_refs_allow_anyone", False)),
     }
@@ -2714,7 +2726,7 @@ def start_match_data_api(tournament_url):
                 "name": match.name,
                 "field": match.field,
                 "set_type": match.set_type.value if match.set_type else None,
-                "refs": match.refs,
+                "refs": get_match_refs_csv(match) or None,
                 "team1_name": _team_name_for_match(tournament, match, "team1"),
                 "team2_name": _team_name_for_match(tournament, match, "team2"),
             },
@@ -3151,8 +3163,8 @@ def tournament_schedule_setup(tournament_url):
                 "nominal_length": m.nominal_length,
                 "previous_match": m.previous_match,
                 "next_match": m.next_match,
-                "refs": m.refs,
-                "refs_initial": m.refs_initial,
+                "refs": get_match_refs_csv(m) or None,
+                "refs_initial": get_match_refs_initial_csv(m) or None,
                 "ribbon": m.ribbon,
                 "skip_condition": m.skip_condition,
                 "nsets": m.nsets,
@@ -3221,17 +3233,19 @@ def _team_display_name(tournament, team_id):
 
 def _refs_display_for_match(tournament, match):
     """Refs as comma-separated display names (pseudonym for each ref team), like team1_name/team2_name."""
-    if not match.refs:
-        return match.refs_initial
+    team_ids = get_match_ref_team_ids(match)
+    initials_csv = get_match_refs_initial_csv(match) or None
+    if not any(team_ids):
+        return initials_csv
     parts = []
-    for tid in (match.refs or "").split(","):
+    for tid in team_ids:
         tid = tid.strip()
         if not tid:
             continue
         name = _team_display_name(tournament, tid)
         if name:
             parts.append(name)
-    return ",".join(parts) if parts else match.refs_initial
+    return ",".join(parts) if parts else initials_csv
 
 
 @bp.route("/tournaments/<tournament_url>/match", methods=["GET"])
@@ -3313,16 +3327,9 @@ def tournament_match_detail(tournament_url):
     )
     for idx, cam in enumerate(camera_rows):
         cam_type = "youtube" if (cam.source_type or "").strip() == "youtube_livestream" else "recorded"
-        time_world = None
-        time_video = None
-        try:
-            time_world = json.loads(cam.time_world) if cam.time_world else None
-        except (json.JSONDecodeError, TypeError):
-            time_world = None
-        try:
-            time_video = json.loads(cam.time_video) if cam.time_video else None
-        except (json.JSONDecodeError, TypeError):
-            time_video = None
+        worlds, videos = get_camera_timepoint_arrays(cam)
+        time_world = worlds or None
+        time_video = videos or None
 
         # Only provide YouTube URL/id once upload succeeded.
         url = cam.link if cam.status == "SUCCESS" else None
@@ -3441,19 +3448,8 @@ def tournament_match_detail(tournament_url):
     from app.utils.player_helpers import get_player_display_from_registration
 
     # Parse selected players for "in_this_match" check
-    team1_selected = set()
-    if match.team1_players:
-        try:
-            team1_selected = set(json.loads(match.team1_players))
-        except:
-            pass
-
-    team2_selected = set()
-    if match.team2_players:
-        try:
-            team2_selected = set(json.loads(match.team2_players))
-        except:
-            pass
+    team1_selected = set(get_match_player_ids(match, WinnerSide.TEAM1))
+    team2_selected = set(get_match_player_ids(match, WinnerSide.TEAM2))
 
     # Helper to add players from a team (registration). Skip any player whose id is in exclude_ids (e.g. playing for the other team).
     def add_team_players(team_id, team_side, selected_ids, exclude_ids=None):
@@ -3645,8 +3641,8 @@ def tournament_match_detail(tournament_url):
                 "schedule_type": (match.schedule_type.value if match.schedule_type else None),
                 "nominal_length": match.nominal_length,
                 "previous_match": match.previous_match,
-                "refs": match.refs,
-                "refs_initial": match.refs_initial,
+                "refs": get_match_refs_csv(match) or None,
+                "refs_initial": get_match_refs_initial_csv(match) or None,
                 "refs_display": _refs_display_for_match(tournament, match),
                 "ribbon": match.ribbon,
                 "skip_condition": match.skip_condition,
@@ -4481,12 +4477,7 @@ def update_match_api(tournament_url, match_id):
         match.team1_initial = None
         match.team2 = None
         match.team2_initial = None
-        match.refs = None
-        match.refs_initial = None
-        # Mirror the new ``match_referees`` join table.
-        from app.services.dual_write import sync_match_referees
-
-        sync_match_referees(match)
+        clear_match_referees(match)
     else:
         # Helper to check if a value is an explicit team ID (not a tag or match reference)
         def is_explicit_team_id(val: str) -> bool:
@@ -4545,17 +4536,10 @@ def update_match_api(tournament_url, match_id):
         if refs is not None:
             if isinstance(refs, list):
                 r_csv, i_csv = resolve_refs_slots(refs, tournament_url)
-                match.refs = r_csv
-                match.refs_initial = i_csv
             else:
                 toks = refs_string_to_tokens(refs)
                 r_csv, i_csv = resolve_refs_slots(toks, tournament_url)
-                match.refs = r_csv
-                match.refs_initial = i_csv
-            # Mirror the new ``match_referees`` join table.
-            from app.services.dual_write import sync_match_referees
-
-            sync_match_referees(match)
+            set_match_referees_from_csv(match, r_csv, i_csv)
 
     # Set Type
     if set_type_str:
@@ -4751,12 +4735,7 @@ def force_start_match_api(tournament_url, match_id):
 
     # Refs: preserve slot count (registration, explicit id, tag)
     r_csv, i_csv = resolve_refs_slots(refs_list, tournament_url)
-    match.refs = r_csv
-    match.refs_initial = i_csv
-    # Mirror the new ``match_referees`` join table.
-    from app.services.dual_write import sync_match_referees
-
-    sync_match_referees(match)
+    set_match_referees_from_csv(match, r_csv, i_csv)
 
     # Convert to static
     match.schedule_type = ScheduleType.STATIC
@@ -5121,16 +5100,13 @@ def create_match_api(tournament_url):
         match.team1_initial = team1_name or None
         match.team2_initial = team2_name or None
 
-    # Refs: parallel refs / refs_initial (same slot count)
+    # Refs: parallel refs / refs_initial (same slot count). Resolved here but
+    # written below after the flush so the match has a uuid the join-table
+    # rows can reference.
     refs = data.get("refs")
+    refs_csv_pair: tuple[str, str] | None = None
     if refs and isinstance(refs, list):
-        r_csv, i_csv = resolve_refs_slots(refs, tournament_url)
-        match.refs = r_csv
-        match.refs_initial = i_csv
-        # Mirror the new ``match_referees`` join table.
-        from app.services.dual_write import sync_match_referees
-
-        sync_match_referees(match)
+        refs_csv_pair = resolve_refs_slots(refs, tournament_url)
 
     # Format
     set_type_str = data.get("set_type")
@@ -5153,6 +5129,9 @@ def create_match_api(tournament_url):
 
     db.session.add(match)
     db.session.flush()  # Ensure uuid exists before link updates and validation.
+
+    if refs_csv_pair is not None:
+        set_match_referees_from_csv(match, refs_csv_pair[0], refs_csv_pair[1])
 
     # Handle linked list insert
     prev_match_id = (
@@ -5294,11 +5273,8 @@ def _tag_usage(tournament_url, tag_name):
             used.append(f'Team 1 of match "{m.name}"')
         if m.team2_initial and m.team2_initial.strip() == tag_ref:
             used.append(f'Team 2 of match "{m.name}"')
-        if m.refs_initial:
-            for r in (r.strip() for r in m.refs_initial.split(",")):
-                if r == tag_ref:
-                    used.append(f'Refs of match "{m.name}"')
-                    break
+        if any(initial == tag_ref for initial in get_match_ref_initials(m)):
+            used.append(f'Refs of match "{m.name}"')
         if m.skip_condition and (tag_ref in m.skip_condition or tag_name in m.skip_condition):
             used.append(f'Skip condition of match "{m.name}"')
     return used
@@ -5887,24 +5863,9 @@ def update_tags_api(tournament_url):
         if m.team2_initial == tag_ref:
             m.team2 = team_id
 
-        if m.refs_initial:
-            refs = [r.strip() for r in m.refs_initial.split(",")]
-            current_refs = [r.strip() for r in (m.refs or "").split(",")]
-            if len(current_refs) != len(refs):
-                current_refs = [""] * len(refs)
-
-            changed = False
-            for i, r in enumerate(refs):
-                if r == tag_ref:
-                    current_refs[i] = team_id
-                    changed = True
-
-            if changed:
-                m.refs = ",".join(current_refs)
-                # Mirror the new ``match_referees`` join table.
-                from app.services.dual_write import sync_match_referees
-
-                sync_match_referees(m)
+        for row in get_match_referee_rows(m):
+            if (row.initial or "").strip() == tag_ref:
+                row.team_id = team_id
 
     db.session.commit()
     recompute_all_match_times(tournament_url)

@@ -34,9 +34,12 @@ def test_export_schedule_includes_tags_fields_and_matches(test_db, tournament):
         set_type="SETS",
         team1_initial="tag::Pool A",
         team2_initial="tag::Pool B",
-        refs_initial="tag::Pool A, tag::Pool B",
     )
     db.session.add(m1)
+    db.session.flush()
+    from app.services.dual_write import set_match_referees
+
+    set_match_referees(m1, ["", ""], ["tag::Pool A", "tag::Pool B"])
     db.session.commit()
 
     res = ScheduleImportExportService.export_schedule(tournament_url)
@@ -55,7 +58,7 @@ def test_export_schedule_includes_tags_fields_and_matches(test_db, tournament):
             assert 'name = "M1"' in toml_str
             assert 'field = "Field 1"' in toml_str
             assert 'team1_initial = "tag::Pool A"' in toml_str
-            assert 'refs_initial = "tag::Pool A, tag::Pool B"' in toml_str
+            assert 'refs_initial = "tag::Pool A,tag::Pool B"' in toml_str
         case Err(err):
             raise AssertionError(f"Expected Ok(TOML), got Err({err})")
 
@@ -428,9 +431,12 @@ def test_tags_with_spaces_work_correctly(test_db, tournament):
         set_type="SETS",
         nominal_length=60,
         team1_initial="tag::Pool A Teams",
-        refs_initial="tag::Pool A Teams",
     )
     db.session.add(match)
+    db.session.flush()
+    from app.services.dual_write import set_match_referees
+
+    set_match_referees(match, [""], ["tag::Pool A Teams"])
     db.session.commit()
 
     # Export should include the tag and the reference
@@ -454,7 +460,9 @@ def test_tags_with_spaces_work_correctly(test_db, tournament):
             raise AssertionError(f"Expected Ok(ImportResult), got Err({err})")
 
     # Verify the imported match has the correct reference
+    from app.services.dual_write import get_match_refs_initial_csv
+
     imported_match = Match.query.filter_by(event=tournament_url, name="Test Match").first()
     assert imported_match is not None
     assert imported_match.team1_initial == "tag::Pool A Teams"
-    assert imported_match.refs_initial == "tag::Pool A Teams"
+    assert get_match_refs_initial_csv(imported_match) == "tag::Pool A Teams"

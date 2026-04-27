@@ -968,39 +968,26 @@ def run_match(tournament_url):
     tournament = Tournament.query.get(tournament_url)
     points = Point.query.filter_by(match=match.uuid).order_by(Point.stamp).all()
 
-    team1_players = []
-    team2_players = []
-    if match.team1_players:
-        try:
-            player_ids = json.loads(match.team1_players)
-            for pid in player_ids:
-                pr = PlayerRegistration.query.filter_by(
-                    event=tournament_url,
-                    player=pid,
-                    status=RegistrationStatus.CONFIRMED,
-                ).first()
-                if pr:
-                    player = Player.query.get(pid)
-                    if player:
-                        team1_players.append((pr, player))
-        except (json.JSONDecodeError, TypeError):
-            pass
+    from app.domain.enums import WinnerSide
+    from app.services.dual_write import get_match_player_ids
 
-    if match.team2_players:
-        try:
-            player_ids = json.loads(match.team2_players)
-            for pid in player_ids:
-                pr = PlayerRegistration.query.filter_by(
-                    event=tournament_url,
-                    player=pid,
-                    status=RegistrationStatus.CONFIRMED,
-                ).first()
-                if pr:
-                    player = Player.query.get(pid)
-                    if player:
-                        team2_players.append((pr, player))
-        except (json.JSONDecodeError, TypeError):
-            pass
+    def _registration_with_player(pid):
+        pr = PlayerRegistration.query.filter_by(
+            event=tournament_url, player=pid, status=RegistrationStatus.CONFIRMED
+        ).first()
+        if not pr:
+            return None
+        player = Player.query.get(pid)
+        if not player:
+            return None
+        return (pr, player)
+
+    team1_players = [
+        item for item in (_registration_with_player(pid) for pid in get_match_player_ids(match, WinnerSide.TEAM1)) if item
+    ]
+    team2_players = [
+        item for item in (_registration_with_player(pid) for pid in get_match_player_ids(match, WinnerSide.TEAM2)) if item
+    ]
 
     # Build match_players for player autocomplete in notes modal
     match_players = []

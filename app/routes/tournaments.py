@@ -1818,18 +1818,14 @@ def user_upload_list_cameras(tournament_url: str):
         .all()
     )
 
+    from app.services.dual_write import get_camera_timepoint_arrays
+
     rows = []
     for cam in cams:
         m = Match.query.filter_by(uuid=cam.match_uuid).first()
         f = Field.query.filter_by(id=cam.field).first()
-        world_start = None
-        if cam.time_world:
-            try:
-                tw = json.loads(cam.time_world)
-                if isinstance(tw, list) and tw:
-                    world_start = str(tw[0])
-            except Exception:
-                world_start = None
+        worlds, _ = get_camera_timepoint_arrays(cam)
+        world_start = str(worlds[0]) if worlds and worlds[0] is not None else None
         uploader = None
         if cam.uploaded_by_user_type and cam.uploaded_by_user_id:
             uploader = f"{cam.uploaded_by_user_type}:{cam.uploaded_by_user_id}"
@@ -1878,12 +1874,9 @@ def update_tournament_settings(tournament_url):
     tournament.name = request.form["name"]
     tournament.location = request.form.get("location", "")
     tournament.about = request.form.get("about", "")
-    tournament.head_refs_allowed_list = request.form.get("head_refs_allowed_list", "")
-    # Mirror the new ``headref_allowlist`` join table to the legacy CSV column.
-    # Removed in Phase 4 once application reads have switched over.
-    from app.services.dual_write import sync_head_ref_allowlist
+    from app.services.dual_write import set_head_ref_allowlist_from_csv
 
-    sync_head_ref_allowlist(tournament)
+    set_head_ref_allowlist_from_csv(tournament, request.form.get("head_refs_allowed_list", ""))
     tournament.head_refs_allow_reffing_teams = "head_refs_allow_reffing_teams" in request.form
     tournament.head_refs_allow_anyone = "head_refs_allow_anyone" in request.form
     tournament.published = "published" in request.form
@@ -2074,25 +2067,22 @@ def add_match(tournament_url):
             if resolved_team:
                 final_team2 = resolved_team
 
-    # For refs, populate explicit team IDs and resolve tag references maintaining index structure
-    final_refs = None
+    # For refs, populate explicit team IDs and resolve tag references maintaining index structure.
+    # The ref slot rows are inserted after the match has been flushed so they can reference its uuid.
+    refs_resolved_csv: str | None = None
     if refs_initial:
         refs_initial_list = [r.strip() for r in refs_initial.split(",")]
         refs_list = [""] * len(refs_initial_list)
-        has_explicit_ids = False
         for i, initial_ref in enumerate(refs_initial_list):
-            if initial_ref:
-                if is_explicit_team_id(initial_ref):
-                    refs_list[i] = initial_ref
-                    has_explicit_ids = True
-                else:
-                    # Try to resolve as tag reference
-                    resolved_team = resolve_tag_to_team(initial_ref, tournament_url)
-                    if resolved_team:
-                        refs_list[i] = resolved_team
-                        has_explicit_ids = True
-        if has_explicit_ids:
-            final_refs = ", ".join(refs_list)
+            if not initial_ref:
+                continue
+            if is_explicit_team_id(initial_ref):
+                refs_list[i] = initial_ref
+            else:
+                resolved_team = resolve_tag_to_team(initial_ref, tournament_url)
+                if resolved_team:
+                    refs_list[i] = resolved_team
+        refs_resolved_csv = ",".join(refs_list)
 
     # Skip condition only for SAFE and FAST; clear for STATIC, BREAK, and JOIN
     skip_condition_raw = request.form.get("skip_condition", "").strip() or None
@@ -2113,14 +2103,17 @@ def add_match(tournament_url):
             int(request.form.get("nsets", 3)) if schedule_type not in (ScheduleType.BREAK, ScheduleType.JOIN) else None
         ),
         nominal_length=nominal_length,
-        refs=final_refs,
-        refs_initial=refs_initial,
         stones_per_set=stones_per_set_value,
         skip_condition=skip_condition,
     )
 
     db.session.add(match)
     db.session.flush()  # Flush to get UUID before updating links
+
+    if refs_initial:
+        from app.services.dual_write import set_match_referees_from_csv
+
+        set_match_referees_from_csv(match, refs_resolved_csv, refs_initial)
 
     # For dynamic matches, set previous_match from form and compute start time from it
     # For static matches, use the provided start_time
@@ -2669,37 +2662,30 @@ def update_match(tournament_url):
     skip_condition_raw = request.form.get("skip_condition", "").strip() or None
     match.skip_condition = skip_condition_raw if schedule_type in (ScheduleType.SAFE, ScheduleType.FAST) else None
 
-    # If refs_initial changed, clear refs and repopulate with explicit team IDs and resolved tag references
-    from app.services.dual_write import sync_match_referees
+    # If refs_initial changed, repopulate referee slots with explicit team IDs and resolved tag references
+    from app.services.dual_write import (
+        clear_match_referees,
+        get_match_refs_initial_csv,
+        set_match_referees_from_csv,
+    )
 
-    old_refs_initial = match.refs_initial or ""
-    match.refs_initial = refs_initial
-    if old_refs_initial != refs_initial:
-        # Clear refs, but populate any explicit team IDs and resolved tag references from refs_initial
+    old_refs_initial = get_match_refs_initial_csv(match)
+    if old_refs_initial != (refs_initial or ""):
         if refs_initial:
             refs_initial_list = [r.strip() for r in refs_initial.split(",")]
             refs_list = [""] * len(refs_initial_list)
-            has_explicit_ids = False
             for i, initial_ref in enumerate(refs_initial_list):
-                if initial_ref:
-                    if is_explicit_team_id(initial_ref):
-                        # Explicit team ID
-                        refs_list[i] = initial_ref
-                        has_explicit_ids = True
-                    else:
-                        # Try to resolve as tag reference
-                        resolved_team = resolve_tag_to_team(initial_ref, tournament_url)
-                        if resolved_team:
-                            refs_list[i] = resolved_team
-                            has_explicit_ids = True
-            if has_explicit_ids:
-                match.refs = ", ".join(refs_list)
-            else:
-                match.refs = None
+                if not initial_ref:
+                    continue
+                if is_explicit_team_id(initial_ref):
+                    refs_list[i] = initial_ref
+                else:
+                    resolved_team = resolve_tag_to_team(initial_ref, tournament_url)
+                    if resolved_team:
+                        refs_list[i] = resolved_team
+            set_match_referees_from_csv(match, ",".join(refs_list), refs_initial)
         else:
-            match.refs = None
-        # Mirror the new ``match_referees`` join table.
-        sync_match_referees(match)
+            clear_match_referees(match)
 
     # For dynamic matches, set previous_match from form and compute start time from it
     # For static matches, ensure previous_match is cleared and use provided start_time

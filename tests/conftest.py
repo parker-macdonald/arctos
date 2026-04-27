@@ -109,7 +109,6 @@ def tournament(test_db):
         max_field_size=14,
         published=True,
         schedule_published=True,
-        head_refs_allowed_list="test_ref1,test_ref2",
         registrable_config_id=cfg.id,
     )
     db.session.add(tourn)
@@ -166,10 +165,14 @@ def team_registration(test_db, tournament, team):
 
 @pytest.fixture
 def head_ref_player(test_db, tournament):
-    """Create a head ref player (listed in tournament.head_refs_allowed_list)."""
+    """Create a head ref player and register them on the tournament's allow-list."""
+    from app.services.dual_write import set_head_ref_allowlist_ids
+
     p = Player(id="test_ref1", name="Head Ref Player", pw_hash="dummy_hash")
     p.set_password("testpass")
     db.session.add(p)
+    db.session.flush()
+    set_head_ref_allowlist_ids(tournament, [p.id])
     db.session.commit()
     db.session.refresh(p)
     return p

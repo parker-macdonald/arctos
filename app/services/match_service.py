@@ -130,14 +130,9 @@ class MatchService:
         match.confirmed_start_time = datetime.now(timezone.utc).replace(tzinfo=None)
 
         match.initial_notes = match_notes or ""
-        match.team1_players = json.dumps(team1_players)
-        match.team2_players = json.dumps(team2_players)
-        # Mirror the new ``match_players`` join table to the legacy
-        # team1_players/team2_players JSON arrays. Removed in Phase 4 once
-        # application reads have switched over.
-        from app.services.dual_write import sync_match_players
+        from app.services.dual_write import set_match_players
 
-        sync_match_players(match)
+        set_match_players(match, team1_players, team2_players)
         match.started_by = user.id
         match.started_at = datetime.now(timezone.utc).replace(tzinfo=None)
 

@@ -86,6 +86,7 @@ def _make_camera(match_uuid: str, tournament_url: str, field_id: int, **override
 def test_backfill_head_refs_inserts_one_per_csv_entry(test_db, tournament, head_ref_player):
     """Each comma-separated player ID becomes one HeadRefAllowList row."""
     # Add a second valid player so the comma-separated list has two entries.
+    # head_ref_player fixture seeds an allow-list row for test_ref1.
     db.session.add(Player(id="ref2", name="Ref 2", pw_hash="h"))
     db.session.commit()
 
@@ -96,7 +97,9 @@ def test_backfill_head_refs_inserts_one_per_csv_entry(test_db, tournament, head_
     stats = backfill.backfill_head_ref_allowlist(targets)
     db.session.commit()
 
-    assert stats.inserted == 2
+    # One row was already seeded by the fixture (skipped_existing); the other CSV entry was inserted.
+    assert stats.inserted == 1
+    assert stats.skipped_existing == 1
     assert HeadRefAllowList.query.filter_by(event=tournament.url).count() == 2
 
 
@@ -135,6 +138,8 @@ def test_backfill_head_refs_is_idempotent(test_db, tournament, head_ref_player):
 @pytest.mark.unit
 def test_backfill_head_refs_skips_empty_entries(test_db, tournament, head_ref_player):
     """Empty entries from trailing commas / extra whitespace don't error out."""
+    # head_ref_player fixture already inserted the allow-list row for test_ref1, so the
+    # backfill counts it as ``skipped_existing`` rather than ``inserted``.
     tournament.head_refs_allowed_list = f", {head_ref_player.id} ,, ,"
     db.session.commit()
 
@@ -142,7 +147,8 @@ def test_backfill_head_refs_skips_empty_entries(test_db, tournament, head_ref_pl
     stats = backfill.backfill_head_ref_allowlist(targets)
     db.session.commit()
 
-    assert stats.inserted == 1
+    assert stats.skipped_existing == 1
+    assert HeadRefAllowList.query.filter_by(event=tournament.url).count() == 1
 
 
 # ---------------------------------------------------------------------------

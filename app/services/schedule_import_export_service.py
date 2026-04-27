@@ -47,6 +47,38 @@ def _is_explicit_team_id(token: str) -> bool:
     return True
 
 
+def _create_match_from_dict(match_dict: dict) -> "Match":
+    """Persist a new ``Match`` from an import dict and populate its referee slots.
+
+    ``refs`` and ``refs_initial`` are stripped from the constructor arguments
+    because they live in the ``MatchReferee`` join table. After flushing the
+    match (so its uuid is assigned), the referee rows are written via the
+    join-table helper.
+    """
+    from app.domain.enums import MatchStatus, ScheduleType
+    from app.services.dual_write import set_match_referees_from_csv
+    from models import Match, db
+
+    refs_csv = match_dict.get("refs") or ""
+    refs_initial_csv = match_dict.get("refs_initial") or ""
+    create_dict = {
+        k: v
+        for k, v in match_dict.items()
+        if k not in ("previous_match", "next_match", "refs", "refs_initial")
+    }
+    match = Match(**create_dict)
+    if not match.status:
+        if match.schedule_type == ScheduleType.STATIC:
+            match.status = MatchStatus.READY_TO_START
+        else:
+            match.status = MatchStatus.NOT_STARTED
+    db.session.add(match)
+    db.session.flush()  # Flush to assign uuid before writing the referee rows.
+    if refs_csv or refs_initial_csv:
+        set_match_referees_from_csv(match, refs_csv, refs_initial_csv)
+    return match
+
+
 @dataclass(frozen=True)
 class ImportResult:
     """Result of a schedule import operation.
@@ -499,8 +531,14 @@ class ScheduleImportExportService:
                     # Same tournament: update by UUID
                     match = Match.query.filter_by(uuid=match_dict["uuid"], event=tournament_url).first()
                     if match:
-                        # Check if refs_initial changed - if so, clear refs (will be repopulated)
-                        old_refs_initial = match.refs_initial or ""
+                        from app.services.dual_write import (
+                            clear_match_referees,
+                            get_match_refs_initial_csv,
+                            set_match_referees_from_csv,
+                        )
+
+                        # Check if refs_initial changed - if so, repopulate slots
+                        old_refs_initial = get_match_refs_initial_csv(match)
                         new_refs_initial = match_dict.get("refs_initial") or ""
                         refs_initial_changed = old_refs_initial != new_refs_initial
 
@@ -513,44 +551,33 @@ class ScheduleImportExportService:
                         new_team2_initial = match_dict.get("team2_initial") or ""
                         team2_initial_changed = old_team2_initial != new_team2_initial
 
-                        # Update fields (excluding relationships which we'll handle in second pass)
+                        # Update model columns (excluding relationships, refs/refs_initial which live
+                        # in the join table, and event/uuid which identify the row).
                         for key, value in match_dict.items():
                             if key not in (
                                 "uuid",
                                 "event",
                                 "previous_match",
                                 "next_match",
+                                "refs",
+                                "refs_initial",
                             ):
                                 setattr(match, key, value)
 
-                        # If _initial fields changed, clear corresponding resolved fields
-                        # (they will be repopulated by update_tags/apply_match_dependencies or explicit team IDs)
-                        if refs_initial_changed or team1_initial_changed or team2_initial_changed:
-                            # Handle team1
-                            if team1_initial_changed:
-                                match.team1 = resolve_team_column(new_team1_initial, tournament_url)
-
-                            # Handle team2
-                            if team2_initial_changed:
-                                match.team2 = resolve_team_column(new_team2_initial, tournament_url)
-
-                            # Handle refs (parallel with refs_initial)
-                            if refs_initial_changed:
-                                if new_refs_initial:
-                                    r_csv, _ = resolve_refs_slots(
-                                        refs_string_to_tokens(new_refs_initial),
-                                        tournament_url,
-                                    )
-                                    if r_csv and any(s.strip() for s in r_csv.split(",")):
-                                        match.refs = r_csv
-                                    else:
-                                        match.refs = None
-                                else:
-                                    match.refs = None
-                                # Mirror the new ``match_referees`` join table.
-                                from app.services.dual_write import sync_match_referees
-
-                                sync_match_referees(match)
+                        # If _initial fields changed, refresh the corresponding resolved values.
+                        if team1_initial_changed:
+                            match.team1 = resolve_team_column(new_team1_initial, tournament_url)
+                        if team2_initial_changed:
+                            match.team2 = resolve_team_column(new_team2_initial, tournament_url)
+                        if refs_initial_changed:
+                            if new_refs_initial:
+                                r_csv, _ = resolve_refs_slots(
+                                    refs_string_to_tokens(new_refs_initial),
+                                    tournament_url,
+                                )
+                                set_match_referees_from_csv(match, r_csv, new_refs_initial)
+                            else:
+                                clear_match_referees(match)
                         match_name_to_uuid[match_name] = match.uuid
                         # Also add to field-based mapping for duplicate resolution (use actual match field)
                         match_field = match.field or ""
@@ -559,21 +586,8 @@ class ScheduleImportExportService:
                         kept_match_uuids.add(match.uuid)
                         matches_updated += 1
                     else:
-                        # UUID doesn't exist, create new
-                        create_dict = {k: v for k, v in match_dict.items() if k not in ("previous_match", "next_match")}
-                        match = Match(**create_dict)
-                        # Set initial status if not already set: STATIC matches are READY_TO_START, others are NOT_STARTED
-                        if not match.status:
-                            from app.domain.enums import ScheduleType, MatchStatus
-
-                            if match.schedule_type == ScheduleType.STATIC:
-                                match.status = MatchStatus.READY_TO_START
-                            else:
-                                match.status = MatchStatus.NOT_STARTED
-                        db.session.add(match)
-                        db.session.flush()  # Flush to get the match object with field set
+                        match = _create_match_from_dict(match_dict)
                         match_name_to_uuid[match_name] = match.uuid
-                        # Also add to field-based mapping for duplicate resolution (use actual match field)
                         match_field = match.field or ""
                         if match_field:
                             match_name_field_to_uuid[(match_name, match_field)] = match.uuid
@@ -581,20 +595,8 @@ class ScheduleImportExportService:
                         matches_created += 1
                 else:
                     # Different tournament: always create new
-                    create_dict = {k: v for k, v in match_dict.items() if k not in ("previous_match", "next_match")}
-                    match = Match(**create_dict)
-                    # Set initial status if not already set: STATIC matches are READY_TO_START, others are NOT_STARTED
-                    if not match.status:
-                        from app.domain.enums import ScheduleType, MatchStatus
-
-                        if match.schedule_type == ScheduleType.STATIC:
-                            match.status = MatchStatus.READY_TO_START
-                        else:
-                            match.status = MatchStatus.NOT_STARTED
-                    db.session.add(match)
-                    db.session.flush()  # Flush to get the match object with field set
+                    match = _create_match_from_dict(match_dict)
                     match_name_to_uuid[match_name] = match.uuid
-                    # Also add to field-based mapping for duplicate resolution (use actual match field)
                     match_field = match.field or ""
                     if match_field:
                         match_name_field_to_uuid[(match_name, match_field)] = match.uuid

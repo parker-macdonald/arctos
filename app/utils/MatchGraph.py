@@ -487,10 +487,12 @@ def build_match_graph(
         dependent_key = key
         match = match_list[0]
 
+        from app.services.dual_write import get_match_refs_initial_csv
+
         for initial_field in [
             match.team1_initial,
             match.team2_initial,
-            match.refs_initial,
+            get_match_refs_initial_csv(match),
         ]:
             refs = _extract_match_references(initial_field or "")
             for ref_match_name, ref_type in refs:
