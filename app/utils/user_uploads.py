@@ -247,6 +247,59 @@ def _media_profile_summary(profile: UserUploadMediaProfile) -> str:
     return f"video={profile.video_codec} {profile.width}x{profile.height} {profile.pix_fmt}; audio={audio_part}"
 
 
+def _audio_quality_key(profile: UserUploadMediaProfile) -> tuple[int, int, int]:
+    try:
+        sample_rate = int(profile.sample_rate or 0)
+    except (TypeError, ValueError):
+        sample_rate = 0
+    return (
+        1 if profile.audio_codec else 0,
+        sample_rate,
+        profile.channels or 0,
+    )
+
+
+def _video_quality_key(profile: UserUploadMediaProfile) -> tuple[int, int, int]:
+    return (
+        profile.width * profile.height,
+        profile.width,
+        profile.height,
+    )
+
+
+def _choose_best_reencode_target_profile(
+    profiles: list[UserUploadMediaProfile],
+) -> UserUploadMediaProfile:
+    if not profiles:
+        raise ValueError("profiles required")
+
+    best_video = max(profiles, key=_video_quality_key)
+    audio_profiles = [p for p in profiles if p.audio_codec]
+    best_audio = max(audio_profiles, key=_audio_quality_key) if audio_profiles else None
+
+    return UserUploadMediaProfile(
+        video_codec="h264",
+        width=best_video.width,
+        height=best_video.height,
+        pix_fmt="yuv420p",
+        audio_codec="aac" if best_audio else None,
+        sample_rate=best_audio.sample_rate if best_audio else None,
+        channels=best_audio.channels if best_audio else None,
+    )
+
+
+def _channel_layout_for_count(channels: Optional[int]) -> str:
+    match channels or 0:
+        case 1:
+            return "mono"
+        case 2:
+            return "stereo"
+        case 6:
+            return "5.1"
+        case _:
+            return "stereo"
+
+
 def build_clip_plans_for_points(
     *,
     video_start_world: datetime,
@@ -378,6 +431,18 @@ def _validate_compatible_source_media_profiles(
     return baseline_profile, None
 
 
+def _load_source_media_profiles(
+    source_paths: list[str],
+) -> tuple[dict[str, UserUploadMediaProfile], Optional[str]]:
+    profiles_by_path: dict[str, UserUploadMediaProfile] = {}
+    for source_path in source_paths:
+        profile = _get_media_profile(source_path)
+        if profile is None:
+            return {}, f"could not read media streams from {_source_label(source_path)}"
+        profiles_by_path[source_path] = profile
+    return profiles_by_path, None
+
+
 def _ffmpeg_trim_without_reencode(
     *,
     input_path: str,
@@ -409,6 +474,97 @@ def _ffmpeg_trim_without_reencode(
         "make_zero",
         output_path,
     ]
+    subprocess.run(cmd, check=True, capture_output=True, text=True)
+
+
+def _ffmpeg_trim_with_reencode(
+    *,
+    input_path: str,
+    start_sec: float,
+    end_sec: float,
+    output_path: str,
+    target_profile: UserUploadMediaProfile,
+    input_profile: UserUploadMediaProfile,
+) -> None:
+    duration = max(0.0, end_sec - start_sec)
+    scale_filter = (
+        f"scale={target_profile.width}:{target_profile.height}:force_original_aspect_ratio=decrease,"
+        f"pad={target_profile.width}:{target_profile.height}:(ow-iw)/2:(oh-ih)/2,"
+        f"format={target_profile.pix_fmt or 'yuv420p'}"
+    )
+    cmd = [
+        "ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-ss",
+        str(start_sec),
+        "-i",
+        input_path,
+    ]
+
+    if target_profile.audio_codec and not input_profile.audio_codec:
+        cmd.extend(
+            [
+                "-f",
+                "lavfi",
+                "-t",
+                str(duration),
+                "-i",
+                (
+                    "anullsrc="
+                    f"channel_layout={_channel_layout_for_count(target_profile.channels)}:"
+                    f"sample_rate={target_profile.sample_rate or '44100'}"
+                ),
+            ]
+        )
+
+    cmd.extend(
+        [
+            "-t",
+            str(duration),
+            "-map",
+            "0:v:0",
+        ]
+    )
+
+    if target_profile.audio_codec:
+        cmd.extend(["-map", "0:a:0?" if input_profile.audio_codec else "1:a:0"])
+
+    cmd.extend(
+        [
+            "-vf",
+            scale_filter,
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-crf",
+            "18",
+            "-pix_fmt",
+            target_profile.pix_fmt or "yuv420p",
+        ]
+    )
+
+    if target_profile.audio_codec:
+        cmd.extend(
+            [
+                "-c:a",
+                target_profile.audio_codec,
+                "-ar",
+                str(target_profile.sample_rate or "44100"),
+                "-ac",
+                str(target_profile.channels or 2),
+                "-b:a",
+                "192k",
+                "-shortest",
+            ]
+        )
+    else:
+        cmd.append("-an")
+
+    cmd.append(output_path)
     subprocess.run(cmd, check=True, capture_output=True, text=True)
 
 
@@ -880,12 +1036,12 @@ def user_autoclips_from_uploaded_batch_worker(
         )
         return
 
-    _media_profile, media_profile_error = _validate_compatible_source_media_profiles(
+    profiles_by_source, media_profile_error = _load_source_media_profiles(
         [window.source_path for window in source_windows]
     )
     if media_profile_error:
         _log.warning(
-            "user_autoclips batch: incompatible source media field=%s event=%s batch=%s error=%s",
+            "user_autoclips batch: source media inspection failed field=%s event=%s batch=%s error=%s",
             field_name,
             tournament_url,
             batch_id_key,
@@ -899,25 +1055,45 @@ def user_autoclips_from_uploaded_batch_worker(
         )
         return
 
+    compatible_profile, compatibility_error = _validate_compatible_source_media_profiles(
+        [window.source_path for window in source_windows]
+    )
+    use_stream_copy = compatibility_error is None and compatible_profile is not None
+    reencode_target_profile: Optional[UserUploadMediaProfile] = None
     keyframes_by_source: dict[str, list[float]] = {}
-    for source_window in source_windows:
-        try:
-            keyframes_by_source[source_window.source_path] = _get_video_keyframe_times_sec(source_window.source_path)
-        except Exception:
-            _log.exception(
-                "user_autoclips batch: failed to read keyframes for %s",
-                source_window.source_path,
+
+    if use_stream_copy:
+        for source_window in source_windows:
+            try:
+                keyframes_by_source[source_window.source_path] = _get_video_keyframe_times_sec(
+                    source_window.source_path
+                )
+            except Exception:
+                _log.exception(
+                    "user_autoclips batch: failed to read keyframes for %s",
+                    source_window.source_path,
+                )
+                _finalize_batch_status(
+                    manifest_path,
+                    status="failed",
+                    error=(
+                        "could not inspect uploaded video keyframes for fast trim mode; "
+                        f"source={path.basename(source_window.source_path)}"
+                    ),
+                    logger=_log,
+                )
+                return
+    else:
+        reencode_target_profile = _choose_best_reencode_target_profile(list(profiles_by_source.values()))
+        if compatibility_error:
+            _log.warning(
+                "user_autoclips batch: source media mismatch, falling back to reencode field=%s event=%s batch=%s detail=%s target=%s",
+                field_name,
+                tournament_url,
+                batch_id_key,
+                compatibility_error,
+                _media_profile_summary(reencode_target_profile),
             )
-            _finalize_batch_status(
-                manifest_path,
-                status="failed",
-                error=(
-                    "could not inspect uploaded video keyframes for fast trim mode; "
-                    f"source={path.basename(source_window.source_path)}"
-                ),
-                logger=_log,
-            )
-            return
 
     field_obj = Field.query.filter_by(event=tournament_url, name=field_name).first()
     if not field_obj:
@@ -1029,22 +1205,34 @@ def user_autoclips_from_uploaded_batch_worker(
         for i, (plan, user_video_abs_path) in enumerate(deduped):
             clip_name = f"point_clip_{i}.mkv"
             clip_abs_path = path.join(src_clips_dir, clip_name)
-            effective_clip_start_sec = _effective_stream_copy_clip_start_sec(
-                plan.clip_start_file_sec,
-                keyframes_by_source.get(user_video_abs_path, []),
-            )
-            _ffmpeg_trim_without_reencode(
-                input_path=user_video_abs_path,
-                start_sec=plan.clip_start_file_sec,
-                end_sec=plan.clip_end_file_sec,
-                output_path=clip_abs_path,
-            )
+            if use_stream_copy:
+                effective_clip_start_sec = _effective_stream_copy_clip_start_sec(
+                    plan.clip_start_file_sec,
+                    keyframes_by_source.get(user_video_abs_path, []),
+                )
+                _ffmpeg_trim_without_reencode(
+                    input_path=user_video_abs_path,
+                    start_sec=plan.clip_start_file_sec,
+                    end_sec=plan.clip_end_file_sec,
+                    output_path=clip_abs_path,
+                )
+                point_start_in_clip_sec = max(
+                    0.0,
+                    plan.clip_start_file_sec + plan.point_start_in_clip_sec - effective_clip_start_sec,
+                )
+            else:
+                _ffmpeg_trim_with_reencode(
+                    input_path=user_video_abs_path,
+                    start_sec=plan.clip_start_file_sec,
+                    end_sec=plan.clip_end_file_sec,
+                    output_path=clip_abs_path,
+                    target_profile=reencode_target_profile
+                    or _choose_best_reencode_target_profile(list(profiles_by_source.values())),
+                    input_profile=profiles_by_source[user_video_abs_path],
+                )
+                point_start_in_clip_sec = max(0.0, plan.point_start_in_clip_sec)
             clip_paths.append(clip_abs_path)
 
-            point_start_in_clip_sec = max(
-                0.0,
-                plan.clip_start_file_sec + plan.point_start_in_clip_sec - effective_clip_start_sec,
-            )
             point_start_in_highlight = concat_offset + point_start_in_clip_sec
             time_world.append(_dt_to_iso_z(plan.point_start_world))
             time_video.append(round(point_start_in_highlight, 3))
