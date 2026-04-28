@@ -77,7 +77,18 @@ Pre-conditions for this migration:
 
 * No row in ``team_registrations`` / ``player_registrations`` / ``tos``
   has both ``event`` and ``league_id`` set, or both NULL. The CHECK
-  constraints added here will reject such rows.
+  constraints added here will reject such rows. Find them with::
+
+      SELECT id FROM <table>
+       WHERE (event IS NULL AND league_id IS NULL)
+          OR (event IS NOT NULL AND league_id IS NOT NULL);
+
+* Pre-existing orphan FK references (i.e. rows surfaced by
+  ``PRAGMA foreign_key_check;``) are tolerated by this migration —
+  the FK pragma is temporarily disabled around the batch_alter_table
+  operations so existing rows survive the table rebuild — but those
+  orphans will fail any future ``UPDATE`` once FK enforcement is back
+  on. Investigate and clean them when convenient.
 
 Rollback: ``alembic downgrade 0001_baseline`` reverses every operation
 in this file (drops the four tables, drops the constraints and indexes,
@@ -172,30 +183,46 @@ def upgrade() -> None:
     # 2. Monetary precision + 3. CHECK constraints on the same tables.
     #    Combine into one batch_alter_table per table so SQLite only
     #    rebuilds each table once.
+    #
+    #    SQLite + alembic batch_alter_table rebuilds each table by
+    #    INSERT-SELECTing every row into a temp table. With the FK pragma
+    #    enforced (which the runtime and our migration env both do), any
+    #    pre-existing orphan FK reference in the source data causes that
+    #    INSERT-SELECT to fail. Disable FK enforcement around the batch
+    #    operations and re-enable + validate afterwards. This matches
+    #    alembic's documented pattern for SQLite batch migrations.
     # ------------------------------------------------------------------
-    with op.batch_alter_table("registrable_configs") as batch:
-        batch.alter_column("team_reg_fee", existing_type=sa.Float(), type_=sa.Numeric(10, 2))
-        batch.alter_column("player_reg_fee", existing_type=sa.Float(), type_=sa.Numeric(10, 2))
+    bind = op.get_bind()
+    is_sqlite = bind.dialect.name == "sqlite"
+    if is_sqlite:
+        bind.exec_driver_sql("PRAGMA foreign_keys = OFF")
+    try:
+        with op.batch_alter_table("registrable_configs") as batch:
+            batch.alter_column("team_reg_fee", existing_type=sa.Float(), type_=sa.Numeric(10, 2))
+            batch.alter_column("player_reg_fee", existing_type=sa.Float(), type_=sa.Numeric(10, 2))
 
-    with op.batch_alter_table("team_registrations") as batch:
-        batch.alter_column("amount_paid", existing_type=sa.Float(), type_=sa.Numeric(10, 2))
-        batch.create_check_constraint(
-            "ck_team_registrations_event_league_mutual_exclusive",
-            _EVENT_OR_LEAGUE,
-        )
+        with op.batch_alter_table("team_registrations") as batch:
+            batch.alter_column("amount_paid", existing_type=sa.Float(), type_=sa.Numeric(10, 2))
+            batch.create_check_constraint(
+                "ck_team_registrations_event_league_mutual_exclusive",
+                _EVENT_OR_LEAGUE,
+            )
 
-    with op.batch_alter_table("player_registrations") as batch:
-        batch.alter_column("amount_paid", existing_type=sa.Float(), type_=sa.Numeric(10, 2))
-        batch.create_check_constraint(
-            "ck_player_registrations_event_league_mutual_exclusive",
-            _EVENT_OR_LEAGUE,
-        )
+        with op.batch_alter_table("player_registrations") as batch:
+            batch.alter_column("amount_paid", existing_type=sa.Float(), type_=sa.Numeric(10, 2))
+            batch.create_check_constraint(
+                "ck_player_registrations_event_league_mutual_exclusive",
+                _EVENT_OR_LEAGUE,
+            )
 
-    with op.batch_alter_table("tos") as batch:
-        batch.create_check_constraint(
-            "ck_tos_event_league_mutual_exclusive",
-            _EVENT_OR_LEAGUE,
-        )
+        with op.batch_alter_table("tos") as batch:
+            batch.create_check_constraint(
+                "ck_tos_event_league_mutual_exclusive",
+                _EVENT_OR_LEAGUE,
+            )
+    finally:
+        if is_sqlite:
+            bind.exec_driver_sql("PRAGMA foreign_keys = ON")
 
     # ------------------------------------------------------------------
     # 4. UNIQUE indexes on logically-unique column pairs.
@@ -253,20 +280,30 @@ def downgrade() -> None:
     op.drop_index("uq_team_registrations_team_league", table_name="team_registrations")
     op.drop_index("uq_team_registrations_team_event", table_name="team_registrations")
 
-    with op.batch_alter_table("tos") as batch:
-        batch.drop_constraint("ck_tos_event_league_mutual_exclusive", type_="check")
+    # Disable FK enforcement around batch operations — see upgrade() for
+    # the explanation.
+    bind = op.get_bind()
+    is_sqlite = bind.dialect.name == "sqlite"
+    if is_sqlite:
+        bind.exec_driver_sql("PRAGMA foreign_keys = OFF")
+    try:
+        with op.batch_alter_table("tos") as batch:
+            batch.drop_constraint("ck_tos_event_league_mutual_exclusive", type_="check")
 
-    with op.batch_alter_table("player_registrations") as batch:
-        batch.drop_constraint("ck_player_registrations_event_league_mutual_exclusive", type_="check")
-        batch.alter_column("amount_paid", existing_type=sa.Numeric(10, 2), type_=sa.Float())
+        with op.batch_alter_table("player_registrations") as batch:
+            batch.drop_constraint("ck_player_registrations_event_league_mutual_exclusive", type_="check")
+            batch.alter_column("amount_paid", existing_type=sa.Numeric(10, 2), type_=sa.Float())
 
-    with op.batch_alter_table("team_registrations") as batch:
-        batch.drop_constraint("ck_team_registrations_event_league_mutual_exclusive", type_="check")
-        batch.alter_column("amount_paid", existing_type=sa.Numeric(10, 2), type_=sa.Float())
+        with op.batch_alter_table("team_registrations") as batch:
+            batch.drop_constraint("ck_team_registrations_event_league_mutual_exclusive", type_="check")
+            batch.alter_column("amount_paid", existing_type=sa.Numeric(10, 2), type_=sa.Float())
 
-    with op.batch_alter_table("registrable_configs") as batch:
-        batch.alter_column("player_reg_fee", existing_type=sa.Numeric(10, 2), type_=sa.Float())
-        batch.alter_column("team_reg_fee", existing_type=sa.Numeric(10, 2), type_=sa.Float())
+        with op.batch_alter_table("registrable_configs") as batch:
+            batch.alter_column("player_reg_fee", existing_type=sa.Numeric(10, 2), type_=sa.Float())
+            batch.alter_column("team_reg_fee", existing_type=sa.Numeric(10, 2), type_=sa.Float())
+    finally:
+        if is_sqlite:
+            bind.exec_driver_sql("PRAGMA foreign_keys = ON")
 
     op.drop_table("camera_timepoints")
     op.drop_table("match_players")
