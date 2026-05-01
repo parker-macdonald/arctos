@@ -164,3 +164,57 @@ Everything is evaluated when a match's last dependency becomes
 finished or skipped. If it is not skipped, the skip condition will be
 re-evaluated every time a match starts or finishes until it is started
 or the skip condition evaluates to `true` and it gets skipped.
+
+## Cheat Sheet
+
+### Basic Values
+
+- `true` - True  
+- `false` - False  
+- `nil` - Nil  
+- `[TeamName]` - Team name (username, `tag::TagName`, or `MatchName::winner` / `MatchName::loser`)  
+- `{MatchName}` - Match name  
+
+### Basic Operations
+
+- `(== A B)` - Equality comparison  
+- `(> A B)`, `(< A B)`, `(>= A B)`, `(<= A B)` - Numeric comparisons  
+- `(and A B)`, `(or A B)`, `(not A)` - Logical operations  
+
+### Team Operations
+
+- `(wins [TeamName])` - Number of wins for a team  
+- `(losses [TeamName])` - Number of losses for a team  
+- `(points-won [TeamName])` - Total points won by a team  
+- `(points-lost [TeamName])` - Total points lost by a team  
+- `(points-won [TeamName] {MatchName})` - Points won in a specific match  
+- `(points-lost [TeamName] {MatchName})` - Points lost in a specific match  
+- `(is-skipped {MatchName})` - True if match status is SKIPPED, false if IN_PROGRESS or COMPLETED  
+
+### Match Operations
+
+- `(winner {MatchName})` - Winner team of a match (returns team or NIL)  
+- `(loser {MatchName})` - Loser team of a match (returns team or NIL)  
+
+### Other Operations
+
+- `(if CONDITION IF_TRUE IF_FALSE)` - If condition is true, return IF_TRUE, otherwise return IF_FALSE  
+- `(lambda (*args) (output))` - Define a lambda function  
+- `(cons *_ )` - Create a list from the arguments  
+- `(car LIST)` - Get the first element of a list  
+- `(cdr LIST)` - Get the rest of a list  
+- `(get INDEX LIST)` - Get the element at index  
+- `(or-default VAL DEFAULT)` - Returns VAL if VAL is not NIL else DEFAULT  
+- `(len LIST)` - Length of a list  
+- `(map LIST FUNC)` - Apply a function to each element of a list  
+- `(reduce LIST FUNC)` - Reduce a list to a single value  
+- `(max LIST)`, `(min LIST)` - Max/min value in a list  
+- `(max_by LIST FUNC)`, `(min_by LIST FUNC)` - Max/min by a function  
+
+### Examples
+
+- `(== 0 (losses [TeamName]))` - Skip if team has no losses  
+- `(> (wins [TeamA]) (wins [TeamB]))` - Skip if TeamA has more wins than TeamB  
+- `(== (winner {Match1}) [TeamName])` - Skip if TeamName won Match1  
+
+
