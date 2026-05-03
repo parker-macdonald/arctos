@@ -43,6 +43,7 @@ def get_who_allowed_explanation(tournament_url: str, match=None) -> List[str]:
     - If reffing teams allowed: "players registered for assigned ref teams [list of teams] are allowed."
     - If allow anyone: "anyone registered for this tournament can head ref."
     """
+    from app.services.dual_write import get_head_ref_allowlist_ids, get_match_ref_team_ids
     from models import Tournament
 
     tournament = Tournament.query.get(tournament_url)
@@ -51,13 +52,12 @@ def get_who_allowed_explanation(tournament_url: str, match=None) -> List[str]:
 
     lines: List[str] = []
 
-    if tournament.head_refs_allowed_list:
-        allowed_list = [ref.strip() for ref in tournament.head_refs_allowed_list.split(",") if ref.strip()]
-        if allowed_list:
-            lines.append(f"{', '.join(allowed_list)} are allowed.")
+    allowed_list = get_head_ref_allowlist_ids(tournament)
+    if allowed_list:
+        lines.append(f"{', '.join(allowed_list)} are allowed.")
 
-    if tournament.head_refs_allow_reffing_teams and match and getattr(match, "refs", None):
-        ref_teams = [t.strip() for t in match.refs.split(",") if t.strip()]
+    if tournament.head_refs_allow_reffing_teams and match:
+        ref_teams = [tid for tid in get_match_ref_team_ids(match) if tid]
         if ref_teams:
             names = [get_team_display_name_for_event(tournament_url, tid) or tid for tid in ref_teams]
             lines.append(f"Players registered for assigned ref teams ({', '.join(names)}) are allowed.")
@@ -155,37 +155,31 @@ def get_conflicting_match_on_field(tournament_url: str, match):
 
 def _reasons_teams_refs(match, tournament_url: str) -> List[str]:
     """Reasons for teams or refs not resolved. For refs, list which slots are unresolved (tag, match ref, or explicit)."""
+    from app.services.dual_write import get_match_referee_rows
     from models import Match, Tag
 
     reasons = []
     if not getattr(match, "team1", None) or not getattr(match, "team2", None):
         reasons.append("Teams not yet determined.")
-    refs_initial = (getattr(match, "refs_initial", None) or "").strip()
-    if refs_initial:
-        refs_list = [r.strip() for r in refs_initial.split(",")]
-        refs_current = (getattr(match, "refs", None) or "").split(",")
-        if len(refs_current) < len(refs_list):
-            refs_current = list(refs_current) + [""] * (len(refs_list) - len(refs_current))
-        elif len(refs_current) > len(refs_list):
-            refs_current = refs_current[: len(refs_list)]
-        for i, initial in enumerate(refs_list):
-            if not initial:
-                continue
-            current = refs_current[i].strip() if i < len(refs_current) else ""
-            if current:
-                continue
-            if initial.lower().startswith("tag::"):
-                tag_name = initial[5:].strip()
-                tag = Tag.query.filter_by(event=tournament_url, name=tag_name).first()
-                if not tag or not getattr(tag, "team", None):
-                    reasons.append(f"Ref slot {i + 1} is set by tag '{tag_name}', which is not yet assigned.")
-            elif "::winner" in initial or "::loser" in initial:
-                base = initial.split("::")[0].strip()
-                dep = Match.query.filter_by(name=base, event=tournament_url).first()
-                if not dep or getattr(dep, "match_winner", None) is None:
-                    reasons.append(f"Ref slot {i + 1} depends on match '{base}', which is not yet completed.")
-            else:
-                reasons.append(f"Ref slot {i + 1} is not yet set.")
+    for row in get_match_referee_rows(match):
+        if row.team_id:
+            continue
+        initial = (row.initial or "").strip()
+        if not initial:
+            continue
+        slot_label = row.slot + 1
+        if initial.lower().startswith("tag::"):
+            tag_name = initial[5:].strip()
+            tag = Tag.query.filter_by(event=tournament_url, name=tag_name).first()
+            if not tag or not getattr(tag, "team", None):
+                reasons.append(f"Ref slot {slot_label} is set by tag '{tag_name}', which is not yet assigned.")
+        elif "::winner" in initial or "::loser" in initial:
+            base = initial.split("::")[0].strip()
+            dep = Match.query.filter_by(name=base, event=tournament_url).first()
+            if not dep or getattr(dep, "match_winner", None) is None:
+                reasons.append(f"Ref slot {slot_label} depends on match '{base}', which is not yet completed.")
+        else:
+            reasons.append(f"Ref slot {slot_label} is not yet set.")
     return reasons
 
 

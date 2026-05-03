@@ -293,13 +293,12 @@ def camera_url(tournament_url: str, field_name: str) -> str:
 def merge_refs(match) -> str:
     """Merge confirmed and initial referee lists into a single display string.
 
-    Iterates position-by-position over ``match.refs_initial`` (which defines
-    the roster structure) and replaces each slot with the confirmed value from
-    ``match.refs`` when it is non-empty, keeping the initial value otherwise.
+    Iterates over the ``MatchReferee`` rows for *match* in slot order and
+    emits the resolved ``team_id`` when present, falling back to the
+    original ``initial`` expression otherwise.
 
     Args:
-        match: A :class:`~app.models.match.Match` instance with ``refs`` and
-            ``refs_initial`` attributes (both comma-separated strings), or
+        match: A :class:`~app.models.match.Match` instance, or
             ``None`` / falsy.
 
     Returns:
@@ -309,25 +308,13 @@ def merge_refs(match) -> str:
     if not match:
         return ""
 
-    refs_str = match.refs or ""
-    refs_initial_str = match.refs_initial or ""
+    from app.services.dual_write import get_match_referee_rows
 
-    # If refs_initial is empty, just return refs
-    if not refs_initial_str:
-        return refs_str
-
-    # Split both lists
-    refs_list = [r.strip() for r in refs_str.split(",")] if refs_str else []
-    refs_initial_list = [r.strip() for r in refs_initial_str.split(",")] if refs_initial_str else []
-
-    # Use refs_initial as the base (it defines the structure)
     merged = []
-    for i, initial_ref in enumerate(refs_initial_list):
-        # If refs has a value at this position, use it; otherwise use refs_initial
-        if i < len(refs_list) and refs_list[i]:
-            merged.append(refs_list[i])
-        elif initial_ref:
-            merged.append(initial_ref)
-        # Skip empty positions
+    for row in get_match_referee_rows(match):
+        if row.team_id:
+            merged.append(row.team_id)
+        elif row.initial:
+            merged.append(row.initial)
 
     return ", ".join(merged)

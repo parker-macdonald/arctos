@@ -31,6 +31,7 @@ from models import (
     HeadRefAllowList,
     MatchPlayer,
     MatchReferee,
+    Player,
     PlayerRegistration,
     TeamRegistration,
     db,
@@ -43,21 +44,27 @@ from models import (
 
 
 @pytest.mark.unit
-def test_headref_allowlist_round_trips(test_db, tournament, head_ref_player):
+def test_headref_allowlist_round_trips(test_db, tournament):
     """HeadRefAllowList accepts a valid (event, player_id) pair and round-trips."""
-    db.session.add(HeadRefAllowList(event=tournament.url, player_id=head_ref_player.id))
+    p = Player(id="schema_ref", name="Schema Ref", pw_hash="dummy")
+    db.session.add(p)
     db.session.commit()
-    row = HeadRefAllowList.query.filter_by(event=tournament.url, player_id=head_ref_player.id).one()
+    db.session.add(HeadRefAllowList(event=tournament.url, player_id=p.id))
+    db.session.commit()
+    row = HeadRefAllowList.query.filter_by(event=tournament.url, player_id=p.id).one()
     assert row.event == tournament.url
-    assert row.player_id == head_ref_player.id
+    assert row.player_id == p.id
 
 
 @pytest.mark.unit
-def test_headref_allowlist_rejects_duplicate(test_db, tournament, head_ref_player):
+def test_headref_allowlist_rejects_duplicate(test_db, tournament):
     """Two HeadRefAllowList rows with the same (event, player_id) raise IntegrityError."""
-    db.session.add(HeadRefAllowList(event=tournament.url, player_id=head_ref_player.id))
+    p = Player(id="schema_ref_dup", name="Schema Dup", pw_hash="dummy")
+    db.session.add(p)
     db.session.commit()
-    db.session.add(HeadRefAllowList(event=tournament.url, player_id=head_ref_player.id))
+    db.session.add(HeadRefAllowList(event=tournament.url, player_id=p.id))
+    db.session.commit()
+    db.session.add(HeadRefAllowList(event=tournament.url, player_id=p.id))
     with pytest.raises(sa.exc.IntegrityError):
         db.session.commit()
     db.session.rollback()

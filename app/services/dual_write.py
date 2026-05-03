@@ -1,40 +1,31 @@
-"""Dual-write helpers that keep the new normalised tables in sync with their legacy blob columns.
+"""Read/write helpers for the normalised join tables that supersede legacy blob columns.
 
-The application currently authoritative reads come from the historical
-blob columns (``Tournament.head_refs_allowed_list``, ``Match.refs``,
-``Match.team1_players`` / ``team2_players``,
-``Camera.time_world`` / ``Camera.time_video``). The corresponding new
-join tables — populated initially by ``scripts/backfill_normalised_tables.py``
-— must continue to track every subsequent write so that switching reads
-over later is a no-op.
+These functions are the canonical interface for application code to access:
 
-Each ``sync_*`` function below is invoked immediately after the legacy
-blob has been assigned and before ``db.session.commit()``. It reads the
-in-memory value of the blob column, computes the desired set of rows in
-the new table, and reconciles by inserting / updating / deleting as
-necessary. The functions are idempotent: re-running on already-in-sync
-data is a no-op.
+* ``HeadRefAllowList``  — replaces ``Tournament.head_refs_allowed_list``
+* ``MatchReferee``      — replaces ``Match.refs`` and ``Match.refs_initial``
+* ``MatchPlayer``       — replaces ``Match.team1_players`` / ``team2_players``
+* ``CameraTimepoint``   — replaces ``Camera.time_world`` / ``time_video``
 
-Each ``assert_*_parity`` function is the read-side check used by tests
-and (eventually) a CI consistency job. They compare the two
-representations and raise ``AssertionError`` on drift. **All of these
-are temporary** — once application reads have switched to the new tables
-and the legacy columns are dropped (Phase 4), this module can be
-deleted in its entirety.
+Each ``get_*`` reader queries the join table and returns data in the shape
+callers expect (lists of IDs, ordered slot rows, parallel arrays). Each
+``set_*`` / ``clear_*`` writer reconciles join-table rows against a desired
+state expressed as parsed inputs. Callers no longer touch the legacy blob
+columns; the columns remain in the schema but are no longer read or
+written.
 
-Orphan-FK behaviour (consistent with the backfill script):
+Orphan-FK behaviour:
 
-* ``HeadRefAllowList.player_id`` referring to a deleted player is
+* ``HeadRefAllowList.player_id`` referring to a non-existent player is
   skipped with a logger warning.
-* ``MatchReferee.team_id`` referring to a deleted team is stored as
+* ``MatchReferee.team_id`` referring to a non-existent team is stored as
   ``None`` while preserving the original ASS expression in ``initial``.
-* ``MatchPlayer.player_id`` referring to a deleted player is skipped
+* ``MatchPlayer.player_id`` referring to a non-existent player is skipped
   with a logger warning.
 """
 
 from __future__ import annotations
 
-import json
 import logging
 from typing import Iterable
 
@@ -58,66 +49,48 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Shared parsing helpers. Kept local to this module so the dual-write code
-# is self-contained — modifying the parser here can never accidentally break
-# the production read paths in service / route code.
+# Internal helpers
 # ---------------------------------------------------------------------------
 
 
-def _parse_csv_ids(raw: str | None) -> list[str]:
-    """Split a comma-separated string into a list of trimmed non-empty entries."""
-    if not raw:
-        return []
-    return [item.strip() for item in raw.split(",") if item.strip()]
+def _existing_ids(model, query_filter) -> set:
+    """``SELECT id FROM model WHERE ...`` returned as a set."""
+    return {row[0] for row in db.session.execute(select(model.id).where(query_filter)).all()}
 
 
-def _parse_csv_with_blanks(raw: str | None) -> list[str]:
+def _split_csv_with_blanks(raw: str | None) -> list[str]:
     """Split a CSV preserving slot positions; empty slots become ``""``."""
     if not raw:
         return []
     return [item.strip() for item in raw.split(",")]
 
 
-def _parse_json_list(raw: str | None) -> list:
-    """Parse a JSON list, returning ``[]`` for None / empty / malformed input."""
-    if not raw:
-        return []
-    try:
-        parsed = json.loads(raw)
-    except (json.JSONDecodeError, TypeError):
-        return []
-    return parsed if isinstance(parsed, list) else []
-
-
-def _existing_ids(model, query_filter) -> set:
-    """Tiny helper for ``SELECT id FROM model WHERE ...`` returning a set."""
-    return {row[0] for row in db.session.execute(select(model.id).where(query_filter)).all()}
-
-
 # ---------------------------------------------------------------------------
-# Sync functions. Each is callable as ``sync_x(parent_obj)`` and reconciles
-# the corresponding normalised table to match the parent's current blob.
+# HeadRefAllowList
 # ---------------------------------------------------------------------------
 
 
-def sync_head_ref_allowlist(tournament: Tournament) -> None:
-    """Reconcile ``headref_allowlist`` to match ``tournament.head_refs_allowed_list``.
+def get_head_ref_allowlist_ids(tournament: Tournament) -> list[str]:
+    """Return the player IDs on this tournament's head-referee allow-list."""
+    rows = (
+        HeadRefAllowList.query.filter_by(event=tournament.url).order_by(HeadRefAllowList.id).all()
+    )
+    return [r.player_id for r in rows]
 
-    Inserts rows for player IDs newly added to the comma-separated list,
-    deletes rows for player IDs no longer present, and skips orphan
-    references (player IDs that don't exist in ``players``) with a
-    warning.
+
+def set_head_ref_allowlist_ids(tournament: Tournament, player_ids: Iterable[str]) -> None:
+    """Reconcile the allow-list to contain exactly the given player IDs.
+
+    Player IDs that don't exist in ``players`` are skipped with a warning,
+    matching the orphan-FK policy used throughout the migration.
     """
-    desired = set(_parse_csv_ids(tournament.head_refs_allowed_list))
+    desired = {pid.strip() for pid in player_ids if pid and pid.strip()}
 
-    # Filter to only player IDs that actually exist — match the backfill's
-    # orphan-skipping behaviour rather than letting the FK pragma reject
-    # the insert at flush time.
     if desired:
         present = _existing_ids(Player, Player.id.in_(desired))
         for orphan in desired - present:
             logger.warning(
-                "head_ref_allowlist sync: tournament=%s references unknown player_id=%r; skipped",
+                "head_ref_allowlist: tournament=%s references unknown player_id=%r; skipped",
                 tournament.url,
                 orphan,
             )
@@ -133,25 +106,72 @@ def sync_head_ref_allowlist(tournament: Tournament) -> None:
             db.session.delete(row)
 
 
-def sync_match_referees(match: Match) -> None:
-    """Reconcile ``match_referees`` to match ``Match.refs`` / ``Match.refs_initial``.
+def set_head_ref_allowlist_from_csv(tournament: Tournament, csv: str | None) -> None:
+    """Reconcile the allow-list from a comma-separated player-ID string."""
+    set_head_ref_allowlist_ids(tournament, _split_csv_with_blanks(csv))
 
-    The two source columns are parallel CSVs. Slot ordering is preserved
-    via ``MatchReferee.slot``. ``team_id`` references a real team if the
-    string is a known team ID; otherwise it is stored as ``None`` and
-    the original expression is kept in ``initial`` so a later resolver
-    can re-attempt resolution.
+
+# ---------------------------------------------------------------------------
+# MatchReferee
+# ---------------------------------------------------------------------------
+
+
+def get_match_referee_rows(match: Match) -> list[MatchReferee]:
+    """Return ``MatchReferee`` rows for a match, ordered by slot."""
+    return MatchReferee.query.filter_by(match_uuid=match.uuid).order_by(MatchReferee.slot).all()
+
+
+def get_match_ref_team_ids(match: Match) -> list[str]:
+    """Resolved team IDs across all referee slots, in slot order.
+
+    ``""`` is returned for slots whose ``team_id`` is not yet resolved.
+    Slot positions are preserved by filling gaps from the slot indices.
     """
-    refs = _parse_csv_with_blanks(match.refs)
-    initials = _parse_csv_with_blanks(match.refs_initial)
-    n = max(len(refs), len(initials))
-    refs = refs + [""] * (n - len(refs))
-    initials = initials + [""] * (n - len(initials))
+    rows = get_match_referee_rows(match)
+    if not rows:
+        return []
+    max_slot = rows[-1].slot
+    by_slot = {r.slot: r for r in rows}
+    return [(by_slot[s].team_id or "") if s in by_slot else "" for s in range(max_slot + 1)]
 
-    # Pre-resolve which of the candidate team IDs actually exist, so a slot
-    # whose `refs[i]` is bogus stores `None` rather than tripping the FK.
+
+def get_match_ref_initials(match: Match) -> list[str]:
+    """Initial ASS expressions across all referee slots, in slot order."""
+    rows = get_match_referee_rows(match)
+    if not rows:
+        return []
+    max_slot = rows[-1].slot
+    by_slot = {r.slot: r for r in rows}
+    return [(by_slot[s].initial or "") if s in by_slot else "" for s in range(max_slot + 1)]
+
+
+def get_match_refs_csv(match: Match) -> str:
+    """Comma-separated team-ID string, preserving slot positions."""
+    return ",".join(get_match_ref_team_ids(match))
+
+
+def get_match_refs_initial_csv(match: Match) -> str:
+    """Comma-separated initial-expression string, preserving slot positions."""
+    return ",".join(get_match_ref_initials(match))
+
+
+def set_match_referees(match: Match, refs: list[str], initials: list[str]) -> None:
+    """Reconcile ``MatchReferee`` rows for *match* from parallel team-ID and initial lists.
+
+    The two lists must be parallel; the shorter is padded with ``""`` so
+    every position becomes a slot. Slots where both values are empty are
+    not stored. ``team_id`` values that don't reference a real team are
+    stored as ``None`` and the original expression is kept in ``initial``
+    for later resolution.
+    """
+    n = max(len(refs), len(initials))
+    refs = list(refs) + [""] * (n - len(refs))
+    initials = list(initials) + [""] * (n - len(initials))
+
     candidate_team_ids = {team_id for team_id in refs if team_id}
-    valid_team_ids = _existing_ids(Team, Team.id.in_(candidate_team_ids)) if candidate_team_ids else set()
+    valid_team_ids = (
+        _existing_ids(Team, Team.id.in_(candidate_team_ids)) if candidate_team_ids else set()
+    )
 
     existing = {r.slot: r for r in MatchReferee.query.filter_by(match_uuid=match.uuid).all()}
     desired_slots: set[int] = set()
@@ -180,24 +200,57 @@ def sync_match_referees(match: Match) -> None:
             db.session.delete(row)
 
 
-def sync_match_players(match: Match) -> None:
-    """Reconcile ``match_players`` to match ``Match.team1_players`` / ``team2_players``.
+def set_match_referees_from_csv(
+    match: Match, refs_csv: str | None, initials_csv: str | None
+) -> None:
+    """Convenience wrapper that splits parallel CSV strings before reconciling."""
+    set_match_referees(
+        match, _split_csv_with_blanks(refs_csv), _split_csv_with_blanks(initials_csv)
+    )
 
-    Each side's JSON array of player IDs becomes a set of ``MatchPlayer``
-    rows tagged with the matching ``side``. The ``UNIQUE(match_uuid,
-    player_id)`` constraint on the destination table means a player who
-    appears on both sides simultaneously will only land on the side that
-    is processed first; that combination is a data error and the second
-    side is skipped with a warning.
+
+def clear_match_referees(match: Match) -> None:
+    """Delete every ``MatchReferee`` row for *match*."""
+    for row in MatchReferee.query.filter_by(match_uuid=match.uuid).all():
+        db.session.delete(row)
+
+
+# ---------------------------------------------------------------------------
+# MatchPlayer
+# ---------------------------------------------------------------------------
+
+
+def get_match_player_ids(match: Match, side: WinnerSide) -> list[str]:
+    """Return the player IDs registered for *side* on *match*, in insertion order."""
+    rows = (
+        MatchPlayer.query.filter_by(match_uuid=match.uuid, side=side)
+        .order_by(MatchPlayer.id)
+        .all()
+    )
+    return [r.player_id for r in rows]
+
+
+def set_match_players(
+    match: Match, team1_players: Iterable[str], team2_players: Iterable[str]
+) -> None:
+    """Reconcile ``MatchPlayer`` rows for *match* from per-side player ID lists.
+
+    A player who appears on both sides simultaneously is a data error: the
+    side processed first wins and the second is skipped with a warning,
+    matching the unique-(match, player) constraint on the destination
+    table. Orphan player IDs are skipped with a warning.
     """
     desired: dict[str, WinnerSide] = {}
-    for side, raw in ((WinnerSide.TEAM1, match.team1_players), (WinnerSide.TEAM2, match.team2_players)):
-        for pid in _parse_json_list(raw):
+    for side, ids in (
+        (WinnerSide.TEAM1, team1_players),
+        (WinnerSide.TEAM2, team2_players),
+    ):
+        for pid in ids:
             if not pid:
                 continue
             if pid in desired and desired[pid] != side:
                 logger.warning(
-                    "match_players sync: match=%s player_id=%r appears on both sides; keeping side=%s",
+                    "match_players: match=%s player_id=%r appears on both sides; keeping side=%s",
                     match.uuid,
                     pid,
                     desired[pid].value,
@@ -206,10 +259,10 @@ def sync_match_players(match: Match) -> None:
             desired[pid] = side
 
     if desired:
-        present_players = _existing_ids(Player, Player.id.in_(desired.keys()))
-        for orphan in set(desired) - present_players:
+        present = _existing_ids(Player, Player.id.in_(desired.keys()))
+        for orphan in set(desired) - present:
             logger.warning(
-                "match_players sync: match=%s references unknown player_id=%r; skipped",
+                "match_players: match=%s references unknown player_id=%r; skipped",
                 match.uuid,
                 orphan,
             )
@@ -226,31 +279,46 @@ def sync_match_players(match: Match) -> None:
             db.session.delete(row)
 
 
-def sync_camera_timepoints(camera: Camera) -> None:
-    """Reconcile ``camera_timepoints`` to match ``Camera.time_world`` / ``Camera.time_video``.
+# ---------------------------------------------------------------------------
+# CameraTimepoint
+# ---------------------------------------------------------------------------
 
-    The two source columns are parallel JSON arrays. If the lengths
-    disagree (data corruption) the camera's destination rows are cleared
-    rather than silently producing misaligned interpolation anchors —
-    matching the backfill's "skip the camera" policy.
+
+def get_camera_timepoint_arrays(
+    camera: Camera,
+) -> tuple[list[str | None], list[float | None]]:
+    """Return ``(time_world, time_video)`` parallel arrays in sequence order."""
+    rows = (
+        CameraTimepoint.query.filter_by(camera_uuid=camera.uuid)
+        .order_by(CameraTimepoint.sequence)
+        .all()
+    )
+    return [r.time_world for r in rows], [r.time_video for r in rows]
+
+
+def set_camera_timepoints(camera: Camera, worlds: list, videos: list) -> None:
+    """Reconcile ``CameraTimepoint`` rows for *camera* from parallel arrays.
+
+    If the two arrays disagree in length, all destination rows for the
+    camera are cleared rather than producing partial or misaligned
+    interpolation anchors.
     """
-    worlds = _parse_json_list(camera.time_world)
-    videos = _parse_json_list(camera.time_video)
-
-    desired: dict[int, tuple[str | None, float | None]] = {}
+    desired: dict[int, tuple] = {}
     if len(worlds) == len(videos):
         for seq, (tw, tv) in enumerate(zip(worlds, videos)):
             desired[seq] = (tw, tv)
     elif worlds or videos:
         logger.warning(
-            "camera_timepoints sync: camera=%s has mismatched array lengths "
+            "camera_timepoints: camera=%s has mismatched array lengths "
             "(world=%d, video=%d); destination rows cleared",
             camera.uuid,
             len(worlds),
             len(videos),
         )
 
-    existing = {r.sequence: r for r in CameraTimepoint.query.filter_by(camera_uuid=camera.uuid).all()}
+    existing = {
+        r.sequence: r for r in CameraTimepoint.query.filter_by(camera_uuid=camera.uuid).all()
+    }
     for seq, (tw, tv) in desired.items():
         if seq in existing:
             existing[seq].time_world = tw
@@ -267,103 +335,3 @@ def sync_camera_timepoints(camera: Camera) -> None:
     for seq, row in existing.items():
         if seq not in desired:
             db.session.delete(row)
-
-
-# ---------------------------------------------------------------------------
-# Parity assertions. Used by tests and a future CI consistency job to
-# verify the two representations agree. Each raises AssertionError on
-# drift. These are intentionally tolerant: the destination tables only
-# need to contain the *resolvable* subset of the legacy data, since
-# orphan refs are stored as `None` (refs) or skipped (players, head-refs).
-# ---------------------------------------------------------------------------
-
-
-def _ids_resolvable(model, ids: Iterable[str]) -> set[str]:
-    """Return the subset of ``ids`` that exist as PK values on ``model``."""
-    ids = {i for i in ids if i}
-    if not ids:
-        return set()
-    return _existing_ids(model, model.id.in_(ids))
-
-
-def assert_head_ref_allowlist_parity(tournament: Tournament) -> None:
-    """``headref_allowlist`` rows for ``tournament`` match its CSV blob.
-
-    Compares the *resolvable* subset (orphan player IDs in the legacy CSV
-    are skipped during sync, so they're not expected to appear in the
-    join table either).
-    """
-    legacy_ids = set(_parse_csv_ids(tournament.head_refs_allowed_list))
-    legacy_resolvable = _ids_resolvable(Player, legacy_ids)
-    new_ids = {r.player_id for r in HeadRefAllowList.query.filter_by(event=tournament.url).all()}
-    assert legacy_resolvable == new_ids, (
-        f"head_refs parity drift on {tournament.url}: legacy={legacy_resolvable} new={new_ids}"
-    )
-
-
-def assert_match_referees_parity(match: Match) -> None:
-    """``match_referees`` rows for ``match`` match its ``refs``/``refs_initial`` blob.
-
-    Verified at the slot level (slot index → (team_id, initial)). Orphan
-    team IDs are expected to land with ``team_id=None`` in the new table.
-    """
-    refs = _parse_csv_with_blanks(match.refs)
-    initials = _parse_csv_with_blanks(match.refs_initial)
-    n = max(len(refs), len(initials))
-    refs = refs + [""] * (n - len(refs))
-    initials = initials + [""] * (n - len(initials))
-
-    candidate_team_ids = {t for t in refs if t}
-    valid_team_ids = _existing_ids(Team, Team.id.in_(candidate_team_ids)) if candidate_team_ids else set()
-
-    expected: dict[int, tuple[str | None, str | None]] = {}
-    for slot, (team_id, initial) in enumerate(zip(refs, initials)):
-        if not team_id and not initial:
-            continue
-        expected[slot] = (
-            team_id if team_id in valid_team_ids else None,
-            initial or None,
-        )
-
-    actual = {r.slot: (r.team_id, r.initial) for r in MatchReferee.query.filter_by(match_uuid=match.uuid).all()}
-    assert expected == actual, f"match_referees parity drift on {match.uuid}: legacy={expected} new={actual}"
-
-
-def assert_match_players_parity(match: Match) -> None:
-    """``match_players`` rows for ``match`` match its team1/team2 JSON arrays.
-
-    Verified as a (player_id → side) mapping. Orphan player IDs are
-    expected to be skipped (so they appear in the legacy blob but not
-    in the new table); this assertion accounts for that.
-    """
-    legacy: dict[str, WinnerSide] = {}
-    for side, raw in ((WinnerSide.TEAM1, match.team1_players), (WinnerSide.TEAM2, match.team2_players)):
-        for pid in _parse_json_list(raw):
-            if pid and pid not in legacy:
-                legacy[pid] = side
-
-    resolvable = _ids_resolvable(Player, legacy.keys())
-    expected = {pid: side for pid, side in legacy.items() if pid in resolvable}
-
-    actual = {r.player_id: r.side for r in MatchPlayer.query.filter_by(match_uuid=match.uuid).all()}
-    assert expected == actual, f"match_players parity drift on {match.uuid}: legacy={expected} new={actual}"
-
-
-def assert_camera_timepoints_parity(camera: Camera) -> None:
-    """``camera_timepoints`` rows match the parallel JSON arrays.
-
-    When the legacy arrays disagree in length (data corruption) the
-    destination is expected to be empty per the ``sync_*`` policy;
-    this assertion accounts for that.
-    """
-    worlds = _parse_json_list(camera.time_world)
-    videos = _parse_json_list(camera.time_video)
-    expected: dict[int, tuple[str | None, float | None]] = {}
-    if len(worlds) == len(videos):
-        for seq, (tw, tv) in enumerate(zip(worlds, videos)):
-            expected[seq] = (tw, tv)
-
-    actual = {
-        r.sequence: (r.time_world, r.time_video) for r in CameraTimepoint.query.filter_by(camera_uuid=camera.uuid).all()
-    }
-    assert expected == actual, f"camera_timepoints parity drift on {camera.uuid}: legacy={expected} new={actual}"

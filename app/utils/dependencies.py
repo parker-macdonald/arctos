@@ -4,8 +4,8 @@ Utility functions for resolving match dependencies.
 
 from __future__ import annotations
 
+from app.services.dual_write import get_match_referee_rows
 from models import Match, db
-from app.utils.helpers import resolve_tag_to_team
 
 
 def apply_match_dependencies(tournament_url: str, completed_match: Match) -> None:
@@ -13,9 +13,9 @@ def apply_match_dependencies(tournament_url: str, completed_match: Match) -> Non
 
     Scans every match in the tournament and replaces ``"<name>::winner"`` and
     ``"<name>::loser"`` placeholders in ``team1_initial``, ``team2_initial``,
-    and ``refs_initial`` with the concrete team IDs from *completed_match*,
-    writing the result to the non-``_initial`` columns (``team1``, ``team2``,
-    ``refs``).
+    and unresolved referee slots with the concrete team IDs from
+    *completed_match*, writing the result to ``team1`` / ``team2`` and to
+    the ``team_id`` column of the corresponding ``MatchReferee`` rows.
 
     This function is called after a match is finalised so that downstream
     matches can have their rosters and refs resolved in preparation for
@@ -26,17 +26,11 @@ def apply_match_dependencies(tournament_url: str, completed_match: Match) -> Non
         completed_match: The match that just finished, whose winner/loser team
             IDs should be propagated to dependent matches.
     """
-    # Determine winner/loser team ids
     winner_team_id = completed_match.winner_team_id
     loser_team_id = completed_match.loser_team_id
     if not winner_team_id and not loser_team_id:
         return
 
-    # If either missing, nothing to substitute
-    if not winner_team_id or not loser_team_id:
-        pass  # Still proceed for what exists
-
-    # Build robust placeholder variants (case-insensitive, flexible separators)
     def normalize(s: str) -> str:
         return " ".join((s or "").strip().split())
 
@@ -70,65 +64,16 @@ def apply_match_dependencies(tournament_url: str, completed_match: Match) -> Non
                 m.team2 = loser_team_id
                 updated_any = True
 
-        # refs - merge match resolutions into existing refs at correct indices
-        refs_initial_val = m.refs_initial or ""
-        if refs_initial_val:
-            # Split refs_initial preserving all positions (including empty strings between commas)
-            refs_initial_list = [r.strip() for r in refs_initial_val.split(",")]
-
-            # Get current refs state (may be empty or partially populated with empty string placeholders)
-            refs_current_list = []
-            if m.refs:
-                refs_current_list = [r.strip() for r in m.refs.split(",")]
-
-            # Ensure refs_current_list has same length as refs_initial_list
-            # If lengths don't match, rebuild from refs_initial (preserving explicit team IDs and resolved tag references)
-            if len(refs_current_list) != len(refs_initial_list):
-                refs_current_list = [""] * len(refs_initial_list)
-                # Populate any explicit team IDs and resolved tag references from refs_initial
-                for i, initial_ref in enumerate(refs_initial_list):
-                    if initial_ref:
-                        if (
-                            not initial_ref.lower().startswith("tag::")
-                            and "::winner" not in initial_ref.lower()
-                            and "::loser" not in initial_ref.lower()
-                        ):
-                            # Explicit team ID
-                            refs_current_list[i] = initial_ref
-                        else:
-                            # Try to resolve as tag reference
-                            resolved_team = resolve_tag_to_team(initial_ref, tournament_url)
-                            if resolved_team:
-                                refs_current_list[i] = resolved_team
-
-            # Merge match resolutions into existing refs at correct indices
-            changed = False
-            for i, initial_ref in enumerate(refs_initial_list):
-                if not initial_ref:
-                    continue
-
-                # Check if this is a match reference that needs resolution
-                normalized_ref = normalize(initial_ref)
-                if normalized_ref == winner_placeholder and winner_team_id:
-                    # Only update if this position is empty (not already resolved)
-                    if i < len(refs_current_list) and not refs_current_list[i]:
-                        refs_current_list[i] = winner_team_id
-                        changed = True
-                elif normalized_ref == loser_placeholder and loser_team_id:
-                    # Only update if this position is empty (not already resolved)
-                    if i < len(refs_current_list) and not refs_current_list[i]:
-                        refs_current_list[i] = loser_team_id
-                        changed = True
-                # For tag references or explicit team IDs, preserve existing value
-                # (they should have been set by update_tags or are already correct)
-
-            if changed:
-                # Join with commas, preserving empty strings as placeholders
-                m.refs = ", ".join(refs_current_list)
-                # Mirror the new ``match_referees`` join table.
-                from app.services.dual_write import sync_match_referees
-
-                sync_match_referees(m)
+        # refs — resolve placeholder slots whose team_id has not yet been set
+        for row in get_match_referee_rows(m):
+            if row.team_id:
+                continue
+            normalized_ref = normalize(row.initial)
+            if normalized_ref == winner_placeholder and winner_team_id:
+                row.team_id = winner_team_id
+                updated_any = True
+            elif normalized_ref == loser_placeholder and loser_team_id:
+                row.team_id = loser_team_id
                 updated_any = True
 
     if updated_any:

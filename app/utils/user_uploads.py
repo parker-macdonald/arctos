@@ -1075,15 +1075,12 @@ def user_autoclips_from_uploaded_batch_worker(
             uploaded_by_user_type=uploader_user_type,
             status="UPLOADING",
             file=final_highlight_rel,
-            time_world=json.dumps(time_world),
-            time_video=json.dumps(time_video),
         )
         db.session.add(camera_row)
-        db.session.flush()  # so camera_row.uuid is assigned before sync
-        # Mirror the new ``camera_timepoints`` join table.
-        from app.services.dual_write import sync_camera_timepoints
+        db.session.flush()  # so camera_row.uuid is assigned before set_camera_timepoints
+        from app.services.dual_write import set_camera_timepoints
 
-        sync_camera_timepoints(camera_row)
+        set_camera_timepoints(camera_row, time_world, time_video)
         db.session.commit()
 
         app_obj = current_app._get_current_object()
@@ -1207,8 +1204,6 @@ def create_direct_user_upload_camera(
         uploaded_by_user_type=uploader_user_type,
         status="UPLOADING",
         file=final_rel,
-        time_world=None,
-        time_video=None,
     )
     db.session.add(camera_row)
     db.session.commit()
