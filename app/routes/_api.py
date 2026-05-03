@@ -4483,6 +4483,10 @@ def update_match_api(tournament_url, match_id):
         match.team2_initial = None
         match.refs = None
         match.refs_initial = None
+        # Mirror the new ``match_referees`` join table.
+        from app.services.dual_write import sync_match_referees
+
+        sync_match_referees(match)
     else:
         # Helper to check if a value is an explicit team ID (not a tag or match reference)
         def is_explicit_team_id(val: str) -> bool:
@@ -4548,6 +4552,10 @@ def update_match_api(tournament_url, match_id):
                 r_csv, i_csv = resolve_refs_slots(toks, tournament_url)
                 match.refs = r_csv
                 match.refs_initial = i_csv
+            # Mirror the new ``match_referees`` join table.
+            from app.services.dual_write import sync_match_referees
+
+            sync_match_referees(match)
 
     # Set Type
     if set_type_str:
@@ -4745,6 +4753,10 @@ def force_start_match_api(tournament_url, match_id):
     r_csv, i_csv = resolve_refs_slots(refs_list, tournament_url)
     match.refs = r_csv
     match.refs_initial = i_csv
+    # Mirror the new ``match_referees`` join table.
+    from app.services.dual_write import sync_match_referees
+
+    sync_match_referees(match)
 
     # Convert to static
     match.schedule_type = ScheduleType.STATIC
@@ -5115,6 +5127,10 @@ def create_match_api(tournament_url):
         r_csv, i_csv = resolve_refs_slots(refs, tournament_url)
         match.refs = r_csv
         match.refs_initial = i_csv
+        # Mirror the new ``match_referees`` join table.
+        from app.services.dual_write import sync_match_referees
+
+        sync_match_referees(match)
 
     # Format
     set_type_str = data.get("set_type")
@@ -5885,6 +5901,10 @@ def update_tags_api(tournament_url):
 
             if changed:
                 m.refs = ",".join(current_refs)
+                # Mirror the new ``match_referees`` join table.
+                from app.services.dual_write import sync_match_referees
+
+                sync_match_referees(m)
 
     db.session.commit()
     recompute_all_match_times(tournament_url)

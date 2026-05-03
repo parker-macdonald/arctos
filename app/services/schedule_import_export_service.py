@@ -547,6 +547,10 @@ class ScheduleImportExportService:
                                         match.refs = None
                                 else:
                                     match.refs = None
+                                # Mirror the new ``match_referees`` join table.
+                                from app.services.dual_write import sync_match_referees
+
+                                sync_match_referees(match)
                         match_name_to_uuid[match_name] = match.uuid
                         # Also add to field-based mapping for duplicate resolution (use actual match field)
                         match_field = match.field or ""

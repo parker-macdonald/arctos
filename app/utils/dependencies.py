@@ -125,6 +125,10 @@ def apply_match_dependencies(tournament_url: str, completed_match: Match) -> Non
             if changed:
                 # Join with commas, preserving empty strings as placeholders
                 m.refs = ", ".join(refs_current_list)
+                # Mirror the new ``match_referees`` join table.
+                from app.services.dual_write import sync_match_referees
+
+                sync_match_referees(m)
                 updated_any = True
 
     if updated_any:

@@ -1879,6 +1879,11 @@ def update_tournament_settings(tournament_url):
     tournament.location = request.form.get("location", "")
     tournament.about = request.form.get("about", "")
     tournament.head_refs_allowed_list = request.form.get("head_refs_allowed_list", "")
+    # Mirror the new ``headref_allowlist`` join table to the legacy CSV column.
+    # Removed in Phase 4 once application reads have switched over.
+    from app.services.dual_write import sync_head_ref_allowlist
+
+    sync_head_ref_allowlist(tournament)
     tournament.head_refs_allow_reffing_teams = "head_refs_allow_reffing_teams" in request.form
     tournament.head_refs_allow_anyone = "head_refs_allow_anyone" in request.form
     tournament.published = "published" in request.form
@@ -2665,6 +2670,8 @@ def update_match(tournament_url):
     match.skip_condition = skip_condition_raw if schedule_type in (ScheduleType.SAFE, ScheduleType.FAST) else None
 
     # If refs_initial changed, clear refs and repopulate with explicit team IDs and resolved tag references
+    from app.services.dual_write import sync_match_referees
+
     old_refs_initial = match.refs_initial or ""
     match.refs_initial = refs_initial
     if old_refs_initial != refs_initial:
@@ -2691,6 +2698,8 @@ def update_match(tournament_url):
                 match.refs = None
         else:
             match.refs = None
+        # Mirror the new ``match_referees`` join table.
+        sync_match_referees(match)
 
     # For dynamic matches, set previous_match from form and compute start time from it
     # For static matches, ensure previous_match is cleared and use provided start_time

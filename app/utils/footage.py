@@ -741,6 +741,11 @@ def _create_camera_outputs(
     camera_row.file = video_path
     camera_row.time_world = json.dumps(time_world)
     camera_row.time_video = json.dumps(time_video)
+    db.session.flush()  # so camera_row.uuid is assigned before sync
+    # Mirror the new ``camera_timepoints`` join table.
+    from app.services.dual_write import sync_camera_timepoints
+
+    sync_camera_timepoints(camera_row)
     db.session.commit()
     return camera_row
 

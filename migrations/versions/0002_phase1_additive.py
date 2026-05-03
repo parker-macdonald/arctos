@@ -66,14 +66,10 @@ Deliberately deferred:
 
 Pre-conditions for this migration:
 
-* ``make db-check-duplicates`` exits 0. If it reports duplicate groups,
-  they MUST be resolved in SQL
-  first, otherwise the ``UNIQUE`` index creation will fail.
-
-* ``sqlite3 instance/tournament.db "PRAGMA foreign_key_check;"``
-  returns no rows. Existing FK violators won't be touched by this
-  migration but would prevent any ``INSERT`` from succeeding once the
-  pragma is enforced (which it already is at runtime after Phase 0).
+* ``uv run python scripts/check_duplicates.py`` exits 0. If it reports
+  duplicate groups (the unique-constraint targets), they MUST be
+  resolved in SQL first, otherwise the ``UNIQUE`` index creation will
+  fail.
 
 * No row in ``team_registrations`` / ``player_registrations`` / ``tos``
   has both ``event`` and ``league_id`` set, or both NULL. The CHECK
