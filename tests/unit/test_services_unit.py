@@ -21,7 +21,6 @@ def test_registration_service_register_team_closed_raises(test_db, team):
         start_date=datetime.now(timezone.utc),
         published=True,
         registrable_config_id=make_registrable_config(
-            registration_open=False,
             team_registration_open=False,
         ).id,
     )

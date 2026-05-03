@@ -22,6 +22,10 @@ class Camera(db.Model):
     Tracks the full lifecycle of a video clip from initial upload through
     S3 transfer and optional YouTube publication.
 
+    The wall-clock / video-offset synchronisation anchors live in the
+    ``camera_timepoints`` join table; access them through the helpers in
+    :mod:`app.services.dual_write`.
+
     Attributes:
         uuid: UUID primary key, auto-generated.
         match_uuid: UUID FK of the :class:`~app.models.match.Match` this
@@ -38,10 +42,6 @@ class Camera(db.Model):
         link: YouTube URL or video ID once the upload succeeds.
         file: Local file path or S3 key, used for failed or in-progress
             uploads.
-        time_world: JSON array of wall-clock timestamps (one per
-            session/clip boundary) aligning footage to real time.
-        time_video: JSON array of float second offsets (one per
-            session/clip boundary) within the video file.
     """
 
     __tablename__ = "cameras"
@@ -75,7 +75,3 @@ class Camera(db.Model):
 
     # Local/static/S3 key for FAILED downloads (and possibly for in-progress uploads).
     file = db.Column(db.String(LONG_URL_LEN))
-
-    # JSON arrays stored as strings (SQLite-safe). Keep format consistent with frontend expectations.
-    time_world = db.Column(db.Text)  # JSON array of world timestamps; one per session/clip boundary
-    time_video = db.Column(db.Text)  # JSON array of float seconds; one per session/clip boundary

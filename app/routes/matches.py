@@ -96,7 +96,7 @@ def scoreboard():
         stones_info = None
         if match.set_type == "STONES":
             stones_info = {
-                "stones_per_set": match.stones_per_set or match.nstonesperset or 100,
+                "stones_per_set": match.stones_per_set or 100,
                 "stones_remaining": match.stones_remaining,
             }
 
@@ -282,7 +282,7 @@ def scoreboard_state():
         points_for_stones = None
         if match.set_type == "STONES":
             stones_info = {
-                "stones_per_set": match.stones_per_set or match.nstonesperset or 100,
+                "stones_per_set": match.stones_per_set or 100,
                 "stones_remaining": match.stones_remaining,
             }
 
@@ -983,10 +983,14 @@ def run_match(tournament_url):
         return (pr, player)
 
     team1_players = [
-        item for item in (_registration_with_player(pid) for pid in get_match_player_ids(match, WinnerSide.TEAM1)) if item
+        item
+        for item in (_registration_with_player(pid) for pid in get_match_player_ids(match, WinnerSide.TEAM1))
+        if item
     ]
     team2_players = [
-        item for item in (_registration_with_player(pid) for pid in get_match_player_ids(match, WinnerSide.TEAM2)) if item
+        item
+        for item in (_registration_with_player(pid) for pid in get_match_player_ids(match, WinnerSide.TEAM2))
+        if item
     ]
 
     # Build match_players for player autocomplete in notes modal

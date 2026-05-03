@@ -62,9 +62,7 @@ def _create_match_from_dict(match_dict: dict) -> "Match":
     refs_csv = match_dict.get("refs") or ""
     refs_initial_csv = match_dict.get("refs_initial") or ""
     create_dict = {
-        k: v
-        for k, v in match_dict.items()
-        if k not in ("previous_match", "next_match", "refs", "refs_initial")
+        k: v for k, v in match_dict.items() if k not in ("previous_match", "next_match", "refs", "refs_initial")
     }
     match = Match(**create_dict)
     if not match.status:

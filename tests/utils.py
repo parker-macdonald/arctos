@@ -7,7 +7,6 @@ def make_registrable_config(**kwargs) -> RegistrableConfig:
     Must be called within an active app context (e.g. inside a test_db scope).
     """
     defaults = {
-        "registration_open": False,
         "team_registration_open": False,
         "player_registration_open": False,
     }

@@ -22,8 +22,6 @@ class RegistrableConfig(db.Model):  # type: ignore[misc]
         player_reg_fee: Registration fee charged per player (≥ 0). Same
             ``DECIMAL(10, 2)`` storage rationale as ``team_reg_fee``.
         payment_info: Free-text payment instructions shown to registrants.
-        registration_open: Deprecated global toggle; prefer the per-type
-            toggles below.
         team_registration_open: Whether team registration is currently
             accepting new entries.
         player_registration_open: Whether individual player registration is
@@ -42,9 +40,6 @@ class RegistrableConfig(db.Model):  # type: ignore[misc]
     team_reg_fee = db.Column(db.Numeric(10, 2), default=0, nullable=False)
     player_reg_fee = db.Column(db.Numeric(10, 2), default=0, nullable=False)
     payment_info = db.Column(db.Text)
-    # Deprecated: use team_registration_open / player_registration_open instead.
-    # Kept for backward compatibility and migration scripts.
-    registration_open = db.Column(db.Boolean, default=False, nullable=False)
     # Separate toggles for team and player registration.
     team_registration_open = db.Column(db.Boolean, default=False, nullable=False)
     player_registration_open = db.Column(db.Boolean, default=False, nullable=False)

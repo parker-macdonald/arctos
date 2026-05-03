@@ -53,48 +53,19 @@ class RegistrationService:
 
     @staticmethod
     def _tournament_team_reg_open(tournament) -> bool:
-        """Return whether team registration is currently open for *tournament*.
-
-        Prefers the ``team_registration_open`` field; falls back to the
-        legacy ``registration_open`` field for older records.
-
-        Args:
-            tournament: The tournament to check.
-
-        Returns:
-            ``True`` if team registration is open.
-        """
+        """Return whether team registration is currently open for *tournament*."""
         from app.utils.helpers import get_registrable_config
 
         cfg = get_registrable_config(tournament)
-        if not cfg:
-            return False
-        # Prefer new field; fall back to legacy registration_open for older data.
-        if hasattr(cfg, "team_registration_open"):
-            return bool(cfg.team_registration_open)
-        return bool(cfg.registration_open)
+        return bool(cfg.team_registration_open) if cfg else False
 
     @staticmethod
     def _tournament_player_reg_open(tournament) -> bool:
-        """Return whether player registration is currently open for *tournament*.
-
-        Prefers the ``player_registration_open`` field; falls back to the
-        legacy ``registration_open`` field for older records.
-
-        Args:
-            tournament: The tournament to check.
-
-        Returns:
-            ``True`` if player registration is open.
-        """
+        """Return whether player registration is currently open for *tournament*."""
         from app.utils.helpers import get_registrable_config
 
         cfg = get_registrable_config(tournament)
-        if not cfg:
-            return False
-        if hasattr(cfg, "player_registration_open"):
-            return bool(cfg.player_registration_open)
-        return bool(cfg.registration_open)
+        return bool(cfg.player_registration_open) if cfg else False
 
     @staticmethod
     def _require_team_registration_open_for_register(
@@ -334,7 +305,7 @@ class RegistrationService:
         if not league:
             return Err(ValidationError("League not found"))
         rc = league.registrable_config
-        if not (rc and getattr(rc, "team_registration_open", rc.registration_open)):
+        if not (rc and rc.team_registration_open):
             return Err(RegistrationClosedError("Registration is not open for this league"))
 
         pseudonym = (pseudonym or "").strip()
@@ -391,7 +362,7 @@ class RegistrationService:
         if not league:
             return Err(ValidationError("League not found"))
         rc = league.registrable_config
-        if not (rc and getattr(rc, "player_registration_open", rc.registration_open)):
+        if not (rc and rc.player_registration_open):
             return Err(RegistrationClosedError("Registration is not open for this league"))
 
         team_id = (team_id or "").strip() or None
@@ -455,7 +426,7 @@ class RegistrationService:
         if not league:
             return Err(ValidationError("League not found"))
         rc = league.registrable_config
-        if not (rc and getattr(rc, "team_registration_open", rc.registration_open)):
+        if not (rc and rc.team_registration_open):
             return Err(ValidationError("Registration changes are locked for this league"))
 
         team_registration = TeamRegistration.query.filter_by(
@@ -496,7 +467,7 @@ class RegistrationService:
         if not league:
             return Err(ValidationError("League not found"))
         rc = league.registrable_config
-        if not (rc and getattr(rc, "player_registration_open", rc.registration_open)):
+        if not (rc and rc.player_registration_open):
             return Err(ValidationError("Registration changes are locked for this league"))
 
         player_registration = (

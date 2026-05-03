@@ -89,9 +89,7 @@ def test_set_head_ref_allowlist_initial_populate(test_db, tournament, head_ref_p
 def test_set_head_ref_allowlist_update_adds_and_removes(test_db, tournament, head_ref_player):
     """Existing rows reconcile to the new ID set (some added, some removed)."""
     # head_ref_player fixture seeds an allow-list row for test_ref1.
-    db.session.add_all(
-        [Player(id="ref2", name="R2", pw_hash="h"), Player(id="ref3", name="R3", pw_hash="h")]
-    )
+    db.session.add_all([Player(id="ref2", name="R2", pw_hash="h"), Player(id="ref3", name="R3", pw_hash="h")])
     db.session.add(HeadRefAllowList(event=tournament.url, player_id="ref2"))
 
     dual_write.set_head_ref_allowlist_ids(tournament, [head_ref_player.id, "ref3"])
@@ -265,9 +263,7 @@ def test_get_match_refs_csv_preserves_empty_slot_positions(test_db, tournament, 
 @pytest.mark.unit
 def test_set_match_players_splits_by_side(test_db, tournament, seeded_teams):
     """team1_players → side=TEAM1, team2_players → side=TEAM2."""
-    db.session.add_all(
-        [Player(id="p1", name="P1", pw_hash="h"), Player(id="p2", name="P2", pw_hash="h")]
-    )
+    db.session.add_all([Player(id="p1", name="P1", pw_hash="h"), Player(id="p2", name="P2", pw_hash="h")])
     m = _make_match(tournament.url)
 
     dual_write.set_match_players(m, ["p1"], ["p2"])
@@ -350,9 +346,7 @@ def test_set_camera_timepoints_pairs_arrays(test_db, tournament):
     dual_write.set_camera_timepoints(cam, ["t0", "t1"], [0.0, 10.0])
     db.session.commit()
 
-    rows = (
-        CameraTimepoint.query.filter_by(camera_uuid=cam.uuid).order_by(CameraTimepoint.sequence).all()
-    )
+    rows = CameraTimepoint.query.filter_by(camera_uuid=cam.uuid).order_by(CameraTimepoint.sequence).all()
     assert [(r.sequence, r.time_world, r.time_video) for r in rows] == [
         (0, "t0", 0.0),
         (1, "t1", 10.0),
