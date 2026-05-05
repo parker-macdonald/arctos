@@ -2,7 +2,7 @@
 
 or, "i type forever and still don't produce something that feels complete"
 
-## Table of Contents {#table-of-contents}
+## Table of Contents
 
 Just Me Yapping
 
@@ -29,7 +29,7 @@ For Players
 For Head Refs
 
  - [Running Games](#running-games)
- - [Force Start Games](#force-start)
+ - [Force Start Games](#force-start-games)
 
 
 For TOs
@@ -53,7 +53,7 @@ For TOs
 
 ---
 
-## FAQ {#faq}
+## FAQ
 
 **I want to test this out for my tournament, but I don't want to
 create a bunch of fake teams on the official site. What can i do?**
@@ -76,9 +76,9 @@ create a bunch of fake teams on the official site. What can i do?**
 
 **How is my data used? What can and can't other people see?**
 
-   - The Arctos [privacy policy](/privacy-policy) describes how we use
+   - The Arctos [privacy policy](privacy-policy.md) describes how we use
      all data in more legally relevant terms. The [data accessibility
-     guide](/data-accessibility-guide) is a more approachable and
+     guide](data-accessibility-guide.md) is a more approachable and
      practical guide to when and how data you enter into Arctos gets
      publicized.
 
@@ -90,7 +90,7 @@ create a bunch of fake teams on the official site. What can i do?**
      problem.
 
 
-## Ownership (is Arctos a CAJA project?) {#ownership-is-arctos-a-caja-project}
+## Ownership (is Arctos a CAJA project?)
 
 The short answer: No.
 
@@ -120,7 +120,7 @@ often different from the regulatory & political bodies.
     me be a proud Californian.
 
 
-## What Arctos *is* and what it is *not* {#what-arctos-is-and-what-it-is-not}
+## What Arctos *is* and what it is *not*
 
 Arctos is a tool for Jugger events that aims to:
 
@@ -156,7 +156,7 @@ schedule, but you should be developing these externally - Arctos is
 meant to run tournaments, not do in-depth bracket analysis or solve
 massive mixed integer nonlinear programs to schedule your matches.
 
-## Design Philosophy {#design-philosophy}
+## Design Philosophy
 
 With the above goals in mind, Arctos has been designed to be:
 
@@ -182,7 +182,7 @@ With the above goals in mind, Arctos has been designed to be:
   tournaments you should try to register for; I don't even need your
   email. I don't need to know how old, tall, heavy, or gender you are.
 
-## Bugs, Feature Requests, and Contributing {#bugs-feature-requests-and-contributing}
+## Bugs, Feature Requests, and Contributing
 
 Arctos is an open-source project, hosted on
 [github](https://github.com/reid23/arctos) and licensed with
@@ -202,11 +202,11 @@ the fastest way to get a maintainer to see your bug/request.
 
 ---
 
-## Functionality Overview {#functionality-overview}
+## Functionality Overview
 
 Here's, briefly, how it works.
 
-#### BEFORE THE TOURNAMENT {#before-the-tournament}
+#### BEFORE THE TOURNAMENT
 
   1. TOs create a tournament, with:
      - basic configuration: max team size, max team counts, number of
@@ -249,7 +249,7 @@ Here's, briefly, how it works.
      - TOs may deregister players and/or teams as they see fit
 
 
-#### ON THE DAY OF {#on-the-day-of}
+#### ON THE DAY OF
 
   1. TOs optionally set up phones to record the matches (different
      from live stream integration). These phones will automatically
@@ -293,7 +293,7 @@ Here's, briefly, how it works.
      match. The schedule updates based on the results and timestamp.
 
 
-## Stones {#stones}
+## Stones
 
 A central feature of Arctos is the stones player. It plays stones in
 sync with the server's system clock, on every even multiple of 1500
@@ -321,7 +321,7 @@ play from two separate devices and it'll be in sync.
 
 
 
-## Account Types {#account-types}
+## Account Types
 
 There are two account types: team and player. Either of these can be
 TOs; just create a tournament.
@@ -336,7 +336,7 @@ is permanent, and your profile is meant to be the thing that ties you
 to you between tournaments. This is why you can change your jersey
 name and jersey number for each tournament.
 
-## Penalties {#penalties}
+## Penalties
 
 The penalty system in Jugger (at least in the US) is still changing
 rapidly, so there is no Arctos-prescribed way to penalize
@@ -352,7 +352,7 @@ Penalties are visible to:
 
 ---
 
-## Phone Number {#phone-number}
+## Phone Number
 
 This is just to say that while there is a box for players to enter
 their phone numbers, it doesn't currently do anything. Eventually,
@@ -360,7 +360,7 @@ there will be an option for opt-in match/schedule notifications, but I
 have not implemented this yet.
 
 
-## Logging Injuries {#logging-injuries}
+## Logging Injuries
 
 When you log injuries on your profile, all it does is add a little bit
 of text under your name on refs' screens when they start matches, so
@@ -371,7 +371,7 @@ to *everyone*; private notes are shown only to you and head refs.
 ---
 
 
-## Running Games {#running-games}
+## Running Games
 
 Running games is mostly self explanatory. If there's no option for you
 to start a match that you think you should be able to start, check
@@ -385,16 +385,16 @@ that:
 
 For the actual workflow to run games, a textual description is even
 more unhelpful than it is dry. Instead, i've made this [nice big
-diagram showing how to do it](/static/run_match_pipeline.png). it's a
+diagram showing how to do it](../static/run_match_pipeline.png). it's a
 bit large to display here well, but if you click the link, you can
 zoom in however much you want.
 
-![](/static/run_match_pipeline.png)
+![](../static/run_match_pipeline.png)
 
 [^2]: static matches may not be skipped because if it is skipped, it's impossible to know when the next match should be, since the static match doesn't care what came before it.
 
 
-## Force Start Games {#force-start}
+## Force Start Games
 
 If Arctos thinks a match cannot be started, it will not let you start
 that match. However, there are some cases when you want to override
@@ -421,9 +421,9 @@ change the teams involved. Only TOs may make further edits.
 
 ---
 
-## Tournament Settings {#tournament-settings}
+## Tournament Settings
 
-### Basic Information {#basic-information}
+### Basic Information
 
 This is pretty self explanatory so I only have a few notes:
 
@@ -435,7 +435,7 @@ This is pretty self explanatory so I only have a few notes:
   - The max team size on field and roster **are** actually enforced; don't
     just choose random numbers.
 
-### Head Ref Options {#head-ref-options}
+### Head Ref Options
 
 As it says on the form:
 
@@ -450,7 +450,7 @@ ref teams to head ref, or just allow all registered players to head
 ref. The union of all selected options is used, and the players
 explicitly listed need not be registered to head ref.
 
-### Visibility and Access Control {#visibility-and-access-control}
+### Visibility and Access Control
 
 TOs can set the publication status of the tournament as a whole and
 the schedule (along with the bracket) independently. Registration is a
@@ -470,7 +470,7 @@ head refs to tell different penalties apart when viewing a list.
 Note that once a penalty has been made with a specific penalty type,
 that type cannot be deleted!
 
-## Match Schedule Setup {#match-schedule-setup}
+## Match Schedule Setup
 
 From the schedule page, TOs can enter *edit mode*, which allows you to
 set up the schedule.
@@ -482,7 +482,7 @@ All matches have (among other things) the following information:
 - previous match (if one exists)
 - next match (if one exists)
 
-### Tags and References: Specifying Teams {#tags-and-references-specifying-teams}
+### Tags and References: Specifying Teams
 
 Each match as two teams playing in it as well as any number of teams
 assigned to ref. Let's take a breif aside on how to specify teams. You
@@ -512,7 +512,7 @@ tell you how you should do rankings, so you can just do it however
 you'd like.
 
 
-### Static Scheduling {#static-scheduling}
+### Static Scheduling
 
 In the *static scheduling* paradigm (implemented by the `static` match
 type), all match start times must be set concretely before the event
@@ -528,7 +528,7 @@ idle time before every match starts (see: Fog of War 2025). To fix
 this, we introduce the *dynamic scheduling*, implemented by the
 `fast` and `safe` match types.
 
-### Dynamic Matches {#dynamic-matches}
+### Dynamic Matches
 
 Dynamic matches do not have a nominal start time (that you, the TO,
 can set, at least). Instead, their nominal start time is computed
@@ -569,7 +569,7 @@ reasonable to expect them to be on time.
 !!! note
     Matches without dependencies (like the first match of the day) must be static.
 
-### Breaks {#breaks}
+### Breaks
 
 Break matches represent dynamically scheduled breaks in the
 tournament. They just reserve time (ie, for a lunch break) on a field
@@ -578,7 +578,7 @@ in a way that can be pulled forward if matches finish early.
 If you want a non-dynamic break, just use static matches before and
 after the break, and leave the break empty.
 
-### Joins {#joins}
+### Joins
 
 Join matches are like thread joins in multithreading: they are
 dynamically-scheduled zero-length entries in the schedule that follow
@@ -590,7 +590,7 @@ matches afterwards. This would ensure that all teams have at least the
 length of the break overlapping in their lunches (unless they choose
 to start afternoon games early).
 
-### Ribbon Games {#ribbon-games}
+### Ribbon Games
 
 Ribbon games are matches that are not counted in tournament results
 (or rather, are by default excluded). They are useful for exhibition
@@ -598,7 +598,7 @@ matches, practice games, or matches that don't affect standings. When
 creating or editing a match, you can check the "Ribbon Game" checkbox
 to mark it as such.
 
-### Skip Conditions {#skip-conditions}
+### Skip Conditions
 
 Between tags and references, very nearly any tournament structure can
 be expressed. There are, however, some cases when you can't know *how
@@ -610,9 +610,9 @@ In order to implement this, dynamic (`fast` or `safe`) matches[^2] may
 have a *skip condition*, an boolean expression in lisp-like language
 called Arctos Schedule Script (ASS).
 
-You can see the full ASS docs [here](/arctos-schedule-script).
+You can see the full ASS docs [here](arctos-schedule-script.md).
 
-### Exporting and Importing Schedule Files {#exporting-and-importing-schedule-files}
+### Exporting and Importing Schedule Files
 
 On the match setup page, under Utilities, there are "Export Schedule"
 and "Import Schedule" buttons. These allow you to export .toml files
@@ -642,7 +642,7 @@ teams.
 
 ---
 
-## YouTube Livestream Integration {#youtube-livestream-integration}
+## YouTube Livestream Integration
 
 If you plan on live streaming the matches to youtube, Arctos can be
 configured to recognize this. If you do this, it will:
@@ -660,7 +660,7 @@ Setup:
    2. Click **Share** → **Embed**
    3. Copy the link inside the `src="..."` attribute of the embed code
 
-## OBS Scoreboard Integration {#obs-scoreboard-integration}
+## OBS Scoreboard Integration
 
 Arctos provides a public scoreboard endpoint that can be embedded in
 OBS or your streaming software of choice as a browser source. This
@@ -685,7 +685,7 @@ The scoreboard automatically polls for updates and refreshes when
 match state changes. For stones matches, the countdown updates in
 real-time using the same synchronization system as the match pages.
 
-## Recording Matches {#recording-matches}
+## Recording Matches
 
 !!! warning 
     This feature is **still in development**. I cannot
