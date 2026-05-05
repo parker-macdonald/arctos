@@ -2,9 +2,28 @@
 Tournament site Flask application factory.
 """
 
+from decimal import Decimal
+
 from flask import Flask
+from flask.json.provider import DefaultJSONProvider
 from flask_login import LoginManager
 import os
+
+
+class ArctosJSONProvider(DefaultJSONProvider):
+    """JSON provider that serialises ``Decimal`` as a JSON number.
+
+    The SQLAlchemy ``Numeric(10, 2)`` columns (registration fees, paid
+    amounts) come back as :class:`decimal.Decimal`. Flask's default
+    provider emits those as JSON strings (e.g. ``"0.00"``), but every
+    SPA consumer of those fields expects a JSON number. Convert here
+    rather than at every callsite.
+    """
+
+    def default(self, o):
+        if isinstance(o, Decimal):
+            return float(o)
+        return super().default(o)
 
 # Initialize extensions (will be initialized in create_app)
 db = None
@@ -52,6 +71,7 @@ def create_app(config: dict | None = None) -> Flask:
     global db
 
     app = Flask(__name__, static_folder="../static", template_folder="../templates")
+    app.json = ArctosJSONProvider(app)
     config = config or dict()
     # Default configuration
     app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev-key")
