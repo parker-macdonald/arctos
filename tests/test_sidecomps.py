@@ -360,3 +360,84 @@ def test_deregister_player_idempotent_when_missing(test_db, tournament):
 
     res = SideCompService.deregister_player(sc.id, player_id=p.id)
     assert isinstance(res, Ok)
+
+
+def test_organizer_check_in_succeeds(test_db, tournament):
+    to_user = _make_player("to_user", "TO User")
+    other = _make_player("p_other", "Other")
+    _make_to(tournament.url, to_user.id)
+    _confirm_event_registration(tournament.url, other.id)
+    sc = SideComp(event=tournament.url, name="A", type="DUELING")
+    db.session.add(sc)
+    db.session.commit()
+
+    from app.services.sidecomp_service import SideCompService
+
+    res = SideCompService.organizer_check_in(
+        sc.id,
+        actor_user_id=to_user.id,
+        actor_user_type="player",
+        player_id=other.id,
+    )
+    assert isinstance(res, Ok)
+    reg = res.unwrap()
+    assert reg.registered_by_to is True
+
+
+def test_organizer_check_in_non_to_forbidden(test_db, tournament):
+    actor = _make_player("not_to", "Not TO")
+    target = _make_player("p_other", "Other")
+    _confirm_event_registration(tournament.url, target.id)
+    sc = SideComp(event=tournament.url, name="A", type="DUELING")
+    db.session.add(sc)
+    db.session.commit()
+
+    from app.services.sidecomp_service import SideCompService
+
+    res = SideCompService.organizer_check_in(
+        sc.id,
+        actor_user_id=actor.id,
+        actor_user_type="player",
+        player_id=target.id,
+    )
+    assert isinstance(res, Err)
+    assert res.unwrap_err().status_code == 403
+
+
+def test_organizer_check_in_target_not_event_registered(test_db, tournament):
+    to_user = _make_player("to_user", "TO User")
+    target = _make_player("p_other", "Other")
+    _make_to(tournament.url, to_user.id)
+    sc = SideComp(event=tournament.url, name="A", type="DUELING")
+    db.session.add(sc)
+    db.session.commit()
+
+    from app.services.sidecomp_service import SideCompService
+
+    res = SideCompService.organizer_check_in(
+        sc.id,
+        actor_user_id=to_user.id,
+        actor_user_type="player",
+        player_id=target.id,
+    )
+    assert isinstance(res, Err)
+    assert res.unwrap_err().status_code == 400
+
+
+def test_organizer_remove_idempotent(test_db, tournament):
+    to_user = _make_player("to_user", "TO User")
+    target = _make_player("p_other", "Other")
+    _make_to(tournament.url, to_user.id)
+    sc = SideComp(event=tournament.url, name="A", type="DUELING")
+    db.session.add(sc)
+    db.session.commit()
+
+    from app.services.sidecomp_service import SideCompService
+
+    res = SideCompService.organizer_remove(
+        sc.id,
+        actor_user_id=to_user.id,
+        actor_user_type="player",
+        player_id=target.id,
+    )
+    assert isinstance(res, Ok)

@@ -289,6 +289,111 @@ class SideCompService:
 
     @staticmethod
     @allow_Q
+    def organizer_check_in(
+        comp_id: int,
+        *,
+        actor_user_id: str,
+        actor_user_type: str,
+        player_id: str,
+    ) -> Result["SideCompRegistration", ArctosError]:
+        """Register *player_id* for side competition *comp_id* on behalf of a TO.
+
+        The resulting :class:`~app.models.sidecomp.SideCompRegistration` row has
+        ``registered_by_to=True`` so it is distinguishable from a player's
+        self-registration.
+
+        Args:
+            comp_id: Primary key of the :class:`~app.models.sidecomp.SideComp`.
+            actor_user_id: ID of the user performing the check-in. Must be a TO
+                of the parent event.
+            actor_user_type: ``"player"`` or ``"team"``.
+            player_id: ID of the player being checked in.
+
+        Returns:
+            :class:`~app.error_values.Ok` wrapping the persisted
+            :class:`~app.models.sidecomp.SideCompRegistration`, or an
+            :class:`~app.error_values.Err` describing the failure (comp not
+            found, actor not a TO, target player not found, target not
+            registered for the parent event, or duplicate registration).
+        """
+        from app.domain.enums import RegistrationStatus
+        from models import (
+            Player,
+            PlayerRegistration,
+            SideComp,
+            SideCompRegistration,
+            db,
+        )
+
+        sc = SideComp.query.get(comp_id)
+        if sc is None:
+            return Err(NotFoundError("Side competition not found"))
+
+        SideCompService._require_to(sc.event, actor_user_id, actor_user_type).Q()
+
+        target = Player.query.get(player_id)
+        if target is None:
+            return Err(ValidationError("Player not found"))
+
+        event_reg = PlayerRegistration.query.filter_by(
+            event=sc.event,
+            player=player_id,
+            status=RegistrationStatus.CONFIRMED,
+        ).first()
+        if not event_reg:
+            return Err(ValidationError("Player is not registered for this event"))
+
+        existing = SideCompRegistration.query.filter_by(comp=comp_id, player=player_id).first()
+        if existing:
+            return Err(ValidationError("Player is already registered for this side competition"))
+
+        reg = SideCompRegistration(comp=comp_id, player=player_id, registered_by_to=True)
+        db.session.add(reg)
+        db.session.commit()
+        return Ok(reg)
+
+    @staticmethod
+    @allow_Q
+    def organizer_remove(
+        comp_id: int,
+        *,
+        actor_user_id: str,
+        actor_user_type: str,
+        player_id: str,
+    ) -> Result[None, ArctosError]:
+        """Remove *player_id*'s side-competition registration on behalf of a TO.
+
+        Idempotent: removing a row that doesn't exist returns
+        :class:`~app.error_values.Ok`.
+
+        Args:
+            comp_id: Primary key of the :class:`~app.models.sidecomp.SideComp`.
+            actor_user_id: ID of the user performing the removal. Must be a TO
+                of the parent event.
+            actor_user_type: ``"player"`` or ``"team"``.
+            player_id: ID of the player being removed.
+
+        Returns:
+            :class:`~app.error_values.Ok` wrapping ``None`` on success, or an
+            :class:`~app.error_values.Err` describing the failure (comp not
+            found or actor not a TO).
+        """
+        from models import SideComp, SideCompRegistration, db
+
+        sc = SideComp.query.get(comp_id)
+        if sc is None:
+            return Err(NotFoundError("Side competition not found"))
+
+        SideCompService._require_to(sc.event, actor_user_id, actor_user_type).Q()
+
+        SideCompRegistration.query.filter_by(comp=comp_id, player=player_id).delete(
+            synchronize_session=False
+        )
+        db.session.commit()
+        return Ok(None)
+
+    @staticmethod
+    @allow_Q
     def deregister_player(
         comp_id: int,
         *,
