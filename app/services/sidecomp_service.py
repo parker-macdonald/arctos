@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Optional
 from app.error_values import Err, Ok, Result, allow_Q, option
 from app.exceptions import (
     ArctosError,
+    NotFoundError,
     UnauthorizedError,
     ValidationError,
 )
@@ -107,3 +108,48 @@ class SideCompService:
         db.session.add(sc)
         db.session.commit()
         return Ok(sc)
+
+    @staticmethod
+    def list_for_event(tournament_url: str):
+        """Return all side competitions for *tournament_url*, oldest first.
+
+        Args:
+            tournament_url: URL slug of the parent tournament.
+
+        Returns:
+            List of :class:`~app.models.sidecomp.SideComp` rows ordered by
+            ``created_at`` ascending. Empty list if there are none.
+        """
+        from models import SideComp
+
+        return SideComp.query.filter_by(event=tournament_url).order_by(SideComp.created_at.asc()).all()
+
+    @staticmethod
+    def get_with_registrants(comp_id: int) -> Result[tuple, ArctosError]:
+        """Return a side competition and its registrants by *comp_id*.
+
+        Args:
+            comp_id: Primary key of the :class:`~app.models.sidecomp.SideComp`.
+
+        Returns:
+            :class:`~app.error_values.Ok` wrapping
+            ``(SideComp, list[(SideCompRegistration, Player)])`` ordered by
+            registration time, or :class:`~app.error_values.Err` with a
+            :class:`~app.exceptions.NotFoundError` if the comp does not exist.
+        """
+        from models import Player, SideComp, SideCompRegistration
+
+        sc = SideComp.query.get(comp_id)
+        if sc is None:
+            return Err(NotFoundError("Side competition not found"))
+
+        rows = (
+            SideCompRegistration.query.filter_by(comp=comp_id)
+            .order_by(SideCompRegistration.registered_at.asc())
+            .all()
+        )
+        registrants = []
+        for r in rows:
+            p = Player.query.get(r.player)
+            registrants.append((r, p))
+        return Ok((sc, registrants))

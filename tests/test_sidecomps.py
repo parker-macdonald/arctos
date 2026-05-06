@@ -131,3 +131,44 @@ def test_sidecomp_service_create_empty_name(test_db, tournament):
     )
     assert isinstance(res, Err)
     assert res.unwrap_err().status_code == 400
+
+
+def test_sidecomp_list_for_event_returns_all(test_db, tournament):
+    sc1 = SideComp(event=tournament.url, name="A", type="DUELING")
+    sc2 = SideComp(event=tournament.url, name="B", type="OTHER")
+    db.session.add_all([sc1, sc2])
+    db.session.commit()
+
+    from app.services.sidecomp_service import SideCompService
+
+    rows = SideCompService.list_for_event(tournament.url)
+    names = sorted(r.name for r in rows)
+    assert names == ["A", "B"]
+
+
+def test_sidecomp_get_with_registrants(test_db, tournament):
+    p = _make_player()
+    sc = SideComp(event=tournament.url, name="C", type="CHAIN_BREAKING")
+    db.session.add(sc)
+    db.session.flush()
+    db.session.add(SideCompRegistration(comp=sc.id, player=p.id))
+    db.session.commit()
+
+    from app.services.sidecomp_service import SideCompService
+
+    res = SideCompService.get_with_registrants(sc.id)
+    assert isinstance(res, Ok)
+    comp, registrants = res.unwrap()
+    assert comp.id == sc.id
+    assert len(registrants) == 1
+    reg, player = registrants[0]
+    assert reg.player == p.id
+    assert player.id == p.id
+
+
+def test_sidecomp_get_with_registrants_not_found(test_db):
+    from app.services.sidecomp_service import SideCompService
+
+    res = SideCompService.get_with_registrants(99999)
+    assert isinstance(res, Err)
+    assert res.unwrap_err().status_code == 404
