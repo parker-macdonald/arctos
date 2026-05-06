@@ -25,9 +25,23 @@ pub fn SideCompDetail(url: String, comp_id: i32) -> Element {
                         let viewer_is_to = d.viewer_is_to;
                         let viewer_can_register = d.viewer_can_register;
                         let viewer_is_registered_in_comp = d.viewer_is_registered_in_comp;
+                        let registration_open = d.registration_open;
+                        let description = d.description.clone();
                         rsx! {
                             h1 { "{d.name}" }
-                            p { span { class: "badge bg-secondary", "{d.type_}" } }
+                            p {
+                                span { class: "badge bg-secondary me-2", "{d.type_}" }
+                                if registration_open {
+                                    span { class: "badge bg-success", "Open" }
+                                } else {
+                                    span { class: "badge bg-secondary", "Closed" }
+                                }
+                            }
+                            if let Some(desc) = description.as_ref() {
+                                if !desc.is_empty() {
+                                    p { style: "white-space: pre-wrap;", "{desc}" }
+                                }
+                            }
                             if viewer_is_to {
                                 div { class: "mb-3",
                                     Link {

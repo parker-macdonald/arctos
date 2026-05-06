@@ -7,6 +7,7 @@ pub fn SideCompNew(url: String) -> Element {
     let navigator = use_navigator();
     let mut name = use_signal(String::new);
     let mut type_ = use_signal(|| "DUELING".to_string());
+    let mut description = use_signal(String::new);
     let mut error = use_signal(|| None::<String>);
     let mut submitting = use_signal(|| false);
 
@@ -30,10 +31,12 @@ pub fn SideCompNew(url: String) -> Element {
                         let url_inner = url_for_submit.clone();
                         let n = name();
                         let t = type_();
+                        let d = description();
+                        let d_opt = if d.trim().is_empty() { None } else { Some(d) };
                         submitting.set(true);
                         error.set(None);
                         spawn(async move {
-                            match api::sidecomp_create(&url_inner, &n, &t, None).await {
+                            match api::sidecomp_create(&url_inner, &n, &t, d_opt.as_deref()).await {
                                 Ok(_) => {
                                     navigator.push(Route::SideCompsList { url: url_inner });
                                 }
@@ -64,6 +67,16 @@ pub fn SideCompNew(url: String) -> Element {
                             option { value: "CHAIN_BREAKING", "Chain / Breaking" }
                             option { value: "OTHER", "Other" }
                         }
+                    }
+                    div { class: "mb-3",
+                        label { class: "form-label", "Description" }
+                        textarea {
+                            class: "form-control",
+                            rows: "4",
+                            value: "{description}",
+                            oninput: move |evt| description.set(evt.value()),
+                        }
+                        div { class: "form-text", "Optional. Shown on the side competition page." }
                     }
                     if let Some(err) = error() {
                         div { class: "alert alert-danger", "{err}" }
