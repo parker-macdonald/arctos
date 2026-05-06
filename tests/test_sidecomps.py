@@ -578,3 +578,58 @@ def test_route_delete_to_succeeds(app, client, tournament):
     assert resp.status_code == 200
     with app.app_context():
         assert SideComp.query.get(comp_id) is None
+
+
+def test_route_player_register_succeeds(app, client, tournament):
+    with app.app_context():
+        p = _make_player()
+        _confirm_event_registration(tournament.url, p.id)
+        sc = SideComp(event=tournament.url, name="A", type="DUELING")
+        db.session.add(sc)
+        db.session.commit()
+        comp_id = sc.id
+        login_as(client, p)
+
+    resp = client.post(f"/_api/sidecomps/{comp_id}/register")
+    assert resp.status_code == 200
+
+    with app.app_context():
+        assert SideCompRegistration.query.filter_by(comp=comp_id, player=p.id).count() == 1
+
+
+def test_route_player_register_requires_player_account(app, client, tournament):
+    """Team accounts cannot self-register for side competitions."""
+    from models import Team
+
+    with app.app_context():
+        t = Team(id="t_team", name="T", pw_hash="dummy_hash")
+        t.set_password("p")
+        db.session.add(t)
+        db.session.commit()
+        sc = SideComp(event=tournament.url, name="A", type="DUELING")
+        db.session.add(sc)
+        db.session.commit()
+        comp_id = sc.id
+        login_as(client, t)
+
+    resp = client.post(f"/_api/sidecomps/{comp_id}/register")
+    assert resp.status_code == 403
+
+
+def test_route_player_deregister_succeeds(app, client, tournament):
+    with app.app_context():
+        p = _make_player()
+        _confirm_event_registration(tournament.url, p.id)
+        sc = SideComp(event=tournament.url, name="A", type="DUELING")
+        db.session.add(sc)
+        db.session.flush()
+        db.session.add(SideCompRegistration(comp=sc.id, player=p.id))
+        db.session.commit()
+        comp_id = sc.id
+        login_as(client, p)
+
+    resp = client.post(f"/_api/sidecomps/{comp_id}/deregister")
+    assert resp.status_code == 200
+
+    with app.app_context():
+        assert SideCompRegistration.query.filter_by(comp=comp_id, player=p.id).count() == 0

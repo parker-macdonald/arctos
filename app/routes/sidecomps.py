@@ -145,3 +145,40 @@ def delete(comp_id: int):
             return jsonify({"success": True})
         case Err(err):
             return _err_response(err)
+
+
+@bp.route("/sidecomps/<int:comp_id>/register", methods=["POST"])
+@login_required
+def player_register(comp_id: int):
+    """Player self-registration for a side competition."""
+    if not is_player(current_user):
+        return jsonify({"success": False, "error": "Only players can register"}), 403
+
+    res = SideCompService.register_player(comp_id, player_id=current_user.id)
+    match res:
+        case Ok(reg):
+            return jsonify(
+                {
+                    "success": True,
+                    "comp": reg.comp,
+                    "player_id": reg.player,
+                    "registered_at": reg.registered_at.isoformat() if reg.registered_at else None,
+                }
+            )
+        case Err(err):
+            return _err_response(err)
+
+
+@bp.route("/sidecomps/<int:comp_id>/deregister", methods=["POST"])
+@login_required
+def player_deregister(comp_id: int):
+    """Player self-deregistration from a side competition."""
+    if not is_player(current_user):
+        return jsonify({"success": False, "error": "Only players can deregister"}), 403
+
+    res = SideCompService.deregister_player(comp_id, player_id=current_user.id)
+    match res:
+        case Ok(_):
+            return jsonify({"success": True})
+        case Err(err):
+            return _err_response(err)
