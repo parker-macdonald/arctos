@@ -554,9 +554,10 @@ pub fn TournamentHome(url: String) -> Element {
                                 if viewer_is_to {
                                     div { class: "mb-3 d-flex justify-content-end",
                                         Link {
-                                            to: Route::SideCompsList { url: url.clone() },
-                                            class: "btn btn-sm btn-outline-secondary",
-                                            "Manage"
+                                            to: Route::SideCompNew { url: url.clone() },
+                                            class: "btn btn-sm btn-outline-success",
+                                            title: "Add side competition",
+                                            i { class: "fas fa-plus" }
                                         }
                                     }
                                 }
@@ -568,16 +569,68 @@ pub fn TournamentHome(url: String) -> Element {
                                             rsx! {
                                                 ul { class: "list-group",
                                                     for row in rows.iter() {
-                                                        li { class: "list-group-item d-flex justify-content-between align-items-center",
-                                                            div {
-                                                                strong { "{row.name}" }
-                                                                span { class: "badge bg-secondary ms-2", "{row.type_}" }
-                                                                span { class: "text-muted ms-2", "({row.registrant_count} registered)" }
-                                                            }
-                                                            Link {
-                                                                to: Route::SideCompDetail { url: url.clone(), comp_id: row.id },
-                                                                class: "btn btn-sm btn-outline-primary",
-                                                                "View"
+                                                        {
+                                                            let comp_id = row.id;
+                                                            let row_name = row.name.clone();
+                                                            let mut sidecomps_for_row = sidecomps;
+                                                            rsx! {
+                                                                li {
+                                                                    key: "{comp_id}",
+                                                                    class: "list-group-item d-flex justify-content-between align-items-center",
+                                                                    div {
+                                                                        strong { "{row.name}" }
+                                                                        span { class: "badge bg-secondary ms-2", "{row.type_}" }
+                                                                        if row.registration_open {
+                                                                            span { class: "badge bg-success ms-2", "Open" }
+                                                                        }
+                                                                        span { class: "text-muted ms-2", "({row.registrant_count} registered)" }
+                                                                    }
+                                                                    div { class: "d-flex gap-1",
+                                                                        Link {
+                                                                            to: Route::SideCompDetail { url: url.clone(), comp_id },
+                                                                            class: "btn btn-sm btn-outline-primary",
+                                                                            "View"
+                                                                        }
+                                                                        if viewer_is_to {
+                                                                            Link {
+                                                                                to: Route::SideCompEdit { url: url.clone(), comp_id },
+                                                                                class: "btn btn-sm btn-outline-secondary",
+                                                                                title: "Edit",
+                                                                                i { class: "fas fa-pen" }
+                                                                            }
+                                                                            button {
+                                                                                class: "btn btn-sm btn-outline-danger",
+                                                                                title: "Delete",
+                                                                                onclick: move |_| {
+                                                                                    let confirmed = web_sys::window()
+                                                                                        .and_then(|w| w
+                                                                                            .confirm_with_message(&format!(
+                                                                                                "Delete '{}'? This cannot be undone.",
+                                                                                                row_name
+                                                                                            ))
+                                                                                            .ok())
+                                                                                        .unwrap_or(false);
+                                                                                    if !confirmed {
+                                                                                        return;
+                                                                                    }
+                                                                                    spawn(async move {
+                                                                                        match api::sidecomp_delete(comp_id).await {
+                                                                                            Ok(_) => {
+                                                                                                sidecomps_for_row.restart();
+                                                                                            }
+                                                                                            Err(e) => {
+                                                                                                web_sys::console::error_1(
+                                                                                                    &format!("sidecomp_delete failed: {}", e).into(),
+                                                                                                );
+                                                                                            }
+                                                                                        }
+                                                                                    });
+                                                                                },
+                                                                                i { class: "fas fa-trash" }
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                }
                                                             }
                                                         }
                                                     }
