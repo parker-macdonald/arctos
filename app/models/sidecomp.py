@@ -21,6 +21,9 @@ class SideComp(db.Model):
         event: Tournament URL slug this side competition belongs to.
         name: Display name of the competition.
         type: One of :class:`SideCompType`.
+        description: Optional free-form description of the side competition.
+        registration_open: When ``True``, players can self-register; when
+            ``False`` (default), only TO check-in can add registrants.
         created_at: Timestamp when the side competition was created.
     """
 
@@ -30,6 +33,8 @@ class SideComp(db.Model):
     event = db.Column(db.String(URL_SLUG_LEN), db.ForeignKey("tournaments.url"), nullable=False)
     name = db.Column(db.String(SHORT_NAME_LEN), nullable=False)
     type = db.Column(db.Enum(SideCompType), nullable=False)
+    description = db.Column(db.Text, nullable=True)
+    registration_open = db.Column(db.Boolean, nullable=False, default=False)
     created_at = db.Column(
         db.DateTime,
         default=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
