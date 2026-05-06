@@ -33,19 +33,9 @@ pub fn SideCompsList(url: String) -> Element {
                         if rows.is_empty() {
                             p { class: "text-muted", "No side competitions yet." }
                         } else {
-                            table { class: "table",
-                                thead {
-                                    tr {
-                                        th { "Name" }
-                                        th { "Type" }
-                                        th { "Registrants" }
-                                        th { "" }
-                                    }
-                                }
-                                tbody {
-                                    for row in rows.iter() {
-                                        SideCompRow { url: url.clone(), row: row.clone() }
-                                    }
+                            ul { class: "list-group",
+                                for row in rows.iter() {
+                                    SideCompRow { url: url.clone(), row: row.clone() }
                                 }
                             }
                         }
@@ -60,16 +50,22 @@ pub fn SideCompsList(url: String) -> Element {
 
 #[component]
 fn SideCompRow(url: String, row: SideCompSummary) -> Element {
+    let comp_id = row.id;
     rsx! {
-        tr {
-            td { "{row.name}" }
-            td { span { class: "badge bg-secondary", "{row.type_}" } }
-            td { "{row.registrant_count}" }
-            td {
-                Link {
-                    to: Route::SideCompDetail { url: url.clone(), comp_id: row.id },
-                    class: "btn btn-sm btn-outline-primary",
-                    "View"
+        li {
+            class: "list-group-item d-flex justify-content-between align-items-center p-0",
+            Link {
+                to: Route::SideCompDetail { url: url.clone(), comp_id },
+                class: "text-decoration-none text-reset p-3 flex-grow-1",
+                div {
+                    strong { "{row.name}" }
+                    span { class: "badge bg-secondary ms-2", "{row.type_}" }
+                    if row.registration_open {
+                        span { class: "badge bg-success ms-2", "Open" }
+                    } else {
+                        span { class: "badge bg-secondary ms-2", "Closed" }
+                    }
+                    span { class: "text-muted ms-2", "({row.registrant_count} registered)" }
                 }
             }
         }

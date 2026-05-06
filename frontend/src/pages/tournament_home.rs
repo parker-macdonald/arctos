@@ -576,22 +576,23 @@ pub fn TournamentHome(url: String) -> Element {
                                                             rsx! {
                                                                 li {
                                                                     key: "{comp_id}",
-                                                                    class: "list-group-item d-flex justify-content-between align-items-center",
-                                                                    div {
-                                                                        strong { "{row.name}" }
-                                                                        span { class: "badge bg-secondary ms-2", "{row.type_}" }
-                                                                        if row.registration_open {
-                                                                            span { class: "badge bg-success ms-2", "Open" }
+                                                                    class: "list-group-item d-flex justify-content-between align-items-center p-0",
+                                                                    Link {
+                                                                        to: Route::SideCompDetail { url: url.clone(), comp_id },
+                                                                        class: "text-decoration-none text-reset p-3 flex-grow-1",
+                                                                        div {
+                                                                            strong { "{row.name}" }
+                                                                            span { class: "badge bg-secondary ms-2", "{row.type_}" }
+                                                                            if row.registration_open {
+                                                                                span { class: "badge bg-success ms-2", "Open" }
+                                                                            } else {
+                                                                                span { class: "badge bg-secondary ms-2", "Closed" }
+                                                                            }
+                                                                            span { class: "text-muted ms-2", "({row.registrant_count} registered)" }
                                                                         }
-                                                                        span { class: "text-muted ms-2", "({row.registrant_count} registered)" }
                                                                     }
-                                                                    div { class: "d-flex gap-1",
-                                                                        Link {
-                                                                            to: Route::SideCompDetail { url: url.clone(), comp_id },
-                                                                            class: "btn btn-sm btn-outline-primary",
-                                                                            "View"
-                                                                        }
-                                                                        if viewer_is_to {
+                                                                    if viewer_is_to {
+                                                                        div { class: "d-flex gap-1 px-3",
                                                                             Link {
                                                                                 to: Route::SideCompEdit { url: url.clone(), comp_id },
                                                                                 class: "btn btn-sm btn-outline-secondary",
