@@ -153,3 +153,87 @@ class SideCompService:
             p = Player.query.get(r.player)
             registrants.append((r, p))
         return Ok((sc, registrants))
+
+    @staticmethod
+    @allow_Q
+    def update(
+        comp_id: int,
+        *,
+        actor_user_id: str,
+        actor_user_type: str,
+        name: Optional[str] = None,
+        type: Optional[str] = None,
+    ) -> Result["SideComp", ArctosError]:
+        """Update *name* and/or *type* of an existing side competition.
+
+        Args:
+            comp_id: Primary key of the :class:`~app.models.sidecomp.SideComp`.
+            actor_user_id: ID of the user attempting the update. Must be a TO.
+            actor_user_type: ``"player"`` or ``"team"``.
+            name: New display name. If ``None``, the field is left untouched.
+                Must be non-blank when provided.
+            type: New :class:`~app.domain.enums.SideCompType` value. If ``None``,
+                the field is left untouched.
+
+        Returns:
+            :class:`~app.error_values.Ok` wrapping the updated
+            :class:`~app.models.sidecomp.SideComp`, or an
+            :class:`~app.error_values.Err` describing the failure (comp not
+            found, actor not a TO, invalid name, or invalid type).
+        """
+        from models import SideComp, db
+
+        sc = SideComp.query.get(comp_id)
+        if sc is None:
+            return Err(NotFoundError("Side competition not found"))
+
+        SideCompService._require_to(sc.event, actor_user_id, actor_user_type).Q()
+
+        if name is not None:
+            name_value = name.strip()
+            if not name_value:
+                return Err(ValidationError("Side competition name is required"))
+            sc.name = name_value
+
+        if type is not None:
+            parsed_type = _parse_type(type)
+            if parsed_type is None:
+                return Err(ValidationError("Invalid side competition type"))
+            sc.type = parsed_type
+
+        db.session.commit()
+        return Ok(sc)
+
+    @staticmethod
+    @allow_Q
+    def delete(
+        comp_id: int,
+        *,
+        actor_user_id: str,
+        actor_user_type: str,
+    ) -> Result[None, ArctosError]:
+        """Delete a side competition along with its registrations and results.
+
+        Args:
+            comp_id: Primary key of the :class:`~app.models.sidecomp.SideComp`.
+            actor_user_id: ID of the user attempting the delete. Must be a TO.
+            actor_user_type: ``"player"`` or ``"team"``.
+
+        Returns:
+            :class:`~app.error_values.Ok` wrapping ``None`` on success, or an
+            :class:`~app.error_values.Err` describing the failure (comp not
+            found or actor not a TO).
+        """
+        from models import SideComp, SideCompRegistration, SideCompResult, db
+
+        sc = SideComp.query.get(comp_id)
+        if sc is None:
+            return Err(NotFoundError("Side competition not found"))
+
+        SideCompService._require_to(sc.event, actor_user_id, actor_user_type).Q()
+
+        SideCompRegistration.query.filter_by(comp=comp_id).delete(synchronize_session=False)
+        SideCompResult.query.filter_by(comp=comp_id).delete(synchronize_session=False)
+        db.session.delete(sc)
+        db.session.commit()
+        return Ok(None)

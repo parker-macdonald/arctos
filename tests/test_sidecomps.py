@@ -10,6 +10,7 @@ from models import (
     PlayerRegistration,
     SideComp,
     SideCompRegistration,
+    SideCompResult,
     TO,
     db,
 )
@@ -172,3 +173,87 @@ def test_sidecomp_get_with_registrants_not_found(test_db):
     res = SideCompService.get_with_registrants(99999)
     assert isinstance(res, Err)
     assert res.unwrap_err().status_code == 404
+
+
+def test_sidecomp_update_changes_name_and_type(test_db, tournament):
+    p = _make_player("to_user", "TO User")
+    _make_to(tournament.url, p.id)
+    sc = SideComp(event=tournament.url, name="Old", type="DUELING")
+    db.session.add(sc)
+    db.session.commit()
+
+    from app.services.sidecomp_service import SideCompService
+
+    res = SideCompService.update(
+        sc.id,
+        actor_user_id=p.id,
+        actor_user_type="player",
+        name="New",
+        type="OTHER",
+    )
+    assert isinstance(res, Ok)
+    db.session.refresh(sc)
+    assert sc.name == "New"
+    assert sc.type == "OTHER"
+
+
+def test_sidecomp_update_partial(test_db, tournament):
+    p = _make_player("to_user", "TO User")
+    _make_to(tournament.url, p.id)
+    sc = SideComp(event=tournament.url, name="Old", type="DUELING")
+    db.session.add(sc)
+    db.session.commit()
+
+    from app.services.sidecomp_service import SideCompService
+
+    res = SideCompService.update(
+        sc.id,
+        actor_user_id=p.id,
+        actor_user_type="player",
+        name="NewName",
+    )
+    assert isinstance(res, Ok)
+    db.session.refresh(sc)
+    assert sc.name == "NewName"
+    assert sc.type == "DUELING"
+
+
+def test_sidecomp_update_non_to_forbidden(test_db, tournament):
+    p = _make_player("non_to", "Non TO")
+    sc = SideComp(event=tournament.url, name="X", type="DUELING")
+    db.session.add(sc)
+    db.session.commit()
+
+    from app.services.sidecomp_service import SideCompService
+
+    res = SideCompService.update(
+        sc.id,
+        actor_user_id=p.id,
+        actor_user_type="player",
+        name="Y",
+    )
+    assert isinstance(res, Err)
+    assert res.unwrap_err().status_code == 403
+
+
+def test_sidecomp_delete_cascades(test_db, tournament):
+    to_user = _make_player("to_user", "TO User")
+    other = _make_player("other_player", "Other")
+    _make_to(tournament.url, to_user.id)
+    sc = SideComp(event=tournament.url, name="Z", type="DUELING")
+    db.session.add(sc)
+    db.session.flush()
+    db.session.add(SideCompRegistration(comp=sc.id, player=other.id))
+    db.session.add(SideCompResult(comp=sc.id, player=other.id))
+    db.session.commit()
+    comp_id = sc.id
+
+    from app.services.sidecomp_service import SideCompService
+
+    res = SideCompService.delete(
+        comp_id, actor_user_id=to_user.id, actor_user_type="player"
+    )
+    assert isinstance(res, Ok)
+    assert SideComp.query.get(comp_id) is None
+    assert SideCompRegistration.query.filter_by(comp=comp_id).count() == 0
+    assert SideCompResult.query.filter_by(comp=comp_id).count() == 0
