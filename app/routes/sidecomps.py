@@ -87,6 +87,7 @@ def detail(comp_id: int):
                         {
                             "player_id": reg.player,
                             "player_name": (player.name if player else reg.player),
+                            "entry_number": reg.entry_number,
                             "registered_at": reg.registered_at.isoformat() if reg.registered_at else None,
                             "registered_by_to": bool(reg.registered_by_to),
                         }
@@ -247,6 +248,7 @@ def to_checkin(comp_id: int):
                     "success": True,
                     "player_id": reg.player,
                     "player_name": player.name if player else reg.player,
+                    "entry_number": reg.entry_number,
                     "registered_at": reg.registered_at.isoformat() if reg.registered_at else None,
                 }
             )

@@ -756,6 +756,29 @@ def test_route_detail_public_with_registrants(client, tournament):
     assert payload["registrants"][0]["player_id"] == p.id
 
 
+def test_route_detail_includes_entry_numbers(app, client, tournament):
+    with app.app_context():
+        p1 = _make_player("p1", "P1")
+        p2 = _make_player("p2", "P2")
+        _confirm_event_registration(tournament.url, p1.id)
+        _confirm_event_registration(tournament.url, p2.id)
+        sc = SideComp(event=tournament.url, name="A", type="DUELING", registration_open=True)
+        db.session.add(sc)
+        db.session.commit()
+        comp_id = sc.id
+
+        from app.services.sidecomp_service import SideCompService
+
+        SideCompService.register_player(comp_id, player_id=p1.id)
+        SideCompService.register_player(comp_id, player_id=p2.id)
+
+    resp = client.get(f"/_api/sidecomps/{comp_id}")
+    assert resp.status_code == 200
+    payload = resp.get_json()
+    entry_numbers = [r["entry_number"] for r in payload["registrants"]]
+    assert entry_numbers == [1, 2]
+
+
 def test_route_detail_not_found(client):
     resp = client.get("/_api/sidecomps/99999")
     assert resp.status_code == 404
