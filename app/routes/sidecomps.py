@@ -44,10 +44,35 @@ def list_for_event(tournament_url: str):
 
 @bp.route("/sidecomps/<int:comp_id>", methods=["GET"])
 def detail(comp_id: int):
-    """Public: side competition detail with registrants."""
+    """Public: side competition detail with registrants and viewer-context flags."""
     res = SideCompService.get_with_registrants(comp_id)
     match res:
         case Ok((sc, registrants)):
+            viewer_is_to = False
+            viewer_can_register = False
+            viewer_is_registered_in_comp = False
+            if current_user.is_authenticated:
+                from app.domain.enums import RegistrationStatus
+                from models import PlayerRegistration, TO
+
+                viewer_is_to = (
+                    TO.query.filter_by(
+                        event=sc.event,
+                        user_id=current_user.id,
+                        user_type=current_user.__class__.__name__.lower(),
+                    ).first()
+                    is not None
+                )
+                if is_player(current_user):
+                    viewer_is_registered_in_comp = any(reg.player == current_user.id for reg, _ in registrants)
+                    if not viewer_is_registered_in_comp:
+                        event_reg = PlayerRegistration.query.filter_by(
+                            event=sc.event,
+                            player=current_user.id,
+                            status=RegistrationStatus.CONFIRMED,
+                        ).first()
+                        viewer_can_register = event_reg is not None
+
             return jsonify(
                 {
                     "id": sc.id,
@@ -64,6 +89,9 @@ def detail(comp_id: int):
                         }
                         for reg, player in registrants
                     ],
+                    "viewer_is_to": viewer_is_to,
+                    "viewer_can_register": viewer_can_register,
+                    "viewer_is_registered_in_comp": viewer_is_registered_in_comp,
                 }
             )
         case Err(err):

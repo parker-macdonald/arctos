@@ -516,6 +516,69 @@ def test_route_detail_not_found(client):
     assert resp.status_code == 404
 
 
+def test_route_detail_viewer_flags_anonymous(client, tournament):
+    sc = SideComp(event=tournament.url, name="A", type="DUELING")
+    db.session.add(sc)
+    db.session.commit()
+
+    resp = client.get(f"/_api/sidecomps/{sc.id}")
+    assert resp.status_code == 200
+    payload = resp.get_json()
+    assert payload["viewer_is_to"] is False
+    assert payload["viewer_can_register"] is False
+    assert payload["viewer_is_registered_in_comp"] is False
+
+
+def test_route_detail_viewer_flags_event_player(app, client, tournament):
+    with app.app_context():
+        p = _make_player()
+        _confirm_event_registration(tournament.url, p.id)
+        sc = SideComp(event=tournament.url, name="A", type="DUELING")
+        db.session.add(sc)
+        db.session.commit()
+        comp_id = sc.id
+        login_as(client, p)
+
+    resp = client.get(f"/_api/sidecomps/{comp_id}")
+    payload = resp.get_json()
+    assert payload["viewer_is_to"] is False
+    assert payload["viewer_can_register"] is True
+    assert payload["viewer_is_registered_in_comp"] is False
+
+
+def test_route_detail_viewer_flags_already_registered(app, client, tournament):
+    with app.app_context():
+        p = _make_player()
+        _confirm_event_registration(tournament.url, p.id)
+        sc = SideComp(event=tournament.url, name="A", type="DUELING")
+        db.session.add(sc)
+        db.session.flush()
+        db.session.add(SideCompRegistration(comp=sc.id, player=p.id))
+        db.session.commit()
+        comp_id = sc.id
+        login_as(client, p)
+
+    resp = client.get(f"/_api/sidecomps/{comp_id}")
+    payload = resp.get_json()
+    assert payload["viewer_can_register"] is False
+    assert payload["viewer_is_registered_in_comp"] is True
+
+
+def test_route_detail_viewer_flags_to(app, client, tournament):
+    with app.app_context():
+        to_user = _make_player("to_user", "TO User")
+        _make_to(tournament.url, to_user.id)
+        sc = SideComp(event=tournament.url, name="A", type="DUELING")
+        db.session.add(sc)
+        db.session.commit()
+        comp_id = sc.id
+        login_as(client, to_user)
+
+    resp = client.get(f"/_api/sidecomps/{comp_id}")
+    payload = resp.get_json()
+    assert payload["viewer_is_to"] is True
+
+
 def test_route_create_to_succeeds(app, client, tournament):
     with app.app_context():
         to_user = _make_player("to_user", "TO User")

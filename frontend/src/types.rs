@@ -1373,6 +1373,12 @@ pub struct SideCompDetail {
     pub type_: String,
     pub created_at: Option<String>,
     pub registrants: Vec<SideCompRegistrant>,
+    #[serde(default)]
+    pub viewer_is_to: bool,
+    #[serde(default)]
+    pub viewer_can_register: bool,
+    #[serde(default)]
+    pub viewer_is_registered_in_comp: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
