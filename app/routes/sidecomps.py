@@ -59,9 +59,7 @@ def detail(comp_id: int):
                         {
                             "player_id": reg.player,
                             "player_name": (player.name if player else reg.player),
-                            "registered_at": reg.registered_at.isoformat()
-                            if reg.registered_at
-                            else None,
+                            "registered_at": reg.registered_at.isoformat() if reg.registered_at else None,
                             "registered_by_to": bool(reg.registered_by_to),
                         }
                         for reg, player in registrants
@@ -259,16 +257,12 @@ def eligible_players(comp_id: int):
     if sc is None:
         return jsonify({"success": False, "error": "Side competition not found"}), 404
 
-    auth_check = SideCompService._require_to(
-        sc.event, current_user.id, current_user.__class__.__name__.lower()
-    )
+    auth_check = SideCompService._require_to(sc.event, current_user.id, current_user.__class__.__name__.lower())
     match auth_check:
         case Err(err):
             return _err_response(err)
 
-    already_in = {
-        r.player for r in SideCompRegistration.query.filter_by(comp=comp_id).all()
-    }
+    already_in = {r.player for r in SideCompRegistration.query.filter_by(comp=comp_id).all()}
 
     event_regs = PlayerRegistration.query.filter_by(
         event=sc.event,

@@ -370,9 +370,7 @@ def deregister_any_team(tournament_url: str):
         team_registration.status = RegistrationStatus.CANCELLED
 
         affected_player_ids = [
-            r.player for r in PlayerRegistration.query.filter_by(
-                event=tournament_url, team=team_id
-            ).all()
+            r.player for r in PlayerRegistration.query.filter_by(event=tournament_url, team=team_id).all()
         ]
 
         PlayerRegistration.query.filter_by(event=tournament_url, team=team_id).update(

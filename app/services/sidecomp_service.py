@@ -52,9 +52,7 @@ class SideCompService:
         return option(tournament).ok_or(TournamentNotFoundError(tournament_url))
 
     @staticmethod
-    def _require_to(
-        tournament_url: str, actor_user_id: str, actor_user_type: str
-    ) -> Result[None, ArctosError]:
+    def _require_to(tournament_url: str, actor_user_id: str, actor_user_type: str) -> Result[None, ArctosError]:
         from models import TO
 
         is_to = TO.query.filter_by(
@@ -144,9 +142,7 @@ class SideCompService:
             return Err(NotFoundError("Side competition not found"))
 
         rows = (
-            SideCompRegistration.query.filter_by(comp=comp_id)
-            .order_by(SideCompRegistration.registered_at.asc())
-            .all()
+            SideCompRegistration.query.filter_by(comp=comp_id).order_by(SideCompRegistration.registered_at.asc()).all()
         )
         registrants = []
         for r in rows:
@@ -386,9 +382,7 @@ class SideCompService:
 
         SideCompService._require_to(sc.event, actor_user_id, actor_user_type).Q()
 
-        SideCompRegistration.query.filter_by(comp=comp_id, player=player_id).delete(
-            synchronize_session=False
-        )
+        SideCompRegistration.query.filter_by(comp=comp_id, player=player_id).delete(synchronize_session=False)
         db.session.commit()
         return Ok(None)
 
@@ -400,7 +394,7 @@ class SideCompService:
         cancelled. No Result wrapper - the caller is already inside a
         transaction.
         """
-        from models import SideComp, SideCompRegistration, db
+        from models import SideComp, SideCompRegistration
 
         comp_ids = [c.id for c in SideComp.query.filter_by(event=event).all()]
         if not comp_ids:
@@ -437,8 +431,6 @@ class SideCompService:
         if sc is None:
             return Err(NotFoundError("Side competition not found"))
 
-        SideCompRegistration.query.filter_by(comp=comp_id, player=player_id).delete(
-            synchronize_session=False
-        )
+        SideCompRegistration.query.filter_by(comp=comp_id, player=player_id).delete(synchronize_session=False)
         db.session.commit()
         return Ok(None)

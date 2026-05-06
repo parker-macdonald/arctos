@@ -251,9 +251,7 @@ def test_sidecomp_delete_cascades(test_db, tournament):
 
     from app.services.sidecomp_service import SideCompService
 
-    res = SideCompService.delete(
-        comp_id, actor_user_id=to_user.id, actor_user_type="player"
-    )
+    res = SideCompService.delete(comp_id, actor_user_id=to_user.id, actor_user_type="player")
     assert isinstance(res, Ok)
     assert SideComp.query.get(comp_id) is None
     assert SideCompRegistration.query.filter_by(comp=comp_id).count() == 0

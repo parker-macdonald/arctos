@@ -301,9 +301,7 @@ class RegistrationService:
                 return Err(ValidationError("Waiver is missing its checksum"))
             waiver_signature_data = (signature, current_waiver_sha, now)
 
-        existing_reg = PlayerRegistration.query.filter_by(
-            event=tournament_url, player=player_id
-        ).first()
+        existing_reg = PlayerRegistration.query.filter_by(event=tournament_url, player=player_id).first()
         if existing_reg:
             if existing_reg.status not in (
                 RegistrationStatus.CANCELLED,
@@ -392,15 +390,11 @@ class RegistrationService:
                     status=TeamRegistrationStatus.CONFIRMED,
                 ).count()
             if current_team_count >= n_max:
-                return Err(ValidationError(
-                    f"Maximum teams reached ({current_team_count}/{n_max})"
-                ))
+                return Err(ValidationError(f"Maximum teams reached ({current_team_count}/{n_max})"))
 
         now = datetime.now(timezone.utc).replace(tzinfo=None)
 
-        existing_reg = TeamRegistration.query.filter_by(
-            event=tournament_url, team=team_id
-        ).first()
+        existing_reg = TeamRegistration.query.filter_by(event=tournament_url, team=team_id).first()
         if existing_reg:
             if existing_reg.status != TeamRegistrationStatus.CANCELLED:
                 return Err(ValidationError("This team is already registered"))
@@ -450,9 +444,7 @@ class RegistrationService:
         team_registration.status = TeamRegistrationStatus.CANCELLED
 
         affected_player_ids = [
-            r.player for r in PlayerRegistration.query.filter_by(
-                event=tournament_url, team=team_id
-            ).all()
+            r.player for r in PlayerRegistration.query.filter_by(event=tournament_url, team=team_id).all()
         ]
 
         PlayerRegistration.query.filter_by(event=tournament_url, team=team_id).update(

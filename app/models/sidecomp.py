@@ -61,9 +61,7 @@ class SideCompRegistration(db.Model):
     )
     registered_by_to = db.Column(db.Boolean, default=False, nullable=False)
 
-    __table_args__ = (
-        db.UniqueConstraint("comp", "player", name="uq_sidecomp_registrations_comp_player"),
-    )
+    __table_args__ = (db.UniqueConstraint("comp", "player", name="uq_sidecomp_registrations_comp_player"),)
 
 
 class SideCompResult(db.Model):

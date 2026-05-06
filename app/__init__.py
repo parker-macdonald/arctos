@@ -25,6 +25,7 @@ class ArctosJSONProvider(DefaultJSONProvider):
             return float(o)
         return super().default(o)
 
+
 # Initialize extensions (will be initialized in create_app)
 db = None
 login_manager = LoginManager()
