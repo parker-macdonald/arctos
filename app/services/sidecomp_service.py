@@ -393,6 +393,24 @@ class SideCompService:
         return Ok(None)
 
     @staticmethod
+    def cancel_player_registrations_in_event(event: str, player: str) -> None:
+        """Hard-delete all SideCompRegistration rows for ``(event, player)``.
+
+        Called by RegistrationService when a player's event registration is
+        cancelled. No Result wrapper - the caller is already inside a
+        transaction.
+        """
+        from models import SideComp, SideCompRegistration, db
+
+        comp_ids = [c.id for c in SideComp.query.filter_by(event=event).all()]
+        if not comp_ids:
+            return
+        SideCompRegistration.query.filter(
+            SideCompRegistration.comp.in_(comp_ids),
+            SideCompRegistration.player == player,
+        ).delete(synchronize_session=False)
+
+    @staticmethod
     @allow_Q
     def deregister_player(
         comp_id: int,

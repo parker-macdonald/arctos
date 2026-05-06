@@ -369,9 +369,20 @@ def deregister_any_team(tournament_url: str):
     if team_registration:
         team_registration.status = RegistrationStatus.CANCELLED
 
+        affected_player_ids = [
+            r.player for r in PlayerRegistration.query.filter_by(
+                event=tournament_url, team=team_id
+            ).all()
+        ]
+
         PlayerRegistration.query.filter_by(event=tournament_url, team=team_id).update(
             {"status": RegistrationStatus.CANCELLED}
         )
+
+        from app.services.sidecomp_service import SideCompService
+
+        for pid in affected_player_ids:
+            SideCompService.cancel_player_registrations_in_event(tournament_url, pid)
 
         db.session.commit()
         return (
@@ -435,6 +446,10 @@ def deregister_any_player(tournament_url: str):
 
     if player_registration:
         player_registration.status = RegistrationStatus.CANCELLED
+
+        from app.services.sidecomp_service import SideCompService
+
+        SideCompService.cancel_player_registrations_in_event(tournament_url, player_id)
 
         db.session.commit()
         return (

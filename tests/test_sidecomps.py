@@ -441,3 +441,44 @@ def test_organizer_remove_idempotent(test_db, tournament):
         player_id=target.id,
     )
     assert isinstance(res, Ok)
+
+
+def test_cancel_player_registrations_in_event_removes_only_matching(test_db, tournament):
+    p1 = _make_player("p1", "P1")
+    p2 = _make_player("p2", "P2")
+    sc1 = SideComp(event=tournament.url, name="A", type="DUELING")
+    sc2 = SideComp(event=tournament.url, name="B", type="OTHER")
+    db.session.add_all([sc1, sc2])
+    db.session.flush()
+    db.session.add(SideCompRegistration(comp=sc1.id, player=p1.id))
+    db.session.add(SideCompRegistration(comp=sc2.id, player=p1.id))
+    db.session.add(SideCompRegistration(comp=sc1.id, player=p2.id))
+    db.session.commit()
+
+    from app.services.sidecomp_service import SideCompService
+
+    SideCompService.cancel_player_registrations_in_event(tournament.url, p1.id)
+
+    assert SideCompRegistration.query.filter_by(player=p1.id).count() == 0
+    assert SideCompRegistration.query.filter_by(player=p2.id).count() == 1
+
+
+def test_player_self_deregister_from_event_cascades(app, client, tournament):
+    """Player self-deregister via /deregister-player should cascade to side comps."""
+    from tests.utils import login_as
+
+    with app.app_context():
+        p = _make_player()
+        _confirm_event_registration(tournament.url, p.id)
+        sc = SideComp(event=tournament.url, name="A", type="DUELING")
+        db.session.add(sc)
+        db.session.flush()
+        db.session.add(SideCompRegistration(comp=sc.id, player=p.id))
+        db.session.commit()
+        login_as(client, p)
+
+    resp = client.post(f"/_api/{tournament.url}/deregister-player")
+    assert resp.status_code == 200
+
+    with app.app_context():
+        assert SideCompRegistration.query.filter_by(player=p.id).count() == 0
