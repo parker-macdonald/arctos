@@ -70,3 +70,78 @@ def detail(comp_id: int):
             )
         case Err(err):
             return _err_response(err)
+
+
+@bp.route("/<tournament_url>/sidecomps", methods=["POST"])
+@login_required
+def create(tournament_url: str):
+    """TO-only: create a side competition."""
+    if not request.is_json:
+        return jsonify({"success": False, "error": "Content-Type must be application/json"}), 415
+    data = request.get_json() or {}
+
+    res = SideCompService.create(
+        tournament_url,
+        actor_user_id=current_user.id,
+        actor_user_type=current_user.__class__.__name__.lower(),
+        name=data.get("name", ""),
+        type=data.get("type", ""),
+    )
+    match res:
+        case Ok(sc):
+            return jsonify(
+                {
+                    "id": sc.id,
+                    "event": sc.event,
+                    "name": sc.name,
+                    "type": str(sc.type),
+                    "created_at": sc.created_at.isoformat() if sc.created_at else None,
+                }
+            )
+        case Err(err):
+            return _err_response(err)
+
+
+@bp.route("/sidecomps/<int:comp_id>", methods=["PATCH"])
+@login_required
+def update(comp_id: int):
+    """TO-only: rename or change type of a side competition."""
+    if not request.is_json:
+        return jsonify({"success": False, "error": "Content-Type must be application/json"}), 415
+    data = request.get_json() or {}
+
+    res = SideCompService.update(
+        comp_id,
+        actor_user_id=current_user.id,
+        actor_user_type=current_user.__class__.__name__.lower(),
+        name=data.get("name"),
+        type=data.get("type"),
+    )
+    match res:
+        case Ok(sc):
+            return jsonify(
+                {
+                    "id": sc.id,
+                    "event": sc.event,
+                    "name": sc.name,
+                    "type": str(sc.type),
+                }
+            )
+        case Err(err):
+            return _err_response(err)
+
+
+@bp.route("/sidecomps/<int:comp_id>", methods=["DELETE"])
+@login_required
+def delete(comp_id: int):
+    """TO-only: hard-delete a side competition and its registrations/results."""
+    res = SideCompService.delete(
+        comp_id,
+        actor_user_id=current_user.id,
+        actor_user_type=current_user.__class__.__name__.lower(),
+    )
+    match res:
+        case Ok(_):
+            return jsonify({"success": True})
+        case Err(err):
+            return _err_response(err)

@@ -14,6 +14,7 @@ from models import (
     TO,
     db,
 )
+from tests.utils import login_as
 
 
 def _make_player(player_id="p_alice", name="Alice"):
@@ -515,3 +516,65 @@ def test_route_detail_public_with_registrants(client, tournament):
 def test_route_detail_not_found(client):
     resp = client.get("/_api/sidecomps/99999")
     assert resp.status_code == 404
+
+
+def test_route_create_to_succeeds(app, client, tournament):
+    with app.app_context():
+        to_user = _make_player("to_user", "TO User")
+        _make_to(tournament.url, to_user.id)
+        login_as(client, to_user)
+
+    resp = client.post(
+        f"/_api/{tournament.url}/sidecomps",
+        json={"name": "Dueling", "type": "DUELING"},
+    )
+    assert resp.status_code == 200
+    payload = resp.get_json()
+    assert payload["name"] == "Dueling"
+    assert payload["type"] == "DUELING"
+
+
+def test_route_create_non_to_forbidden(app, client, tournament):
+    with app.app_context():
+        p = _make_player("non_to", "Non TO")
+        login_as(client, p)
+
+    resp = client.post(
+        f"/_api/{tournament.url}/sidecomps",
+        json={"name": "X", "type": "DUELING"},
+    )
+    assert resp.status_code == 403
+
+
+def test_route_update_to_succeeds(app, client, tournament):
+    with app.app_context():
+        to_user = _make_player("to_user", "TO User")
+        _make_to(tournament.url, to_user.id)
+        sc = SideComp(event=tournament.url, name="Old", type="DUELING")
+        db.session.add(sc)
+        db.session.commit()
+        comp_id = sc.id
+        login_as(client, to_user)
+
+    resp = client.patch(
+        f"/_api/sidecomps/{comp_id}",
+        json={"name": "New"},
+    )
+    assert resp.status_code == 200
+    assert resp.get_json()["name"] == "New"
+
+
+def test_route_delete_to_succeeds(app, client, tournament):
+    with app.app_context():
+        to_user = _make_player("to_user", "TO User")
+        _make_to(tournament.url, to_user.id)
+        sc = SideComp(event=tournament.url, name="Old", type="DUELING")
+        db.session.add(sc)
+        db.session.commit()
+        comp_id = sc.id
+        login_as(client, to_user)
+
+    resp = client.delete(f"/_api/sidecomps/{comp_id}")
+    assert resp.status_code == 200
+    with app.app_context():
+        assert SideComp.query.get(comp_id) is None
