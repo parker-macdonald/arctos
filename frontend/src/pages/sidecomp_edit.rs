@@ -43,7 +43,7 @@ pub fn SideCompEdit(url: String, comp_id: i32) -> Element {
                         let t = type_();
                         error.set(None);
                         spawn(async move {
-                            match api::sidecomp_update(comp_id, Some(&n), Some(&t)).await {
+                            match api::sidecomp_update(comp_id, Some(&n), Some(&t), None, None).await {
                                 Ok(_) => {
                                     navigator.push(Route::SideCompDetail { url: url_inner, comp_id });
                                 }

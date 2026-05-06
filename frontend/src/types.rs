@@ -1353,6 +1353,8 @@ pub struct SideCompSummary {
     #[serde(rename = "type")]
     pub type_: String,
     pub registrant_count: i64,
+    #[serde(default)]
+    pub registration_open: bool,
     pub created_at: Option<String>,
 }
 
@@ -1371,6 +1373,10 @@ pub struct SideCompDetail {
     pub name: String,
     #[serde(rename = "type")]
     pub type_: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub registration_open: bool,
     pub created_at: Option<String>,
     pub registrants: Vec<SideCompRegistrant>,
     #[serde(default)]

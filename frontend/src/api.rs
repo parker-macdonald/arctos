@@ -3531,9 +3531,14 @@ pub async fn sidecomp_create(
     tournament_url: &str,
     name: &str,
     type_: &str,
+    description: Option<&str>,
 ) -> Result<Value, String> {
     let c = client();
-    let body = serde_json::json!({"name": name, "type": type_});
+    let body = serde_json::json!({
+        "name": name,
+        "type": type_,
+        "description": description.unwrap_or(""),
+    });
     let r = with_credentials(
         c.post(format!("{}/_api/{}/sidecomps", base(), tournament_url))
             .json(&body),
@@ -3548,6 +3553,8 @@ pub async fn sidecomp_update(
     comp_id: i32,
     name: Option<&str>,
     type_: Option<&str>,
+    description: Option<&str>,
+    registration_open: Option<bool>,
 ) -> Result<Value, String> {
     let c = client();
     let mut body = serde_json::Map::new();
@@ -3556,6 +3563,12 @@ pub async fn sidecomp_update(
     }
     if let Some(t) = type_ {
         body.insert("type".to_string(), serde_json::json!(t));
+    }
+    if let Some(d) = description {
+        body.insert("description".to_string(), serde_json::json!(d));
+    }
+    if let Some(open) = registration_open {
+        body.insert("registration_open".to_string(), serde_json::json!(open));
     }
     let r = with_credentials(
         c.patch(format!("{}/_api/sidecomps/{}", base(), comp_id))

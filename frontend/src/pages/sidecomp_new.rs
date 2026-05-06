@@ -33,7 +33,7 @@ pub fn SideCompNew(url: String) -> Element {
                         submitting.set(true);
                         error.set(None);
                         spawn(async move {
-                            match api::sidecomp_create(&url_inner, &n, &t).await {
+                            match api::sidecomp_create(&url_inner, &n, &t, None).await {
                                 Ok(_) => {
                                     navigator.push(Route::SideCompsList { url: url_inner });
                                 }
