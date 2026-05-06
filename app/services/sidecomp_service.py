@@ -7,7 +7,7 @@ check-in. Mirrors the style of :class:`~app.services.registration_service.Regist
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 from app.error_values import Err, Ok, Result, allow_Q, option
 from app.exceptions import (
@@ -17,10 +17,11 @@ from app.exceptions import (
 )
 
 if TYPE_CHECKING:  # pragma: no cover
-    from models import SideComp
+    from app.domain.enums import SideCompType
+    from models import SideComp, Tournament
 
 
-def _parse_type(value: object):
+def _parse_type(value: object) -> Optional["SideCompType"]:
     """Parse *value* into a :class:`~app.domain.enums.SideCompType` member.
 
     Returns ``None`` if *value* is not a valid side competition type.
@@ -42,7 +43,7 @@ class SideCompService:
     """Side competition workflows. Static methods, namespace dataclass."""
 
     @staticmethod
-    def _get_tournament(tournament_url: str):
+    def _get_tournament(tournament_url: str) -> Result["Tournament", ArctosError]:
         from app.exceptions import TournamentNotFoundError
         from models import Tournament
 
