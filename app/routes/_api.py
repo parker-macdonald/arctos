@@ -448,6 +448,7 @@ def _tournament_to_dict(t) -> dict:
         "end_date": end,
         "location": t.location,
         "published": t.published,
+        "organizer_checkin_enabled": bool(t.organizer_checkin_enabled),
         "n_max_teams": getattr(cfg, "n_max_teams", None) if cfg else None,
         "schedule_published": getattr(t, "schedule_published", False),
         # Legacy aggregate flag kept for compatibility: true if either team or player registration open.

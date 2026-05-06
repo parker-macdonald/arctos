@@ -700,10 +700,75 @@ pub async fn deregister_team(tournament_url: &str) -> Result<StatusResponse, Str
     post_form_status(&url, &[]).await
 }
 
+pub async fn checkin_info(
+    tournament_url: &str,
+) -> Result<crate::types::CheckinInfoResponse, String> {
+    let c = client();
+    let r = with_credentials(c.get(format!(
+        "{}/_api/{}/checkin-info",
+        base(),
+        tournament_url
+    )))
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    if r.status().as_u16() == 403 {
+        return Err("Only tournament organizers can access this page".to_string());
+    }
+    response_json(r).await
+}
+
+pub async fn checkin(
+    tournament_url: &str,
+    player_id: &str,
+    team_id: Option<&str>,
+    jersey_number: &str,
+    jersey_name: &str,
+    waiver_legal_name_signature: &str,
+) -> Result<crate::types::CheckinResponse, String> {
+    let c = client();
+    let body = serde_json::json!({
+        "player_id": player_id,
+        "team": team_id,
+        "jersey_number": jersey_number,
+        "jersey_name": jersey_name,
+        "waiver_legal_name_signature": waiver_legal_name_signature,
+    });
+    let r = with_credentials(
+        c.post(format!("{}/_api/{}/checkin", base(), tournament_url))
+            .json(&body),
+    )
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    response_json(r).await
+}
+
+pub async fn checkin_team(
+    tournament_url: &str,
+    team_id: &str,
+    pseudonym: &str,
+) -> Result<crate::types::CheckinTeamResponse, String> {
+    let c = client();
+    let body = serde_json::json!({
+        "team_id": team_id,
+        "pseudonym": pseudonym,
+    });
+    let r = with_credentials(
+        c.post(format!("{}/_api/{}/checkin-team", base(), tournament_url))
+            .json(&body),
+    )
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    response_json(r).await
+}
+
 pub async fn create_tournament(
     name: &str,
     url_slug: &str,
     league_id: Option<&str>,
+    organizer_checkin_enabled: bool,
 ) -> Result<CreateTournamentResponse, String> {
     let mut params: Vec<(String, String)> = vec![
         ("name".into(), name.to_string()),
@@ -711,6 +776,9 @@ pub async fn create_tournament(
     ];
     if let Some(id) = league_id {
         params.push(("league_id".into(), id.to_string()));
+    }
+    if organizer_checkin_enabled {
+        params.push(("organizer_checkin_enabled".into(), "on".into()));
     }
     let url = format!("{}/_api/create-tournament", base());
     let c = client();

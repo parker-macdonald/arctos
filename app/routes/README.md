@@ -100,4 +100,3 @@ In production, nginx serves the SPA same-origin and CORS isn't needed.
 6. Write integration tests in [`tests/`](../../tests/README.md). The
    `client` fixture + `login_as(client, user)` from `tests/utils.py`
    covers most cases.
-

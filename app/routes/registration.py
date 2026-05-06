@@ -523,3 +523,172 @@ def decline_invitation(tournament_url: str, invitation_id: int):
     player_registration.status = RegistrationStatus.REJECTED
     db.session.commit()
     return jsonify({"success": True, "message": "Player request declined"}), 200
+
+
+@bp.route("/<tournament_url>/checkin", methods=["POST"])
+@login_required
+def organizer_checkin(tournament_url: str):
+    """Tournament-organizer-driven player check-in.
+
+    ``POST /_api/<tournament_url>/checkin``
+
+    The caller must be a TO of this tournament (enforced in the service
+    layer). Adds an existing player to the tournament with an auto-confirmed,
+    fully-paid registration.
+
+    Args:
+        tournament_url: Tournament URL slug from the path.
+
+    Request JSON:
+        player_id (str): ID of the existing player to check in. Required.
+        team (str | None): Team ID to register under, or null/omitted for
+            unaffiliated.
+        jersey_number (str): Jersey number; defaults to ``"0"`` when blank.
+        jersey_name (str): Jersey name; defaults to ``"N/A"`` when blank.
+        waiver_legal_name_signature (str): Player's legal-name signature
+            (typed by the TO on the player's behalf). Required when the
+            tournament has a waiver configured.
+
+    Returns:
+        ``200`` with the resolved registration fields on success, or
+        ``{success: false, error}`` with an appropriate status on failure.
+    """
+    if not request.is_json:
+        return jsonify({"success": False, "error": "Content-Type must be application/json"}), 415
+    data = request.get_json() or {}
+
+    player_id = (data.get("player_id") or "").strip()
+    if not player_id:
+        return jsonify({"success": False, "error": "player_id is required"}), 400
+
+    res = RegistrationService.organizer_checkin(
+        tournament_url,
+        actor_user_id=current_user.id,
+        actor_user_type=current_user.__class__.__name__.lower(),
+        player_id=player_id,
+        team_id=(data.get("team") or None),
+        jersey_number=data.get("jersey_number", ""),
+        jersey_name=data.get("jersey_name", ""),
+        waiver_legal_name_signature=data.get("waiver_legal_name_signature", ""),
+    )
+    match res:
+        case Ok(reg):
+            from models import Player
+
+            player = Player.query.get(reg.player)
+            return (
+                jsonify(
+                    {
+                        "success": True,
+                        "message": "Player checked in",
+                        "player_id": reg.player,
+                        "player_name": player.name if player else reg.player,
+                        "team": reg.team,
+                        "jersey_number": reg.jersey_number,
+                        "jersey_name": reg.jersey_name,
+                    }
+                ),
+                200,
+            )
+        case Err(err):
+            from app.exceptions import ArctosError
+
+            status = err.status_code if isinstance(err, ArctosError) else 400
+            return jsonify({"success": False, "error": public_error_message(err)}), status
+
+
+@bp.route("/<tournament_url>/checkin-team", methods=["POST"])
+@login_required
+def organizer_checkin_team(tournament_url: str):
+    """Tournament-organizer-driven team registration.
+
+    ``POST /_api/<tournament_url>/checkin-team``
+
+    The caller must be a TO of this tournament (enforced in the service
+    layer). Adds an existing team to the tournament with an auto-confirmed,
+    fully-paid registration.
+
+    Args:
+        tournament_url: Tournament URL slug from the path.
+
+    Request JSON:
+        team_id (str): ID of the existing team to register. Required.
+        pseudonym (str): Per-tournament team display name. Optional;
+            defaults to ``team.name`` when blank.
+
+    Returns:
+        ``200`` with the resolved registration fields on success, or
+        ``{success: false, error}`` with an appropriate status on failure.
+    """
+    if not request.is_json:
+        return jsonify({"success": False, "error": "Content-Type must be application/json"}), 415
+    data = request.get_json() or {}
+
+    team_id = (data.get("team_id") or "").strip()
+    if not team_id:
+        return jsonify({"success": False, "error": "team_id is required"}), 400
+
+    res = RegistrationService.organizer_register_team(
+        tournament_url,
+        actor_user_id=current_user.id,
+        actor_user_type=current_user.__class__.__name__.lower(),
+        team_id=team_id,
+        pseudonym=data.get("pseudonym", ""),
+    )
+    match res:
+        case Ok(reg):
+            from models import Team
+
+            team = Team.query.get(reg.team)
+            return (
+                jsonify(
+                    {
+                        "success": True,
+                        "message": "Team registered",
+                        "team_id": reg.team,
+                        "team_name": team.name if team else reg.team,
+                        "pseudonym": reg.pseudonym,
+                    }
+                ),
+                200,
+            )
+        case Err(err):
+            from app.exceptions import ArctosError
+
+            status = err.status_code if isinstance(err, ArctosError) else 400
+            return jsonify({"success": False, "error": public_error_message(err)}), status
+
+
+@bp.route("/<tournament_url>/checkin-info", methods=["GET"])
+@login_required
+def organizer_checkin_info(tournament_url: str):
+    """Bootstrap data the frontend needs to render the Event Check-in page."""
+    from app.utils.helpers import get_registrable_config
+    from app.domain.enums import TeamRegistrationStatus
+
+    tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
+
+    is_to = TO.query.filter_by(
+        event=tournament_url,
+        user_id=current_user.id,
+        user_type=current_user.__class__.__name__.lower(),
+    ).first()
+    if not is_to:
+        return jsonify({"error": "Only tournament organizers can access this page"}), 403
+
+    cfg = get_registrable_config(tournament)
+    waiver_filepath = getattr(cfg, "waiver_filepath", None) if cfg else None
+
+    team_regs = TeamRegistration.query.filter_by(
+        event=tournament_url, status=TeamRegistrationStatus.CONFIRMED
+    ).all()
+    teams_payload = [{"id": r.team, "pseudonym": r.pseudonym} for r in team_regs]
+
+    return jsonify(
+        {
+            "organizer_checkin_enabled": bool(tournament.organizer_checkin_enabled),
+            "teams": teams_payload,
+            "waiver_required": bool(waiver_filepath),
+            "waiver_url": waiver_filepath,
+        }
+    )

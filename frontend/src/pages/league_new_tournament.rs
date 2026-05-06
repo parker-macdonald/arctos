@@ -11,6 +11,14 @@ fn get_form_value(id: &str) -> String {
         .unwrap_or_default()
 }
 
+fn get_form_check(id: &str) -> bool {
+    let doc = web_sys::window().and_then(|w| w.document()).unwrap();
+    doc.get_element_by_id(id)
+        .and_then(|e| e.dyn_into::<web_sys::HtmlInputElement>().ok())
+        .map(|e| e.checked())
+        .unwrap_or(false)
+}
+
 #[component]
 pub fn LeagueNewTournament(league_url: String) -> Element {
     let navigator = use_navigator();
@@ -44,10 +52,11 @@ pub fn LeagueNewTournament(league_url: String) -> Element {
                                         error.set(Some("Name and URL slug are required.".to_string()));
                                         return;
                                     }
+                                    let organizer_checkin = get_form_check("organizer_checkin_enabled");
                                     let nav = navigator.clone();
                                     let lu = league_url.clone();
                                     spawn(async move {
-                                        match api::create_tournament(&name, &url_slug, Some(&lu)).await {
+                                        match api::create_tournament(&name, &url_slug, Some(&lu), organizer_checkin).await {
                                             Ok(res) if res.success => {
                                                 if let Some(url) = res.url {
                                                     nav.push(Route::TournamentHome { url });
@@ -72,6 +81,11 @@ pub fn LeagueNewTournament(league_url: String) -> Element {
                                     label { r#for: "url", class: "form-label", "URL Slug" }
                                     input { r#type: "text", class: "form-control", id: "url", name: "url", required: true }
                                     div { class: "form-text", "This will be used in the URL (e.g., /my-event)" }
+                                }
+                                div { class: "form-check mb-3",
+                                    input { class: "form-check-input", r#type: "checkbox", id: "organizer_checkin_enabled", name: "organizer_checkin_enabled" }
+                                    label { class: "form-check-label", r#for: "organizer_checkin_enabled", "Enable organizer player check-in" }
+                                    div { class: "form-text", "Tournament organizers can check players into the event from the Admin panel." }
                                 }
                                 div { class: "d-flex gap-2",
                                     Link { to: Route::LeagueHome { league_url: lu_for_cancel.clone() }, class: "btn btn-outline-secondary", "Cancel" }

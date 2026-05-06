@@ -548,6 +548,9 @@ pub fn TournamentSettings(url: String) -> Element {
                                     if get_form_check("schedule_published") {
                                         params.push(("schedule_published".into(), "on".to_string()));
                                     }
+                                    if get_form_check("organizer_checkin_enabled") {
+                                        params.push(("organizer_checkin_enabled".into(), "on".to_string()));
+                                    }
                                     if get_form_check("team_registration_open") {
                                         params.push(("team_registration_open".into(), "on".to_string()));
                                     }
@@ -812,6 +815,13 @@ pub fn TournamentSettings(url: String) -> Element {
                                         input { class: "form-check-input", r#type: "checkbox", id: "schedule_published", name: "schedule_published", checked: d.tournament.schedule_published }
                                         label { class: "form-check-label", r#for: "schedule_published", "Schedule Published (schedule visible to public)" }
                                         div { class: "form-text", "show the schedule will be visible to all users. Still visible to TOs and head refs if unchecked." }
+                                    }
+                                }
+                                div { class: "mb-3",
+                                    div { class: "form-check",
+                                        input { class: "form-check-input", r#type: "checkbox", id: "organizer_checkin_enabled", name: "organizer_checkin_enabled", checked: d.tournament.organizer_checkin_enabled }
+                                        label { class: "form-check-label", r#for: "organizer_checkin_enabled", "Enable organizer player check-in" }
+                                        div { class: "form-text", "Tournament organizers can check players into the event from the Admin panel." }
                                     }
                                 }
                                 if d.tournament.league.is_none() {

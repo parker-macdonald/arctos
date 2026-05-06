@@ -179,10 +179,10 @@ Install the Dioxus CLI:
 cargo install dioxus-cli
 ```
 
-then (for development) simply `cd frontend` and serve the app:
+then (for development) serve the app:
 
 ```bash
-dx serve
+make frontend            # equivalent to `cd frontend && dx serve`
 ```
 
 In production, you should run `dx bundle --release` and copy the
@@ -197,8 +197,8 @@ output files to somewhere that your reverse proxy can serve.
 | Format | `make format` |
 | Apply migrations | `make db-backup && make db-migrate` |
 | Generate a migration | `make db-revision MSG="snake_case_message"` |
-| Start dev backend | `make run` (or `python run_app.py` for Werkzeug) |
-| Start dev frontend | `cd frontend && dx serve` |
+| Start dev backend | `make dev` (HTTP, :5006) or `make run` (TLS, :8081) |
+| Start dev frontend | `make frontend` |
 
 ## Conventions
 

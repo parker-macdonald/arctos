@@ -89,6 +89,9 @@ enum Route {
     #[route("/:url/register")]
     TournamentRegister { url: String },
 
+    #[route("/:url/checkin")]
+    OrganizerCheckin { url: String },
+
     #[route("/:url/manage")]
     Manage { url: String },
 

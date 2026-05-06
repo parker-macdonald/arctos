@@ -15,8 +15,10 @@ from app.domain.enums import MatchStatus, RegistrationStatus, TeamRegistrationSt
 from app.error_values import Err, Ok, Result, allow_Q, option
 from app.exceptions import (
     ArctosError,
+    OrganizerCheckinDisabledError,
     RegistrationClosedError,
     TournamentNotFoundError,
+    UnauthorizedError,
     ValidationError,
 )
 from app.utils.name_validation import team_pseudonym_char_error
@@ -233,6 +235,200 @@ class RegistrationService:
 
         db.session.commit()
         return Ok(player_registration)
+
+    @staticmethod
+    @allow_Q
+    def organizer_checkin(
+        tournament_url: str,
+        *,
+        actor_user_id: str,
+        actor_user_type: str,
+        player_id: str,
+        team_id: Optional[str],
+        jersey_number: str = "",
+        jersey_name: str = "",
+        waiver_legal_name_signature: str = "",
+    ) -> Result["PlayerRegistration", ArctosError]:
+        """Tournament-organizer-driven player check-in.
+
+        The actor must be a TO (tournament organizer) for ``tournament_url``.
+        The target player (``player_id``) must already exist. Returns the
+        created or updated :class:`~app.models.registration.PlayerRegistration`
+        on success.
+        """
+        from models import PlayerRegistration, TeamRegistration, TO, db
+
+        tournament = RegistrationService._get_tournament(tournament_url).Q()
+        if not tournament.organizer_checkin_enabled:
+            return Err(OrganizerCheckinDisabledError())
+
+        from models import Player
+
+        is_to = TO.query.filter_by(
+            event=tournament_url,
+            user_id=actor_user_id,
+            user_type=actor_user_type,
+        ).first()
+        if not is_to:
+            return Err(UnauthorizedError("Only tournament organizers can check in players"))
+
+        target = Player.query.get(player_id)
+        if target is None:
+            return Err(ValidationError("Player not found"))
+
+        jersey_name_value = (jersey_name or "").strip() or "N/A"
+        jersey_number_value = (jersey_number or "").strip() or "0"
+
+        if team_id:
+            team_reg = TeamRegistration.query.filter_by(
+                event=tournament_url,
+                team=team_id,
+                status=TeamRegistrationStatus.CONFIRMED,
+            ).first()
+            if not team_reg:
+                return Err(ValidationError("Selected team is not registered for this event"))
+
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+
+        from app.utils.helpers import get_registrable_config
+
+        cfg = get_registrable_config(tournament)
+        waiver_filepath = getattr(cfg, "waiver_filepath", None) if cfg else None
+        waiver_signature_data = None
+        if waiver_filepath:
+            signature = (waiver_legal_name_signature or "").strip()
+            if not signature:
+                return Err(ValidationError("Waiver signature is required"))
+            current_waiver_sha = getattr(cfg, "waiver_sha256", None)
+            if not current_waiver_sha:
+                return Err(ValidationError("Waiver is missing its checksum"))
+            waiver_signature_data = (signature, current_waiver_sha, now)
+
+        existing_reg = PlayerRegistration.query.filter_by(
+            event=tournament_url, player=player_id
+        ).first()
+        if existing_reg:
+            if existing_reg.status not in (
+                RegistrationStatus.CANCELLED,
+                RegistrationStatus.REJECTED,
+            ):
+                return Err(ValidationError("This player is already checked in"))
+            registration = existing_reg
+            registration.team = team_id
+            registration.jersey_number = jersey_number_value
+            registration.jersey_name = jersey_name_value
+            registration.status = RegistrationStatus.CONFIRMED
+            registration.paid = True
+            registration.amount_paid = 0
+            registration.paid_at = now
+        else:
+            registration = PlayerRegistration(
+                event=tournament_url,
+                player=player_id,
+                team=team_id,
+                jersey_number=jersey_number_value,
+                jersey_name=jersey_name_value,
+                status=RegistrationStatus.CONFIRMED,
+                paid=True,
+                amount_paid=0,
+                paid_at=now,
+            )
+            db.session.add(registration)
+        if waiver_signature_data is not None:
+            sig, sha, ts = waiver_signature_data
+            registration.waiver_legal_name_signature = sig
+            registration.waiver_legal_name_signature_sha256 = sha
+            registration.waiver_signature_submitted_at = ts
+        db.session.commit()
+        return Ok(registration)
+
+    @staticmethod
+    @allow_Q
+    def organizer_register_team(
+        tournament_url: str,
+        *,
+        actor_user_id: str,
+        actor_user_type: str,
+        team_id: str,
+        pseudonym: str = "",
+    ) -> Result["TeamRegistration", ArctosError]:
+        """Tournament-organizer-driven team registration.
+
+        The actor must be a TO for ``tournament_url``. The target team must
+        already exist. Returns the created or updated
+        :class:`~app.models.registration.TeamRegistration` on success.
+        """
+        from models import Team, TeamRegistration, TO, db
+
+        tournament = RegistrationService._get_tournament(tournament_url).Q()
+        if not tournament.organizer_checkin_enabled:
+            return Err(OrganizerCheckinDisabledError())
+
+        is_to = TO.query.filter_by(
+            event=tournament_url,
+            user_id=actor_user_id,
+            user_type=actor_user_type,
+        ).first()
+        if not is_to:
+            return Err(UnauthorizedError("Only tournament organizers can register teams"))
+
+        team = Team.query.get(team_id)
+        if team is None:
+            return Err(ValidationError("Team not found"))
+
+        pseudonym_value = (pseudonym or "").strip() or team.name
+        pn_err = team_pseudonym_char_error(pseudonym_value)
+        if pn_err:
+            return Err(ValidationError(pn_err))
+
+        from app.utils.helpers import get_registrable_config
+
+        cfg = get_registrable_config(tournament)
+        n_max = getattr(cfg, "n_max_teams", None) if cfg else None
+        if n_max is not None:
+            if getattr(tournament, "league_id", None):
+                current_team_count = TeamRegistration.query.filter_by(
+                    league_id=tournament.league_id,
+                    status=TeamRegistrationStatus.CONFIRMED,
+                ).count()
+            else:
+                current_team_count = TeamRegistration.query.filter_by(
+                    event=tournament_url,
+                    status=TeamRegistrationStatus.CONFIRMED,
+                ).count()
+            if current_team_count >= n_max:
+                return Err(ValidationError(
+                    f"Maximum teams reached ({current_team_count}/{n_max})"
+                ))
+
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+
+        existing_reg = TeamRegistration.query.filter_by(
+            event=tournament_url, team=team_id
+        ).first()
+        if existing_reg:
+            if existing_reg.status != TeamRegistrationStatus.CANCELLED:
+                return Err(ValidationError("This team is already registered"))
+            registration = existing_reg
+            registration.pseudonym = pseudonym_value
+            registration.status = TeamRegistrationStatus.CONFIRMED
+            registration.paid = True
+            registration.amount_paid = 0
+            registration.paid_at = now
+        else:
+            registration = TeamRegistration(
+                event=tournament_url,
+                team=team_id,
+                pseudonym=pseudonym_value,
+                status=TeamRegistrationStatus.CONFIRMED,
+                paid=True,
+                amount_paid=0,
+                paid_at=now,
+            )
+            db.session.add(registration)
+
+        db.session.commit()
+        return Ok(registration)
 
     @staticmethod
     @allow_Q

@@ -23,7 +23,7 @@ CERT_SUBJECT ?= /CN=localhost
         setup setup-os setup-macos setup-ubuntu setup-python install setup-frontend \
         lint format \
         test unit integration \
-        run certs \
+        run dev frontend certs \
         db-baseline db-migrate db-revision db-current db-history \
         db-backup db-check-duplicates
 
@@ -75,14 +75,14 @@ format: ## Auto-format code with ruff
 
 # ── Test ──────────────────────────────────────────────────────────────────────
 
-test: ## Run all tests
-	@uv run pytest tests/
+test: ## Run all tests (extra pytest args via ARGS=..., e.g. make test ARGS="-k foo")
+	@uv run pytest tests/ $(ARGS)
 
-unit: ## Run unit tests only
-	@uv run pytest tests/ -m unit
+unit: ## Run unit tests only (extra pytest args via ARGS=...)
+	@uv run pytest tests/ -m unit $(ARGS)
 
-integration: ## Run integration tests only
-	@uv run pytest tests/ -m integration
+integration: ## Run integration tests only (extra pytest args via ARGS=...)
+	@uv run pytest tests/ -m integration $(ARGS)
 
 # ── Run ───────────────────────────────────────────────────────────────────────
 
@@ -102,6 +102,12 @@ run: ## Run the backend with gunicorn (loads $(ENV_FILE) if present)
 		$(if $(strip $(CERTFILE)),--certfile=$(CERTFILE)) \
 		$(if $(strip $(KEYFILE)),--keyfile=$(KEYFILE)) \
 		run_app:app
+
+dev: ## Run the backend for local dev (HTTP on :5006, no TLS)
+	@$(MAKE) --no-print-directory run ARCTOS_CORS_DEV=1 BIND=0.0.0.0:5006 CERTFILE= KEYFILE=
+
+frontend: ## Serve the Dioxus frontend
+	@cd frontend && dx serve
 
 # ── Database migrations ───────────────────────────────────────────────────────
 #
