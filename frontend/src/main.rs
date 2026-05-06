@@ -89,6 +89,22 @@ enum Route {
     #[route("/:url/register")]
     TournamentRegister { url: String },
 
+    #[route("/:url/sidecomps")]
+    SideCompsList { url: String },
+
+    #[route("/:url/sidecomps/new")]
+    SideCompNew { url: String },
+
+    #[route("/:url/sidecomps/:comp_id")]
+    SideCompDetail { url: String, comp_id: i32 },
+
+    #[route("/:url/sidecomps/:comp_id/edit")]
+    SideCompEdit { url: String, comp_id: i32 },
+
+    #[route("/:url/sidecomps/:comp_id/checkin")]
+    SideCompCheckin { url: String, comp_id: i32 },
+
+
     #[route("/:url/manage")]
     Manage { url: String },
 
