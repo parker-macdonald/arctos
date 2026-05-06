@@ -36,6 +36,7 @@ def list_for_event(tournament_url: str):
                 "name": sc.name,
                 "type": str(sc.type),
                 "registrant_count": count,
+                "registration_open": bool(sc.registration_open),
                 "created_at": sc.created_at.isoformat() if sc.created_at else None,
             }
         )
@@ -65,7 +66,7 @@ def detail(comp_id: int):
                 )
                 if is_player(current_user):
                     viewer_is_registered_in_comp = any(reg.player == current_user.id for reg, _ in registrants)
-                    if not viewer_is_registered_in_comp:
+                    if not viewer_is_registered_in_comp and sc.registration_open:
                         event_reg = PlayerRegistration.query.filter_by(
                             event=sc.event,
                             player=current_user.id,
@@ -79,6 +80,8 @@ def detail(comp_id: int):
                     "event": sc.event,
                     "name": sc.name,
                     "type": str(sc.type),
+                    "description": sc.description,
+                    "registration_open": bool(sc.registration_open),
                     "created_at": sc.created_at.isoformat() if sc.created_at else None,
                     "registrants": [
                         {
@@ -112,6 +115,7 @@ def create(tournament_url: str):
         actor_user_type=current_user.__class__.__name__.lower(),
         name=data.get("name", ""),
         type=data.get("type", ""),
+        description=data.get("description"),
     )
     match res:
         case Ok(sc):
@@ -121,6 +125,8 @@ def create(tournament_url: str):
                     "event": sc.event,
                     "name": sc.name,
                     "type": str(sc.type),
+                    "description": sc.description,
+                    "registration_open": bool(sc.registration_open),
                     "created_at": sc.created_at.isoformat() if sc.created_at else None,
                 }
             )
@@ -142,6 +148,8 @@ def update(comp_id: int):
         actor_user_type=current_user.__class__.__name__.lower(),
         name=data.get("name"),
         type=data.get("type"),
+        description=data.get("description"),
+        registration_open=data.get("registration_open"),
     )
     match res:
         case Ok(sc):
@@ -151,6 +159,8 @@ def update(comp_id: int):
                     "event": sc.event,
                     "name": sc.name,
                     "type": str(sc.type),
+                    "description": sc.description,
+                    "registration_open": bool(sc.registration_open),
                 }
             )
         case Err(err):

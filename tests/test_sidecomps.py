@@ -672,7 +672,7 @@ def test_route_detail_viewer_flags_event_player(app, client, tournament):
     with app.app_context():
         p = _make_player()
         _confirm_event_registration(tournament.url, p.id)
-        sc = SideComp(event=tournament.url, name="A", type="DUELING")
+        sc = SideComp(event=tournament.url, name="A", type="DUELING", registration_open=True)
         db.session.add(sc)
         db.session.commit()
         comp_id = sc.id
@@ -762,6 +762,73 @@ def test_route_update_to_succeeds(app, client, tournament):
     )
     assert resp.status_code == 200
     assert resp.get_json()["name"] == "New"
+
+
+def test_route_create_with_description(app, client, tournament):
+    with app.app_context():
+        to_user = _make_player("to_user", "TO User")
+        _make_to(tournament.url, to_user.id)
+        login_as(client, to_user)
+
+    resp = client.post(
+        f"/_api/{tournament.url}/sidecomps",
+        json={"name": "Dueling", "type": "DUELING", "description": "Single elim"},
+    )
+    assert resp.status_code == 200
+    payload = resp.get_json()
+    assert payload["description"] == "Single elim"
+    assert payload["registration_open"] is False
+
+
+def test_route_update_open_close(app, client, tournament):
+    with app.app_context():
+        to_user = _make_player("to_user", "TO User")
+        _make_to(tournament.url, to_user.id)
+        sc = SideComp(event=tournament.url, name="A", type="DUELING")
+        db.session.add(sc)
+        db.session.commit()
+        comp_id = sc.id
+        login_as(client, to_user)
+
+    resp = client.patch(
+        f"/_api/sidecomps/{comp_id}",
+        json={"registration_open": True},
+    )
+    assert resp.status_code == 200
+    assert resp.get_json()["registration_open"] is True
+
+    resp = client.get(f"/_api/sidecomps/{comp_id}")
+    assert resp.status_code == 200
+    assert resp.get_json()["registration_open"] is True
+
+
+def test_route_detail_viewer_cannot_register_when_closed(app, client, tournament):
+    with app.app_context():
+        p = _make_player()
+        _confirm_event_registration(tournament.url, p.id)
+        sc = SideComp(event=tournament.url, name="A", type="DUELING")
+        db.session.add(sc)
+        db.session.commit()
+        comp_id = sc.id
+        login_as(client, p)
+
+    resp = client.get(f"/_api/sidecomps/{comp_id}")
+    payload = resp.get_json()
+    assert payload["registration_open"] is False
+    assert payload["viewer_can_register"] is False
+
+
+def test_route_list_includes_registration_open(client, tournament):
+    sc = SideComp(event=tournament.url, name="A", type="DUELING")
+    db.session.add(sc)
+    db.session.commit()
+
+    resp = client.get(f"/_api/{tournament.url}/sidecomps")
+    assert resp.status_code == 200
+    rows = resp.get_json()
+    row = next(r for r in rows if r["name"] == "A")
+    assert "registration_open" in row
+    assert row["registration_open"] is False
 
 
 def test_route_delete_to_succeeds(app, client, tournament):
