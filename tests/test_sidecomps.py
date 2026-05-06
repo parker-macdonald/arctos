@@ -482,3 +482,36 @@ def test_player_self_deregister_from_event_cascades(app, client, tournament):
 
     with app.app_context():
         assert SideCompRegistration.query.filter_by(player=p.id).count() == 0
+
+
+def test_route_list_for_event_public(client, tournament):
+    sc = SideComp(event=tournament.url, name="A", type="DUELING")
+    db.session.add(sc)
+    db.session.commit()
+
+    resp = client.get(f"/_api/{tournament.url}/sidecomps")
+    assert resp.status_code == 200
+    payload = resp.get_json()
+    assert any(row["name"] == "A" and row["type"] == "DUELING" for row in payload)
+
+
+def test_route_detail_public_with_registrants(client, tournament):
+    p = _make_player()
+    sc = SideComp(event=tournament.url, name="A", type="DUELING")
+    db.session.add(sc)
+    db.session.flush()
+    db.session.add(SideCompRegistration(comp=sc.id, player=p.id))
+    db.session.commit()
+
+    resp = client.get(f"/_api/sidecomps/{sc.id}")
+    assert resp.status_code == 200
+    payload = resp.get_json()
+    assert payload["name"] == "A"
+    assert payload["type"] == "DUELING"
+    assert len(payload["registrants"]) == 1
+    assert payload["registrants"][0]["player_id"] == p.id
+
+
+def test_route_detail_not_found(client):
+    resp = client.get("/_api/sidecomps/99999")
+    assert resp.status_code == 404
