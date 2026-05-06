@@ -1345,3 +1345,41 @@ pub struct RegisterTeamAsToResponse {
     pub team_name: Option<String>,
     pub pseudonym: Option<String>,
 }
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SideCompSummary {
+    pub id: i32,
+    pub name: String,
+    #[serde(rename = "type")]
+    pub type_: String,
+    pub registrant_count: i64,
+    pub created_at: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SideCompRegistrant {
+    pub player_id: String,
+    pub player_name: String,
+    pub registered_at: Option<String>,
+    pub registered_by_to: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SideCompDetail {
+    pub id: i32,
+    pub event: String,
+    pub name: String,
+    #[serde(rename = "type")]
+    pub type_: String,
+    pub created_at: Option<String>,
+    pub registrants: Vec<SideCompRegistrant>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct EligiblePlayer {
+    pub player_id: String,
+    pub player_name: String,
+    pub team_id: Option<String>,
+    pub team_pseudonym: Option<String>,
+    pub jersey_name: Option<String>,
+}
