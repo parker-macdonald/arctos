@@ -285,6 +285,12 @@ pub fn TournamentHome(url: String) -> Element {
         }
     });
 
+    let url_for_sidecomps = url.clone();
+    let sidecomps = use_resource(move || {
+        let u = url_for_sidecomps.clone();
+        async move { api::sidecomps_list(&u).await }
+    });
+
     {
         let url_for_upload_planning = url.clone();
         let mut upload_planning = upload_planning;
@@ -664,6 +670,50 @@ pub fn TournamentHome(url: String) -> Element {
                                         }
                                     }
                                 }
+                            }
+                        }
+                    }
+                }
+            }
+
+            div { class: "row mt-4",
+                div { class: "col-12",
+                    div { class: "card",
+                        div { class: "card-header d-flex justify-content-between align-items-center",
+                            h5 { class: "mb-0", "Side Competitions" }
+                            Link {
+                                to: Route::SideCompsList { url: url.clone() },
+                                class: "btn btn-sm btn-outline-secondary",
+                                "Manage"
+                            }
+                        }
+                        div { class: "card-body",
+                            match sidecomps.read().as_ref() {
+                                Some(Ok(rows)) => {
+                                    if rows.is_empty() {
+                                        rsx! { p { class: "text-muted mb-0", "No side competitions for this tournament." } }
+                                    } else {
+                                        rsx! {
+                                            ul { class: "list-group",
+                                                for row in rows.iter() {
+                                                    li { class: "list-group-item d-flex justify-content-between align-items-center",
+                                                        div {
+                                                            strong { "{row.name}" }
+                                                            span { class: "badge bg-secondary ms-2", "{row.type_}" }
+                                                            span { class: "text-muted ms-2", "({row.registrant_count} registered)" }
+                                                        }
+                                                        Link {
+                                                            to: Route::SideCompDetail { url: url.clone(), comp_id: row.id },
+                                                            class: "btn btn-sm btn-outline-primary",
+                                                            "View"
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                _ => rsx! {},
                             }
                         }
                     }
