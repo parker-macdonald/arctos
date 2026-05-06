@@ -67,10 +67,11 @@ pub fn SideCompDetail(url: String, comp_id: i32) -> Element {
                                 p { class: "text-muted", "No registrants yet." }
                             } else {
                                 table { class: "table",
-                                    thead { tr { th { "Player" } th { "Registered" } th { "Source" } } }
+                                    thead { tr { th { "#" } th { "Player" } th { "Registered" } th { "Source" } } }
                                     tbody {
                                         for r in registrants.iter() {
                                             tr {
+                                                td { "{r.entry_number}" }
                                                 td { "{r.player_name}" }
                                                 td { "{r.registered_at.clone().unwrap_or_default()}" }
                                                 td { if r.registered_by_to { "TO" } else { "Self" } }

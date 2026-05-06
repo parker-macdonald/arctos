@@ -1362,6 +1362,8 @@ pub struct SideCompSummary {
 pub struct SideCompRegistrant {
     pub player_id: String,
     pub player_name: String,
+    #[serde(default)]
+    pub entry_number: i32,
     pub registered_at: Option<String>,
     pub registered_by_to: bool,
 }
