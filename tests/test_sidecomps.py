@@ -4,11 +4,13 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 
 from app.domain.enums import RegistrationStatus
+from app.error_values import Err, Ok
 from models import (
     Player,
     PlayerRegistration,
     SideComp,
     SideCompRegistration,
+    TO,
     db,
 )
 
@@ -54,3 +56,78 @@ def test_sidecomp_registration_unique_per_player(test_db, tournament):
     with pytest.raises(IntegrityError):
         db.session.commit()
     db.session.rollback()
+
+
+def _make_to(tournament_url, user_id, user_type="player"):
+    db.session.add(TO(event=tournament_url, user_id=user_id, user_type=user_type))
+    db.session.commit()
+
+
+def test_sidecomp_service_create_to_succeeds(test_db, tournament):
+    p = _make_player("to_user", "TO User")
+    _make_to(tournament.url, p.id)
+
+    from app.services.sidecomp_service import SideCompService
+
+    res = SideCompService.create(
+        tournament.url,
+        actor_user_id=p.id,
+        actor_user_type="player",
+        name="Dueling 1v1",
+        type="DUELING",
+    )
+    assert isinstance(res, Ok)
+    sc = res.unwrap()
+    assert sc.name == "Dueling 1v1"
+    assert sc.type == "DUELING"
+    assert sc.event == tournament.url
+
+
+def test_sidecomp_service_create_non_to_forbidden(test_db, tournament):
+    p = _make_player("not_to", "Non TO")
+
+    from app.services.sidecomp_service import SideCompService
+
+    res = SideCompService.create(
+        tournament.url,
+        actor_user_id=p.id,
+        actor_user_type="player",
+        name="X",
+        type="DUELING",
+    )
+    assert isinstance(res, Err)
+    assert res.unwrap_err().status_code == 403
+
+
+def test_sidecomp_service_create_invalid_type(test_db, tournament):
+    p = _make_player("to_user", "TO User")
+    _make_to(tournament.url, p.id)
+
+    from app.services.sidecomp_service import SideCompService
+
+    res = SideCompService.create(
+        tournament.url,
+        actor_user_id=p.id,
+        actor_user_type="player",
+        name="X",
+        type="NOT_A_REAL_TYPE",
+    )
+    assert isinstance(res, Err)
+    assert res.unwrap_err().status_code == 400
+
+
+def test_sidecomp_service_create_empty_name(test_db, tournament):
+    p = _make_player("to_user", "TO User")
+    _make_to(tournament.url, p.id)
+
+    from app.services.sidecomp_service import SideCompService
+
+    res = SideCompService.create(
+        tournament.url,
+        actor_user_id=p.id,
+        actor_user_type="player",
+        name="   ",
+        type="DUELING",
+    )
+    assert isinstance(res, Err)
+    assert res.unwrap_err().status_code == 400
