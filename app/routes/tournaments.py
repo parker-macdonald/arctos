@@ -234,13 +234,13 @@ def create_tournament():
         rc = RegistrableConfig(
             team_reg_fee=0.0,
             player_reg_fee=0.0,
-            registration_open=False,
         )
         db.session.add(rc)
         db.session.flush()
         tournament.registrable_config_id = rc.id
 
     db.session.add(tournament)
+    db.session.flush()
 
     to_entry = TO(
         user_id=current_user.id,
