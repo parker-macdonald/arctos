@@ -660,6 +660,39 @@ def test_route_to_checkin_succeeds(app, client, tournament):
         assert reg.registered_by_to is True
 
 
+def test_delete_tournament_cascades_sidecomp_registrations(app, client, tournament):
+    """Deleting a tournament must remove SideCompRegistration rows before SideComp.
+
+    Regression test: SideCompRegistration has a FK to sidecomps.id, so deleting
+    side comps without first removing their registrations raises IntegrityError
+    when SQLite foreign_keys=ON.
+    """
+    with app.app_context():
+        to_user = _make_player("to_user", "TO User")
+        target = _make_player("p_other", "Other")
+        _make_to(tournament.url, to_user.id)
+        _confirm_event_registration(tournament.url, target.id)
+        sc = SideComp(event=tournament.url, name="A", type="DUELING")
+        db.session.add(sc)
+        db.session.flush()
+        db.session.add(SideCompRegistration(comp=sc.id, player=target.id))
+        db.session.commit()
+        comp_id = sc.id
+        tournament_url = tournament.url
+        login_as(client, to_user)
+
+    resp = client.post(
+        f"/_api/{tournament_url}/delete",
+        data={"confirm_url": tournament_url},
+    )
+    assert resp.status_code == 200, resp.get_json()
+    assert resp.get_json()["success"] is True
+
+    with app.app_context():
+        assert SideComp.query.get(comp_id) is None
+        assert SideCompRegistration.query.filter_by(comp=comp_id).count() == 0
+
+
 def test_route_eligible_players_excludes_already_registered(app, client, tournament):
     with app.app_context():
         to_user = _make_player("to_user", "TO User")

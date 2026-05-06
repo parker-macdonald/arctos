@@ -3052,18 +3052,20 @@ def delete_tournament(tournament_url):
         Field,
         Tag,
         SideComp,
+        SideCompRegistration,
         SideCompResult,
         PenaltyType,
     )
 
     # Delete in order to respect foreign key constraints.
-    # Order: side comp results -> side comps; points & match notes -> matches;
+    # Order: side comp results & registrations -> side comps; points & match notes -> matches;
     # then penalty types, head refs, registrations, TOs, fields, tags; finally tournament.
 
     side_comps = SideComp.query.filter_by(event=tournament_url).all()
     side_comp_ids = [sc.id for sc in side_comps]
     if side_comp_ids:
         SideCompResult.query.filter(SideCompResult.comp.in_(side_comp_ids)).delete(synchronize_session=False)
+        SideCompRegistration.query.filter(SideCompRegistration.comp.in_(side_comp_ids)).delete(synchronize_session=False)
 
     SideComp.query.filter_by(event=tournament_url).delete(synchronize_session=False)
 
