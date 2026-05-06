@@ -53,6 +53,23 @@ class SideCompService:
         return option(tournament).ok_or(TournamentNotFoundError(tournament_url))
 
     @staticmethod
+    def _next_entry_number(comp_id: int) -> int:
+        """Return the next 1-indexed ``entry_number`` for *comp_id*.
+
+        Returns one more than the current max ``entry_number`` for the comp,
+        or ``1`` if the comp has no registrations. Numbers are not reused
+        when a registrant is removed.
+        """
+        from sqlalchemy import func
+
+        from models import SideCompRegistration, db
+
+        current_max = (
+            db.session.query(func.max(SideCompRegistration.entry_number)).filter_by(comp=comp_id).scalar()
+        )
+        return (current_max or 0) + 1
+
+    @staticmethod
     def _require_to(tournament_url: str, actor_user_id: str, actor_user_type: str) -> Result[None, ArctosError]:
         from models import TO
 
@@ -308,7 +325,13 @@ class SideCompService:
         if existing:
             return Err(ValidationError("You are already registered for this side competition"))
 
-        reg = SideCompRegistration(comp=comp_id, player=player_id, registered_by_to=False)
+        entry_number = SideCompService._next_entry_number(comp_id)
+        reg = SideCompRegistration(
+            comp=comp_id,
+            player=player_id,
+            entry_number=entry_number,
+            registered_by_to=False,
+        )
         db.session.add(reg)
         db.session.commit()
         return Ok(reg)
@@ -373,7 +396,13 @@ class SideCompService:
         if existing:
             return Err(ValidationError("Player is already registered for this side competition"))
 
-        reg = SideCompRegistration(comp=comp_id, player=player_id, registered_by_to=True)
+        entry_number = SideCompService._next_entry_number(comp_id)
+        reg = SideCompRegistration(
+            comp=comp_id,
+            player=player_id,
+            entry_number=entry_number,
+            registered_by_to=True,
+        )
         db.session.add(reg)
         db.session.commit()
         return Ok(reg)
