@@ -49,6 +49,9 @@ class SideCompRegistration(db.Model):
         id: Auto-increment primary key.
         comp: FK to the parent :class:`SideComp`.
         player: FK to the registering player.
+        entry_number: 1-indexed sequential entry number assigned at
+            registration time, unique within a comp. Numbers are not reused
+            after a deregistration.
         registered_at: Timestamp when the registration was created.
         registered_by_to: ``True`` when the row was created via TO check-in,
             ``False`` for player self-registration.
@@ -59,6 +62,7 @@ class SideCompRegistration(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     comp = db.Column(db.Integer, db.ForeignKey("sidecomps.id"), nullable=False)
     player = db.Column(db.String(USER_ID_LEN), db.ForeignKey("players.id"), nullable=False)
+    entry_number = db.Column(db.Integer, nullable=False)
     registered_at = db.Column(
         db.DateTime,
         default=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
@@ -66,7 +70,10 @@ class SideCompRegistration(db.Model):
     )
     registered_by_to = db.Column(db.Boolean, default=False, nullable=False)
 
-    __table_args__ = (db.UniqueConstraint("comp", "player", name="uq_sidecomp_registrations_comp_player"),)
+    __table_args__ = (
+        db.UniqueConstraint("comp", "player", name="uq_sidecomp_registrations_comp_player"),
+        db.UniqueConstraint("comp", "entry_number", name="uq_sidecomp_registrations_comp_entry_number"),
+    )
 
 
 class SideCompResult(db.Model):
