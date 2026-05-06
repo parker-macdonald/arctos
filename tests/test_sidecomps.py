@@ -257,3 +257,78 @@ def test_sidecomp_delete_cascades(test_db, tournament):
     assert SideComp.query.get(comp_id) is None
     assert SideCompRegistration.query.filter_by(comp=comp_id).count() == 0
     assert SideCompResult.query.filter_by(comp=comp_id).count() == 0
+
+
+def test_register_player_succeeds_when_event_registered(test_db, tournament):
+    p = _make_player()
+    _confirm_event_registration(tournament.url, p.id)
+    sc = SideComp(event=tournament.url, name="A", type="DUELING")
+    db.session.add(sc)
+    db.session.commit()
+
+    from app.services.sidecomp_service import SideCompService
+
+    res = SideCompService.register_player(sc.id, player_id=p.id)
+    assert isinstance(res, Ok)
+    reg = res.unwrap()
+    assert reg.comp == sc.id
+    assert reg.player == p.id
+    assert reg.registered_by_to is False
+
+
+def test_register_player_no_event_registration(test_db, tournament):
+    p = _make_player()
+    sc = SideComp(event=tournament.url, name="A", type="DUELING")
+    db.session.add(sc)
+    db.session.commit()
+
+    from app.services.sidecomp_service import SideCompService
+
+    res = SideCompService.register_player(sc.id, player_id=p.id)
+    assert isinstance(res, Err)
+    assert res.unwrap_err().status_code == 400
+
+
+def test_register_player_cancelled_event_registration(test_db, tournament):
+    p = _make_player()
+    reg = _confirm_event_registration(tournament.url, p.id)
+    reg.status = RegistrationStatus.CANCELLED
+    db.session.commit()
+    sc = SideComp(event=tournament.url, name="A", type="DUELING")
+    db.session.add(sc)
+    db.session.commit()
+
+    from app.services.sidecomp_service import SideCompService
+
+    res = SideCompService.register_player(sc.id, player_id=p.id)
+    assert isinstance(res, Err)
+    assert res.unwrap_err().status_code == 400
+
+
+def test_register_player_duplicate_rejected(test_db, tournament):
+    p = _make_player()
+    _confirm_event_registration(tournament.url, p.id)
+    sc = SideComp(event=tournament.url, name="A", type="DUELING")
+    db.session.add(sc)
+    db.session.commit()
+
+    from app.services.sidecomp_service import SideCompService
+
+    SideCompService.register_player(sc.id, player_id=p.id)
+    res2 = SideCompService.register_player(sc.id, player_id=p.id)
+    assert isinstance(res2, Err)
+    assert res2.unwrap_err().status_code == 400
+
+
+def test_register_player_unaffiliated_succeeds(test_db, tournament):
+    """Players with no team_id on their event registration can still register."""
+    p = _make_player()
+    _confirm_event_registration(tournament.url, p.id, team_id=None)
+    sc = SideComp(event=tournament.url, name="A", type="DUELING")
+    db.session.add(sc)
+    db.session.commit()
+
+    from app.services.sidecomp_service import SideCompService
+
+    res = SideCompService.register_player(sc.id, player_id=p.id)
+    assert isinstance(res, Ok)

@@ -19,7 +19,7 @@ from app.exceptions import (
 
 if TYPE_CHECKING:  # pragma: no cover
     from app.domain.enums import SideCompType
-    from models import SideComp, Tournament
+    from models import SideComp, SideCompRegistration, Tournament
 
 
 def _parse_type(value: object) -> Optional["SideCompType"]:
@@ -237,3 +237,52 @@ class SideCompService:
         db.session.delete(sc)
         db.session.commit()
         return Ok(None)
+
+    @staticmethod
+    @allow_Q
+    def register_player(
+        comp_id: int,
+        *,
+        player_id: str,
+    ) -> Result["SideCompRegistration", ArctosError]:
+        """Register *player_id* for side competition *comp_id* (self-registration).
+
+        Args:
+            comp_id: Primary key of the :class:`~app.models.sidecomp.SideComp`.
+            player_id: ID of the player registering themselves.
+
+        Returns:
+            :class:`~app.error_values.Ok` wrapping the persisted
+            :class:`~app.models.sidecomp.SideCompRegistration`, or an
+            :class:`~app.error_values.Err` describing the failure (comp not
+            found, player not registered for the parent event, or duplicate
+            registration).
+        """
+        from app.domain.enums import RegistrationStatus
+        from models import (
+            PlayerRegistration,
+            SideComp,
+            SideCompRegistration,
+            db,
+        )
+
+        sc = SideComp.query.get(comp_id)
+        if sc is None:
+            return Err(NotFoundError("Side competition not found"))
+
+        event_reg = PlayerRegistration.query.filter_by(
+            event=sc.event,
+            player=player_id,
+            status=RegistrationStatus.CONFIRMED,
+        ).first()
+        if not event_reg:
+            return Err(ValidationError("You must be registered for the event before joining a side competition"))
+
+        existing = SideCompRegistration.query.filter_by(comp=comp_id, player=player_id).first()
+        if existing:
+            return Err(ValidationError("You are already registered for this side competition"))
+
+        reg = SideCompRegistration(comp=comp_id, player=player_id, registered_by_to=False)
+        db.session.add(reg)
+        db.session.commit()
+        return Ok(reg)
