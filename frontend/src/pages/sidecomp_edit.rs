@@ -1,6 +1,98 @@
+use crate::api;
+use crate::Route;
 use dioxus::prelude::*;
 
 #[component]
 pub fn SideCompEdit(url: String, comp_id: i32) -> Element {
-    rsx! { div { class: "container my-4", "TBD: SideCompEdit for {url} / {comp_id}" } }
+    let navigator = use_navigator();
+    let detail = use_resource(move || async move { api::sidecomp_detail(comp_id).await });
+
+    let mut name = use_signal(String::new);
+    let mut type_ = use_signal(String::new);
+    let mut initialised = use_signal(|| false);
+    let mut error = use_signal(|| None::<String>);
+
+    if !initialised() {
+        if let Some(Ok(d)) = detail.read().as_ref() {
+            name.set(d.name.clone());
+            type_.set(d.type_.clone());
+            initialised.set(true);
+        }
+    }
+
+    let url_for_back = url.clone();
+    let url_for_submit = url.clone();
+    let url_for_delete = url.clone();
+
+    rsx! {
+        div { class: "row",
+            div { class: "col-12",
+                h1 { "Edit side competition" }
+                div { class: "mb-3",
+                    Link {
+                        to: Route::SideCompDetail { url: url_for_back, comp_id },
+                        class: "btn btn-link",
+                        "<- Back"
+                    }
+                }
+                form {
+                    onsubmit: move |evt| {
+                        evt.prevent_default();
+                        let url_inner = url_for_submit.clone();
+                        let n = name();
+                        let t = type_();
+                        error.set(None);
+                        spawn(async move {
+                            match api::sidecomp_update(comp_id, Some(&n), Some(&t)).await {
+                                Ok(_) => {
+                                    navigator.push(Route::SideCompDetail { url: url_inner, comp_id });
+                                }
+                                Err(e) => error.set(Some(e)),
+                            }
+                        });
+                    },
+                    div { class: "mb-3",
+                        label { class: "form-label", "Name" }
+                        input {
+                            class: "form-control",
+                            r#type: "text",
+                            value: "{name}",
+                            oninput: move |evt| name.set(evt.value()),
+                        }
+                    }
+                    div { class: "mb-3",
+                        label { class: "form-label", "Type" }
+                        select {
+                            class: "form-select",
+                            value: "{type_}",
+                            onchange: move |evt| type_.set(evt.value()),
+                            option { value: "DUELING", "Dueling" }
+                            option { value: "CHAIN_BREAKING", "Chain / Breaking" }
+                            option { value: "OTHER", "Other" }
+                        }
+                    }
+                    if let Some(err) = error() {
+                        div { class: "alert alert-danger", "{err}" }
+                    }
+                    button { class: "btn btn-primary", r#type: "submit", "Save" }
+                }
+                hr {}
+                button {
+                    class: "btn btn-danger",
+                    onclick: move |_| {
+                        let url_inner = url_for_delete.clone();
+                        spawn(async move {
+                            match api::sidecomp_delete(comp_id).await {
+                                Ok(_) => {
+                                    navigator.push(Route::SideCompsList { url: url_inner });
+                                }
+                                Err(e) => error.set(Some(e)),
+                            }
+                        });
+                    },
+                    "Delete this side competition"
+                }
+            }
+        }
+    }
 }
