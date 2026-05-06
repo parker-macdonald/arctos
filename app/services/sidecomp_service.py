@@ -64,9 +64,7 @@ class SideCompService:
 
         from models import SideCompRegistration, db
 
-        current_max = (
-            db.session.query(func.max(SideCompRegistration.entry_number)).filter_by(comp=comp_id).scalar()
-        )
+        current_max = db.session.query(func.max(SideCompRegistration.entry_number)).filter_by(comp=comp_id).scalar()
         return (current_max or 0) + 1
 
     @staticmethod
