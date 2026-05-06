@@ -286,3 +286,36 @@ class SideCompService:
         db.session.add(reg)
         db.session.commit()
         return Ok(reg)
+
+    @staticmethod
+    @allow_Q
+    def deregister_player(
+        comp_id: int,
+        *,
+        player_id: str,
+    ) -> Result[None, ArctosError]:
+        """Remove *player_id*'s registration for side competition *comp_id*.
+
+        Idempotent: removing a row that doesn't exist returns
+        :class:`~app.error_values.Ok`.
+
+        Args:
+            comp_id: Primary key of the :class:`~app.models.sidecomp.SideComp`.
+            player_id: ID of the player deregistering themselves.
+
+        Returns:
+            :class:`~app.error_values.Ok` wrapping ``None`` on success, or an
+            :class:`~app.error_values.Err` with a
+            :class:`~app.exceptions.NotFoundError` if the comp does not exist.
+        """
+        from models import SideComp, SideCompRegistration, db
+
+        sc = SideComp.query.get(comp_id)
+        if sc is None:
+            return Err(NotFoundError("Side competition not found"))
+
+        SideCompRegistration.query.filter_by(comp=comp_id, player=player_id).delete(
+            synchronize_session=False
+        )
+        db.session.commit()
+        return Ok(None)

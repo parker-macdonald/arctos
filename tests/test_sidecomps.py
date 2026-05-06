@@ -332,3 +332,31 @@ def test_register_player_unaffiliated_succeeds(test_db, tournament):
 
     res = SideCompService.register_player(sc.id, player_id=p.id)
     assert isinstance(res, Ok)
+
+
+def test_deregister_player_removes_row(test_db, tournament):
+    p = _make_player()
+    _confirm_event_registration(tournament.url, p.id)
+    sc = SideComp(event=tournament.url, name="A", type="DUELING")
+    db.session.add(sc)
+    db.session.flush()
+    db.session.add(SideCompRegistration(comp=sc.id, player=p.id))
+    db.session.commit()
+
+    from app.services.sidecomp_service import SideCompService
+
+    res = SideCompService.deregister_player(sc.id, player_id=p.id)
+    assert isinstance(res, Ok)
+    assert SideCompRegistration.query.filter_by(comp=sc.id, player=p.id).first() is None
+
+
+def test_deregister_player_idempotent_when_missing(test_db, tournament):
+    p = _make_player()
+    sc = SideComp(event=tournament.url, name="A", type="DUELING")
+    db.session.add(sc)
+    db.session.commit()
+
+    from app.services.sidecomp_service import SideCompService
+
+    res = SideCompService.deregister_player(sc.id, player_id=p.id)
+    assert isinstance(res, Ok)
