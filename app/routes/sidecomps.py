@@ -182,3 +182,115 @@ def player_deregister(comp_id: int):
             return jsonify({"success": True})
         case Err(err):
             return _err_response(err)
+
+
+@bp.route("/sidecomps/<int:comp_id>/checkin", methods=["POST"])
+@login_required
+def to_checkin(comp_id: int):
+    """TO-only: check a player into a side competition."""
+    if not request.is_json:
+        return jsonify({"success": False, "error": "Content-Type must be application/json"}), 415
+    data = request.get_json() or {}
+    player_id = (data.get("player_id") or "").strip()
+    if not player_id:
+        return jsonify({"success": False, "error": "player_id is required"}), 400
+
+    res = SideCompService.organizer_check_in(
+        comp_id,
+        actor_user_id=current_user.id,
+        actor_user_type=current_user.__class__.__name__.lower(),
+        player_id=player_id,
+    )
+    match res:
+        case Ok(reg):
+            from models import Player
+
+            player = Player.query.get(reg.player)
+            return jsonify(
+                {
+                    "success": True,
+                    "player_id": reg.player,
+                    "player_name": player.name if player else reg.player,
+                    "registered_at": reg.registered_at.isoformat() if reg.registered_at else None,
+                }
+            )
+        case Err(err):
+            return _err_response(err)
+
+
+@bp.route("/sidecomps/<int:comp_id>/uncheckin", methods=["POST"])
+@login_required
+def to_uncheckin(comp_id: int):
+    """TO-only: remove a player from a side competition."""
+    if not request.is_json:
+        return jsonify({"success": False, "error": "Content-Type must be application/json"}), 415
+    data = request.get_json() or {}
+    player_id = (data.get("player_id") or "").strip()
+    if not player_id:
+        return jsonify({"success": False, "error": "player_id is required"}), 400
+
+    res = SideCompService.organizer_remove(
+        comp_id,
+        actor_user_id=current_user.id,
+        actor_user_type=current_user.__class__.__name__.lower(),
+        player_id=player_id,
+    )
+    match res:
+        case Ok(_):
+            return jsonify({"success": True})
+        case Err(err):
+            return _err_response(err)
+
+
+@bp.route("/sidecomps/<int:comp_id>/eligible-players", methods=["GET"])
+@login_required
+def eligible_players(comp_id: int):
+    """TO-only: list players registered for the event but not yet in this side comp."""
+    from app.domain.enums import RegistrationStatus
+    from models import (
+        Player,
+        PlayerRegistration,
+        SideComp,
+        SideCompRegistration,
+        TeamRegistration,
+    )
+
+    sc = SideComp.query.get(comp_id)
+    if sc is None:
+        return jsonify({"success": False, "error": "Side competition not found"}), 404
+
+    auth_check = SideCompService._require_to(
+        sc.event, current_user.id, current_user.__class__.__name__.lower()
+    )
+    match auth_check:
+        case Err(err):
+            return _err_response(err)
+
+    already_in = {
+        r.player for r in SideCompRegistration.query.filter_by(comp=comp_id).all()
+    }
+
+    event_regs = PlayerRegistration.query.filter_by(
+        event=sc.event,
+        status=RegistrationStatus.CONFIRMED,
+    ).all()
+
+    out = []
+    for er in event_regs:
+        if er.player in already_in:
+            continue
+        player = Player.query.get(er.player)
+        team_pseudonym = None
+        if er.team:
+            tr = TeamRegistration.query.filter_by(event=sc.event, team=er.team).first()
+            team_pseudonym = tr.pseudonym if tr else None
+        out.append(
+            {
+                "player_id": er.player,
+                "player_name": player.name if player else er.player,
+                "team_id": er.team,
+                "team_pseudonym": team_pseudonym,
+                "jersey_name": er.jersey_name,
+            }
+        )
+    return jsonify(out)

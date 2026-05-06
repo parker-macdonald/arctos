@@ -633,3 +633,51 @@ def test_route_player_deregister_succeeds(app, client, tournament):
 
     with app.app_context():
         assert SideCompRegistration.query.filter_by(comp=comp_id, player=p.id).count() == 0
+
+
+def test_route_to_checkin_succeeds(app, client, tournament):
+    with app.app_context():
+        to_user = _make_player("to_user", "TO User")
+        _make_to(tournament.url, to_user.id)
+        target = _make_player("p_other", "Other")
+        _confirm_event_registration(tournament.url, target.id)
+        sc = SideComp(event=tournament.url, name="A", type="DUELING")
+        db.session.add(sc)
+        db.session.commit()
+        comp_id = sc.id
+        target_id = target.id
+        login_as(client, to_user)
+
+    resp = client.post(
+        f"/_api/sidecomps/{comp_id}/checkin",
+        json={"player_id": target_id},
+    )
+    assert resp.status_code == 200
+
+    with app.app_context():
+        reg = SideCompRegistration.query.filter_by(comp=comp_id, player=target_id).first()
+        assert reg is not None
+        assert reg.registered_by_to is True
+
+
+def test_route_eligible_players_excludes_already_registered(app, client, tournament):
+    with app.app_context():
+        to_user = _make_player("to_user", "TO User")
+        _make_to(tournament.url, to_user.id)
+        p1 = _make_player("p1", "P1")
+        p2 = _make_player("p2", "P2")
+        _confirm_event_registration(tournament.url, p1.id)
+        _confirm_event_registration(tournament.url, p2.id)
+        sc = SideComp(event=tournament.url, name="A", type="DUELING")
+        db.session.add(sc)
+        db.session.flush()
+        db.session.add(SideCompRegistration(comp=sc.id, player=p1.id))
+        db.session.commit()
+        comp_id = sc.id
+        login_as(client, to_user)
+
+    resp = client.get(f"/_api/sidecomps/{comp_id}/eligible-players")
+    assert resp.status_code == 200
+    ids = {row["player_id"] for row in resp.get_json()}
+    assert "p2" in ids
+    assert "p1" not in ids
