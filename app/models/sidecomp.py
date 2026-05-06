@@ -3,26 +3,14 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from enum import StrEnum
 
+from app.domain.enums import SideCompType
 from app.models.base import db
 from app.models.constants import (
-    SHORT_LABEL_LEN,
     SHORT_NAME_LEN,
     URL_SLUG_LEN,
     USER_ID_LEN,
 )
-
-
-class SideCompType(StrEnum):
-    """Allowed side competition types.
-
-    Values are persisted as strings via :class:`db.Enum`.
-    """
-
-    DUELING = "DUELING"
-    CHAIN_BREAKING = "CHAIN_BREAKING"
-    OTHER = "OTHER"
 
 
 class SideComp(db.Model):
@@ -41,7 +29,7 @@ class SideComp(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     event = db.Column(db.String(URL_SLUG_LEN), db.ForeignKey("tournaments.url"), nullable=False)
     name = db.Column(db.String(SHORT_NAME_LEN), nullable=False)
-    type = db.Column(db.Enum(SideCompType, length=SHORT_LABEL_LEN), nullable=False)
+    type = db.Column(db.Enum(SideCompType), nullable=False)
     created_at = db.Column(
         db.DateTime,
         default=lambda: datetime.now(timezone.utc).replace(tzinfo=None),

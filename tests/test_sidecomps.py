@@ -1,6 +1,7 @@
 """Tests for side competition models, services, and routes."""
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 
 from app.domain.enums import RegistrationStatus
 from models import (
@@ -50,6 +51,6 @@ def test_sidecomp_registration_unique_per_player(test_db, tournament):
     db.session.add(SideCompRegistration(comp=sc.id, player=p.id))
     db.session.commit()
     db.session.add(SideCompRegistration(comp=sc.id, player=p.id))
-    with pytest.raises(Exception):
+    with pytest.raises(IntegrityError):
         db.session.commit()
     db.session.rollback()
