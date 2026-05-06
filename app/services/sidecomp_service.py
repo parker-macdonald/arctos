@@ -13,6 +13,7 @@ from app.error_values import Err, Ok, Result, allow_Q, option
 from app.exceptions import (
     ArctosError,
     NotFoundError,
+    RegistrationClosedError,
     UnauthorizedError,
     ValidationError,
 )
@@ -73,6 +74,7 @@ class SideCompService:
         actor_user_type: str,
         name: str,
         type: str,
+        description: Optional[str] = None,
     ) -> Result["SideComp", ArctosError]:
         """Create a new side competition for *tournament_url*.
 
@@ -82,6 +84,8 @@ class SideCompService:
             actor_user_type: ``"player"`` or ``"team"``.
             name: Display name of the side competition. Must be non-blank.
             type: One of the :class:`~app.domain.enums.SideCompType` values.
+            description: Optional free-form description. Empty/whitespace
+                strings are treated as ``None``.
 
         Returns:
             :class:`~app.error_values.Ok` wrapping the persisted
@@ -102,7 +106,17 @@ class SideCompService:
         if parsed_type is None:
             return Err(ValidationError("Invalid side competition type"))
 
-        sc = SideComp(event=tournament_url, name=name_value, type=parsed_type)
+        description_value: Optional[str] = None
+        if description is not None:
+            stripped = description.strip()
+            description_value = stripped if stripped else None
+
+        sc = SideComp(
+            event=tournament_url,
+            name=name_value,
+            type=parsed_type,
+            description=description_value,
+        )
         db.session.add(sc)
         db.session.commit()
         return Ok(sc)
@@ -159,8 +173,10 @@ class SideCompService:
         actor_user_type: str,
         name: Optional[str] = None,
         type: Optional[str] = None,
+        description: Optional[str] = None,
+        registration_open: Optional[bool] = None,
     ) -> Result["SideComp", ArctosError]:
-        """Update *name* and/or *type* of an existing side competition.
+        """Update fields of an existing side competition.
 
         Args:
             comp_id: Primary key of the :class:`~app.models.sidecomp.SideComp`.
@@ -170,6 +186,10 @@ class SideCompService:
                 Must be non-blank when provided.
             type: New :class:`~app.domain.enums.SideCompType` value. If ``None``,
                 the field is left untouched.
+            description: New description. If ``None``, the field is left
+                untouched. An empty/whitespace string clears it to ``None``.
+            registration_open: New value for the registration-open gate. If
+                ``None``, the field is left untouched.
 
         Returns:
             :class:`~app.error_values.Ok` wrapping the updated
@@ -196,6 +216,13 @@ class SideCompService:
             if parsed_type is None:
                 return Err(ValidationError("Invalid side competition type"))
             sc.type = parsed_type
+
+        if description is not None:
+            stripped = description.strip()
+            sc.description = stripped if stripped else None
+
+        if registration_open is not None:
+            sc.registration_open = bool(registration_open)
 
         db.session.commit()
         return Ok(sc)
@@ -265,6 +292,9 @@ class SideCompService:
         sc = SideComp.query.get(comp_id)
         if sc is None:
             return Err(NotFoundError("Side competition not found"))
+
+        if not sc.registration_open:
+            return Err(RegistrationClosedError("This side competition is not open for registration"))
 
         event_reg = PlayerRegistration.query.filter_by(
             event=sc.event,

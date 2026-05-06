@@ -261,7 +261,7 @@ def test_sidecomp_delete_cascades(test_db, tournament):
 def test_register_player_succeeds_when_event_registered(test_db, tournament):
     p = _make_player()
     _confirm_event_registration(tournament.url, p.id)
-    sc = SideComp(event=tournament.url, name="A", type="DUELING")
+    sc = SideComp(event=tournament.url, name="A", type="DUELING", registration_open=True)
     db.session.add(sc)
     db.session.commit()
 
@@ -277,7 +277,7 @@ def test_register_player_succeeds_when_event_registered(test_db, tournament):
 
 def test_register_player_no_event_registration(test_db, tournament):
     p = _make_player()
-    sc = SideComp(event=tournament.url, name="A", type="DUELING")
+    sc = SideComp(event=tournament.url, name="A", type="DUELING", registration_open=True)
     db.session.add(sc)
     db.session.commit()
 
@@ -293,7 +293,7 @@ def test_register_player_cancelled_event_registration(test_db, tournament):
     reg = _confirm_event_registration(tournament.url, p.id)
     reg.status = RegistrationStatus.CANCELLED
     db.session.commit()
-    sc = SideComp(event=tournament.url, name="A", type="DUELING")
+    sc = SideComp(event=tournament.url, name="A", type="DUELING", registration_open=True)
     db.session.add(sc)
     db.session.commit()
 
@@ -307,7 +307,7 @@ def test_register_player_cancelled_event_registration(test_db, tournament):
 def test_register_player_duplicate_rejected(test_db, tournament):
     p = _make_player()
     _confirm_event_registration(tournament.url, p.id)
-    sc = SideComp(event=tournament.url, name="A", type="DUELING")
+    sc = SideComp(event=tournament.url, name="A", type="DUELING", registration_open=True)
     db.session.add(sc)
     db.session.commit()
 
@@ -323,7 +323,7 @@ def test_register_player_unaffiliated_succeeds(test_db, tournament):
     """Players with no team_id on their event registration can still register."""
     p = _make_player()
     _confirm_event_registration(tournament.url, p.id, team_id=None)
-    sc = SideComp(event=tournament.url, name="A", type="DUELING")
+    sc = SideComp(event=tournament.url, name="A", type="DUELING", registration_open=True)
     db.session.add(sc)
     db.session.commit()
 
@@ -440,6 +440,145 @@ def test_organizer_remove_idempotent(test_db, tournament):
         player_id=target.id,
     )
     assert isinstance(res, Ok)
+
+
+def test_register_player_rejected_when_closed(test_db, tournament):
+    """Self-registration is blocked when the comp is not open, even with event reg."""
+    p = _make_player()
+    _confirm_event_registration(tournament.url, p.id)
+    sc = SideComp(event=tournament.url, name="A", type="DUELING")
+    db.session.add(sc)
+    db.session.commit()
+
+    from app.services.sidecomp_service import SideCompService
+
+    res = SideCompService.register_player(sc.id, player_id=p.id)
+    assert isinstance(res, Err)
+    assert res.unwrap_err().status_code == 400
+
+
+def test_register_player_succeeds_when_opened(test_db, tournament):
+    """Opening a closed comp via update unblocks player self-registration."""
+    to_user = _make_player("to_user", "TO User")
+    p = _make_player("p_alice2", "Alice2")
+    _make_to(tournament.url, to_user.id)
+    _confirm_event_registration(tournament.url, p.id)
+    sc = SideComp(event=tournament.url, name="A", type="DUELING")
+    db.session.add(sc)
+    db.session.commit()
+
+    from app.services.sidecomp_service import SideCompService
+
+    closed = SideCompService.register_player(sc.id, player_id=p.id)
+    assert isinstance(closed, Err)
+
+    upd = SideCompService.update(
+        sc.id,
+        actor_user_id=to_user.id,
+        actor_user_type="player",
+        registration_open=True,
+    )
+    assert isinstance(upd, Ok)
+
+    res = SideCompService.register_player(sc.id, player_id=p.id)
+    assert isinstance(res, Ok)
+
+
+def test_organizer_check_in_works_when_closed(test_db, tournament):
+    """TO check-in must work regardless of registration_open state."""
+    to_user = _make_player("to_user", "TO User")
+    target = _make_player("p_other", "Other")
+    _make_to(tournament.url, to_user.id)
+    _confirm_event_registration(tournament.url, target.id)
+    sc = SideComp(event=tournament.url, name="A", type="DUELING")
+    db.session.add(sc)
+    db.session.commit()
+    assert sc.registration_open is False
+
+    from app.services.sidecomp_service import SideCompService
+
+    res = SideCompService.organizer_check_in(
+        sc.id,
+        actor_user_id=to_user.id,
+        actor_user_type="player",
+        player_id=target.id,
+    )
+    assert isinstance(res, Ok)
+
+
+def test_create_with_description(test_db, tournament):
+    p = _make_player("to_user", "TO User")
+    _make_to(tournament.url, p.id)
+
+    from app.services.sidecomp_service import SideCompService
+
+    res = SideCompService.create(
+        tournament.url,
+        actor_user_id=p.id,
+        actor_user_type="player",
+        name="Dueling 1v1",
+        type="DUELING",
+        description="Best of 3 sets, single elimination.",
+    )
+    assert isinstance(res, Ok)
+    sc = res.unwrap()
+    assert sc.description == "Best of 3 sets, single elimination."
+
+
+def test_update_description_can_clear(test_db, tournament):
+    p = _make_player("to_user", "TO User")
+    _make_to(tournament.url, p.id)
+    sc = SideComp(
+        event=tournament.url,
+        name="A",
+        type="DUELING",
+        description="initial",
+    )
+    db.session.add(sc)
+    db.session.commit()
+
+    from app.services.sidecomp_service import SideCompService
+
+    res = SideCompService.update(
+        sc.id,
+        actor_user_id=p.id,
+        actor_user_type="player",
+        description="   ",
+    )
+    assert isinstance(res, Ok)
+    db.session.refresh(sc)
+    assert sc.description is None
+
+
+def test_update_registration_open_toggle(test_db, tournament):
+    p = _make_player("to_user", "TO User")
+    _make_to(tournament.url, p.id)
+    sc = SideComp(event=tournament.url, name="A", type="DUELING")
+    db.session.add(sc)
+    db.session.commit()
+    assert sc.registration_open is False
+
+    from app.services.sidecomp_service import SideCompService
+
+    res = SideCompService.update(
+        sc.id,
+        actor_user_id=p.id,
+        actor_user_type="player",
+        registration_open=True,
+    )
+    assert isinstance(res, Ok)
+    db.session.refresh(sc)
+    assert sc.registration_open is True
+
+    res = SideCompService.update(
+        sc.id,
+        actor_user_id=p.id,
+        actor_user_type="player",
+        registration_open=False,
+    )
+    assert isinstance(res, Ok)
+    db.session.refresh(sc)
+    assert sc.registration_open is False
 
 
 def test_cancel_player_registrations_in_event_removes_only_matching(test_db, tournament):
@@ -645,7 +784,7 @@ def test_route_player_register_succeeds(app, client, tournament):
     with app.app_context():
         p = _make_player()
         _confirm_event_registration(tournament.url, p.id)
-        sc = SideComp(event=tournament.url, name="A", type="DUELING")
+        sc = SideComp(event=tournament.url, name="A", type="DUELING", registration_open=True)
         db.session.add(sc)
         db.session.commit()
         comp_id = sc.id
