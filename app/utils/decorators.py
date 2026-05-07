@@ -12,7 +12,7 @@ from flask_login import current_user, login_required
 from app.services.permission_service import PermissionService
 
 
-def _wants_json(request) -> bool:
+def wants_json(request) -> bool:
     """Return whether *request* should receive a JSON response.
 
     Mirrors the sniffer used in :mod:`app.error_handlers`. A request is

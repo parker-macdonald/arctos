@@ -28,12 +28,12 @@ def register_error_handlers(app: Flask) -> None:
     from flask import flash, redirect, request
 
     from app.exceptions import ArctosError
-    from app.utils.decorators import _wants_json
+    from app.utils.decorators import wants_json
     from app.utils.responses import json_error
 
     @app.errorhandler(ArctosError)  # type: ignore[misc]
     def _handle_arctos_error(e: ArctosError):
-        if _wants_json(request):
+        if wants_json(request):
             # Surface the domain status_code so SPA clients can distinguish 4xx/5xx by HTTP status.
             return json_error(e.message if e.public else "Request failed", status_code=e.status_code)
 
