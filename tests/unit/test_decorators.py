@@ -340,3 +340,59 @@ def test_require_league_organizer_html_redirects_when_not_lo(fresh_app):
             follow_redirects=False,
         )
         assert resp.status_code in (302, 303)
+
+
+@pytest.mark.unit
+def test_require_json_body_415_for_non_json(fresh_app):
+    from app.utils.decorators import require_json_body
+
+    @fresh_app.route("/_test_json_body_415", methods=["POST"], endpoint="_test_json_body_415")
+    @require_json_body()
+    def _test_json_body_415():
+        return {"ok": True}
+
+    with fresh_app.test_client() as c:
+        resp = c.post("/_test_json_body_415", data="not-json", content_type="text/plain")
+        assert resp.status_code == 415
+        body = resp.get_json()
+        assert body["success"] is False
+        assert "error" in body
+
+
+@pytest.mark.unit
+def test_require_json_body_stashes_parsed_body_on_g(fresh_app):
+    from flask import g
+    from app.utils.decorators import require_json_body
+
+    captured = {}
+
+    @fresh_app.route("/_test_json_body_ok", methods=["POST"], endpoint="_test_json_body_ok")
+    @require_json_body()
+    def _test_json_body_ok():
+        captured["body"] = g.json_body
+        return {"ok": True}
+
+    with fresh_app.test_client() as c:
+        resp = c.post("/_test_json_body_ok", json={"foo": 42, "bar": "baz"})
+        assert resp.status_code == 200
+        assert captured["body"] == {"foo": 42, "bar": "baz"}
+
+
+@pytest.mark.unit
+def test_require_json_body_empty_body_defaults_to_empty_dict(fresh_app):
+    from flask import g
+    from app.utils.decorators import require_json_body
+
+    captured = {}
+
+    @fresh_app.route("/_test_json_body_empty", methods=["POST"], endpoint="_test_json_body_empty")
+    @require_json_body()
+    def _test_json_body_empty():
+        captured["body"] = g.json_body
+        return {"ok": True}
+
+    with fresh_app.test_client() as c:
+        # Empty JSON body
+        resp = c.post("/_test_json_body_empty", data="", content_type="application/json")
+        assert resp.status_code == 200
+        assert captured["body"] == {}

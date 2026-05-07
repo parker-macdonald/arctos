@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from functools import wraps
 
-from flask import flash, redirect, request
+from flask import flash, g, redirect, request
 from flask_login import current_user, login_required
 
 from app.services.permission_service import PermissionService
@@ -132,3 +132,31 @@ def require_league_organizer(
         redirect_path_fn=lambda slug: f"/leagues/{slug}",
         message=message,
     )
+
+
+def require_json_body():
+    """Decorator factory that guards a route's body to be JSON.
+
+    On a non-JSON request the decorator returns
+    ``json_error("Content-Type must be application/json", status_code=415)``.
+    On success the parsed body (or ``{}`` if empty) is stashed on
+    :data:`flask.g.json_body` for the view to consume.
+
+    Returns:
+        A decorator that wraps a Flask route function.
+    """
+    from app.utils.responses import json_error
+
+    def decorator(fn):
+        @wraps(fn)
+        def wrapper(*args, **kwargs):
+            if not request.is_json:
+                return json_error(
+                    "Content-Type must be application/json", status_code=415
+                )
+            g.json_body = request.get_json(silent=True) or {}
+            return fn(*args, **kwargs)
+
+        return wrapper
+
+    return decorator
