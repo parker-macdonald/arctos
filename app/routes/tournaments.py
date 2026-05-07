@@ -196,12 +196,7 @@ def create_tournament():
         league = League.query.get(raw_league_id)
         if not league:
             return jsonify({"success": False, "error": "League not found"}), 400
-        is_league_to = TO.query.filter_by(
-            user_id=current_user.id,
-            user_type=current_user_type(),
-            league_id=raw_league_id,
-        ).first()
-        if not is_league_to:
+        if not PermissionService.is_league_organizer(raw_league_id, current_user):
             return (
                 jsonify(
                     {
