@@ -218,3 +218,125 @@ def test_require_tournament_organizer_grants_access_when_to_exists(fresh_app):
             headers={"Accept": "application/json"},
         )
         assert resp.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# require_league_organizer tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_require_league_organizer_grants_access(fresh_app):
+    """User with a TO row for a league is granted access."""
+    from app.utils.decorators import require_league_organizer
+    from models import TO, League, Player, db
+    from tests.utils import make_registrable_config
+
+    with fresh_app.app_context():
+        cfg = make_registrable_config()
+        league = League(
+            url="dec-test-league-grant",
+            name="Dec League Grant",
+            registrable_config_id=cfg.id,
+        )
+        db.session.add(league)
+        p = Player(id="dec_lg_grant_player", name="LG Grant Player", pw_hash="x", phone="3333333333")
+        p.set_password("pass")
+        db.session.add(p)
+        db.session.flush()
+        db.session.add(TO(user_id=p.id, user_type="player", league_id=league.url))
+        db.session.commit()
+        db.session.refresh(p)
+
+    @fresh_app.route("/_test_lg_grant/<league_url>", endpoint="_test_lg_grant")
+    @require_league_organizer()
+    def _test_lg_grant(league_url):
+        return {"ok": True}
+
+    with fresh_app.app_context():
+        player = db.session.get(Player, "dec_lg_grant_player")
+
+    with fresh_app.test_client(user=player) as logged:
+        resp = logged.get(
+            "/_test_lg_grant/dec-test-league-grant",
+            headers={"Accept": "application/json"},
+        )
+        assert resp.status_code == 200
+
+
+@pytest.mark.unit
+def test_require_league_organizer_denies_with_403_json(fresh_app):
+    """JSON requests get a 403 json_error response when user is not a LO."""
+    from app.utils.decorators import require_league_organizer
+    from models import League, Player, db
+    from tests.utils import make_registrable_config
+
+    with fresh_app.app_context():
+        cfg = make_registrable_config()
+        league = League(
+            url="dec-test-league-deny",
+            name="Dec League Deny",
+            registrable_config_id=cfg.id,
+        )
+        db.session.add(league)
+        p = Player(id="dec_lg_deny_player", name="LG Deny Player", pw_hash="x", phone="4444444444")
+        p.set_password("pass")
+        db.session.add(p)
+        db.session.commit()
+        db.session.refresh(p)
+
+    @fresh_app.route("/_test_lg_deny/<league_url>", endpoint="_test_lg_deny")
+    @require_league_organizer()
+    def _test_lg_deny(league_url):
+        return {"ok": True}
+
+    with fresh_app.app_context():
+        player = db.session.get(Player, "dec_lg_deny_player")
+
+    with fresh_app.test_client(user=player) as logged:
+        resp = logged.get(
+            "/_test_lg_deny/dec-test-league-deny",
+            headers={"Accept": "application/json"},
+        )
+        assert resp.status_code == 403
+        body = resp.get_json()
+        assert body["success"] is False
+        assert "error" in body
+
+
+@pytest.mark.unit
+def test_require_league_organizer_html_redirects_when_not_lo(fresh_app):
+    """HTML requests get flash + redirect when the user is not a LO."""
+    from app.utils.decorators import require_league_organizer
+    from models import League, Player, db
+    from tests.utils import make_registrable_config
+
+    with fresh_app.app_context():
+        cfg = make_registrable_config()
+        league = League(
+            url="dec-test-league-html",
+            name="Dec League HTML",
+            registrable_config_id=cfg.id,
+        )
+        db.session.add(league)
+        p = Player(id="dec_lg_html_player", name="LG HTML Player", pw_hash="x", phone="5555555555")
+        p.set_password("pass")
+        db.session.add(p)
+        db.session.commit()
+        db.session.refresh(p)
+
+    @fresh_app.route("/_test_lg_html/<league_url>", endpoint="_test_lg_html")
+    @require_league_organizer()
+    def _test_lg_html(league_url):
+        return f"OK for {league_url}"
+
+    with fresh_app.app_context():
+        player = db.session.get(Player, "dec_lg_html_player")
+
+    with fresh_app.test_client(user=player) as logged:
+        resp = logged.get(
+            "/_test_lg_html/dec-test-league-html",
+            headers={"Accept": "text/html"},
+            follow_redirects=False,
+        )
+        assert resp.status_code in (302, 303)

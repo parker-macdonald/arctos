@@ -78,3 +78,42 @@ def require_tournament_organizer(
         return wrapper
 
     return decorator
+
+
+def require_league_organizer(
+    message: str = "Only league organizers can access this page",
+):
+    """Decorator factory that guards a route to League Organisers only.
+
+    Mirrors :func:`require_tournament_organizer` but checks
+    :meth:`~app.services.permission_service.PermissionService.is_league_organizer`.
+    The decorated route MUST expose ``league_url`` as its first positional
+    argument or as a keyword argument.
+
+    Args:
+        message: Error message shown to unauthorised users.
+
+    Returns:
+        A decorator that wraps a Flask route function.
+    """
+    from app.utils.responses import json_error
+
+    def decorator(fn):
+        @wraps(fn)
+        @login_required
+        def wrapper(*args, **kwargs):
+            league_url = kwargs.get("league_url")
+            if league_url is None and args:
+                league_url = args[0]
+
+            if not PermissionService.is_league_organizer(league_url, current_user):
+                if wants_json(request):
+                    return json_error(message, status_code=403)
+                flash(message, "error")
+                return redirect(request.referrer or f"/leagues/{league_url}")
+
+            return fn(*args, **kwargs)
+
+        return wrapper
+
+    return decorator
