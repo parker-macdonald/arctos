@@ -3933,6 +3933,15 @@ def get_injury(player_id, injury_id):
     )
 
 
+@bp.route("/players/<player_id>/injuries", methods=["GET"])
+@login_required
+def list_injuries(player_id):
+    if current_user.id != player_id:
+        return jsonify({"error": "Forbidden"}), 403
+    injuries = Injury.query.filter_by(player=player_id).order_by(Injury.stamp.desc()).all()
+    return jsonify([_injury_json(inj) for inj in injuries])
+
+
 @bp.route("/players/<player_id>/injuries", methods=["POST"])
 @login_required
 def create_injury(player_id):
