@@ -33,16 +33,19 @@ def require_tournament_organizer(
 ):
     """Decorator factory that guards a route to Tournament Organisers only.
 
-    Wraps the decorated view function with :func:`~flask_login.login_required`
-    and checks :meth:`~app.services.permission_service.PermissionService.is_tournament_organizer`.
-    On failure it flashes *message* and redirects to the referring page (or
-    ``/<tournament_url>``).
+    Wraps the decorated view with :func:`~flask_login.login_required`.  On
+    failure the response shape matches the request:
 
-    The decorated route **must** expose ``tournament_url`` either as its
-    first positional argument or as a keyword argument.
+    - JSON requests (``Accept: application/json``, ``/_api`` paths,
+      JSON bodies) receive ``json_error(message, status_code=403)``.
+    - HTML requests are flashed *message* and redirected to the referrer
+      (or ``/<tournament_url>``).
+
+    The decorated route MUST expose ``tournament_url`` as its first
+    positional argument or as a keyword argument.
 
     Args:
-        message: Flash message shown to unauthorised users.
+        message: Error message shown to unauthorised users.
 
     Returns:
         A decorator that wraps a Flask route function.
@@ -54,6 +57,7 @@ def require_tournament_organizer(
         def update_settings(tournament_url: str):
             ...
     """
+    from app.utils.responses import json_error
 
     def decorator(fn):
         @wraps(fn)
@@ -64,6 +68,8 @@ def require_tournament_organizer(
                 tournament_url = args[0]
 
             if not PermissionService.is_tournament_organizer(tournament_url, current_user):
+                if wants_json(request):
+                    return json_error(message, status_code=403)
                 flash(message, "error")
                 return redirect(request.referrer or f"/{tournament_url}")
 
