@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 
 from app.models.base import db
 from app.models.constants import URL_SLUG_LEN, USER_ID_LEN
