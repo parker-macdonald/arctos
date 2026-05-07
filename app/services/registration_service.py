@@ -20,6 +20,7 @@ from app.exceptions import (
     ValidationError,
 )
 from app.utils.name_validation import team_pseudonym_char_error
+from app.utils.datetime_helpers import now_utc_naive
 
 if TYPE_CHECKING:  # pragma: no cover
     from models import PlayerRegistration, TeamRegistration, Tournament
@@ -169,7 +170,7 @@ class RegistrationService:
                 if not cfg or not cfg.team_reg_fee or cfg.team_reg_fee == 0:
                     team_registration.paid = True
                     team_registration.amount_paid = 0.0
-                    team_registration.paid_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                    team_registration.paid_at = now_utc_naive()
         except _CapExceeded as exc:
             return Err(ValidationError(f"Maximum number of teams ({exc.n_max}) already registered"))
 
@@ -227,7 +228,7 @@ class RegistrationService:
         if not cfg or not cfg.player_reg_fee or cfg.player_reg_fee == 0:
             player_registration.paid = True
             player_registration.amount_paid = 0.0
-            player_registration.paid_at = datetime.now(timezone.utc).replace(tzinfo=None)
+            player_registration.paid_at = now_utc_naive()
 
         # If a waiver is configured, players must sign it.
         waiver_filepath = getattr(cfg, "waiver_filepath", None) if cfg else None
@@ -239,7 +240,7 @@ class RegistrationService:
             if not current_waiver_sha:
                 return Err(ValidationError("Waiver is missing its checksum"))
 
-            now = datetime.now(timezone.utc).replace(tzinfo=None)
+            now = now_utc_naive()
             player_registration.waiver_legal_name_signature = signature
             player_registration.waiver_legal_name_signature_sha256 = current_waiver_sha
             player_registration.waiver_signature_submitted_at = now
@@ -297,7 +298,7 @@ class RegistrationService:
             if not team_reg:
                 return Err(ValidationError("Selected team is not registered for this event"))
 
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        now = now_utc_naive()
 
         from app.utils.helpers import get_registrable_config
 
@@ -390,7 +391,7 @@ class RegistrationService:
         cfg = get_registrable_config(tournament)
         n_max = getattr(cfg, "n_max_teams", None) if cfg else None
 
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        now = now_utc_naive()
 
         existing_reg = TeamRegistration.query.filter_by(event=tournament_url, team=team_id).first()
         if existing_reg and existing_reg.status != TeamRegistrationStatus.CANCELLED:
@@ -583,7 +584,7 @@ class RegistrationService:
                 if not rc or not rc.team_reg_fee or rc.team_reg_fee == 0:
                     team_registration.paid = True
                     team_registration.amount_paid = 0.0
-                    team_registration.paid_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                    team_registration.paid_at = now_utc_naive()
         except _CapExceeded as exc:
             return Err(ValidationError(f"Maximum number of teams ({exc.n_max}) already registered"))
 
@@ -641,7 +642,7 @@ class RegistrationService:
         if not rc or not rc.player_reg_fee or rc.player_reg_fee == 0:
             player_registration.paid = True
             player_registration.amount_paid = 0.0
-            player_registration.paid_at = datetime.now(timezone.utc).replace(tzinfo=None)
+            player_registration.paid_at = now_utc_naive()
 
         # If a waiver is configured, players must sign it.
         waiver_filepath = getattr(rc, "waiver_filepath", None) if rc else None
@@ -653,7 +654,7 @@ class RegistrationService:
             if not current_waiver_sha:
                 return Err(ValidationError("Waiver is missing its checksum"))
 
-            now = datetime.now(timezone.utc).replace(tzinfo=None)
+            now = now_utc_naive()
             player_registration.waiver_legal_name_signature = signature
             player_registration.waiver_legal_name_signature_sha256 = current_waiver_sha
             player_registration.waiver_signature_submitted_at = now

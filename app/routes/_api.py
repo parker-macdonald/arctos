@@ -54,7 +54,7 @@ from app.utils.scheduling import (
     validate_match_input,
 )
 from app.utils.name_validation import match_name_char_error, team_pseudonym_char_error
-from app.utils.datetime_helpers import to_iso_z
+from app.utils.datetime_helpers import to_iso_z, now_utc_naive
 from app.utils.recording_retry import current_user_can_retry_finalization
 from app.domain.enums import (
     RegistrationStatus,
@@ -1367,7 +1367,7 @@ def update_my_player_registration_league(league_url):
         if rc and getattr(rc, "waiver_filepath", None) and sig:
             sha_cur = getattr(rc, "waiver_sha256", None)
             if sha_cur:
-                now = datetime.now(timezone.utc).replace(tzinfo=None)
+                now = now_utc_naive()
                 reg.waiver_legal_name_signature = sig
                 reg.waiver_legal_name_signature_sha256 = sha_cur
                 reg.waiver_signature_submitted_at = now
@@ -1742,7 +1742,7 @@ def league_mark_team_paid(league_url):
     reg.payment_method = payment_method
     reg.payment_reference = payment_reference
     reg.payment_notes = payment_notes
-    reg.paid_at = datetime.now(timezone.utc).replace(tzinfo=None) if paid else None
+    reg.paid_at = now_utc_naive() if paid else None
     db.session.commit()
     return jsonify({"success": True, "message": "Team payment updated"}), 200
 
@@ -1778,7 +1778,7 @@ def league_mark_player_paid(league_url):
     reg.payment_method = payment_method
     reg.payment_reference = payment_reference
     reg.payment_notes = payment_notes
-    reg.paid_at = datetime.now(timezone.utc).replace(tzinfo=None) if paid else None
+    reg.paid_at = now_utc_naive() if paid else None
     db.session.commit()
     return jsonify({"success": True, "message": "Player payment updated"}), 200
 
@@ -2788,11 +2788,11 @@ def finalize_match_post_api(tournament_url):
     if not match_winner:
         return jsonify({"error": "Match winner required"}), 400
 
-    match.completed_time = datetime.now(timezone.utc).replace(tzinfo=None)
+    match.completed_time = now_utc_naive()
     match.finalized_by = current_user.id
     match.final_notes = data.get("final_notes") or ""
     match.match_winner = match_winner
-    match.finalized_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    match.finalized_at = now_utc_naive()
 
     if match.field:
         field_obj = Field.query.filter_by(event=tournament_url, name=match.field).first()
@@ -4547,7 +4547,7 @@ def force_start_match_api(tournament_url, match_id):
                 400,
             )
 
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        now = now_utc_naive()
         # Close unfinished points on the conflicting match
         for pt in Point.query.filter_by(match=other_match.uuid).all():
             if pt.end_stamp is None:
@@ -4577,7 +4577,7 @@ def force_start_match_api(tournament_url, match_id):
 
     # Convert to static
     match.schedule_type = ScheduleType.STATIC
-    match.nominal_start_time = datetime.now(timezone.utc).replace(tzinfo=None)
+    match.nominal_start_time = now_utc_naive()
     match.status = MatchStatus.READY_TO_START
 
     # Unlink previous/next
@@ -5522,7 +5522,7 @@ def update_my_player_registration(tournament_url):
         if cfg and getattr(cfg, "waiver_filepath", None) and sig:
             sha_cur = getattr(cfg, "waiver_sha256", None)
             if sha_cur:
-                now = datetime.now(timezone.utc).replace(tzinfo=None)
+                now = now_utc_naive()
                 reg.waiver_legal_name_signature = sig
                 reg.waiver_legal_name_signature_sha256 = sha_cur
                 reg.waiver_signature_submitted_at = now

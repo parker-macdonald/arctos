@@ -47,6 +47,7 @@ from app.utils.scheduling import (
 )
 from app.utils.name_validation import match_name_char_error
 from app.utils.decorators import require_tournament_organizer
+from app.utils.datetime_helpers import now_utc_naive
 
 from os import path, listdir
 
@@ -214,7 +215,7 @@ def create_tournament():
 
     from models import RegistrableConfig
 
-    start_date = datetime.now(timezone.utc).replace(tzinfo=None)
+    start_date = now_utc_naive()
     tournament = Tournament(
         url=url,
         name=name,

@@ -27,6 +27,7 @@ from app.services.permission_service import PermissionService
 from app.utils.decorators import require_tournament_organizer
 from app.utils.user_helpers import is_player, is_team
 from app.utils.result_helpers import json_from_result
+from app.utils.datetime_helpers import now_utc_naive
 
 bp = Blueprint("registration", __name__, url_prefix="/_api")
 
@@ -225,7 +226,7 @@ def mark_team_paid(tournament_url: str):
     reg.payment_method = payment_method
     reg.payment_reference = payment_reference
     reg.payment_notes = payment_notes
-    reg.paid_at = datetime.now(timezone.utc).replace(tzinfo=None) if paid else None
+    reg.paid_at = now_utc_naive() if paid else None
     db.session.commit()
     return jsonify({"success": True, "message": "Team payment updated"}), 200
 
@@ -269,7 +270,7 @@ def mark_player_paid(tournament_url: str):
     reg.payment_method = payment_method
     reg.payment_reference = payment_reference
     reg.payment_notes = payment_notes
-    reg.paid_at = datetime.now(timezone.utc).replace(tzinfo=None) if paid else None
+    reg.paid_at = now_utc_naive() if paid else None
     db.session.commit()
     return jsonify({"success": True, "message": "Player payment updated"}), 200
 

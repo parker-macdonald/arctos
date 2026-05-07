@@ -29,7 +29,7 @@ from app.utils.dependencies import apply_match_dependencies
 from app.serializers.match_note_serializer import MatchNoteSerializer
 from app.utils.player_helpers import get_player_display_from_registration
 from app.utils.responses import json_error, json_success
-from app.utils.datetime_helpers import to_iso_z
+from app.utils.datetime_helpers import to_iso_z, now_utc_naive
 from app.error_values import Ok, Err
 from app.utils.result_helpers import json_from_result, public_error_message
 from app.domain.enums import RegistrationStatus, MatchStatus, ScheduleType
@@ -1144,11 +1144,11 @@ def finalize_match_post(tournament_url):
         return jsonify({"success": False, "error": "Please select a match winner"}), 400
 
     # Record completion time on the match using UTC
-    match.completed_time = datetime.now(timezone.utc).replace(tzinfo=None)
+    match.completed_time = now_utc_naive()
     match.finalized_by = current_user.id
     match.final_notes = request.form.get("final_notes", "")
     match.match_winner = match_winner
-    match.finalized_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    match.finalized_at = now_utc_naive()
 
     # Refresh camera stream start times when match ends (in case streams started late)
     if match.field:

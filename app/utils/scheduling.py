@@ -21,6 +21,7 @@ from app.utils.MatchGraph import (
     build_match_graph,
 )
 from app.utils.name_validation import match_name_char_error
+from app.utils.datetime_helpers import now_utc_naive
 
 _tournament_locks: Dict[str, threading.Lock] = {}
 _locks_lock = threading.Lock()
@@ -46,7 +47,7 @@ def _get_tournament_lock(tournament_url: str) -> threading.Lock:
 
 def _now_utc() -> datetime:
     """Return the current UTC time as a timezone-naive :class:`~datetime.datetime`."""
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    return now_utc_naive()
 
 
 def _csv_tokens(raw: Optional[str]) -> List[str]:
