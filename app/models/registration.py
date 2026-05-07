@@ -11,7 +11,6 @@ transparently.
 
 from __future__ import annotations
 
-from datetime import datetime
 
 from app.models.base import db
 from app.utils.datetime_helpers import now_utc_naive

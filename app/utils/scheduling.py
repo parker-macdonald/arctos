@@ -10,7 +10,7 @@ FAST = finalize when all dependencies are completed.
 from __future__ import annotations
 
 import threading
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 
 from app.domain.enums import MatchStatus, ScheduleType

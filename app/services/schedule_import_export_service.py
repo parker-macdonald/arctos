@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from app.error_values import Err, Ok, Result, allow_Q
-from app.exceptions import ArctosError, NotFoundError, ValidationError
+from app.exceptions import ArctosError, ValidationError
 from app.serializers.match_schedule_serializer import MatchScheduleSerializer
 from app.utils.match_ref_resolution import (
     refs_string_to_tokens,

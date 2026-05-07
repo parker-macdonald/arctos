@@ -13,7 +13,6 @@ layer in front of it.
 
 from flask import Blueprint, g, request, jsonify
 from flask_login import login_required, current_user  # type: ignore[import-untyped]
-from datetime import datetime
 from models import (
     Tournament,
     TeamRegistration,

@@ -1,6 +1,6 @@
 """Side competition routes."""
 
-from flask import Blueprint, g, request, jsonify
+from flask import Blueprint, g, jsonify
 from flask_login import login_required, current_user  # type: ignore[import-untyped]
 
 from app.services._common import current_user_type
