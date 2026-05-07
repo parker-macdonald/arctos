@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 
-from app.error_values import Err, Ok, Result, allow_Q, option
+from app.error_values import Err, Ok, Result, allow_Q
 from app.exceptions import (
     ArctosError,
     NotFoundError,
@@ -46,11 +46,9 @@ class SideCompService:
 
     @staticmethod
     def _get_tournament(tournament_url: str) -> Result["Tournament", ArctosError]:
-        from app.exceptions import TournamentNotFoundError
-        from models import Tournament
+        from app.services._common import get_tournament_or_err
 
-        tournament = Tournament.query.filter_by(url=tournament_url).first()
-        return option(tournament).ok_or(TournamentNotFoundError(tournament_url))
+        return get_tournament_or_err(tournament_url)
 
     @staticmethod
     def _next_entry_number(comp_id: int) -> int:

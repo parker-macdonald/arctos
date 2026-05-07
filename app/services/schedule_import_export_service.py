@@ -306,11 +306,9 @@ class ScheduleImportExportService:
         from models import Field, Match, Tag
 
         # Verify tournament exists
-        from models import Tournament
+        from app.services._common import get_tournament_or_err
 
-        tournament = Tournament.query.filter_by(url=tournament_url).first()
-        if not tournament:
-            return Err(NotFoundError(f"Tournament not found: {tournament_url}"))
+        tournament = get_tournament_or_err(tournament_url).Q()
 
         # Fetch all tags, fields, and matches
         tags = Tag.query.filter_by(event=tournament_url).all()
@@ -371,11 +369,9 @@ class ScheduleImportExportService:
         matches_data = parsed["matches"]
 
         # Verify target tournament exists
-        from models import Tournament
+        from app.services._common import get_tournament_or_err
 
-        tournament = Tournament.query.filter_by(url=tournament_url).first()
-        if not tournament:
-            return Err(NotFoundError(f"Tournament not found: {tournament_url}"))
+        tournament = get_tournament_or_err(tournament_url).Q()
 
         is_same_tournament = source_event == tournament_url
 

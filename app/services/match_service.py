@@ -92,7 +92,8 @@ class MatchService:
             :class:`~app.models.match.Match`, or
             :class:`~app.error_values.Err` wrapping a domain error.
         """
-        from models import Match, Tournament, Field, db
+        from models import Match, Field, db
+        from app.services._common import get_tournament_or_err
         from app.domain.enums import MatchStatus
         from app.utils.scheduling import recompute_all_match_times
 
@@ -119,7 +120,7 @@ class MatchService:
         if overlap:
             return Err(ValidationError("A player cannot be selected for both teams"))
 
-        tournament_obj = Tournament.query.get(tournament_url)
+        tournament_obj = get_tournament_or_err(tournament_url).Q()
         from app.utils.helpers import get_registrable_config
 
         cfg = get_registrable_config(tournament_obj)

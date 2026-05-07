@@ -12,11 +12,10 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Optional
 
 from app.domain.enums import MatchStatus, RegistrationStatus, TeamRegistrationStatus
-from app.error_values import Err, Ok, Result, allow_Q, option
+from app.error_values import Err, Ok, Result, allow_Q
 from app.exceptions import (
     ArctosError,
     RegistrationClosedError,
-    TournamentNotFoundError,
     UnauthorizedError,
     ValidationError,
 )
@@ -55,10 +54,9 @@ class RegistrationService:
             :class:`~app.error_values.Err` wrapping a
             :class:`~app.exceptions.TournamentNotFoundError`.
         """
-        from models import Tournament
+        from app.services._common import get_tournament_or_err
 
-        tournament = Tournament.query.filter_by(url=tournament_url).first()
-        return option(tournament).ok_or(TournamentNotFoundError(tournament_url))
+        return get_tournament_or_err(tournament_url)
 
     @staticmethod
     def _tournament_team_reg_open(tournament) -> bool:
