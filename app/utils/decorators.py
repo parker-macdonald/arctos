@@ -12,6 +12,22 @@ from flask_login import current_user, login_required
 from app.services.permission_service import PermissionService
 
 
+def _wants_json(request) -> bool:
+    """Return whether *request* should receive a JSON response.
+
+    Mirrors the sniffer used in :mod:`app.error_handlers`. A request is
+    treated as JSON-preferring when any of the following hold:
+
+    - the body is JSON (``request.is_json``);
+    - the path is under ``/_api`` (the SPA's API namespace); or
+    - the ``Accept`` header explicitly prefers JSON over HTML.
+    """
+    accepts = request.accept_mimetypes
+    prefers_json = accepts.best == "application/json" and not accepts.accept_html
+    is_api_path = request.path.startswith("/_api")
+    return request.is_json or is_api_path or prefers_json
+
+
 def require_tournament_organizer(
     message: str = "Only tournament organizers can access this page",
 ):

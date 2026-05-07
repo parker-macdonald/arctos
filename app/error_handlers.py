@@ -28,18 +28,12 @@ def register_error_handlers(app: Flask) -> None:
     from flask import flash, redirect, request
 
     from app.exceptions import ArctosError
+    from app.utils.decorators import _wants_json
     from app.utils.responses import json_error
 
     @app.errorhandler(ArctosError)  # type: ignore[misc]
     def _handle_arctos_error(e: ArctosError):
-        # Decide “API” vs “HTML” conservatively.
-        # We treat the request as API when:
-        # - it's under /_api, or
-        # - the client explicitly prefers JSON over HTML.
-        accepts = request.accept_mimetypes
-        prefers_json = (accepts.best == "application/json") and not accepts.accept_html
-        is_api_path = request.path.startswith("/_api")
-        if request.is_json or is_api_path or prefers_json:
+        if _wants_json(request):
             # Surface the domain status_code so SPA clients can distinguish 4xx/5xx by HTTP status.
             return json_error(e.message if e.public else "Request failed", status_code=e.status_code)
 
