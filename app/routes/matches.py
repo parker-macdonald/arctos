@@ -10,7 +10,7 @@ Workflow logic lives in ``app.services.match_service`` / ``match_actions_service
 just parse the request and convert the resulting ``Result`` to JSON.
 """
 
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, render_template, make_response
 from flask_login import login_required, current_user
 from datetime import datetime, timezone
 import json
@@ -40,8 +40,6 @@ bp = Blueprint("matches", __name__, url_prefix="/_api")
 @bp.route("/scoreboard")
 def scoreboard():
     """Scoreboard page for OBS overlay. Public endpoint."""
-    from flask import make_response
-
     tournament_url = request.args.get("tournament")
     field_name = request.args.get("field")
 
