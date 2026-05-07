@@ -29,8 +29,9 @@ if TYPE_CHECKING:  # pragma: no cover
 class _CapExceeded(Exception):
     """Internal sentinel for n_max savepoint rollback."""
 
-    def __init__(self, n_max: int) -> None:
+    def __init__(self, n_max: int, confirmed_count: int) -> None:
         self.n_max = n_max
+        self.confirmed_count = confirmed_count
 
 
 @dataclass(frozen=True)
@@ -162,7 +163,7 @@ class RegistrationService:
                             status=TeamRegistrationStatus.CONFIRMED,
                         ).count()
                     if confirmed_count >= n_max:
-                        raise _CapExceeded(n_max)
+                        raise _CapExceeded(n_max=n_max, confirmed_count=confirmed_count)
 
                 team_registration.status = TeamRegistrationStatus.CONFIRMED
 
@@ -402,7 +403,6 @@ class RegistrationService:
 
         if existing_reg:
             registration = existing_reg
-            registration.pseudonym = pseudonym_value
         else:
             registration = TeamRegistration(
                 event=tournament_url,
@@ -410,13 +410,9 @@ class RegistrationService:
                 pseudonym=pseudonym_value,
             )
 
-        registration.status = TeamRegistrationStatus.PENDING
-        registration.paid = True
-        registration.amount_paid = 0
-        registration.paid_at = now
-
         try:
             with db.session.begin_nested():
+                registration.status = TeamRegistrationStatus.PENDING
                 if not existing_reg:
                     db.session.add(registration)
                 db.session.flush()
@@ -433,11 +429,15 @@ class RegistrationService:
                             status=TeamRegistrationStatus.CONFIRMED,
                         ).count()
                     if confirmed_count >= n_max:
-                        raise _CapExceeded(n_max)
+                        raise _CapExceeded(n_max=n_max, confirmed_count=confirmed_count)
 
+                registration.pseudonym = pseudonym_value
                 registration.status = TeamRegistrationStatus.CONFIRMED
+                registration.paid = True
+                registration.amount_paid = 0
+                registration.paid_at = now
         except _CapExceeded as exc:
-            return Err(ValidationError(f"Maximum teams reached ({exc.n_max}/{exc.n_max})"))
+            return Err(ValidationError(f"Maximum teams reached ({exc.confirmed_count}/{exc.n_max})"))
 
         db.session.commit()
         return Ok(registration)
@@ -581,7 +581,7 @@ class RegistrationService:
                         status=TeamRegistrationStatus.CONFIRMED,
                     ).count()
                     if confirmed_count >= n_max:
-                        raise _CapExceeded(n_max)
+                        raise _CapExceeded(n_max=n_max, confirmed_count=confirmed_count)
 
                 team_registration.status = TeamRegistrationStatus.CONFIRMED
 
