@@ -10,7 +10,7 @@ from app.error_values import Err, Ok, Result
 from app.exceptions import ArctosError
 
 
-def get_tournament_or_err(tournament_url: str) -> "Result":
+def get_tournament_or_err(tournament_url: str) -> Result["Tournament", ArctosError]:
     """Return ``Ok(Tournament)`` for *tournament_url* or a 404 ``Err``.
 
     Args:
