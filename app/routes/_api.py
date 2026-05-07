@@ -46,7 +46,6 @@ from app.services.dual_write import (
     set_match_referees_from_csv,
 )
 from app.serializers.match_note_serializer import MatchNoteSerializer
-from app.error_values import Ok, Err
 from app.routes.tournaments import update_match_previous_link
 from app.utils.scheduling import (
     recompute_all_match_times,
@@ -861,7 +860,7 @@ def league_register_team(league_url):
     """Register a team for a league."""
     from app.utils.user_helpers import is_team
     from app.services.registration_service import RegistrationService
-    from app.utils.result_helpers import public_error_message
+    from app.utils.result_helpers import json_from_result
 
     if not is_team(current_user):
         return jsonify({"success": False, "error": "Only teams can register"}), 403
@@ -869,14 +868,11 @@ def league_register_team(league_url):
     if err:
         return jsonify({"error": "Not found" if err == 404 else "Forbidden"}), err
     res = RegistrationService.register_team_for_league(league.url, current_user.id, request.form.get("pseudonym", ""))
-    match res:
-        case Ok(_):
-            return (
-                jsonify({"success": True, "message": "Team registration successful!"}),
-                200,
-            )
-        case Err(e):
-            return jsonify({"success": False, "error": public_error_message(e)}), 400
+    return json_from_result(
+        res,
+        ok_to_payload=lambda _: {"message": "Team registration successful!"},
+        err_status_code=400,
+    )
 
 
 @bp.route("/leagues/<league_url>/register-player", methods=["POST"])
@@ -885,7 +881,7 @@ def league_register_player(league_url):
     """Register a player for a league."""
     from app.utils.user_helpers import is_player
     from app.services.registration_service import RegistrationService
-    from app.utils.result_helpers import public_error_message
+    from app.utils.result_helpers import json_from_result
 
     if not is_player(current_user):
         return jsonify({"success": False, "error": "Only players can register"}), 403
@@ -893,6 +889,11 @@ def league_register_player(league_url):
     if err:
         return jsonify({"error": "Not found" if err == 404 else "Forbidden"}), err
     team_id = request.form.get("team", "") or None
+    msg = (
+        "Registration submitted! The team will need to approve your request."
+        if team_id
+        else "Player registration successful!"
+    )
     res = RegistrationService.register_player_for_league(
         league.url,
         current_user.id,
@@ -901,16 +902,11 @@ def league_register_player(league_url):
         jersey_name=request.form.get("jersey_name", ""),
         waiver_legal_name_signature=request.form.get("waiver_legal_name_signature", ""),
     )
-    match res:
-        case Ok(_):
-            msg = (
-                "Registration submitted! The team will need to approve your request."
-                if team_id
-                else "Player registration successful!"
-            )
-            return jsonify({"success": True, "message": msg}), 200
-        case Err(e):
-            return jsonify({"success": False, "error": public_error_message(e)}), 400
+    return json_from_result(
+        res,
+        ok_to_payload=lambda _: {"message": msg},
+        err_status_code=400,
+    )
 
 
 @bp.route("/leagues/<league_url>/deregister-team", methods=["POST"])
@@ -919,7 +915,7 @@ def league_deregister_team(league_url):
     """Deregister a team from a league."""
     from app.utils.user_helpers import is_team
     from app.services.registration_service import RegistrationService
-    from app.utils.result_helpers import public_error_message
+    from app.utils.result_helpers import json_from_result
 
     if not is_team(current_user):
         return jsonify({"success": False, "error": "Only teams can deregister"}), 403
@@ -927,11 +923,11 @@ def league_deregister_team(league_url):
     if err:
         return jsonify({"error": "Not found" if err == 404 else "Forbidden"}), err
     res = RegistrationService.deregister_team_from_league(league.url, current_user.id)
-    match res:
-        case Ok(_):
-            return jsonify({"success": True, "message": "Team deregistered"}), 200
-        case Err(e):
-            return jsonify({"success": False, "error": public_error_message(e)}), 400
+    return json_from_result(
+        res,
+        ok_to_payload=lambda _: {"message": "Team deregistered"},
+        err_status_code=400,
+    )
 
 
 @bp.route("/leagues/<league_url>/settings", methods=["POST"])
@@ -1250,7 +1246,7 @@ def league_deregister_player(league_url):
     """Deregister a player from a league."""
     from app.utils.user_helpers import is_player
     from app.services.registration_service import RegistrationService
-    from app.utils.result_helpers import public_error_message
+    from app.utils.result_helpers import json_from_result
 
     if not is_player(current_user):
         return jsonify({"success": False, "error": "Only players can deregister"}), 403
@@ -1258,11 +1254,11 @@ def league_deregister_player(league_url):
     if err:
         return jsonify({"error": "Not found" if err == 404 else "Forbidden"}), err
     res = RegistrationService.deregister_player_from_league(league.url, current_user.id)
-    match res:
-        case Ok(_):
-            return jsonify({"success": True, "message": "Player deregistered"}), 200
-        case Err(e):
-            return jsonify({"success": False, "error": public_error_message(e)}), 400
+    return json_from_result(
+        res,
+        ok_to_payload=lambda _: {"message": "Player deregistered"},
+        err_status_code=400,
+    )
 
 
 @bp.route("/leagues/<league_url>/registrations/player/me", methods=["GET"])
@@ -2657,6 +2653,7 @@ def start_match_post_api(tournament_url):
         return jsonify({"error": "Match ID required"}), 400
 
     from app.services.match_service import MatchService
+    from app.utils.result_helpers import json_from_result
 
     team1_players = ",".join(data.get("team1_players") or [])
     team2_players = ",".join(data.get("team2_players") or [])
@@ -2672,11 +2669,11 @@ def start_match_post_api(tournament_url):
         match_notes=match_notes,
         stones_per_set=stones_per_set,
     )
-    match res:
-        case Ok(match_obj):
-            return jsonify({"match_id": match_obj.uuid})
-        case Err(err):
-            return jsonify({"error": str(err)}), 400
+    return json_from_result(
+        res,
+        ok_to_payload=lambda v: {"match_id": v.uuid},
+        err_status_code=400,
+    )
 
 
 @bp.route("/tournaments/<tournament_url>/finalize-match", methods=["GET"])
@@ -5698,18 +5695,11 @@ def export_schedule_api(tournament_url):
     if not _check_to(tournament_url):
         return jsonify({"error": "Forbidden"}), 403
 
-    from app.error_values import Err, Ok
     from app.services.schedule_import_export_service import ScheduleImportExportService
-    from app.utils.responses import json_error
-    from app.utils.result_helpers import public_error_message
+    from app.utils.result_helpers import json_from_result
 
     res = ScheduleImportExportService.export_schedule(tournament_url)
-    match res:
-        case Ok(toml_content):
-            return jsonify({"toml": toml_content})
-        case Err(err):
-            status_code = err.status_code if hasattr(err, "status_code") else 400
-            return json_error(public_error_message(err), status_code=status_code)
+    return json_from_result(res, ok_to_payload=lambda v: {"toml": v})
 
 
 @bp.route("/tournaments/<tournament_url>/import-schedule", methods=["POST"])
@@ -5723,19 +5713,15 @@ def import_schedule_api(tournament_url):
     if not toml_content:
         return jsonify({"error": "TOML content required"}), 400
 
-    from app.error_values import Err, Ok
     from app.services.schedule_import_export_service import ScheduleImportExportService
-    from app.utils.responses import json_error
-    from app.utils.result_helpers import public_error_message
+    from app.utils.result_helpers import json_from_result
+
+    def _ok_payload(_):
+        recompute_all_match_times(tournament_url)
+        return {}
 
     res = ScheduleImportExportService.import_schedule(tournament_url, toml_content)
-    match res:
-        case Ok(_):
-            recompute_all_match_times(tournament_url)
-            return jsonify({"success": True})
-        case Err(err):
-            status_code = err.status_code if hasattr(err, "status_code") else 400
-            return json_error(public_error_message(err), status_code=status_code)
+    return json_from_result(res, ok_to_payload=_ok_payload)
 
 
 @bp.route("/<tournament_url>/upload-waiver", methods=["POST"])
