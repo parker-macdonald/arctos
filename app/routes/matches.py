@@ -808,21 +808,21 @@ def get_selection_notes(tournament_url):
     player_ids_csv = request.args.get("player_ids", "")
 
     if not match_id or team_side not in ("team1", "team2"):
-        return json_error("match_id and team required")
+        return json_error("match_id and team required", status_code=400)
 
     tournament = Tournament.query.filter_by(url=tournament_url).first()
     if not tournament:
-        return json_error("Tournament not found")
+        return json_error("Tournament not found", status_code=404)
     from app.utils.helpers import match_event_urls_for_penalties
 
     event_urls = match_event_urls_for_penalties(tournament)
 
     match = Match.query.get(match_id)
     if not match or match.event not in event_urls:
-        return json_error("Match not found")
+        return json_error("Match not found", status_code=404)
 
     if not can_head_ref_match(tournament_url, current_user.id, match=match):
-        return json_error("bruh ur not a head ref")
+        return json_error("bruh ur not a head ref", status_code=403)
 
     team_id = match.team1 if team_side == "team1" else match.team2
     if not team_id:
@@ -1200,7 +1200,7 @@ def get_points(tournament_url):
     """Get points for a match."""
     match_id = request.args.get("match_id")
     if not match_id:
-        return json_error("Match ID required")
+        return json_error("Match ID required", status_code=400)
 
     from app.services.match_actions_service import MatchActionsService
 
