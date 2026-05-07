@@ -35,6 +35,7 @@ from models import (
     League,
     db,
 )
+from app.services._common import current_user_type
 from app.utils.helpers import (
     resolve_team_name_to_id,
     resolve_tag_to_team,
@@ -196,7 +197,7 @@ def create_tournament():
             return jsonify({"success": False, "error": "League not found"}), 400
         is_league_to = TO.query.filter_by(
             user_id=current_user.id,
-            user_type=current_user.__class__.__name__.lower(),
+            user_type=current_user_type(),
             league_id=raw_league_id,
         ).first()
         if not is_league_to:
@@ -235,7 +236,7 @@ def create_tournament():
 
     to_entry = TO(
         user_id=current_user.id,
-        user_type=current_user.__class__.__name__.lower(),
+        user_type=current_user_type(),
         event=url,
     )
     db.session.add(to_entry)
@@ -294,7 +295,7 @@ def create_league():
 
     to_entry = TO(
         user_id=current_user.id,
-        user_type=current_user.__class__.__name__.lower(),
+        user_type=current_user_type(),
         event=None,
         league_id=league_url,
     )
@@ -1138,7 +1139,7 @@ def user_upload_video_footage(tournament_url: str):
     video_file.save(saved_abs_path)
 
     uploader_user_id = str(current_user.id)
-    uploader_user_type = current_user.__class__.__name__.lower()
+    uploader_user_type = current_user_type()
 
     app_obj = current_app._get_current_object()  # type: ignore[attr-defined]
     logger = current_app.logger
@@ -1328,7 +1329,7 @@ def _require_registered_player_for_upload(tournament_url: str):
     tournament = Tournament.query.filter_by(url=tournament_url).first()
     if not tournament:
         return None, (jsonify({"error": "Tournament not found"}), 404)
-    if current_user.__class__.__name__.lower() != "player":
+    if current_user_type() != "player":
         return None, (
             jsonify({"error": "Only registered players can upload footage"}),
             403,
@@ -1583,7 +1584,7 @@ def user_upload_video_footage_chunk(tournament_url: str):
         "batch_camera_name": batch_camera_name,
         "incoming_dir_name": incoming_dir_name,
         "uploaded_by_user_id": str(current_user.id),
-        "uploaded_by_user_type": current_user.__class__.__name__.lower(),
+        "uploaded_by_user_type": current_user_type(),
     }
     with open(meta_path, "w") as f:
         json.dump(meta, f)
@@ -1696,7 +1697,7 @@ def user_upload_video_footage_complete(tournament_url: str):
         batch_camera_name = co or path.splitext(path.basename(filename))[0] or "upload"
 
     uploader_user_id = str(current_user.id)
-    uploader_user_type = current_user.__class__.__name__.lower()
+    uploader_user_type = current_user_type()
 
     app_obj = current_app._get_current_object()  # type: ignore[attr-defined]
     logger = current_app.logger
@@ -3081,7 +3082,7 @@ def remove_to(tournament_url):
         return jsonify({"success": False, "error": "Invalid TO entry"}), 400
 
     # Prevent removing yourself (optional - you might want to allow this)
-    if to_to_remove.user_id == current_user.id and to_to_remove.user_type == current_user.__class__.__name__.lower():
+    if to_to_remove.user_id == current_user.id and to_to_remove.user_type == current_user_type():
         return (
             jsonify({"success": False, "error": "You cannot remove yourself as a TO"}),
             400,

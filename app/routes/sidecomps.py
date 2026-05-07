@@ -3,6 +3,7 @@
 from flask import Blueprint, request, jsonify
 from flask_login import login_required, current_user  # type: ignore[import-untyped]
 
+from app.services._common import current_user_type
 from app.services.permission_service import PermissionService
 from app.services.sidecomp_service import SideCompService
 from app.utils.result_helpers import json_from_result
@@ -98,7 +99,7 @@ def create(tournament_url: str):
     res = SideCompService.create(
         tournament_url,
         actor_user_id=current_user.id,
-        actor_user_type=current_user.__class__.__name__.lower(),
+        actor_user_type=current_user_type(),
         name=data.get("name", ""),
         type=data.get("type", ""),
         description=data.get("description"),
@@ -128,7 +129,7 @@ def update(comp_id: int):
     res = SideCompService.update(
         comp_id,
         actor_user_id=current_user.id,
-        actor_user_type=current_user.__class__.__name__.lower(),
+        actor_user_type=current_user_type(),
         name=data.get("name"),
         type=data.get("type"),
         description=data.get("description"),
@@ -154,7 +155,7 @@ def delete(comp_id: int):
     res = SideCompService.delete(
         comp_id,
         actor_user_id=current_user.id,
-        actor_user_type=current_user.__class__.__name__.lower(),
+        actor_user_type=current_user_type(),
     )
     return json_from_result(res, ok_to_payload=lambda _: {})
 
@@ -202,7 +203,7 @@ def register_player_as_to(comp_id: int):
     res = SideCompService.register_player_as_to(
         comp_id,
         actor_user_id=current_user.id,
-        actor_user_type=current_user.__class__.__name__.lower(),
+        actor_user_type=current_user_type(),
         player_id=player_id,
     )
 
@@ -234,7 +235,7 @@ def deregister_player_as_to(comp_id: int):
     res = SideCompService.deregister_player_as_to(
         comp_id,
         actor_user_id=current_user.id,
-        actor_user_type=current_user.__class__.__name__.lower(),
+        actor_user_type=current_user_type(),
         player_id=player_id,
     )
     return json_from_result(res, ok_to_payload=lambda _: {})
@@ -257,7 +258,7 @@ def eligible_players(comp_id: int):
     if sc is None:
         return jsonify({"success": False, "error": "Side competition not found"}), 404
 
-    auth_check = SideCompService._require_to(sc.event, current_user.id, current_user.__class__.__name__.lower())
+    auth_check = SideCompService._require_to(sc.event, current_user.id, current_user_type())
     if auth_check.is_err():
         return json_from_result(auth_check)
 

@@ -56,3 +56,23 @@ def test_resolve_actor_returns_none_for_missing_id(app, test_db):
     from app.services._common import resolve_actor
 
     assert resolve_actor("nonexistent-id-xyz", "player") is None
+
+
+@pytest.mark.unit
+def test_current_user_type_for_player(app, test_db, player):
+    from app.services._common import current_user_type
+    from flask_login import login_user
+
+    with app.test_request_context("/"):
+        login_user(player)
+        assert current_user_type() == "player"
+
+
+@pytest.mark.unit
+def test_current_user_type_for_team(app, test_db, team):
+    from app.services._common import current_user_type
+    from flask_login import login_user
+
+    with app.test_request_context("/"):
+        login_user(team)
+        assert current_user_type() == "team"

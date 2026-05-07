@@ -21,6 +21,7 @@ from models import (
     db,
 )
 from app.domain.enums import RegistrationStatus
+from app.services._common import current_user_type
 from app.services.registration_service import RegistrationService
 from app.services.permission_service import PermissionService
 from app.utils.decorators import require_tournament_organizer
@@ -496,7 +497,7 @@ def register_player_as_to(tournament_url: str):
     res = RegistrationService.register_player_as_to(
         tournament_url,
         actor_user_id=current_user.id,
-        actor_user_type=current_user.__class__.__name__.lower(),
+        actor_user_type=current_user_type(),
         player_id=player_id,
         team_id=(data.get("team") or None),
         jersey_number=data.get("jersey_number", ""),
@@ -553,7 +554,7 @@ def register_team_as_to(tournament_url: str):
     res = RegistrationService.register_team_as_to(
         tournament_url,
         actor_user_id=current_user.id,
-        actor_user_type=current_user.__class__.__name__.lower(),
+        actor_user_type=current_user_type(),
         team_id=team_id,
         pseudonym=data.get("pseudonym", ""),
     )

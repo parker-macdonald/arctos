@@ -16,6 +16,7 @@ from flask_login import current_user, login_user, logout_user, login_required
 from sqlalchemy import or_, func
 from sqlalchemy.orm import joinedload
 from sqlalchemy.orm.attributes import flag_modified
+from app.services._common import current_user_type
 from app.services.permission_service import PermissionService
 from app.services.tournament_service import TournamentService
 from app.utils.helpers import (
@@ -630,7 +631,7 @@ def leagues_list():
 def leagues_organized():
     """List leagues that the current user organizes (TO). For tournament create/edit league selector."""
     user_id = current_user.id
-    user_type = current_user.__class__.__name__.lower()
+    user_type = current_user_type()
     to_entries = TO.query.filter(
         TO.league_id.isnot(None),
         TO.user_id == user_id,
@@ -716,7 +717,7 @@ def league_detail(league_url):
         is_current = (
             current_user.is_authenticated
             and current_user.id == e.user_id
-            and current_user.__class__.__name__.lower() == e.user_type
+            and current_user_type() == e.user_type
         )
         to_entries.append(
             {
@@ -1152,7 +1153,7 @@ def league_remove_to(league_url):
     if to_to_remove.league_id != league_url:
         return jsonify({"success": False, "error": "Invalid TO entry"}), 400
 
-    if to_to_remove.user_id == current_user.id and to_to_remove.user_type == current_user.__class__.__name__.lower():
+    if to_to_remove.user_id == current_user.id and to_to_remove.user_type == current_user_type():
         return (
             jsonify({"success": False, "error": "You cannot remove yourself as a TO"}),
             400,
@@ -1996,7 +1997,7 @@ def tournament_detail(tournament_url):
         is_current = (
             current_user.is_authenticated
             and current_user.id == e.user_id
-            and current_user.__class__.__name__.lower() == e.user_type
+            and current_user_type() == e.user_type
         )
         to_entries.append(
             {

@@ -53,3 +53,29 @@ def resolve_actor(actor_user_id: str, actor_user_type: str):
     if actor_user_type == UserType.TEAM.value:
         return Team.query.get(actor_user_id)
     return None
+
+
+def current_user_type() -> str:
+    """Return the current_user's account type as a bare string.
+
+    Assumes the request is guarded by ``@login_required`` and ``current_user``
+    is a :class:`~app.models.player.Player` or
+    :class:`~app.models.team.Team`. Raises a clear error otherwise so a
+    misconfigured route surfaces fast rather than silently misbehaving.
+
+    Returns:
+        ``"player"`` or ``"team"`` (matches
+        :class:`~app.domain.enums.UserType` member values).
+    """
+    from flask_login import current_user
+    from app.error_values import Some
+    from app.services.permission_service import PermissionService
+
+    match PermissionService.user_type(current_user):
+        case Some(user_type):
+            return str(user_type)
+        case _:
+            raise RuntimeError(
+                "current_user_type() called without an authenticated Player/Team; "
+                "is @login_required missing?"
+            )
