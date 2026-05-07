@@ -2,12 +2,15 @@
 Tournament site Flask application factory.
 """
 
+import logging
 from decimal import Decimal
 
 from flask import Flask
 from flask.json.provider import DefaultJSONProvider
 from flask_login import LoginManager
 import os
+
+logger = logging.getLogger(__name__)
 
 
 class ArctosJSONProvider(DefaultJSONProvider):
@@ -191,7 +194,7 @@ def create_app(config: dict | None = None) -> Flask:
                         cur.close()
 
     except Exception:
-        pass
+        logger.exception("Failed to register SQLite pragma listener")
 
     # Initialize login manager
     login_manager.init_app(app)
@@ -335,10 +338,10 @@ def create_app(config: dict | None = None) -> Flask:
                     try:
                         recompute_all_match_times(t.url)
                     except Exception:
-                        pass
+                        logger.exception("recompute_all_match_times failed for tournament %s", t.url)
                     db.session.remove()
     except Exception:
-        pass
+        logger.exception("Tournament boot-time recompute pass failed")
 
     # On boot: resume any YouTube uploads that were left in-progress before a restart.
     # This is best-effort and only runs outside of tests.
@@ -368,8 +371,7 @@ def create_app(config: dict | None = None) -> Flask:
                                 daemon=True,
                             ).start()
     except Exception:
-        # Never block app startup due to background upload resume failures.
-        pass
+        logger.exception("YouTube upload resume failed")
 
     @app.errorhandler(413)
     def too_large(e):
