@@ -81,6 +81,34 @@ class PermissionService:
         return q.first() is not None
 
     @staticmethod
+    def is_league_organizer(league_url: str, user) -> bool:
+        """Return whether *user* is a TO for the league at *league_url*.
+
+        Args:
+            league_url: URL slug of the league.
+            user: Flask-Login user object, or ``None``.
+
+        Returns:
+            ``True`` if a matching :class:`~app.models.tournament.TO` row exists.
+        """
+        if not league_url or user is None:
+            return False
+        match PermissionService.user_type(user):
+            case Some(user_type):
+                pass
+            case _:
+                return False
+
+        from models import TO
+
+        return (
+            TO.query.filter_by(
+                user_id=user.id, user_type=str(user_type), league_id=league_url
+            ).first()
+            is not None
+        )
+
+    @staticmethod
     def can_view_tournament(tournament_url: str, user) -> bool:
         """Return whether *user* may view the tournament.
 

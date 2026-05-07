@@ -152,3 +152,44 @@ def test_is_tournament_organizer_returns_false_when_tournament_missing(app, test
     with app.app_context():
         p = db.session.merge(player)
         assert PermissionService.is_tournament_organizer("does-not-exist-xyz", p) is False
+
+
+@pytest.mark.unit
+def test_is_league_organizer_true_when_to_exists(app, test_db, player):
+    from app.models.league import League
+
+    with app.app_context():
+        p = db.session.merge(player)
+        league = League(
+            url="league-org-test-1",
+            name="League Org Test 1",
+            registrable_config_id=make_registrable_config().id,
+        )
+        db.session.add(league)
+        db.session.add(TO(user_id=p.id, user_type="player", league_id=league.url))
+        db.session.commit()
+
+        assert PermissionService.is_league_organizer(league.url, p) is True
+
+
+@pytest.mark.unit
+def test_is_league_organizer_false_when_no_to(app, test_db, player):
+    from app.models.league import League
+
+    with app.app_context():
+        p = db.session.merge(player)
+        league = League(
+            url="league-org-test-2",
+            name="League Org Test 2",
+            registrable_config_id=make_registrable_config().id,
+        )
+        db.session.add(league)
+        db.session.commit()
+
+        assert PermissionService.is_league_organizer(league.url, p) is False
+
+
+@pytest.mark.unit
+def test_is_league_organizer_false_for_none_user(app, test_db):
+    with app.app_context():
+        assert PermissionService.is_league_organizer("league-x", None) is False
