@@ -7,6 +7,7 @@ from app.domain.enums import (
     RegistrationStatus,
     ScheduleType,
     SetType,
+    UserType,
     WinnerSide,
     parse_enum,
 )
@@ -35,3 +36,13 @@ def test_parse_enum_returns_none_for_invalid_values():
 def test_parse_enum_is_idempotent():
     """parse_enum wraps an already-correct enum member in Some without error."""
     assert parse_enum(MatchStatus, MatchStatus.IN_PROGRESS).unwrap() == MatchStatus.IN_PROGRESS
+
+
+@pytest.mark.unit
+def test_user_type_strenum_values():
+    """UserType StrEnum has correct values and compares equal to raw strings."""
+    assert UserType.PLAYER.value == "player"
+    assert UserType.TEAM.value == "team"
+    # StrEnum equality with raw strings (DB-stored shape compatibility)
+    assert UserType.PLAYER == "player"
+    assert UserType.TEAM == "team"

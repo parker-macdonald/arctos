@@ -62,6 +62,17 @@ class RegistrationStatus(StrEnum):
     CANCELLED = "CANCELLED"
 
 
+class UserType(StrEnum):
+    """Account type for a Flask-Login user.
+
+    Members compare equal to their bare-string DB representation, which
+    keeps storage shape compatible with the legacy ``user_type`` columns.
+    """
+
+    PLAYER = "player"
+    TEAM = "team"
+
+
 class TeamRegistrationStatus(StrEnum):
     """Lifecycle status of a team's registration in an event.
 
