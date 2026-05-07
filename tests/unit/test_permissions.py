@@ -1,6 +1,6 @@
 """Unit tests for PermissionService (no HTTP, no test client)."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -95,3 +95,60 @@ def test_user_type_returns_null_for_none():
 
     result = PermissionService.user_type(None)
     assert isinstance(result, Null)
+
+
+@pytest.mark.unit
+def test_is_tournament_organizer_grants_via_league_id(app, test_db, player):
+    """A league-season TO is granted access to event-only routes on
+    tournaments under that league."""
+    from app.models.league import League
+
+    with app.app_context():
+        p = db.session.merge(player)
+
+        league = League(
+            url="league-tourn-test-1",
+            name="League Tourn Test 1",
+            registrable_config_id=make_registrable_config().id,
+        )
+        db.session.add(league)
+        db.session.commit()
+
+        t = Tournament(
+            url="league-tourn-test-1-evt",
+            name="League Tourn Test 1 Evt",
+            start_date=datetime.now(timezone.utc),
+            end_date=datetime.now(timezone.utc) + timedelta(days=1),
+            location="L1",
+            max_field_size=14,
+            published=True,
+            league_id=league.url,
+        )
+        db.session.add(t)
+        db.session.flush()
+        db.session.add(TO(user_id=p.id, user_type="player", league_id=league.url))
+        db.session.commit()
+
+        assert PermissionService.is_tournament_organizer(t.url, p) is True
+
+
+@pytest.mark.unit
+def test_is_tournament_organizer_denies_when_no_event_or_league_to(
+    app, test_db, tournament, player
+):
+    """is_tournament_organizer returns False when no matching TO exists."""
+    with app.app_context():
+        t = db.session.merge(tournament)
+        p = db.session.merge(player)
+        # ensure there is no TO entry
+        TO.query.filter_by(event=t.url, user_id=p.id, user_type="player").delete()
+        db.session.commit()
+        assert PermissionService.is_tournament_organizer(t.url, p) is False
+
+
+@pytest.mark.unit
+def test_is_tournament_organizer_returns_false_when_tournament_missing(app, test_db, player):
+    """is_tournament_organizer returns False when tournament does not exist."""
+    with app.app_context():
+        p = db.session.merge(player)
+        assert PermissionService.is_tournament_organizer("does-not-exist-xyz", p) is False

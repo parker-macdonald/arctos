@@ -46,15 +46,18 @@ class PermissionService:
 
     @staticmethod
     def is_tournament_organizer(tournament_url: str, user) -> bool:
-        """Return whether *user* is a Tournament Organiser for this event.
+        """Return whether *user* is a Tournament Organiser for this tournament.
+
+        For tournaments attached to a league (``Tournament.league_id`` is set),
+        league-season TOs grant access; otherwise event-specific TOs are
+        consulted. Mirrors :func:`~app.services.registration_resolver.to_entries_for_tournament`.
 
         Args:
             tournament_url: URL slug of the tournament.
             user: Flask-Login user object (player or team), or ``None``.
 
         Returns:
-            ``True`` if a :class:`~app.models.tournament.TO` record exists
-            for *user* and *tournament_url*.
+            ``True`` if a matching :class:`~app.models.tournament.TO` row exists.
         """
         if not tournament_url or user is None:
             return False
@@ -64,9 +67,18 @@ class PermissionService:
             case _:
                 return False
 
-        from models import TO
+        from models import TO, Tournament
 
-        return TO.query.filter_by(user_id=user.id, user_type=user_type, event=tournament_url).first() is not None
+        tournament = Tournament.query.filter_by(url=tournament_url).first()
+        if tournament is None:
+            return False
+
+        q = TO.query.filter_by(user_id=user.id, user_type=str(user_type))
+        if tournament.league_id:
+            q = q.filter_by(league_id=tournament.league_id)
+        else:
+            q = q.filter_by(event=tournament_url)
+        return q.first() is not None
 
     @staticmethod
     def can_view_tournament(tournament_url: str, user) -> bool:
