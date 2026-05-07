@@ -28,6 +28,51 @@ def wants_json(request) -> bool:
     return request.is_json or is_api_path or prefers_json
 
 
+def _require_organizer(
+    *,
+    param_name: str,
+    check_fn,
+    redirect_path_fn,
+    message: str,
+):
+    """Internal builder for organiser-role decorators.
+
+    Args:
+        param_name: Name of the URL slug kwarg (``"tournament_url"`` or
+            ``"league_url"``) the decorated view exposes.
+        check_fn: Callable ``(slug, user) -> bool`` from
+            :class:`~app.services.permission_service.PermissionService`.
+        redirect_path_fn: Callable ``(slug) -> str`` building the HTML
+            redirect fallback when no referrer is set.
+        message: Error message shown to unauthorised users.
+
+    Returns:
+        A decorator that wraps a Flask route function with
+        :func:`~flask_login.login_required` and the organiser check.
+    """
+    from app.utils.responses import json_error
+
+    def decorator(fn):
+        @wraps(fn)
+        @login_required
+        def wrapper(*args, **kwargs):
+            slug = kwargs.get(param_name)
+            if slug is None and args:
+                slug = args[0]
+
+            if not check_fn(slug, current_user):
+                if wants_json(request):
+                    return json_error(message, status_code=403)
+                flash(message, "error")
+                return redirect(request.referrer or redirect_path_fn(slug))
+
+            return fn(*args, **kwargs)
+
+        return wrapper
+
+    return decorator
+
+
 def require_tournament_organizer(
     message: str = "Only tournament organizers can access this page",
 ):
@@ -57,27 +102,12 @@ def require_tournament_organizer(
         def update_settings(tournament_url: str):
             ...
     """
-    from app.utils.responses import json_error
-
-    def decorator(fn):
-        @wraps(fn)
-        @login_required
-        def wrapper(*args, **kwargs):
-            tournament_url = kwargs.get("tournament_url")
-            if tournament_url is None and args:
-                tournament_url = args[0]
-
-            if not PermissionService.is_tournament_organizer(tournament_url, current_user):
-                if wants_json(request):
-                    return json_error(message, status_code=403)
-                flash(message, "error")
-                return redirect(request.referrer or f"/{tournament_url}")
-
-            return fn(*args, **kwargs)
-
-        return wrapper
-
-    return decorator
+    return _require_organizer(
+        param_name="tournament_url",
+        check_fn=PermissionService.is_tournament_organizer,
+        redirect_path_fn=lambda slug: f"/{slug}",
+        message=message,
+    )
 
 
 def require_league_organizer(
@@ -96,24 +126,9 @@ def require_league_organizer(
     Returns:
         A decorator that wraps a Flask route function.
     """
-    from app.utils.responses import json_error
-
-    def decorator(fn):
-        @wraps(fn)
-        @login_required
-        def wrapper(*args, **kwargs):
-            league_url = kwargs.get("league_url")
-            if league_url is None and args:
-                league_url = args[0]
-
-            if not PermissionService.is_league_organizer(league_url, current_user):
-                if wants_json(request):
-                    return json_error(message, status_code=403)
-                flash(message, "error")
-                return redirect(request.referrer or f"/leagues/{league_url}")
-
-            return fn(*args, **kwargs)
-
-        return wrapper
-
-    return decorator
+    return _require_organizer(
+        param_name="league_url",
+        check_fn=PermissionService.is_league_organizer,
+        redirect_path_fn=lambda slug: f"/leagues/{slug}",
+        message=message,
+    )
