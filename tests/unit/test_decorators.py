@@ -396,3 +396,25 @@ def test_require_json_body_empty_body_defaults_to_empty_dict(fresh_app):
         resp = c.post("/_test_json_body_empty", data="", content_type="application/json")
         assert resp.status_code == 200
         assert captured["body"] == {}
+
+
+@pytest.mark.unit
+def test_require_json_body_400_for_malformed_json(fresh_app):
+    """Malformed JSON body with correct Content-Type returns 400, not 200."""
+    from app.utils.decorators import require_json_body
+
+    @fresh_app.route("/_test_json_body_malformed", methods=["POST"], endpoint="_test_json_body_malformed")
+    @require_json_body()
+    def _test_json_body_malformed():
+        return {"ok": True}
+
+    with fresh_app.test_client() as c:
+        resp = c.post(
+            "/_test_json_body_malformed",
+            data='{"bad": json}',
+            content_type="application/json",
+        )
+        assert resp.status_code == 400
+        body = resp.get_json()
+        assert body["success"] is False
+        assert "error" in body
