@@ -1,11 +1,12 @@
 """Side competition routes."""
 
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, g, request, jsonify
 from flask_login import login_required, current_user  # type: ignore[import-untyped]
 
 from app.services._common import current_user_type
 from app.services.permission_service import PermissionService
 from app.services.sidecomp_service import SideCompService
+from app.utils.decorators import require_json_body
 from app.utils.result_helpers import json_from_result
 from app.utils.user_helpers import is_player
 
@@ -90,11 +91,10 @@ def detail(comp_id: int):
 
 @bp.route("/<tournament_url>/sidecomps", methods=["POST"])
 @login_required
+@require_json_body()
 def create(tournament_url: str):
     """TO-only: create a side competition."""
-    if not request.is_json:
-        return jsonify({"success": False, "error": "Content-Type must be application/json"}), 415
-    data = request.get_json() or {}
+    data = g.json_body
 
     res = SideCompService.create(
         tournament_url,
@@ -120,11 +120,10 @@ def create(tournament_url: str):
 
 @bp.route("/sidecomps/<int:comp_id>", methods=["PATCH"])
 @login_required
+@require_json_body()
 def update(comp_id: int):
     """TO-only: rename or change type of a side competition."""
-    if not request.is_json:
-        return jsonify({"success": False, "error": "Content-Type must be application/json"}), 415
-    data = request.get_json() or {}
+    data = g.json_body
 
     res = SideCompService.update(
         comp_id,
@@ -191,11 +190,10 @@ def player_deregister(comp_id: int):
 
 @bp.route("/sidecomps/<int:comp_id>/register-player-as-to", methods=["POST"])
 @login_required
+@require_json_body()
 def register_player_as_to(comp_id: int):
     """TO-only: register a player into a side competition on their behalf."""
-    if not request.is_json:
-        return jsonify({"success": False, "error": "Content-Type must be application/json"}), 415
-    data = request.get_json() or {}
+    data = g.json_body
     player_id = (data.get("player_id") or "").strip()
     if not player_id:
         return jsonify({"success": False, "error": "player_id is required"}), 400
@@ -223,11 +221,10 @@ def register_player_as_to(comp_id: int):
 
 @bp.route("/sidecomps/<int:comp_id>/deregister-player-as-to", methods=["POST"])
 @login_required
+@require_json_body()
 def deregister_player_as_to(comp_id: int):
     """TO-only: deregister a player from a side competition on their behalf."""
-    if not request.is_json:
-        return jsonify({"success": False, "error": "Content-Type must be application/json"}), 415
-    data = request.get_json() or {}
+    data = g.json_body
     player_id = (data.get("player_id") or "").strip()
     if not player_id:
         return jsonify({"success": False, "error": "player_id is required"}), 400

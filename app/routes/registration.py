@@ -11,7 +11,7 @@ The multi-model workflow itself lives in
 layer in front of it.
 """
 
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, g, request, jsonify
 from flask_login import login_required, current_user  # type: ignore[import-untyped]
 from datetime import datetime
 from models import (
@@ -24,7 +24,7 @@ from app.domain.enums import RegistrationStatus
 from app.services._common import current_user_type
 from app.services.registration_service import RegistrationService
 from app.services.permission_service import PermissionService
-from app.utils.decorators import require_tournament_organizer
+from app.utils.decorators import require_json_body, require_tournament_organizer
 from app.utils.user_helpers import is_player, is_team
 from app.utils.result_helpers import json_from_result
 from app.utils.datetime_helpers import now_utc_naive
@@ -461,6 +461,7 @@ def decline_invitation(tournament_url: str, invitation_id: int):
 
 @bp.route("/<tournament_url>/register-player-as-to", methods=["POST"])
 @login_required
+@require_json_body()
 def register_player_as_to(tournament_url: str):
     """Tournament-organizer-driven player registration.
 
@@ -487,9 +488,7 @@ def register_player_as_to(tournament_url: str):
         ``200`` with the resolved registration fields on success, or
         ``{success: false, error}`` with an appropriate status on failure.
     """
-    if not request.is_json:
-        return jsonify({"success": False, "error": "Content-Type must be application/json"}), 415
-    data = request.get_json() or {}
+    data = g.json_body
 
     player_id = (data.get("player_id") or "").strip()
     if not player_id:
@@ -523,6 +522,7 @@ def register_player_as_to(tournament_url: str):
 
 @bp.route("/<tournament_url>/register-team-as-to", methods=["POST"])
 @login_required
+@require_json_body()
 def register_team_as_to(tournament_url: str):
     """Tournament-organizer-driven team registration.
 
@@ -544,9 +544,7 @@ def register_team_as_to(tournament_url: str):
         ``200`` with the resolved registration fields on success, or
         ``{success: false, error}`` with an appropriate status on failure.
     """
-    if not request.is_json:
-        return jsonify({"success": False, "error": "Content-Type must be application/json"}), 415
-    data = request.get_json() or {}
+    data = g.json_body
 
     team_id = (data.get("team_id") or "").strip()
     if not team_id:

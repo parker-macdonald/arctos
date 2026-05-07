@@ -6,7 +6,7 @@ CRUD, schedule queries, rosters, head-ref permissions, photos, profile
 updates, search, ...).
 """
 
-from flask import Blueprint, request, jsonify, session, redirect, current_app
+from flask import Blueprint, g, request, jsonify, session, redirect, current_app
 from datetime import datetime, timezone
 from pathlib import Path
 import hashlib
@@ -19,6 +19,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from app.services._common import current_user_type
 from app.services.permission_service import PermissionService
 from app.services.tournament_service import TournamentService
+from app.utils.decorators import require_json_body
 from app.utils.helpers import (
     is_valid_url_username,
     check_tournament_access,
@@ -184,13 +185,10 @@ def server_time():
 
 
 @bp.route("/login", methods=["POST"])
+@require_json_body()
 def login():
     """JSON body: { username, password }. Sets session cookie on success."""
-    if not request.is_json:
-        return jsonify({"error": "Content-Type must be application/json"}), 415
-    data = request.get_json()
-    if not data:
-        return jsonify({"error": "Invalid JSON"}), 400
+    data = g.json_body
     username = data.get("username")
     password = data.get("password")
     if not username or not password:
@@ -214,13 +212,10 @@ def logout():
 
 @bp.route("/change-password", methods=["POST"])
 @login_required
+@require_json_body()
 def change_password():
     """JSON body: { current_password, new_password }. Change authenticated user's password."""
-    if not request.is_json:
-        return jsonify({"error": "Content-Type must be application/json"}), 415
-    data = request.get_json()
-    if not data:
-        return jsonify({"error": "Invalid JSON"}), 400
+    data = g.json_body
     current_password = data.get("current_password")
     new_password = data.get("new_password")
     if not current_password or not new_password:
@@ -243,13 +238,10 @@ def change_password():
 
 
 @bp.route("/register", methods=["POST"])
+@require_json_body()
 def register():
     """JSON body: { username, password, name, user_type?: "player"|"team" }. Creates user and logs in."""
-    if not request.is_json:
-        return jsonify({"error": "Content-Type must be application/json"}), 415
-    data = request.get_json()
-    if not data:
-        return jsonify({"error": "Invalid JSON"}), 400
+    data = g.json_body
     username = data.get("username")
     password = data.get("password")
     name = data.get("name")
@@ -2302,6 +2294,7 @@ def tournament_bracket_setup_data_api(tournament_url):
 
 @bp.route("/tournaments/<tournament_url>/bracket-setup", methods=["POST"])
 @login_required
+@require_json_body()
 def tournament_bracket_setup_save_api(tournament_url):
     """Save bracket configuration from the SPA."""
     if not _check_to(tournament_url):
@@ -2309,10 +2302,7 @@ def tournament_bracket_setup_save_api(tournament_url):
 
     tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
 
-    if not request.is_json:
-        return jsonify({"error": "Content-Type must be application/json"}), 415
-
-    data = request.get_json(silent=True) or {}
+    data = g.json_body
     brackets = data.get("brackets", [])
 
     def escape_toml_string(s):

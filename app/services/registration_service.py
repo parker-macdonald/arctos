@@ -128,7 +128,7 @@ class RegistrationService:
                 return Err(ValidationError("Your team is already registered for this tournament"))
             team_registration = existing_reg
             team_registration.pseudonym = pseudonym
-            team_registration.registered_at = datetime.now(timezone.utc).replace(tzinfo=None)
+            team_registration.registered_at = now_utc_naive()
         else:
             team_registration = TeamRegistration(
                 event=tournament_url,
@@ -552,7 +552,7 @@ class RegistrationService:
                 return Err(ValidationError("Your team is already registered for this league"))
             team_registration = existing_reg
             team_registration.pseudonym = pseudonym
-            team_registration.registered_at = datetime.now(timezone.utc).replace(tzinfo=None)
+            team_registration.registered_at = now_utc_naive()
         else:
             team_registration = TeamRegistration(
                 event=None,
