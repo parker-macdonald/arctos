@@ -23,23 +23,25 @@ class PermissionService:
     """
 
     @staticmethod
-    def user_type(user) -> Option[str]:
-        """Return the account type string for *user*.
+    def user_type(user) -> "Option[UserType]":
+        """Return the account type for *user*.
 
         Args:
             user: Any Flask-Login user object, or ``None``.
 
         Returns:
-            :class:`~app.error_values.Some` containing ``"player"`` or
-            ``"team"``, or :class:`~app.error_values.Null` for ``None`` /
-            unsupported types.
+            :class:`~app.error_values.Some` containing
+            :class:`~app.domain.enums.UserType`, or
+            :class:`~app.error_values.Null` for ``None`` / unsupported types.
         """
+        from app.domain.enums import UserType
+
         if user is None:
             return Null()
         if is_player(user):
-            return Some("player")
+            return Some(UserType.PLAYER)
         if is_team(user):
-            return Some("team")
+            return Some(UserType.TEAM)
         return Null()
 
     @staticmethod

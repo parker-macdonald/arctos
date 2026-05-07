@@ -57,3 +57,41 @@ def test_permission_service_can_view_unpublished_tournament_for_to(app, test_db,
         db.session.commit()
 
         assert PermissionService.can_view_tournament("private-tournament", p) is True
+
+
+@pytest.mark.unit
+def test_user_type_returns_userdata_player(app, test_db, player):
+    """user_type returns Some(UserType.PLAYER) for a player user."""
+    from app.error_values import Some
+    from app.domain.enums import UserType
+
+    with app.app_context():
+        p = db.session.merge(player)
+        result = PermissionService.user_type(p)
+        assert isinstance(result, Some)
+        assert isinstance(result.val, UserType)  # Strict type check forces the migration
+        assert result.val == UserType.PLAYER
+        assert result.val == "player"
+
+
+@pytest.mark.unit
+def test_user_type_returns_userdata_team(app, test_db, team):
+    """user_type returns Some(UserType.TEAM) for a team user."""
+    from app.error_values import Some
+    from app.domain.enums import UserType
+
+    with app.app_context():
+        t = db.session.merge(team)
+        result = PermissionService.user_type(t)
+        assert isinstance(result, Some)
+        assert isinstance(result.val, UserType)
+        assert result.val == UserType.TEAM
+
+
+@pytest.mark.unit
+def test_user_type_returns_null_for_none():
+    """user_type returns Null for None."""
+    from app.error_values import Null
+
+    result = PermissionService.user_type(None)
+    assert isinstance(result, Null)
