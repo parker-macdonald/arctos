@@ -18,11 +18,12 @@ from models import (
     Tournament,
     TeamRegistration,
     PlayerRegistration,
-    TO,
     db,
 )
 from app.domain.enums import RegistrationStatus
 from app.services.registration_service import RegistrationService
+from app.services.permission_service import PermissionService
+from app.utils.decorators import require_tournament_organizer
 from app.utils.user_helpers import is_player, is_team
 from app.error_values import Ok, Err
 from app.utils.result_helpers import public_error_message
@@ -203,7 +204,7 @@ def deregister_player_from_tournament(tournament_url: str):
 
 
 @bp.route("/<tournament_url>/mark-team-paid", methods=["POST"])
-@login_required
+@require_tournament_organizer("Only tournament organizers can perform this action")
 def mark_team_paid(tournament_url: str):
     """Update payment status for a team registration (TO only).
 
@@ -227,21 +228,6 @@ def mark_team_paid(tournament_url: str):
         JSON ``{"success": true, "message": "..."}`` on success, or 403/404.
     """
     tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
-    is_to = TO.query.filter_by(
-        user_id=current_user.id,
-        user_type=current_user.__class__.__name__.lower(),
-        event=tournament_url,
-    ).first()
-    if not is_to:
-        return (
-            jsonify(
-                {
-                    "success": False,
-                    "error": "Only tournament organizers can perform this action",
-                }
-            ),
-            403,
-        )
 
     reg_id = request.form.get("registration_id")
     paid = request.form.get("paid") == "on"
@@ -262,7 +248,7 @@ def mark_team_paid(tournament_url: str):
 
 
 @bp.route("/<tournament_url>/mark-player-paid", methods=["POST"])
-@login_required
+@require_tournament_organizer("Only tournament organizers can perform this action")
 def mark_player_paid(tournament_url: str):
     """Update payment status for a player registration (TO only).
 
@@ -286,21 +272,6 @@ def mark_player_paid(tournament_url: str):
         JSON ``{"success": true, "message": "..."}`` on success, or 403/404.
     """
     tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
-    is_to = TO.query.filter_by(
-        user_id=current_user.id,
-        user_type=current_user.__class__.__name__.lower(),
-        event=tournament_url,
-    ).first()
-    if not is_to:
-        return (
-            jsonify(
-                {
-                    "success": False,
-                    "error": "Only tournament organizers can perform this action",
-                }
-            ),
-            403,
-        )
 
     reg_id = request.form.get("registration_id")
     paid = request.form.get("paid") == "on"
@@ -321,7 +292,7 @@ def mark_player_paid(tournament_url: str):
 
 
 @bp.route("/<tournament_url>/deregister-any-team", methods=["POST"])
-@login_required
+@require_tournament_organizer("Only tournament organizers can perform this action")
 def deregister_any_team(tournament_url: str):
     """Forcibly cancel a team's registration (TO only).
 
@@ -340,23 +311,6 @@ def deregister_any_team(tournament_url: str):
         JSON success or error body.
     """
     tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
-
-    is_to = TO.query.filter_by(
-        user_id=current_user.id,
-        user_type=current_user.__class__.__name__.lower(),
-        event=tournament_url,
-    ).first()
-
-    if not is_to:
-        return (
-            jsonify(
-                {
-                    "success": False,
-                    "error": "Only tournament organizers can perform this action",
-                }
-            ),
-            403,
-        )
 
     team_id = request.form.get("team_id")
     if not team_id:
@@ -395,7 +349,7 @@ def deregister_any_team(tournament_url: str):
 
 
 @bp.route("/<tournament_url>/deregister-any-player", methods=["POST"])
-@login_required
+@require_tournament_organizer("Only tournament organizers can perform this action")
 def deregister_any_player(tournament_url: str):
     """Forcibly cancel a player's registration (TO only).
 
@@ -414,23 +368,6 @@ def deregister_any_player(tournament_url: str):
         JSON success or error body.
     """
     tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
-
-    is_to = TO.query.filter_by(
-        user_id=current_user.id,
-        user_type=current_user.__class__.__name__.lower(),
-        event=tournament_url,
-    ).first()
-
-    if not is_to:
-        return (
-            jsonify(
-                {
-                    "success": False,
-                    "error": "Only tournament organizers can perform this action",
-                }
-            ),
-            403,
-        )
 
     player_id = request.form.get("player_id")
     if not player_id:

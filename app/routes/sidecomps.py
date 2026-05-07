@@ -5,6 +5,7 @@ from flask_login import login_required, current_user  # type: ignore[import-unty
 
 from app.error_values import Err, Ok
 from app.exceptions import ArctosError
+from app.services.permission_service import PermissionService
 from app.services.sidecomp_service import SideCompService
 from app.utils.result_helpers import public_error_message
 from app.utils.user_helpers import is_player
@@ -54,16 +55,9 @@ def detail(comp_id: int):
             viewer_is_registered_in_comp = False
             if current_user.is_authenticated:
                 from app.domain.enums import RegistrationStatus
-                from models import PlayerRegistration, TO
+                from models import PlayerRegistration
 
-                viewer_is_to = (
-                    TO.query.filter_by(
-                        event=sc.event,
-                        user_id=current_user.id,
-                        user_type=current_user.__class__.__name__.lower(),
-                    ).first()
-                    is not None
-                )
+                viewer_is_to = PermissionService.is_tournament_organizer(sc.event, current_user)
                 if is_player(current_user):
                     viewer_is_registered_in_comp = any(reg.player == current_user.id for reg, _ in registrants)
                     if not viewer_is_registered_in_comp and sc.registration_open:

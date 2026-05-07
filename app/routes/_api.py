@@ -16,6 +16,7 @@ from flask_login import current_user, login_user, logout_user, login_required
 from sqlalchemy import or_, func
 from sqlalchemy.orm import joinedload
 from sqlalchemy.orm.attributes import flag_modified
+from app.services.permission_service import PermissionService
 from app.services.tournament_service import TournamentService
 from app.utils.helpers import (
     is_valid_url_username,
@@ -520,12 +521,7 @@ def _require_league(league_url: str):
         return league, None
     if not current_user.is_authenticated:
         return league, 403
-    is_to = TO.query.filter_by(
-        user_id=current_user.id,
-        user_type=current_user.__class__.__name__.lower(),
-        league_id=league_url,
-    ).first()
-    if not is_to:
+    if not PermissionService.is_league_organizer(league_url, current_user):
         return league, 403
     return league, None
 
@@ -945,12 +941,7 @@ def league_update_settings(league_url):
     league, err = _require_league(league_url)
     if err:
         return jsonify({"error": "Not found" if err == 404 else "Forbidden"}), err
-    is_to = TO.query.filter_by(
-        user_id=current_user.id,
-        user_type=current_user.__class__.__name__.lower(),
-        league_id=league_url,
-    ).first()
-    if not is_to:
+    if not PermissionService.is_league_organizer(league_url, current_user):
         return jsonify({"error": "Only league organizers can update settings"}), 403
 
     data = request.get_json() or {}
@@ -1008,12 +999,7 @@ def create_league_penalty_type(league_url):
     league, err = _require_league(league_url)
     if err:
         return jsonify({"error": "Not found" if err == 404 else "Forbidden"}), err
-    is_to = TO.query.filter_by(
-        user_id=current_user.id,
-        user_type=current_user.__class__.__name__.lower(),
-        league_id=league_url,
-    ).first()
-    if not is_to:
+    if not PermissionService.is_league_organizer(league_url, current_user):
         return jsonify({"error": "Forbidden"}), 403
 
     data = request.get_json()
@@ -1057,12 +1043,7 @@ def update_league_penalty_type(league_url, pt_id):
     league, err = _require_league(league_url)
     if err:
         return jsonify({"error": "Not found" if err == 404 else "Forbidden"}), err
-    is_to = TO.query.filter_by(
-        user_id=current_user.id,
-        user_type=current_user.__class__.__name__.lower(),
-        league_id=league_url,
-    ).first()
-    if not is_to:
+    if not PermissionService.is_league_organizer(league_url, current_user):
         return jsonify({"error": "Forbidden"}), 403
 
     pt = PenaltyType.query.filter_by(id=pt_id, league_id=league_url).first_or_404()
@@ -1089,12 +1070,7 @@ def delete_league_penalty_type(league_url, pt_id):
     league, err = _require_league(league_url)
     if err:
         return jsonify({"error": "Not found" if err == 404 else "Forbidden"}), err
-    is_to = TO.query.filter_by(
-        user_id=current_user.id,
-        user_type=current_user.__class__.__name__.lower(),
-        league_id=league_url,
-    ).first()
-    if not is_to:
+    if not PermissionService.is_league_organizer(league_url, current_user):
         return jsonify({"error": "Forbidden"}), 403
 
     pt = PenaltyType.query.filter_by(id=pt_id, league_id=league_url).first_or_404()
@@ -1113,12 +1089,7 @@ def league_add_to(league_url):
     league, err = _require_league(league_url)
     if err:
         return jsonify({"error": "Not found" if err == 404 else "Forbidden"}), err
-    is_to = TO.query.filter_by(
-        user_id=current_user.id,
-        user_type=current_user.__class__.__name__.lower(),
-        league_id=league_url,
-    ).first()
-    if not is_to:
+    if not PermissionService.is_league_organizer(league_url, current_user):
         return (
             jsonify({"success": False, "error": "Only league organizers can add TOs"}),
             403,
@@ -1171,12 +1142,7 @@ def league_remove_to(league_url):
     league, err = _require_league(league_url)
     if err:
         return jsonify({"error": "Not found" if err == 404 else "Forbidden"}), err
-    is_to = TO.query.filter_by(
-        user_id=current_user.id,
-        user_type=current_user.__class__.__name__.lower(),
-        league_id=league_url,
-    ).first()
-    if not is_to:
+    if not PermissionService.is_league_organizer(league_url, current_user):
         return (
             jsonify({"success": False, "error": "Only league organizers can remove TOs"}),
             403,
@@ -1215,12 +1181,7 @@ def delete_league(league_url):
     if err:
         return jsonify({"error": "Not found" if err == 404 else "Forbidden"}), err
 
-    is_to = TO.query.filter_by(
-        user_id=current_user.id,
-        user_type=current_user.__class__.__name__.lower(),
-        league_id=league_url,
-    ).first()
-    if not is_to:
+    if not PermissionService.is_league_organizer(league_url, current_user):
         return (
             jsonify(
                 {
@@ -1509,12 +1470,7 @@ def league_manage_api(league_url):
     league, err = _require_league(league_url)
     if err:
         return jsonify({"error": "Not found" if err == 404 else "Forbidden"}), err
-    is_to = TO.query.filter_by(
-        user_id=current_user.id,
-        user_type=current_user.__class__.__name__.lower(),
-        league_id=league_url,
-    ).first()
-    if not is_to:
+    if not PermissionService.is_league_organizer(league_url, current_user):
         return jsonify({"error": "Forbidden"}), 403
 
     class LeagueTournament:
@@ -1765,12 +1721,7 @@ def league_mark_team_paid(league_url):
     league, err = _require_league(league_url)
     if err:
         return jsonify({"error": "Not found" if err == 404 else "Forbidden"}), err
-    is_to = TO.query.filter_by(
-        user_id=current_user.id,
-        user_type=current_user.__class__.__name__.lower(),
-        league_id=league_url,
-    ).first()
-    if not is_to:
+    if not PermissionService.is_league_organizer(league_url, current_user):
         return (
             jsonify(
                 {
@@ -1806,12 +1757,7 @@ def league_mark_player_paid(league_url):
     league, err = _require_league(league_url)
     if err:
         return jsonify({"error": "Not found" if err == 404 else "Forbidden"}), err
-    is_to = TO.query.filter_by(
-        user_id=current_user.id,
-        user_type=current_user.__class__.__name__.lower(),
-        league_id=league_url,
-    ).first()
-    if not is_to:
+    if not PermissionService.is_league_organizer(league_url, current_user):
         return (
             jsonify(
                 {
@@ -1847,12 +1793,7 @@ def league_deregister_any_team(league_url):
     league, err = _require_league(league_url)
     if err:
         return jsonify({"error": "Not found" if err == 404 else "Forbidden"}), err
-    is_to = TO.query.filter_by(
-        user_id=current_user.id,
-        user_type=current_user.__class__.__name__.lower(),
-        league_id=league_url,
-    ).first()
-    if not is_to:
+    if not PermissionService.is_league_organizer(league_url, current_user):
         return (
             jsonify(
                 {
@@ -1894,12 +1835,7 @@ def league_deregister_any_player(league_url):
     league, err = _require_league(league_url)
     if err:
         return jsonify({"error": "Not found" if err == 404 else "Forbidden"}), err
-    is_to = TO.query.filter_by(
-        user_id=current_user.id,
-        user_type=current_user.__class__.__name__.lower(),
-        league_id=league_url,
-    ).first()
-    if not is_to:
+    if not PermissionService.is_league_organizer(league_url, current_user):
         return (
             jsonify(
                 {
@@ -2486,14 +2422,7 @@ def tournament_bracket_api(tournament_url):
 
     is_to = False
     if current_user.is_authenticated:
-        is_to = (
-            TO.query.filter_by(
-                user_id=current_user.id,
-                user_type=current_user.__class__.__name__.lower(),
-                event=tournament_url,
-            ).first()
-            is not None
-        )
+        is_to = PermissionService.is_tournament_organizer(tournament_url, current_user)
 
     if not tournament.bracket:
         return jsonify({"error": "Bracket is not available"}), 404
@@ -2912,11 +2841,7 @@ def _schedule_published_check(tournament_url, tournament):
         return True
     if not current_user.is_authenticated:
         return False
-    if TO.query.filter_by(
-        user_id=current_user.id,
-        user_type=current_user.__class__.__name__.lower(),
-        event=tournament_url,
-    ).first():
+    if PermissionService.is_tournament_organizer(tournament_url, current_user):
         return True
     if current_user.__class__.__name__ == "Player" and can_head_ref_match(tournament_url, current_user.id, match=None):
         return True
@@ -4685,26 +4610,7 @@ def force_start_match_api(tournament_url, match_id):
 def _check_to(tournament_url):
     if not current_user.is_authenticated:
         return False
-    tournament = Tournament.query.filter_by(url=tournament_url).first()
-    if not tournament:
-        return False
-    if tournament.league_id:
-        return (
-            TO.query.filter_by(
-                user_id=current_user.id,
-                user_type=current_user.__class__.__name__.lower(),
-                league_id=tournament.league_id,
-            ).first()
-            is not None
-        )
-    return (
-        TO.query.filter_by(
-            user_id=current_user.id,
-            user_type=current_user.__class__.__name__.lower(),
-            event=tournament_url,
-        ).first()
-        is not None
-    )
+    return PermissionService.is_tournament_organizer(tournament_url, current_user)
 
 
 @bp.route("/tournaments/<tournament_url>/fields/<int:field_id>", methods=["GET"])
@@ -5884,12 +5790,7 @@ def league_upload_waiver_api(league_url):
     league, err = _require_league(league_url)
     if err:
         return jsonify({"error": "Not found" if err == 404 else "Forbidden"}), err
-    is_to = TO.query.filter_by(
-        user_id=current_user.id,
-        user_type=current_user.__class__.__name__.lower(),
-        league_id=league_url,
-    ).first()
-    if not is_to:
+    if not PermissionService.is_league_organizer(league_url, current_user):
         return jsonify({"error": "Only league organizers can upload waivers"}), 403
 
     rc = league.registrable_config
