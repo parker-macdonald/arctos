@@ -8,6 +8,7 @@ app.services
 .. toctree::
    :maxdepth: 1
 
+   app.services._common
    app.services.dual_write
    app.services.match_actions_service
    app.services.match_service
