@@ -256,16 +256,6 @@ class MatchGraph:
             dependent.dependencies.add(dep)
             dependency_node.dependents.add(dependent)
 
-    def get_dependencies(self, match_name: str) -> Set["Dependency"]:
-        """Get the set of Dependency wrappers that the given match depends on."""
-        node = self.nodes_by_name.get(match_name)
-        return node.dependencies.copy() if node else set()
-
-    def get_dependents(self, match_name: str) -> Set[MatchGraphNode]:
-        """Get the set of nodes that depend on the given match."""
-        node = self.nodes_by_name.get(match_name)
-        return node.dependents.copy() if node else set()
-
     def topological_sort(self) -> List[str]:
         """
         Perform topological sort of match names.
