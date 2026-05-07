@@ -43,15 +43,15 @@ def get_who_allowed_explanation(tournament_url: str, match=None) -> List[str]:
     - If reffing teams allowed: "players registered for assigned ref teams [list of teams] are allowed."
     - If allow anyone: "anyone registered for this tournament can head ref."
     """
-    from app.error_values import Err
+    from app.error_values import Err, Ok
     from app.services._common import get_tournament_or_err
     from app.services.dual_write import get_head_ref_allowlist_ids, get_match_ref_team_ids
 
     match get_tournament_or_err(tournament_url):
+        case Ok(tournament):
+            pass
         case Err(_):
             return ["Tournament not found."]
-        case tournament_result:
-            tournament = tournament_result.val
 
     lines: List[str] = []
 
