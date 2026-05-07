@@ -577,7 +577,7 @@ def record_request_preview():
     if not tournament_url or not field_name:
         return jsonify({"error": "tournament and field required"}), 400
     if not PermissionService.is_tournament_organizer(tournament_url, current_user):
-        return jsonify({"success": False, "error": "Only tournament organizers can request preview"}), 403
+        return jsonify({"error": "Only tournament organizers can request preview"}), 403
     field = Field.query.filter_by(event=tournament_url, name=field_name).first()
     if not field:
         return jsonify({"error": "Field not found"}), 404
@@ -595,7 +595,7 @@ def record_release_preview():
     if not tournament_url or not field_name:
         return jsonify({"error": "tournament and field required"}), 400
     if not PermissionService.is_tournament_organizer(tournament_url, current_user):
-        return jsonify({"success": False, "error": "Only tournament organizers can release preview"}), 403
+        return jsonify({"error": "Only tournament organizers can release preview"}), 403
     preview_store.clear_preview_requested(tournament_url, field_name)
     return jsonify({"success": True})
 
@@ -681,7 +681,7 @@ def record_preview_metadata_get():
         return jsonify({"error": "tournament and field required"}), 400
     if not PermissionService.is_tournament_organizer(tournament_url, current_user):
         return (
-            jsonify({"success": False, "error": "Only tournament organizers can get preview metadata"}),
+            jsonify({"error": "Only tournament organizers can get preview metadata"}),
             403,
         )
     meta = preview_store.read_metadata(tournament_url, field_name, camera_name)
@@ -700,7 +700,7 @@ def record_preview_cameras():
         return jsonify({"error": "tournament and field required"}), 400
     if not PermissionService.is_tournament_organizer(tournament_url, current_user):
         return (
-            jsonify({"success": False, "error": "Only tournament organizers can list preview cameras"}),
+            jsonify({"error": "Only tournament organizers can list preview cameras"}),
             403,
         )
     field = Field.query.filter_by(event=tournament_url, name=field_name).first()
@@ -724,7 +724,7 @@ def record_preview_frame_get():
         return jsonify({"error": "tournament and field required"}), 400
     if not PermissionService.is_tournament_organizer(tournament_url, current_user):
         return (
-            jsonify({"success": False, "error": "Only tournament organizers can get preview frame"}),
+            jsonify({"error": "Only tournament organizers can get preview frame"}),
             403,
         )
     # Prevent Safari (and others) from caching; Safari may not send cookies with img requests.
