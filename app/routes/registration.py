@@ -25,8 +25,7 @@ from app.services.registration_service import RegistrationService
 from app.services.permission_service import PermissionService
 from app.utils.decorators import require_tournament_organizer
 from app.utils.user_helpers import is_player, is_team
-from app.error_values import Ok, Err
-from app.utils.result_helpers import public_error_message
+from app.utils.result_helpers import json_from_result
 
 bp = Blueprint("registration", __name__, url_prefix="/_api")
 
@@ -58,14 +57,11 @@ def register_team_for_tournament(tournament_url: str):
         )
 
     res = RegistrationService.register_team(tournament_url, current_user.id, request.form.get("pseudonym", ""))
-    match res:
-        case Ok(_):
-            return (
-                jsonify({"success": True, "message": "Team registration successful!"}),
-                200,
-            )
-        case Err(err):
-            return jsonify({"success": False, "error": public_error_message(err)}), 400
+    return json_from_result(
+        res,
+        ok_to_payload=lambda _: {"message": "Team registration successful!"},
+        err_status_code=400,
+    )
 
 
 @bp.route("/<tournament_url>/register-player", methods=["POST"])
@@ -108,15 +104,17 @@ def register_player_for_tournament(tournament_url: str):
         jersey_name=request.form.get("jersey_name", ""),
         waiver_legal_name_signature=request.form.get("waiver_legal_name_signature", ""),
     )
-    match res:
-        case Ok(_):
-            if team_id:
-                msg = "Registration submitted! The team will need to approve your request."
-            else:
-                msg = "Player registration successful! You are now registered for the tournament."
-            return jsonify({"success": True, "message": msg}), 200
-        case Err(err):
-            return jsonify({"success": False, "error": public_error_message(err)}), 400
+    return json_from_result(
+        res,
+        ok_to_payload=lambda _: {
+            "message": (
+                "Registration submitted! The team will need to approve your request."
+                if team_id
+                else "Player registration successful! You are now registered for the tournament."
+            )
+        },
+        err_status_code=400,
+    )
 
 
 @bp.route("/<tournament_url>/deregister-team", methods=["POST"])
@@ -146,19 +144,11 @@ def deregister_team_from_tournament(tournament_url: str):
         )
 
     res = RegistrationService.deregister_team(tournament_url, current_user.id)
-    match res:
-        case Ok(_):
-            return (
-                jsonify(
-                    {
-                        "success": True,
-                        "message": "Team successfully deregistered from tournament",
-                    }
-                ),
-                200,
-            )
-        case Err(err):
-            return jsonify({"success": False, "error": public_error_message(err)}), 400
+    return json_from_result(
+        res,
+        ok_to_payload=lambda _: {"message": "Team successfully deregistered from tournament"},
+        err_status_code=400,
+    )
 
 
 @bp.route("/<tournament_url>/deregister-player", methods=["POST"])
@@ -188,19 +178,11 @@ def deregister_player_from_tournament(tournament_url: str):
         )
 
     res = RegistrationService.deregister_player(tournament_url, current_user.id)
-    match res:
-        case Ok(_):
-            return (
-                jsonify(
-                    {
-                        "success": True,
-                        "message": "Player successfully deregistered from tournament",
-                    }
-                ),
-                200,
-            )
-        case Err(err):
-            return jsonify({"success": False, "error": public_error_message(err)}), 400
+    return json_from_result(
+        res,
+        ok_to_payload=lambda _: {"message": "Player successfully deregistered from tournament"},
+        err_status_code=400,
+    )
 
 
 @bp.route("/<tournament_url>/mark-team-paid", methods=["POST"])
@@ -521,30 +503,20 @@ def register_player_as_to(tournament_url: str):
         jersey_name=data.get("jersey_name", ""),
         waiver_legal_name_signature=data.get("waiver_legal_name_signature", ""),
     )
-    match res:
-        case Ok(reg):
-            from models import Player
+    from models import Player
 
-            player = Player.query.get(reg.player)
-            return (
-                jsonify(
-                    {
-                        "success": True,
-                        "message": "Player registered",
-                        "player_id": reg.player,
-                        "player_name": player.name if player else reg.player,
-                        "team": reg.team,
-                        "jersey_number": reg.jersey_number,
-                        "jersey_name": reg.jersey_name,
-                    }
-                ),
-                200,
-            )
-        case Err(err):
-            from app.exceptions import ArctosError
+    def _checkin_payload(reg):
+        player = Player.query.get(reg.player)
+        return {
+            "message": "Player registered",
+            "player_id": reg.player,
+            "player_name": player.name if player else reg.player,
+            "team": reg.team,
+            "jersey_number": reg.jersey_number,
+            "jersey_name": reg.jersey_name,
+        }
 
-            status = err.status_code if isinstance(err, ArctosError) else 400
-            return jsonify({"success": False, "error": public_error_message(err)}), status
+    return json_from_result(res, ok_to_payload=_checkin_payload)
 
 
 @bp.route("/<tournament_url>/register-team-as-to", methods=["POST"])
@@ -585,25 +557,15 @@ def register_team_as_to(tournament_url: str):
         team_id=team_id,
         pseudonym=data.get("pseudonym", ""),
     )
-    match res:
-        case Ok(reg):
-            from models import Team
+    from models import Team
 
-            team = Team.query.get(reg.team)
-            return (
-                jsonify(
-                    {
-                        "success": True,
-                        "message": "Team registered",
-                        "team_id": reg.team,
-                        "team_name": team.name if team else reg.team,
-                        "pseudonym": reg.pseudonym,
-                    }
-                ),
-                200,
-            )
-        case Err(err):
-            from app.exceptions import ArctosError
+    def _checkin_team_payload(reg):
+        team = Team.query.get(reg.team)
+        return {
+            "message": "Team registered",
+            "team_id": reg.team,
+            "team_name": team.name if team else reg.team,
+            "pseudonym": reg.pseudonym,
+        }
 
-            status = err.status_code if isinstance(err, ArctosError) else 400
-            return jsonify({"success": False, "error": public_error_message(err)}), status
+    return json_from_result(res, ok_to_payload=_checkin_team_payload)
