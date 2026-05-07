@@ -271,18 +271,16 @@ class RegistrationService:
         created or updated :class:`~app.models.registration.PlayerRegistration`
         on success.
         """
-        from models import PlayerRegistration, TeamRegistration, TO, db
+        from models import PlayerRegistration, TeamRegistration, db
 
         tournament = RegistrationService._get_tournament(tournament_url).Q()
 
+        from app.services._common import resolve_actor
+        from app.services.permission_service import PermissionService
         from models import Player
 
-        is_to = TO.query.filter_by(
-            event=tournament_url,
-            user_id=actor_user_id,
-            user_type=actor_user_type,
-        ).first()
-        if not is_to:
+        actor = resolve_actor(actor_user_id, actor_user_type)
+        if not PermissionService.is_tournament_organizer(tournament_url, actor):
             return Err(UnauthorizedError("Only tournament organizers can register players on behalf"))
 
         target = Player.query.get(player_id)
@@ -369,16 +367,15 @@ class RegistrationService:
         already exist. Returns the created or updated
         :class:`~app.models.registration.TeamRegistration` on success.
         """
-        from models import Team, TeamRegistration, TO, db
+        from models import Team, TeamRegistration, db
 
         tournament = RegistrationService._get_tournament(tournament_url).Q()
 
-        is_to = TO.query.filter_by(
-            event=tournament_url,
-            user_id=actor_user_id,
-            user_type=actor_user_type,
-        ).first()
-        if not is_to:
+        from app.services._common import resolve_actor
+        from app.services.permission_service import PermissionService
+
+        actor = resolve_actor(actor_user_id, actor_user_type)
+        if not PermissionService.is_tournament_organizer(tournament_url, actor):
             return Err(UnauthorizedError("Only tournament organizers can register teams"))
 
         team = Team.query.get(team_id)

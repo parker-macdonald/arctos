@@ -106,14 +106,11 @@ class SideCompService:
 
     @staticmethod
     def _require_to(tournament_url: str, actor_user_id: str, actor_user_type: str) -> Result[None, ArctosError]:
-        from models import TO
+        from app.services._common import resolve_actor
+        from app.services.permission_service import PermissionService
 
-        is_to = TO.query.filter_by(
-            event=tournament_url,
-            user_id=actor_user_id,
-            user_type=actor_user_type,
-        ).first()
-        if not is_to:
+        actor = resolve_actor(actor_user_id, actor_user_type)
+        if not PermissionService.is_tournament_organizer(tournament_url, actor):
             return Err(UnauthorizedError("Only tournament organizers can do that"))
         return Ok(None)
 
