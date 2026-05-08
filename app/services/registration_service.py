@@ -15,7 +15,6 @@ from app.domain.enums import MatchStatus, RegistrationStatus, TeamRegistrationSt
 from app.error_values import Err, Ok, Result, allow_Q, option
 from app.exceptions import (
     ArctosError,
-    OrganizerCheckinDisabledError,
     RegistrationClosedError,
     TournamentNotFoundError,
     UnauthorizedError,
@@ -259,8 +258,6 @@ class RegistrationService:
         from models import PlayerRegistration, TeamRegistration, TO, db
 
         tournament = RegistrationService._get_tournament(tournament_url).Q()
-        if not tournament.organizer_checkin_enabled:
-            return Err(OrganizerCheckinDisabledError())
 
         from models import Player
 
@@ -361,8 +358,6 @@ class RegistrationService:
         from models import Team, TeamRegistration, TO, db
 
         tournament = RegistrationService._get_tournament(tournament_url).Q()
-        if not tournament.organizer_checkin_enabled:
-            return Err(OrganizerCheckinDisabledError())
 
         is_to = TO.query.filter_by(
             event=tournament_url,

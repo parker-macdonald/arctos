@@ -99,26 +99,6 @@ class RegistrationClosedError(ArctosError):
         super().__init__(message=message, status_code=status_code, public=public)
 
 
-class OrganizerCheckinDisabledError(ArctosError):
-    """Raised when organizer player check-in is attempted on a tournament that doesn't allow it."""
-
-    def __init__(
-        self,
-        message: str = "Organizer check-in is not enabled for this event",
-        *,
-        status_code: int = 400,
-        public: bool = True,
-    ) -> None:
-        """Initialise the error.
-
-        Args:
-            message: Human-readable description of the disabled state.
-            status_code: HTTP status code to associate with this error.
-            public: Whether ``message`` is safe to surface to end users.
-        """
-        super().__init__(message=message, status_code=status_code, public=public)
-
-
 class TournamentNotFoundError(NotFoundError):
     """Raised when a tournament URL slug cannot be resolved to a record."""
 
