@@ -15,6 +15,10 @@ chmod -R a+rwX dist/public
 cp -r dist/public $FRONTEND_SERVER_ROOT
 
 cd ..
+
+pwd
+make -d
+
 systemctl --user stop arctos
 make db-backup
 make db-migrate
