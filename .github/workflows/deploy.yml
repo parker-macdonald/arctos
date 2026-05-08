@@ -15,4 +15,10 @@ jobs:
         host: ${{ secrets.PROD_SERVER_HOST }}
         username: ${{ secrets.PROD_SERVER_USER }}
         key: ${{ secrets.PROD_SERVER_SSH_KEY }}
-        script: ~/arctos/update.sh
+        script: update.sh
+        env: 
+          GIT_BRANCH: origin/main
+          BUILD_DOCS: 0
+          REPO_ROOT: $HOME/arctos
+          FRONTEND_SERVER_ROOT: /var/www/reid/arctos/
+          CARGO_ENV_FILE: $HOME/.cargo/env

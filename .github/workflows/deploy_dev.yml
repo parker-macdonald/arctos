@@ -16,4 +16,11 @@ jobs:
         username: ${{ secrets.DEV_SERVER_USER }}
         key: ${{ secrets.DEV_SERVER_SSH_KEY }}
         port: ${{ secrets.DEV_SERVER_SSH_PORT }}
-        script: ~/arctos/update.sh
+        script: update.sh
+        env: 
+          GIT_BRANCH: origin/dev
+          BUILD_DOCS: 1
+          REPO_ROOT: $HOME/arctos
+          FRONTEND_SERVER_ROOT: /var/www/html/
+          DOCS_SERVER_ROOT: /var/www/docs/
+          CARGO_ENV_FILE: $HOME/.cargo/env
