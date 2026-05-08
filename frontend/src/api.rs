@@ -700,32 +700,14 @@ pub async fn deregister_team(tournament_url: &str) -> Result<StatusResponse, Str
     post_form_status(&url, &[]).await
 }
 
-pub async fn checkin_info(
-    tournament_url: &str,
-) -> Result<crate::types::CheckinInfoResponse, String> {
-    let c = client();
-    let r = with_credentials(c.get(format!(
-        "{}/_api/{}/checkin-info",
-        base(),
-        tournament_url
-    )))
-    .send()
-    .await
-    .map_err(|e| e.to_string())?;
-    if r.status().as_u16() == 403 {
-        return Err("Only tournament organizers can access this page".to_string());
-    }
-    response_json(r).await
-}
-
-pub async fn checkin(
+pub async fn register_player_as_to(
     tournament_url: &str,
     player_id: &str,
     team_id: Option<&str>,
     jersey_number: &str,
     jersey_name: &str,
     waiver_legal_name_signature: &str,
-) -> Result<crate::types::CheckinResponse, String> {
+) -> Result<crate::types::RegisterPlayerAsToResponse, String> {
     let c = client();
     let body = serde_json::json!({
         "player_id": player_id,
@@ -735,7 +717,7 @@ pub async fn checkin(
         "waiver_legal_name_signature": waiver_legal_name_signature,
     });
     let r = with_credentials(
-        c.post(format!("{}/_api/{}/checkin", base(), tournament_url))
+        c.post(format!("{}/_api/{}/register-player-as-to", base(), tournament_url))
             .json(&body),
     )
     .send()
@@ -744,18 +726,18 @@ pub async fn checkin(
     response_json(r).await
 }
 
-pub async fn checkin_team(
+pub async fn register_team_as_to(
     tournament_url: &str,
     team_id: &str,
     pseudonym: &str,
-) -> Result<crate::types::CheckinTeamResponse, String> {
+) -> Result<crate::types::RegisterTeamAsToResponse, String> {
     let c = client();
     let body = serde_json::json!({
         "team_id": team_id,
         "pseudonym": pseudonym,
     });
     let r = with_credentials(
-        c.post(format!("{}/_api/{}/checkin-team", base(), tournament_url))
+        c.post(format!("{}/_api/{}/register-team-as-to", base(), tournament_url))
             .json(&body),
     )
     .send()

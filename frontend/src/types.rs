@@ -1327,21 +1327,7 @@ pub struct RecordPointData {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct CheckinTeam {
-    pub id: String,
-    pub pseudonym: String,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct CheckinInfoResponse {
-    pub organizer_checkin_enabled: bool,
-    pub teams: Vec<CheckinTeam>,
-    pub waiver_required: bool,
-    pub waiver_url: Option<String>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct CheckinResponse {
+pub struct RegisterPlayerAsToResponse {
     pub success: bool,
     pub message: Option<String>,
     pub error: Option<String>,
@@ -1353,7 +1339,7 @@ pub struct CheckinResponse {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct CheckinTeamResponse {
+pub struct RegisterTeamAsToResponse {
     pub success: bool,
     pub message: Option<String>,
     pub error: Option<String>,
