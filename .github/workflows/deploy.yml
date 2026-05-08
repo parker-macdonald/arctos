@@ -3,6 +3,8 @@ name: Deploy to prod
 on:
   push:
     branches: [ main ]
+    paths-ignore:
+      - '.github/workflows/**'
 
 jobs:
   deploy:
@@ -11,14 +13,15 @@ jobs:
     steps:     
     - name: deploy via ssh pull
       uses: appleboy/ssh-action@v1.0.3
+      env: 
+        GIT_BRANCH: "origin/main"
+        BUILD_DOCS: "0"
+        REPO_ROOT: "$HOME/arctos"
+        FRONTEND_SERVER_ROOT: "/var/www/reid/arctos/"
+        CARGO_ENV_FILE: "$HOME/.cargo/env"
       with:
         host: ${{ secrets.PROD_SERVER_HOST }}
         username: ${{ secrets.PROD_SERVER_USER }}
         key: ${{ secrets.PROD_SERVER_SSH_KEY }}
         script: update.sh
-        env: 
-          GIT_BRANCH: origin/main
-          BUILD_DOCS: 0
-          REPO_ROOT: $HOME/arctos
-          FRONTEND_SERVER_ROOT: /var/www/reid/arctos/
-          CARGO_ENV_FILE: $HOME/.cargo/env
+        envs: GIT_BRANCH,BUILD_DOCS,REPO_ROOT,FRONTEND_SERVER_ROOT,CARGO_ENV_FILE
