@@ -4,8 +4,13 @@ set -e
 
 cd $REPO_ROOT
 
-git fetch origin
-git reset --hard $GIT_BRANCH
+
+if [ "${HAS_PULLED:-0}" -ne 1 ]; then
+    git fetch origin
+    git reset --hard $GIT_BRANCH
+    exec env HAS_PULLED=1 $REPO_ROOT/update.sh
+    exit 0
+fi
 
 . $CARGO_ENV_FILE
 
@@ -15,9 +20,6 @@ chmod -R a+rwX dist/public
 cp -r dist/public $FRONTEND_SERVER_ROOT
 
 cd ..
-
-pwd
-make -d
 
 systemctl --user stop arctos
 make db-backup
