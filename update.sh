@@ -28,4 +28,3 @@ if [ "$BUILD_DOCS" -eq 1 ]; then
 fi
 
 set +e
-
