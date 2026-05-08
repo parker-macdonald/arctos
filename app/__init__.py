@@ -76,6 +76,24 @@ def create_app(config: dict | None = None) -> Flask:
 
     app = Flask(__name__, static_folder="../static", template_folder="../templates")
     app.json = ArctosJSONProvider(app)
+
+    from app.utils.logging import get_or_configure_logger
+
+    _log_level = os.environ.get("ARCTOS_LOG_LEVEL", "INFO")
+    get_or_configure_logger(
+        "root",
+        logger=logging.getLogger(),
+        log_level=_log_level,
+        replace_handler=True,
+    )
+    get_or_configure_logger(
+        app.logger.name,
+        logger=app.logger,
+        log_level=_log_level,
+        replace_handler=True,
+        propagate=False,
+    )
+
     config = config or dict()
     # Default configuration
     app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev-key")
