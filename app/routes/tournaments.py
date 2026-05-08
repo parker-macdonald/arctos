@@ -234,7 +234,6 @@ def create_tournament():
         start_date=start_date,
         end_date=start_date,
         league_id=league_id,
-        organizer_checkin_enabled="organizer_checkin_enabled" in request.form,
     )
     if not league_id:
         rc = RegistrableConfig(
@@ -1886,7 +1885,6 @@ def update_tournament_settings(tournament_url):
     tournament.head_refs_allow_anyone = "head_refs_allow_anyone" in request.form
     tournament.published = "published" in request.form
     tournament.schedule_published = "schedule_published" in request.form
-    tournament.organizer_checkin_enabled = "organizer_checkin_enabled" in request.form
     if not tournament.league_id and tournament.registrable_config:
         rc = tournament.registrable_config
         rc.team_reg_fee = float(request.form.get("team_reg_fee", 0))

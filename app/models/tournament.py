@@ -45,8 +45,6 @@ class Tournament(db.Model):
         bracket: TOML string defining bracket visualisation config.
         about: Markdown description shown on the tournament homepage.
         published: Whether the tournament is publicly visible.
-        organizer_checkin_enabled: When ``True``, tournament organizers can check
-            players and teams in via the Event Check-in page on the tournament home.
         registrable_config_id: FK to the registration config for standalone
             tournaments.
         registrable_config: Relationship to the
@@ -70,7 +68,6 @@ class Tournament(db.Model):
     # Per-event fields (every tournament)
     about = db.Column(db.Text)
     published = db.Column(db.Boolean, default=False, nullable=False)
-    organizer_checkin_enabled = db.Column(db.Boolean, default=False, nullable=False, server_default="0")
 
     # Registration config: used only when league_id is null (standalone tournament).
     # When league_id is set, use league's config. Mutual exclusivity enforced by constraint.
