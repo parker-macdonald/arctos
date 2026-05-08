@@ -4,18 +4,30 @@ This directory holds the versioned schema migrations for Arctos. Every
 schema change after the initial baseline is shipped as a numbered
 revision file under `versions/`.
 
-## Layout
+## What is a migration, and why do we need them?
 
-```
-migrations/
-  env.py              # Alembic environment — wires alembic to app.models.db
-  script.py.mako      # Template used when generating new revisions
-  versions/
-    0001_baseline.py  # Empty baseline (existing schema, no upgrade ops)
-    ...               # One file per subsequent revision
-```
+A **schema migration** is a small, versioned script that brings the
+database from one shape to another (e.g. adding a column, renaming a
+table, backfilling a value). Once code is shipped that *expects* a new
+column, every running database - dev, staging, production, every
+contributor's laptop - has to grow that column. A migration is how
+that change is captured, code-reviewed, and applied deterministically
+in the same order everywhere.
 
-`alembic.ini` lives at the repository root.
+[Alembic](https://alembic.sqlalchemy.org/) is the migration tool that
+ships with SQLAlchemy. It tracks which revisions have been applied to
+a given database (in an `alembic_version` table), runs the ones that
+have not, and supports auto-generating a draft revision by diffing the
+SQLAlchemy models against the live schema. The
+[Alembic tutorial](https://alembic.sqlalchemy.org/en/latest/tutorial.html)
+and the
+[autogenerate guide](https://alembic.sqlalchemy.org/en/latest/autogenerate.html)
+are the two pages worth reading before writing your first migration.
+
+`env.py` wires Alembic to `app.models.db`; `script.py.mako` is the
+template used when generating new revisions; `versions/` holds the
+numbered revision files starting from `0001_baseline.py`. The Alembic
+config (`alembic.ini`) lives at the repository root.
 
 ## Day-to-day commands
 

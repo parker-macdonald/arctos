@@ -1,5 +1,13 @@
-"""
-Match operation routes (start, run, finalize, view).
+"""Match operation routes: scoreboard, run, finalise, view.
+
+Hosts the ``matches`` blueprint.
+
+Endpoints here cover the public scoreboard (consumed by OBS overlays), the run-match flow used by head
+refs during play, and the finalisation step that closes out a match
+and kicks off recording assembly.
+
+Workflow logic lives in ``app.services.match_service`` / ``match_actions_service``; the routes
+just parse the request and convert the resulting ``Result`` to JSON.
 """
 
 from flask import Blueprint, request, jsonify

@@ -1,5 +1,8 @@
-"""
-Schedule serialization for import/export (tags, fields, matches).
+"""Serialise tags, fields, and matches to TOML-compatible dicts (and back).
+
+Used by ``app.services.schedule_import_export_service`` for the
+round-trip between SQLAlchemy rows and the TOML schedule format.
+Empty / null keys are omitted so the resulting TOML stays tidy.
 """
 
 from __future__ import annotations

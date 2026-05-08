@@ -1,5 +1,9 @@
-"""
-Tournament-oriented application services.
+"""Tournament-page context assembly.
+
+Builds the data the SPA index endpoint needs to render a tournament
+home page: tournament metadata, registered teams / players, schedule
+preview, and standings.  The route handlers stay thin and delegate
+here.
 """
 
 from __future__ import annotations

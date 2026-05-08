@@ -1,5 +1,10 @@
-"""
-Tournament management routes.
+"""Tournament-organiser-side tournament management routes.
+
+Hosts the ``tournaments`` blueprint.  Covers TO workflows: creating
+and editing tournaments, editing the schedule, managing cameras and
+recording endpoints, and finalising recordings once a match completes.
+Boots the Flask-Executor used to run ffmpeg finalisation off the
+request thread.
 """
 
 from flask import (

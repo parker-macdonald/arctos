@@ -1,4 +1,8 @@
-"""SQLAlchemy model for camera/video upload records."""
+"""Camera / video upload records.
+
+Defines :class:`Camera` - one row per recorded clip, tracking the full
+lifecycle from upload through S3 transfer and YouTube publication.
+"""
 
 from __future__ import annotations
 

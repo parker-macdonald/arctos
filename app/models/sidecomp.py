@@ -1,4 +1,9 @@
-"""SQLAlchemy models for side competitions and their results."""
+"""Side competitions.
+
+Defines :class:`SideComp` - the competition itself, scoped to a single
+tournament - and :class:`SideCompResult`, one row per player entry.
+Independent of the main match / point flow.
+"""
 
 from __future__ import annotations
 
@@ -14,7 +19,7 @@ from app.models.constants import (
 
 
 class SideComp(db.Model):
-    """A side competition (e.g. accuracy throw, distance) at a tournament.
+    """A side competition at a tournament.
 
     Attributes:
         id: Auto-increment primary key.

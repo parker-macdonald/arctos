@@ -1,5 +1,9 @@
-"""
-Schedule import/export service for tags, fields, and matches.
+"""TOML-based import / export of a tournament's schedule.
+
+Round-trips tags, fields, and matches between SQLAlchemy rows and the
+TOML format used to seed events from the CLI or a snapshot.  Pairs with
+``app.serializers.match_schedule_serializer`` for the row -> dict
+conversion and with ``app.utils.toml_helpers`` for the parse / write.
 """
 
 from __future__ import annotations
