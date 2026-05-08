@@ -530,9 +530,6 @@ pub fn TournamentHome(url: String) -> Element {
                                             div { class: "card-body",
                                                 div { class: "d-grid gap-2",
                                                     Link { to: Route::TournamentSettings { url: url.clone() }, class: "btn btn-outline-secondary", "Settings" }
-                                                    if d.tournament.organizer_checkin_enabled {
-                                                        Link { to: Route::OrganizerCheckin { url: url.clone() }, class: "btn btn-outline-primary", "Event Check-in" }
-                                                    }
                                                     Link { to: Route::BracketSetup { url: url.clone() }, class: "btn btn-outline-secondary", "Bracket Setup" }
                                                     if let Some(ref l) = d.tournament.league {
                                                         Link { to: Route::LeagueManage { league_url: l.league_url.clone() }, class: "btn btn-outline-warning", "Registration Management" }

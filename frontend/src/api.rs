@@ -768,7 +768,6 @@ pub async fn create_tournament(
     name: &str,
     url_slug: &str,
     league_id: Option<&str>,
-    organizer_checkin_enabled: bool,
 ) -> Result<CreateTournamentResponse, String> {
     let mut params: Vec<(String, String)> = vec![
         ("name".into(), name.to_string()),
@@ -776,9 +775,6 @@ pub async fn create_tournament(
     ];
     if let Some(id) = league_id {
         params.push(("league_id".into(), id.to_string()));
-    }
-    if organizer_checkin_enabled {
-        params.push(("organizer_checkin_enabled".into(), "on".into()));
     }
     let url = format!("{}/_api/create-tournament", base());
     let c = client();

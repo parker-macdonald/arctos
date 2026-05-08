@@ -45,10 +45,6 @@ pub struct Tournament {
     pub head_refs_allow_reffing_teams: bool,
     #[serde(default)]
     pub head_refs_allow_anyone: bool,
-    /// When true, tournament organizers can check players in via the Player
-    /// Check-in page.
-    #[serde(default)]
-    pub organizer_checkin_enabled: bool,
     /// When set, this tournament is part of a league; registration is via the league.
     pub league: Option<LeagueRef>,
 }
