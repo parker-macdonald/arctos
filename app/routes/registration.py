@@ -561,7 +561,7 @@ def organizer_checkin(tournament_url: str):
     if not player_id:
         return jsonify({"success": False, "error": "player_id is required"}), 400
 
-    res = RegistrationService.organizer_checkin(
+    res = RegistrationService.register_player_as_to(
         tournament_url,
         actor_user_id=current_user.id,
         actor_user_type=current_user.__class__.__name__.lower(),
@@ -628,7 +628,7 @@ def organizer_checkin_team(tournament_url: str):
     if not team_id:
         return jsonify({"success": False, "error": "team_id is required"}), 400
 
-    res = RegistrationService.organizer_register_team(
+    res = RegistrationService.register_team_as_to(
         tournament_url,
         actor_user_id=current_user.id,
         actor_user_type=current_user.__class__.__name__.lower(),

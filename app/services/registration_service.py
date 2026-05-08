@@ -237,7 +237,7 @@ class RegistrationService:
 
     @staticmethod
     @allow_Q
-    def organizer_checkin(
+    def register_player_as_to(
         tournament_url: str,
         *,
         actor_user_id: str,
@@ -248,7 +248,7 @@ class RegistrationService:
         jersey_name: str = "",
         waiver_legal_name_signature: str = "",
     ) -> Result["PlayerRegistration", ArctosError]:
-        """Tournament-organizer-driven player check-in.
+        """Tournament-organizer-driven player registration.
 
         The actor must be a TO (tournament organizer) for ``tournament_url``.
         The target player (``player_id``) must already exist. Returns the
@@ -341,7 +341,7 @@ class RegistrationService:
 
     @staticmethod
     @allow_Q
-    def organizer_register_team(
+    def register_team_as_to(
         tournament_url: str,
         *,
         actor_user_id: str,
