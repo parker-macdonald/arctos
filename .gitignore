@@ -44,6 +44,7 @@ Cargo.lock
 /frontend/node_modules/
 /docs/_build/
 *.egg-info/
+pytest.log
 
 # stupid
 .DS_Store
