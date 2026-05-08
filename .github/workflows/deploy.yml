@@ -17,9 +17,9 @@ jobs:
       env: 
         GIT_BRANCH: "origin/main"
         BUILD_DOCS: "0"
-        REPO_ROOT: "$HOME/arctos"
+        REPO_ROOT: "~/arctos"
         FRONTEND_SERVER_ROOT: "/var/www/reid/arctos/"
-        CARGO_ENV_FILE: "$HOME/.cargo/env"
+        CARGO_ENV_FILE: "~/.cargo/env"
       with:
         host: ${{ secrets.PROD_SERVER_HOST }}
         username: ${{ secrets.PROD_SERVER_USER }}
