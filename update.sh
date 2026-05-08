@@ -14,12 +14,13 @@ dx bundle --web --release
 chmod -R a+rwX dist/public
 cp -r dist/public $FRONTEND_SERVER_ROOT
 
+cd ..
 systemctl --user stop arctos
 make db-backup
 make db-migrate
 systemctl --user start arctos
 
-cd ../docs
+cd docs
 
 if [ "$BUILD_DOCS" -eq 1 ]; then
   make html
