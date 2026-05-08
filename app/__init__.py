@@ -171,13 +171,6 @@ def create_app(config: dict | None = None) -> Flask:
 
     except Exception:
         pass
-    # Ensure tables exist (safe to call on startup)
-    try:
-        with app.app_context():
-            db.create_all()
-    except Exception:
-        # If creation fails, continue; errors will surface when accessed
-        pass
 
     # Initialize login manager
     login_manager.init_app(app)
