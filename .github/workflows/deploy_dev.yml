@@ -26,5 +26,5 @@ jobs:
         username: ${{ secrets.DEV_SERVER_USER }}
         key: ${{ secrets.DEV_SERVER_SSH_KEY }}
         port: ${{ secrets.DEV_SERVER_SSH_PORT }}
-        script: ./update.sh
+        script_path: update.sh
         envs: GIT_BRANCH,BUILD_DOCS,REPO_ROOT,FRONTEND_SERVER_ROOT,DOCS_SERVER_ROOT,CARGO_ENV_FILE
