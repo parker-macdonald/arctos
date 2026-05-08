@@ -525,15 +525,15 @@ def decline_invitation(tournament_url: str, invitation_id: int):
     return jsonify({"success": True, "message": "Player request declined"}), 200
 
 
-@bp.route("/<tournament_url>/checkin", methods=["POST"])
+@bp.route("/<tournament_url>/register-player-as-to", methods=["POST"])
 @login_required
-def organizer_checkin(tournament_url: str):
-    """Tournament-organizer-driven player check-in.
+def register_player_as_to(tournament_url: str):
+    """Tournament-organizer-driven player registration.
 
-    ``POST /_api/<tournament_url>/checkin``
+    ``POST /_api/<tournament_url>/register-player-as-to``
 
     The caller must be a TO of this tournament (enforced in the service
-    layer). Adds an existing player to the tournament with an auto-confirmed,
+    layer). Registers an existing player to the tournament with an auto-confirmed,
     fully-paid registration.
 
     Args:
@@ -580,7 +580,7 @@ def organizer_checkin(tournament_url: str):
                 jsonify(
                     {
                         "success": True,
-                        "message": "Player checked in",
+                        "message": "Player registered",
                         "player_id": reg.player,
                         "player_name": player.name if player else reg.player,
                         "team": reg.team,
@@ -597,12 +597,12 @@ def organizer_checkin(tournament_url: str):
             return jsonify({"success": False, "error": public_error_message(err)}), status
 
 
-@bp.route("/<tournament_url>/checkin-team", methods=["POST"])
+@bp.route("/<tournament_url>/register-team-as-to", methods=["POST"])
 @login_required
-def organizer_checkin_team(tournament_url: str):
+def register_team_as_to(tournament_url: str):
     """Tournament-organizer-driven team registration.
 
-    ``POST /_api/<tournament_url>/checkin-team``
+    ``POST /_api/<tournament_url>/register-team-as-to``
 
     The caller must be a TO of this tournament (enforced in the service
     layer). Adds an existing team to the tournament with an auto-confirmed,
@@ -657,38 +657,3 @@ def organizer_checkin_team(tournament_url: str):
 
             status = err.status_code if isinstance(err, ArctosError) else 400
             return jsonify({"success": False, "error": public_error_message(err)}), status
-
-
-@bp.route("/<tournament_url>/checkin-info", methods=["GET"])
-@login_required
-def organizer_checkin_info(tournament_url: str):
-    """Bootstrap data the frontend needs to render the Event Check-in page."""
-    from app.utils.helpers import get_registrable_config
-    from app.domain.enums import TeamRegistrationStatus
-
-    tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
-
-    is_to = TO.query.filter_by(
-        event=tournament_url,
-        user_id=current_user.id,
-        user_type=current_user.__class__.__name__.lower(),
-    ).first()
-    if not is_to:
-        return jsonify({"error": "Only tournament organizers can access this page"}), 403
-
-    cfg = get_registrable_config(tournament)
-    waiver_filepath = getattr(cfg, "waiver_filepath", None) if cfg else None
-
-    team_regs = TeamRegistration.query.filter_by(
-        event=tournament_url, status=TeamRegistrationStatus.CONFIRMED
-    ).all()
-    teams_payload = [{"id": r.team, "pseudonym": r.pseudonym} for r in team_regs]
-
-    return jsonify(
-        {
-            "organizer_checkin_enabled": bool(tournament.organizer_checkin_enabled),
-            "teams": teams_payload,
-            "waiver_required": bool(waiver_filepath),
-            "waiver_url": waiver_filepath,
-        }
-    )
