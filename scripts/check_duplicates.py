@@ -6,8 +6,11 @@ but currently have no database-level constraint enforcing it. Examples:
 
 * ``team_registrations(team, event)`` — a team registered twice for the same
   tournament double-counts toward ``n_max_teams``.
-* ``matches(name, event)`` — the skip-condition DSL looks matches up by name;
-  duplicates make the lookup ambiguous.
+* playable ``matches(name, event)`` rows — the skip-condition DSL looks
+  matches up by name; duplicates make the lookup ambiguous.
+* ``BREAK`` / ``JOIN`` matches ``(name, event, field)`` — operators need to
+  reuse names across fields, but duplicates on the same field are still
+  ambiguous.
 * ``fields(name, event)`` — ``Match.field`` references fields by name; two
   same-named fields in one event are indistinguishable.
 
@@ -66,11 +69,15 @@ class DuplicateCheck:
         why: Human-readable note explaining the impact of duplicates, so
             operators reading the report do not have to dig into the schema
             to understand why a duplicate matters.
+        where: Optional SQL predicate limiting which rows participate in the
+            uniqueness rule. Used for partial unique indexes such as the
+            schedule-type-specific match constraints.
     """
 
     table: str
     columns: tuple[str, ...]
     why: str
+    where: str | None = None
 
 
 # Each entry is a (table, columns) pair that should logically be unique together
@@ -106,7 +113,14 @@ CHECKS: Sequence[DuplicateCheck] = (
     DuplicateCheck(
         table="matches",
         columns=("name", "event"),
-        why="The skip-condition DSL references matches by name; duplicates make it ambiguous.",
+        why="Playable matches are looked up by name in scheduling logic; duplicates make the lookup ambiguous.",
+        where="schedule_type NOT IN ('BREAK', 'JOIN')",
+    ),
+    DuplicateCheck(
+        table="matches",
+        columns=("name", "event", "field"),
+        why="BREAK/JOIN schedule rows may reuse a name across fields, but duplicates on the same field remain ambiguous.",
+        where="schedule_type IN ('BREAK', 'JOIN')",
     ),
     DuplicateCheck(
         table="tags",
@@ -178,10 +192,14 @@ def _run_check(engine: Engine, check: DuplicateCheck) -> list[tuple]:
     """
     cols = ", ".join(check.columns)
     not_null = " AND ".join(f"{c} IS NOT NULL" for c in check.columns)
+    where_parts = [not_null]
+    if check.where:
+        where_parts.append(f"({check.where})")
+    where_clause = " AND ".join(where_parts)
     sql = sa.text(
         f"SELECT {cols}, COUNT(*) AS n "  # noqa: S608 — column names are static, not user input
         f"FROM {check.table} "
-        f"WHERE {not_null} "
+        f"WHERE {where_clause} "
         f"GROUP BY {cols} "
         f"HAVING COUNT(*) > 1 "
         f"ORDER BY n DESC"
@@ -203,6 +221,8 @@ def _format_report(check: DuplicateCheck, rows: Iterable[tuple]) -> str:
         f"  impact:  {check.why}",
         "  duplicates:",
     ]
+    if check.where:
+        lines.insert(2, f"  filter:  {check.where}")
     header = "    " + " | ".join(list(check.columns) + ["count"])
     lines.append(header)
     lines.append("    " + "-" * (len(header) - 4))

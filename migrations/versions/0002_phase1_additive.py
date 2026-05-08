@@ -27,7 +27,10 @@ Concretely, this migration does five things:
    as a pre-flight gate. Constraints are implemented as ``UNIQUE`` indexes
    (``op.create_index(..., unique=True)``) because SQLite supports adding
    those directly, whereas adding a table-level ``UNIQUE`` constraint
-   would require rebuilding the whole table.
+   would require rebuilding the whole table. ``matches`` is the one special
+   case: playable rows stay unique on ``(name, event)``, while ``BREAK`` /
+   ``JOIN`` rows are only unique on ``(name, event, field)`` via partial
+   unique indexes.
 
 4. **Mutual-exclusivity CHECK constraints** on ``team_registrations``,
    ``player_registrations``, and ``tos`` enforcing that exactly one of
@@ -235,7 +238,22 @@ def upgrade() -> None:
         unique=True,
     )
     op.create_index("uq_headrefs_player_event", "headrefs", ["player", "event"], unique=True)
-    op.create_index("uq_matches_name_event", "matches", ["name", "event"], unique=True)
+    op.create_index(
+        "unique_with_field",
+        "matches",
+        ["name", "event", "field"],
+        unique=True,
+        sqlite_where=sa.text("schedule_type IN ('BREAK', 'JOIN')"),
+        postgresql_where=sa.text("schedule_type IN ('BREAK', 'JOIN')"),
+    )
+    op.create_index(
+        "unique_without_field",
+        "matches",
+        ["name", "event"],
+        unique=True,
+        sqlite_where=sa.text("schedule_type NOT IN ('BREAK', 'JOIN')"),
+        postgresql_where=sa.text("schedule_type NOT IN ('BREAK', 'JOIN')"),
+    )
     op.create_index("uq_tags_name_event", "tags", ["name", "event"], unique=True)
     op.create_index("uq_fields_name_event", "fields", ["name", "event"], unique=True)
     op.create_index("uq_sidecompresults_comp_player", "sidecompresults", ["comp", "player"], unique=True)
@@ -269,7 +287,8 @@ def downgrade() -> None:
     op.drop_index("uq_sidecompresults_comp_player", table_name="sidecompresults")
     op.drop_index("uq_fields_name_event", table_name="fields")
     op.drop_index("uq_tags_name_event", table_name="tags")
-    op.drop_index("uq_matches_name_event", table_name="matches")
+    op.drop_index("unique_without_field", table_name="matches")
+    op.drop_index("unique_with_field", table_name="matches")
     op.drop_index("uq_headrefs_player_event", table_name="headrefs")
     op.drop_index("uq_player_registrations_player_league", table_name="player_registrations")
     op.drop_index("uq_player_registrations_player_event", table_name="player_registrations")
