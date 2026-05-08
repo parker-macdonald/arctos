@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timedelta, timezone
 
+import sqlalchemy as sa
 
 from app.domain.enums import (
     MatchStatus,
@@ -40,7 +41,7 @@ class Match(db.Model):
 
     Attributes:
         uuid: UUID primary key, auto-generated.
-        name: Human-readable match name (unique within the tournament).
+        name: Human-readable match name.
         event: Tournament URL slug (FK).
         team1: ID of the first team, or ``None`` while unresolved.
         team2: ID of the second team, or ``None`` while unresolved.
@@ -78,6 +79,23 @@ class Match(db.Model):
     """
 
     __tablename__ = "matches"
+    __table_args__ = (
+        db.Index(
+            "unique_with_field",
+            "name",
+            "event",
+            "field",
+            unique=True,
+            sqlite_where=sa.text("schedule_type IN ('BREAK', 'JOIN')"),
+        ),
+        db.Index(
+            "unique_without_field",
+            "name",
+            "event",
+            unique=True,
+            sqlite_where=sa.text("schedule_type NOT IN ('BREAK', 'JOIN')"),
+        ),
+    )
 
     uuid = db.Column(db.String(UUID_LEN), primary_key=True, default=lambda: str(uuid.uuid4()))
     name = db.Column(db.String(LONG_NAME_LEN), nullable=False)

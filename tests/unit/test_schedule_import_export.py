@@ -4,6 +4,7 @@ import textwrap
 from datetime import datetime, timezone
 
 import pytest
+import sqlalchemy as sa
 
 from app.error_values import Err, Ok
 from app.services.schedule_import_export_service import ScheduleImportExportService
@@ -278,7 +279,7 @@ def test_break_join_matches_can_have_duplicate_names_on_different_fields(test_db
 
 @pytest.mark.unit
 def test_regular_matches_cannot_have_duplicate_names(test_db, tournament, app):
-    """Regular matches (STATIC/SAFE/FAST) must have unique names within tournament."""
+    """Regular matches (STATIC/SAFE/FAST) are DB-enforced unique within a tournament."""
     tournament_url = tournament.url
 
     # Create a field
@@ -299,10 +300,8 @@ def test_regular_matches_cannot_have_duplicate_names(test_db, tournament, app):
     db.session.add(match1)
     db.session.commit()
 
-    # Try to create another STATIC match with the same name (even on different field) - should fail
-
-    # We can't easily test the route directly, but we can test the uniqueness constraint
-    # by trying to create a duplicate match directly
+    # Try to create another STATIC match with the same name (even on different
+    # field) — the partial unique index should reject it.
     match2 = Match(
         name="Match A",
         event=tournament_url,
@@ -312,13 +311,12 @@ def test_regular_matches_cannot_have_duplicate_names(test_db, tournament, app):
         nominal_length=60,
     )
     db.session.add(match2)
-    db.session.commit()
+    with pytest.raises(sa.exc.IntegrityError):
+        db.session.commit()
+    db.session.rollback()
 
-    # Both exist in DB (no DB constraint), but the route validation should prevent this
-    # Let's verify that regular matches with same name exist (they do, but route should prevent creation)
     matches = Match.query.filter_by(event=tournament_url, name="Match A", schedule_type="STATIC").all()
-    # Note: This test verifies the DB allows it, but the route validation should prevent it
-    # We'll test the route validation separately if needed
+    assert len(matches) == 1
 
 
 @pytest.mark.unit
