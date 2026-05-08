@@ -346,18 +346,24 @@ def create_app(config: dict | None = None) -> Flask:
             from app.utils.scheduling import recompute_all_match_times
 
             now = datetime.now(timezone.utc)
-            for t in Tournament.query.all():
-                if t.end_date is None:
+            # Materialise the (url, end_date) pairs up front so iteration is
+            # decoupled from the session: recompute_all_match_times commits in
+            # the global session, which expires every still-pending ORM row in
+            # the iterator and would otherwise raise DetachedInstanceError on
+            # the next access.
+            tournaments = [(t.url, t.end_date) for t in Tournament.query.all()]
+            db.session.remove()
+            for url, end_date in tournaments:
+                if end_date is None:
                     not_complete = True
                 else:
-                    end_utc = t.end_date.replace(tzinfo=timezone.utc) if t.end_date.tzinfo is None else t.end_date
+                    end_utc = end_date.replace(tzinfo=timezone.utc) if end_date.tzinfo is None else end_date
                     not_complete = end_utc >= now
                 if not_complete:
                     try:
-                        recompute_all_match_times(t.url)
+                        recompute_all_match_times(url)
                     except Exception:
-                        logger.exception("recompute_all_match_times failed for tournament %s", t.url)
-                    db.session.remove()
+                        logger.exception("recompute_all_match_times failed for tournament %s", url)
     except Exception:
         logger.exception("Tournament boot-time recompute pass failed")
 
