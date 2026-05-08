@@ -28,9 +28,7 @@ def test_create_standalone_tournament(client, player_user):
     )
     assert resp.status_code == 200, resp.get_data(as_text=True)
     assert Tournament.query.get("ha-standalone") is not None
-    rc = RegistrableConfig.query.filter_by(
-        id=Tournament.query.get("ha-standalone").registrable_config_id
-    ).one()
+    rc = RegistrableConfig.query.filter_by(id=Tournament.query.get("ha-standalone").registrable_config_id).one()
     assert rc.team_registration_open is False
     assert rc.player_registration_open is False
 
@@ -42,9 +40,7 @@ def test_create_event_for_league(client, player_user):
     league = League(url="lg", name="Test League", registrable_config_id=rc.id)
     db.session.add(league)
     db.session.flush()
-    db.session.add(
-        TO(user_id=player_user.id, user_type="player", event=None, league_id="lg")
-    )
+    db.session.add(TO(user_id=player_user.id, user_type="player", event=None, league_id="lg"))
     db.session.commit()
 
     login_as(client, player_user)
