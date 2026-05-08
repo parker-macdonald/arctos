@@ -1,10 +1,10 @@
-"""Tests for the organizer player check-in feature."""
+"""Tests for the TO-driven player and team registration feature."""
 
 from datetime import datetime, timezone
 
 import pytest
 
-from app.exceptions import OrganizerCheckinDisabledError, UnauthorizedError, ValidationError
+from app.exceptions import UnauthorizedError, ValidationError
 from app.error_values import Err, Ok
 from app.domain.enums import RegistrationStatus, TeamRegistrationStatus
 from app.services.registration_service import RegistrationService
@@ -20,21 +20,9 @@ from models import (
 from tests.utils import make_registrable_config, login_as
 
 
-def test_organizer_checkin_disabled_error_defaults():
-    err = OrganizerCheckinDisabledError()
-    assert err.message == "Organizer check-in is not enabled for this event"
-    assert err.status_code == 400
-    assert err.public is True
-
-
-def test_organizer_checkin_disabled_error_custom_message():
-    err = OrganizerCheckinDisabledError("custom")
-    assert err.message == "custom"
-
-
 @pytest.fixture
 def checkin_tournament(test_db):
-    """A tournament that allows organizer check-in, with no waiver configured."""
+    """A tournament with no waiver configured."""
     cfg = make_registrable_config(
         team_registration_open=False,
         player_registration_open=False,
@@ -44,7 +32,6 @@ def checkin_tournament(test_db):
         name="Checkin Event",
         start_date=datetime.now(timezone.utc),
         registrable_config_id=cfg.id,
-        organizer_checkin_enabled=True,
         published=True,
     )
     db.session.add(t)
@@ -93,32 +80,8 @@ def confirmed_team(test_db, checkin_tournament):
 
 
 @pytest.mark.integration
-def test_checkin_returns_disabled_when_flag_off(test_db, target_player):
-    cfg = make_registrable_config()
-    t = Tournament(
-        url="not-a-checkin-event",
-        name="X",
-        start_date=datetime.now(timezone.utc),
-        registrable_config_id=cfg.id,
-        organizer_checkin_enabled=False,
-    )
-    db.session.add(t)
-    db.session.commit()
-
-    res = RegistrationService.organizer_checkin(
-        t.url,
-        actor_user_id="anyone",
-        actor_user_type="player",
-        player_id=target_player.id,
-        team_id=None,
-    )
-    assert isinstance(res, Err)
-    assert isinstance(res.unwrap_err(), OrganizerCheckinDisabledError)
-
-
-@pytest.mark.integration
 def test_checkin_rejects_non_to_actor(checkin_tournament, target_player):
-    res = RegistrationService.organizer_checkin(
+    res = RegistrationService.register_player_as_to(
         checkin_tournament.url,
         actor_user_id="random-user",
         actor_user_type="player",
@@ -133,7 +96,7 @@ def test_checkin_rejects_non_to_actor(checkin_tournament, target_player):
 
 @pytest.mark.integration
 def test_checkin_happy_path_no_team(checkin_tournament, to_player, target_player):
-    res = RegistrationService.organizer_checkin(
+    res = RegistrationService.register_player_as_to(
         checkin_tournament.url,
         actor_user_id=to_player.id,
         actor_user_type="player",
@@ -152,7 +115,7 @@ def test_checkin_happy_path_no_team(checkin_tournament, to_player, target_player
 
 @pytest.mark.integration
 def test_checkin_happy_path_with_team(checkin_tournament, to_player, target_player, confirmed_team):
-    res = RegistrationService.organizer_checkin(
+    res = RegistrationService.register_player_as_to(
         checkin_tournament.url,
         actor_user_id=to_player.id,
         actor_user_type="player",
@@ -170,7 +133,7 @@ def test_checkin_happy_path_with_team(checkin_tournament, to_player, target_play
 
 @pytest.mark.integration
 def test_checkin_unknown_player(checkin_tournament, to_player):
-    res = RegistrationService.organizer_checkin(
+    res = RegistrationService.register_player_as_to(
         checkin_tournament.url,
         actor_user_id=to_player.id,
         actor_user_type="player",
@@ -185,7 +148,7 @@ def test_checkin_unknown_player(checkin_tournament, to_player):
 
 @pytest.mark.integration
 def test_checkin_rejects_already_confirmed(checkin_tournament, to_player, target_player):
-    first = RegistrationService.organizer_checkin(
+    first = RegistrationService.register_player_as_to(
         checkin_tournament.url,
         actor_user_id=to_player.id,
         actor_user_type="player",
@@ -194,7 +157,7 @@ def test_checkin_rejects_already_confirmed(checkin_tournament, to_player, target
     )
     assert isinstance(first, Ok)
 
-    second = RegistrationService.organizer_checkin(
+    second = RegistrationService.register_player_as_to(
         checkin_tournament.url,
         actor_user_id=to_player.id,
         actor_user_type="player",
@@ -223,7 +186,7 @@ def test_checkin_reuses_cancelled_row(checkin_tournament, to_player, target_play
     db.session.commit()
     cancelled_id = cancelled.id
 
-    res = RegistrationService.organizer_checkin(
+    res = RegistrationService.register_player_as_to(
         checkin_tournament.url,
         actor_user_id=to_player.id,
         actor_user_type="player",
@@ -246,7 +209,7 @@ def test_checkin_reuses_cancelled_row(checkin_tournament, to_player, target_play
 
 @pytest.mark.integration
 def test_checkin_rejects_unregistered_team(checkin_tournament, to_player, target_player):
-    res = RegistrationService.organizer_checkin(
+    res = RegistrationService.register_player_as_to(
         checkin_tournament.url,
         actor_user_id=to_player.id,
         actor_user_type="player",
@@ -272,7 +235,6 @@ def test_checkin_waiver_required(test_db, target_player):
         name="W",
         start_date=datetime.now(timezone.utc),
         registrable_config_id=cfg.id,
-        organizer_checkin_enabled=True,
     )
     to_player = Player(id="to1", name="TO")
     to_player.set_password("pw")
@@ -281,7 +243,7 @@ def test_checkin_waiver_required(test_db, target_player):
     db.session.add(TO(user_id=to_player.id, user_type="player", event=t.url))
     db.session.commit()
 
-    blank = RegistrationService.organizer_checkin(
+    blank = RegistrationService.register_player_as_to(
         t.url,
         actor_user_id=to_player.id,
         actor_user_type="player",
@@ -292,7 +254,7 @@ def test_checkin_waiver_required(test_db, target_player):
     assert isinstance(blank, Err)
     assert "Waiver signature" in blank.unwrap_err().message
 
-    signed = RegistrationService.organizer_checkin(
+    signed = RegistrationService.register_player_as_to(
         t.url,
         actor_user_id=to_player.id,
         actor_user_type="player",
@@ -310,7 +272,7 @@ def test_checkin_waiver_required(test_db, target_player):
 @pytest.mark.integration
 def test_post_checkin_unauthenticated(client, checkin_tournament, target_player):
     res = client.post(
-        f"/_api/{checkin_tournament.url}/checkin",
+        f"/_api/{checkin_tournament.url}/register-player-as-to",
         json={"player_id": target_player.id},
     )
     assert res.status_code == 401
@@ -326,7 +288,7 @@ def test_post_checkin_non_to(client, checkin_tournament, target_player, test_db)
     login_as(client, other)
 
     res = client.post(
-        f"/_api/{checkin_tournament.url}/checkin",
+        f"/_api/{checkin_tournament.url}/register-player-as-to",
         json={"player_id": target_player.id},
     )
     assert res.status_code == 403
@@ -340,7 +302,7 @@ def test_post_checkin_happy_path(client, checkin_tournament, to_player, target_p
     login_as(client, to_player)
 
     res = client.post(
-        f"/_api/{checkin_tournament.url}/checkin",
+        f"/_api/{checkin_tournament.url}/register-player-as-to",
         json={
             "player_id": target_player.id,
             "team": confirmed_team.id,
@@ -363,7 +325,7 @@ def test_post_checkin_applies_defaults(client, checkin_tournament, to_player, ta
     login_as(client, to_player)
 
     res = client.post(
-        f"/_api/{checkin_tournament.url}/checkin",
+        f"/_api/{checkin_tournament.url}/register-player-as-to",
         json={"player_id": target_player.id},
     )
     assert res.status_code == 200
@@ -376,7 +338,7 @@ def test_post_checkin_missing_player_id(client, checkin_tournament, to_player):
     login_as(client, to_player)
 
     res = client.post(
-        f"/_api/{checkin_tournament.url}/checkin",
+        f"/_api/{checkin_tournament.url}/register-player-as-to",
         json={"team": None},
     )
     assert res.status_code == 400
@@ -388,7 +350,7 @@ def test_post_checkin_requires_json(client, checkin_tournament, to_player):
     login_as(client, to_player)
 
     res = client.post(
-        f"/_api/{checkin_tournament.url}/checkin",
+        f"/_api/{checkin_tournament.url}/register-player-as-to",
         data="player_id=anyone",
         content_type="application/x-www-form-urlencoded",
     )
@@ -400,78 +362,18 @@ def test_post_checkin_already_confirmed(client, checkin_tournament, to_player, t
     login_as(client, to_player)
 
     first = client.post(
-        f"/_api/{checkin_tournament.url}/checkin",
+        f"/_api/{checkin_tournament.url}/register-player-as-to",
         json={"player_id": target_player.id},
     )
     assert first.status_code == 200
 
     second = client.post(
-        f"/_api/{checkin_tournament.url}/checkin",
+        f"/_api/{checkin_tournament.url}/register-player-as-to",
         json={"player_id": target_player.id},
     )
     assert second.status_code == 400
     assert second.json["success"] is False
     assert "already checked in" in second.json["error"]
-
-
-@pytest.mark.integration
-def test_get_checkin_info_unauthenticated(client, checkin_tournament):
-    res = client.get(f"/_api/{checkin_tournament.url}/checkin-info")
-    assert res.status_code == 401
-
-
-@pytest.mark.integration
-def test_get_checkin_info_non_to(client, checkin_tournament, test_db):
-    other = Player(id="not-a-to-2", name="Not a TO")
-    other.set_password("pw")
-    db.session.add(other)
-    db.session.commit()
-    login_as(client, other)
-
-    res = client.get(f"/_api/{checkin_tournament.url}/checkin-info")
-    assert res.status_code == 403
-
-
-@pytest.mark.integration
-def test_get_checkin_info_to(client, checkin_tournament, to_player, confirmed_team):
-    login_as(client, to_player)
-
-    res = client.get(f"/_api/{checkin_tournament.url}/checkin-info")
-    assert res.status_code == 200
-    body = res.json
-    assert body["organizer_checkin_enabled"] is True
-    assert {"id": confirmed_team.id, "pseudonym": "Blue Team"} in body["teams"]
-    assert body["waiver_required"] is False
-    assert body["waiver_url"] is None
-
-
-@pytest.mark.integration
-def test_get_checkin_info_flag_off_returns_200(client, test_db):
-    cfg = make_registrable_config()
-    t = Tournament(
-        url="flag-off-checkin",
-        name="Flag Off",
-        start_date=datetime.now(timezone.utc),
-        registrable_config_id=cfg.id,
-        organizer_checkin_enabled=False,
-    )
-    db.session.add(t)
-    db.session.flush()
-
-    organizer = Player(id="flag-off-to", name="Flag Off TO")
-    organizer.set_password("pw")
-    db.session.add(organizer)
-    db.session.add(TO(user_id=organizer.id, user_type="player", event=t.url))
-    db.session.commit()
-
-    login_as(client, organizer)
-
-    res = client.get(f"/_api/{t.url}/checkin-info")
-    assert res.status_code == 200
-    assert res.json["organizer_checkin_enabled"] is False
-    assert res.json["teams"] == []
-    assert res.json["waiver_required"] is False
-    assert res.json["waiver_url"] is None
 
 
 def _make_team(test_db, *, team_id="green-team", name="Green Team"):
@@ -483,36 +385,10 @@ def _make_team(test_db, *, team_id="green-team", name="Green Team"):
 
 
 @pytest.mark.integration
-def test_register_team_returns_disabled_when_flag_off(test_db, to_player):
-    cfg = make_registrable_config()
-    t = Tournament(
-        url="not-a-checkin-event-2",
-        name="X",
-        start_date=datetime.now(timezone.utc),
-        registrable_config_id=cfg.id,
-        organizer_checkin_enabled=False,
-    )
-    db.session.add(t)
-    db.session.flush()
-    db.session.add(TO(user_id=to_player.id, user_type="player", event=t.url))
-    target_team = _make_team(test_db, team_id="closed-team", name="Closed Team")
-    db.session.commit()
-
-    res = RegistrationService.organizer_register_team(
-        t.url,
-        actor_user_id=to_player.id,
-        actor_user_type="player",
-        team_id=target_team.id,
-    )
-    assert isinstance(res, Err)
-    assert isinstance(res.unwrap_err(), OrganizerCheckinDisabledError)
-
-
-@pytest.mark.integration
 def test_register_team_rejects_non_to_actor(checkin_tournament, test_db):
     target_team = _make_team(test_db, team_id="reject-team", name="Reject Team")
 
-    res = RegistrationService.organizer_register_team(
+    res = RegistrationService.register_team_as_to(
         checkin_tournament.url,
         actor_user_id="random-user",
         actor_user_type="player",
@@ -528,7 +404,7 @@ def test_register_team_rejects_non_to_actor(checkin_tournament, test_db):
 def test_register_team_happy_path_default_pseudonym(checkin_tournament, to_player, test_db):
     target_team = _make_team(test_db, team_id="orange-team", name="Orange Team")
 
-    res = RegistrationService.organizer_register_team(
+    res = RegistrationService.register_team_as_to(
         checkin_tournament.url,
         actor_user_id=to_player.id,
         actor_user_type="player",
@@ -548,7 +424,7 @@ def test_register_team_happy_path_default_pseudonym(checkin_tournament, to_playe
 def test_register_team_happy_path_custom_pseudonym(checkin_tournament, to_player, test_db):
     target_team = _make_team(test_db, team_id="purple-team", name="Purple Team")
 
-    res = RegistrationService.organizer_register_team(
+    res = RegistrationService.register_team_as_to(
         checkin_tournament.url,
         actor_user_id=to_player.id,
         actor_user_type="player",
@@ -561,7 +437,7 @@ def test_register_team_happy_path_custom_pseudonym(checkin_tournament, to_player
 
 @pytest.mark.integration
 def test_register_team_unknown_team(checkin_tournament, to_player):
-    res = RegistrationService.organizer_register_team(
+    res = RegistrationService.register_team_as_to(
         checkin_tournament.url,
         actor_user_id=to_player.id,
         actor_user_type="player",
@@ -575,7 +451,7 @@ def test_register_team_unknown_team(checkin_tournament, to_player):
 
 @pytest.mark.integration
 def test_register_team_rejects_already_confirmed(checkin_tournament, to_player, confirmed_team):
-    res = RegistrationService.organizer_register_team(
+    res = RegistrationService.register_team_as_to(
         checkin_tournament.url,
         actor_user_id=to_player.id,
         actor_user_type="player",
@@ -602,7 +478,7 @@ def test_register_team_reuses_cancelled_row(checkin_tournament, to_player, test_
     db.session.commit()
     cancelled_id = cancelled.id
 
-    res = RegistrationService.organizer_register_team(
+    res = RegistrationService.register_team_as_to(
         checkin_tournament.url,
         actor_user_id=to_player.id,
         actor_user_type="player",
@@ -630,7 +506,6 @@ def test_register_team_n_max_cap_with_count_in_message(test_db):
         name="Capped",
         start_date=datetime.now(timezone.utc),
         registrable_config_id=cfg.id,
-        organizer_checkin_enabled=True,
     )
     organizer = Player(id="capped-to", name="Capped TO")
     organizer.set_password("pw")
@@ -655,7 +530,7 @@ def test_register_team_n_max_cap_with_count_in_message(test_db):
     db.session.add(overflow)
     db.session.commit()
 
-    res = RegistrationService.organizer_register_team(
+    res = RegistrationService.register_team_as_to(
         t.url,
         actor_user_id=organizer.id,
         actor_user_type="player",
@@ -671,7 +546,7 @@ def test_register_team_n_max_cap_with_count_in_message(test_db):
 def test_register_team_invalid_pseudonym_chars(checkin_tournament, to_player, test_db):
     target_team = _make_team(test_db, team_id="bad-name-team", name="Some Team")
 
-    res = RegistrationService.organizer_register_team(
+    res = RegistrationService.register_team_as_to(
         checkin_tournament.url,
         actor_user_id=to_player.id,
         actor_user_type="player",
@@ -689,7 +564,7 @@ def test_post_checkin_team_unauthenticated(client, checkin_tournament, test_db):
     target_team = _make_team(test_db, team_id="anon-team", name="Anon Team")
 
     res = client.post(
-        f"/_api/{checkin_tournament.url}/checkin-team",
+        f"/_api/{checkin_tournament.url}/register-team-as-to",
         json={"team_id": target_team.id},
     )
     assert res.status_code == 401
@@ -705,7 +580,7 @@ def test_post_checkin_team_non_to(client, checkin_tournament, test_db):
     login_as(client, other)
 
     res = client.post(
-        f"/_api/{checkin_tournament.url}/checkin-team",
+        f"/_api/{checkin_tournament.url}/register-team-as-to",
         json={"team_id": target_team.id},
     )
     assert res.status_code == 403
@@ -720,7 +595,7 @@ def test_post_checkin_team_happy_path(client, checkin_tournament, to_player, tes
     login_as(client, to_player)
 
     res = client.post(
-        f"/_api/{checkin_tournament.url}/checkin-team",
+        f"/_api/{checkin_tournament.url}/register-team-as-to",
         json={"team_id": target_team.id, "pseudonym": "Happy Squad"},
     )
     assert res.status_code == 200
@@ -737,7 +612,7 @@ def test_post_checkin_team_default_pseudonym(client, checkin_tournament, to_play
     login_as(client, to_player)
 
     res = client.post(
-        f"/_api/{checkin_tournament.url}/checkin-team",
+        f"/_api/{checkin_tournament.url}/register-team-as-to",
         json={"team_id": target_team.id},
     )
     assert res.status_code == 200
@@ -749,7 +624,7 @@ def test_post_checkin_team_missing_team_id(client, checkin_tournament, to_player
     login_as(client, to_player)
 
     res = client.post(
-        f"/_api/{checkin_tournament.url}/checkin-team",
+        f"/_api/{checkin_tournament.url}/register-team-as-to",
         json={"pseudonym": "x"},
     )
     assert res.status_code == 400
@@ -761,7 +636,7 @@ def test_post_checkin_team_requires_json(client, checkin_tournament, to_player):
     login_as(client, to_player)
 
     res = client.post(
-        f"/_api/{checkin_tournament.url}/checkin-team",
+        f"/_api/{checkin_tournament.url}/register-team-as-to",
         data="team_id=anyone",
         content_type="application/x-www-form-urlencoded",
     )
