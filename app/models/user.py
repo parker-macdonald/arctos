@@ -1,4 +1,12 @@
-"""SQLAlchemy models for individual players and teams."""
+"""Player and Team account models.
+
+Defines :class:`Player` (individual user accounts) and :class:`Team`
+(team accounts that register for events).
+
+Both subclass :class:`flask_login.UserMixin`, so Flask-Login can authenticate either
+shape with the same machinery; both also support either password or
+Google OAuth login.
+"""
 
 from __future__ import annotations
 

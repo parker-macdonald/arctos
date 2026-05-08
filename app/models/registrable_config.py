@@ -1,4 +1,12 @@
-"""SQLAlchemy model for shared registration configuration (RegistrableConfig)."""
+"""Registration configuration shared by tournaments and leagues.
+
+Defines :class:`RegistrableConfig` - the bundle of registration
+settings (fees, caps, waiver, open/close toggles) that governs how a
+tournament or league accepts entries. A standalone tournament owns its
+config directly; a league tournament inherits its parent league's
+config. Resolve the effective config for any tournament with
+:func:`app.utils.helpers.get_registrable_config`.
+"""
 
 from __future__ import annotations
 

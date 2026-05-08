@@ -4,20 +4,21 @@ Every HTTP handler lives here. Routes are organised into Flask
 blueprints by topic, but they all share the same URL prefix:
 **`/_api/`**.
 
-## What's in here
+Each file in this directory is a blueprint; its module-level docstring
+states the topic it covers. New endpoints should go into the most
+specific blueprint that fits; fall back to `_api.py` only if nothing
+else is appropriate.
 
-| File | Blueprint | Topic |
-|------|-----------|-------|
-| `_api.py` | `_api` | The general JSON API for the SPA. The largest file in the project (~6k lines). |
-| `auth.py` | `auth` | Logout, username availability, Google OAuth login + callback. (Login/register are handled inside the SPA + `_api`.) |
-| `tournaments.py` | `tournaments` | Tournament management, schedule editing, recording / camera endpoints, finalisation. |
-| `matches.py` | `matches` | Match operations: scoreboard, run, finalise, view. |
-| `notes.py` | `notes` | Match-note CRUD (head refs only). |
-| `registration.py` | `registration` | Team / player registration into tournaments and leagues. |
-| `waivers.py` | `waivers` | Public waiver-document serving (intentionally outside `/_api/` so the frontend can link to a stable URL). |
+## What is a blueprint?
 
-New endpoints should go into the most specific blueprint that fits;
-fall back to `_api.py` only if nothing else is appropriate.
+A [Flask blueprint](https://flask.palletsprojects.com/en/stable/blueprints/)
+is a way to group related routes into a module that can be registered
+on the app as a unit. Instead of every endpoint hanging off the global
+`app` object, each topic gets its own `Blueprint(...)` object that
+collects its own routes; `create_app()` then calls
+`app.register_blueprint(bp, url_prefix="/_api")` once per blueprint.
+The result is the same URL routing, but the code is split into
+manageable files instead of one mega-module.
 
 ## Conventions
 
@@ -100,23 +101,3 @@ In production, nginx serves the SPA same-origin and CORS isn't needed.
    `client` fixture + `login_as(client, user)` from `tests/utils.py`
    covers most cases.
 
-## File-by-file quick reference
-
-- **`_api.py`** - start here when looking for an existing endpoint.
-  Tournament listing, match detail, points CRUD, schedule queries,
-  rosters, head-ref permissions, notes, photos, profile updates,
-  search, ...
-- **`tournaments.py`** - TO-side workflows: create/edit tournaments,
-  edit the schedule, manage cameras, finalise recordings. Boots the
-  `Executor` used to run ffmpeg out-of-thread.
-- **`matches.py`** - public scoreboard (used by OBS overlays), run
-  match flow, finalise.
-- **`notes.py`** - referee notes attached to matches and points.
-- **`registration.py`** - register / unregister / re-register flows
-  for both teams and players, plus league registration.
-- **`auth.py`** - logout endpoint, username availability check, Google
-  OAuth (login + callback). Login/register-with-password live in
-  `_api.py`.
-- **`waivers.py`** - serves the uploaded waiver PDF/file for an event
-  or league. Falls back to the league waiver if the event belongs to
-  one. Public, no auth.

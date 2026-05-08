@@ -5,13 +5,6 @@ They live in their own package (rather than as methods on the models)
 so they can resolve cross-cutting display details - registration
 pseudonyms, head-ref permissions - without bloating the model classes.
 
-## What's in here
-
-| File | What it does |
-|------|--------------|
-| `match_note_serializer.py` | Serialises a `MatchNote` to the API shape. Resolves the author and target player's display names; for `team1`/`team2`-target notes, fills in the `team_id` from the parent match. |
-| `match_schedule_serializer.py` | Serialises tags, fields, and matches to TOML-compatible dicts (and back). Used by the schedule import/export service. Omits empty / null keys to keep the TOML output tidy. |
-
 ## Pattern
 
 Each serialiser is a `@dataclass(frozen=True)` namespace with

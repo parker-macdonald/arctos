@@ -1,6 +1,9 @@
-"""
-Internal JSON API for the Dioxus SPA. All routes live under /_api/.
-Do not use /api/ — that is reserved for a future public API.
+"""Internal JSON API for the Dioxus SPA.
+
+Hosts the ``_api`` blueprint - the catch-all for endpoints that don't
+have a more specific home (tournament listing, match detail, points
+CRUD, schedule queries, rosters, head-ref permissions, photos, profile
+updates, search, ...).
 """
 
 from flask import Blueprint, request, jsonify, session, redirect, current_app

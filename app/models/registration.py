@@ -1,4 +1,13 @@
-"""SQLAlchemy models for team and player registrations."""
+"""Per-event team and player registrations.
+
+Defines :class:`TeamRegistration` and :class:`PlayerRegistration`.
+Both tables are scoped *either* to a single tournament (``event``) *or*
+to a league (``league_id``), never both - a `CHECK` constraint
+enforces the invariant. Use
+:func:`app.services.registration_resolver.team_registrations_for_tournament`
+(and friends) to query in a way that handles both scopes
+transparently.
+"""
 
 from __future__ import annotations
 

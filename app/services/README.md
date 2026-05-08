@@ -5,20 +5,10 @@ and the persistence layer ([`models/`](../models/README.md)). They own
 multi-step workflow logic: register a team, start a match, recompute
 a schedule. Routes call into a service for anything non-trivial.
 
-## What's in here
-
-| File | What it does |
-|------|--------------|
-| `tournament_service.py` | Tournament homepage context (used by the SPA index endpoint). |
-| `registration_service.py` | Register / cancel / re-register teams and players for tournaments and leagues. |
-| `registration_resolver.py` | Read-side queries that work transparently for both standalone and league-scoped registrations. |
-| `match_service.py` | High-level match lifecycle: start, end, finalise. |
-| `match_actions_service.py` | In-match actions: add/update/delete points, update stones / sets. |
-| `match_start_eligibility.py` | Single source of truth for "can this match start?" with structured blocking reasons. Used by both the route and the SPA modal. |
-| `permission_service.py` | Flask-agnostic authorisation checks (no `current_user` / `request` access - those live in routes/decorators). |
-| `team_stats_service.py` | Compute team standings (wins, losses, points) from a set of matches. |
-| `schedule_import_export_service.py` | TOML-based import/export of tags, fields, and matches. |
-| `dual_write.py` | Read/write helpers for the join tables (`HeadRefAllowList`, `MatchReferee`, `MatchPlayer`, `CameraTimepoint`). The canonical interface for those tables. |
+Each `*_service.py` file owns one workflow area; read the module
+docstring to see what it covers. `dual_write.py` is the canonical
+interface for the four normalised join tables - call its helpers
+instead of querying those tables directly.
 
 ## Conventions
 

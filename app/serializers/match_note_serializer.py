@@ -1,5 +1,9 @@
-"""
-Match note serialization.
+"""Serialise :class:`~app.models.match.MatchNote` rows to API shape.
+
+Resolves the author and (for player-target notes) the target player's
+display name, and for ``team1`` / ``team2``-target notes fills in the
+``team_id`` from the parent match so the SPA does not have to look it
+up itself.  Used by every endpoint that returns notes.
 """
 
 from __future__ import annotations

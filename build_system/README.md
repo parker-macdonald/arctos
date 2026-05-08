@@ -3,12 +3,6 @@
 Build images used by tooling that should run the same way on every
 contributor's machine.
 
-## What's in here
-
-| File | Purpose |
-|------|---------|
-| `Dockerfile` | Python 3.12 slim image with Sphinx, MyST, Furo, autodoc-typehints, plus the project's own dependencies installed from `pyproject.toml`. |
-
 ## How it's used
 
 The container is consumed exclusively from

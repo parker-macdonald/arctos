@@ -1,64 +1,38 @@
 # `app/utils/` - Helpers & Utility Functions
 
 Helpers shared across routes, services, and models. The modules group
-loosely by topic.
+loosely into five topic areas:
 
-## Match scheduling and the ASS DSL
+- **Scheduling and the ASS DSL** - the Lisp-based dependency/skip
+  language and the per-match scheduling algorithm.
+- **Dates and times** - naive-UTC conversion helpers.
+- **Auth, users, permissions** - the small functions every route reaches
+  for (`get_registrable_config`, `can_head_ref_match`, ...).
+- **Cameras, footage, video** - the recording / upload / finalisation
+  pipeline.
+- **Validation, responses, misc** - reserved-character validation, JSON
+  response helpers, TOML parse/write.
+
+Each module's docstring covers its own surface area; the rest of this
+README is for the topics that need more than a docstring's worth of
+explanation.
+
+## The ASS DSL
 
 Arctos has a small Lisp-based DSL - the **A**rctos **S**chedule
 **S**cript, or ASS - for expressing match dependencies and skip
-conditions. A user-facing reference lives in
+conditions. The grammar (`grammar.lark`) is small enough to fit on one
+screen, but the evaluation context is large; this is the part of the
+codebase most likely to surprise newcomers.
+
+Start with `parser.py`'s top docstring and walk outward.
+`dsl_dependency_analyzer.py` walks an expression and reports which
+matches it depends on; `scheduling.py` consumes that to run the
+per-match scheduling algorithm (SAFE finalises start time when the
+last dependency *starts*; FAST when all dependencies *complete*) on
+top of the in-memory DAG built by `MatchGraph.py`. The user-facing
+reference lives in
 [`docs/arctos-schedule-script.md`](../../docs/arctos-schedule-script.md).
-
-| File | What it does |
-|------|--------------|
-| `grammar.lark` | Lark grammar for the DSL. Expressions, atoms, lists, teams in `[brackets]`, matches in `{braces}`. |
-| `parser.py` | Parses ASS expressions and evaluates them against the current tournament state (`(wins TEAM)`, `(winner MATCH)`, `(if COND TRUE FALSE)`, etc.). |
-| `dsl_dependency_analyzer.py` | Walks an ASS expression and reports which matches it depends on, distinguishing direct (`(winner Match1)`) from skip-condition (`(is-skipped {Match2})`) dependencies. |
-| `MatchGraph.py` | In-memory DAG of matches for topological sorting. Avoids repeated DB queries during schedule recomputation. |
-| `scheduling.py` | Implements PROCEDURE - the per-match scheduling algorithm. SAFE finalises start time when the last dependency *starts*; FAST when all dependencies *complete*. Called on match create/edit and on match start/end. |
-| `dependencies.py` | Resolves the linked-list-style `previous_match` / `next_match` relationships. |
-| `match_ref_resolution.py` | Turns a CSV ref string into resolved team-ID slots - used by both API and import paths to keep the `refs` / `refs_initial` columns in sync. |
-
-The DSL is the part of the codebase most likely to surprise newcomers.
-The grammar is small (it fits in one screen) but the evaluation context
-is large; start with `parser.py`'s top docstring and walk outward.
-
-## Dates and times
-
-| File | What it does |
-|------|--------------|
-| `datetime_helpers.py` | `normalize_datetime`, `to_iso_z`, etc. The codebase stores naive UTC; these helpers make conversion in/out predictable. |
-
-## Authentication / users / permissions
-
-| File | What it does |
-|------|--------------|
-| `helpers.py` | A general utility module. Most-used: `get_registrable_config(tournament)`, `can_head_ref_match(...)`, `is_valid_url_username`, `generate_permission_key` (HMAC of slug + secret, used for invite-only tournaments). |
-| `user_helpers.py` | `is_player(user)`, `is_team(user)` - the right way to type-check a Flask-Login user. Avoid `user.__class__.__name__ == "Player"`. |
-| `player_helpers.py` | Display-name resolution (jersey name -> registration -> player name -> ID). |
-| `decorators.py` | Route decorators - `require_tournament_organizer` and friends. |
-| `recording_retry.py` | Decides whether the current user is allowed to retry a failed finalisation (gated by an env var). |
-
-## Cameras, footage, video
-
-| File | What it does |
-|------|--------------|
-| `footage.py` | Finalisation worker: given a finished match, runs ffmpeg to assemble the recording and update the `Camera` row. Runs in a Flask-Executor thread. |
-| `s3_video.py` | Upload to S3 / B2 and presigned URL generation. |
-| `youtube_upload.py` | YouTube Data API v3 resumable uploads. |
-| `user_uploads.py` | Direct uploads from camera operators (chunked, with manifest tracking). |
-| `preview_store.py` | Filesystem-backed store for camera preview state - works across multiple gunicorn workers. |
-| `camera_helpers.py` | HMAC-signed access keys so camera operators can use the recording page without a login. |
-
-## Validation, responses, misc
-
-| File | What it does |
-|------|--------------|
-| `name_validation.py` | Reserved characters in match names and team pseudonyms (kept in sync with the parser/exporter). |
-| `responses.py` | `json_success` / `json_error` helpers. |
-| `result_helpers.py` | Map `Result[T, ArctosError]` to a Flask JSON response. |
-| `toml_helpers.py` | TOML parse/write for schedule import/export. |
 
 ## When to put something here vs. elsewhere
 

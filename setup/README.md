@@ -7,16 +7,11 @@ auto-detects your OS) - you shouldn't normally call them directly.
 Application Python deps are not handled here; those live in
 `pyproject.toml` and install via `make install` (`uv sync`).
 
-## What's in here
-
-| File | Used by | Installs |
-|------|---------|----------|
-| `setup-macos.sh` | `make setup` (on macOS) | XCode CLI tools, Homebrew, then everything in `Brewfile`, then calls `setup-python.sh`. |
-| `setup-ubuntu.sh` | `make setup` (on Linux) | `apt` packages from `apt-packages.txt`, `uv` (via the upstream installer), then calls `setup-python.sh`. |
-| `setup-python.sh` | called by both `setup-macos.sh` and `setup-ubuntu.sh` | A specific CPython 3.12 build via `uv python install`, then `uv sync --group dev`, then `pre-commit install`. |
-| `Brewfile` | macOS | `git`, `uv`, `sqlite`. |
-| `apt-packages.txt` | Ubuntu / Debian | `git`, `sqlite3`. |
-
+`make setup` dispatches to `setup-macos.sh` or `setup-ubuntu.sh` based
+on your OS; both scripts install platform packages (from `Brewfile` or
+`apt-packages.txt`) and then chain into `setup-python.sh`, which pins
+CPython 3.12, runs `uv sync --group dev`, and installs the pre-commit
+hook. See each script's header comments for the exact steps.
 
 Other targets:
 

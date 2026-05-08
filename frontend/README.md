@@ -7,26 +7,17 @@ serves the built bundle at `/`; the SPA calls the Flask backend at
 
 ## Layout
 
-```
-frontend/
-├── Cargo.toml         # crate manifest (dependencies, wasm features)
-├── Cargo.lock
-├── Dioxus.toml        # Dioxus build config (output dir, app title)
-├── rust-toolchain.toml
-├── index.html         # shell HTML the WASM bundle loads into
-└── src/
-    ├── main.rs        # router definition and bootstrap
-    ├── api.rs         # reqwest-based wrapper for /_api/ endpoints
-    ├── types.rs       # serde structs that mirror API responses
-    ├── components/    # reusable UI components
-    ├── pages/         # one file per route
-    ├── time_format.rs # client-side timezone conversion
-    ├── stones_filter.rs
-    └── record_idb.rs  # IndexedDB-backed video chunk buffer (wasm-only)
-```
+The crate is a standard Dioxus + WASM project (`Cargo.toml`,
+`Dioxus.toml`, `rust-toolchain.toml`, `index.html` shell). All
+application code lives under `src/`:
 
-`src/pages/` mirrors the SPA's URL structure - there's a file per
-top-level page. `src/components/` is the shared widget library.
+- `main.rs` - router definition and bootstrap.
+- `api.rs` - reqwest-based wrapper for every `/_api/` endpoint.
+- `types.rs` - serde structs mirroring API responses.
+- `pages/` - one file per route (mirrors the SPA's URL structure).
+- `components/` - shared widget library.
+- `record_idb.rs`, `time_format.rs`, `stones_filter.rs` - smaller
+  cross-cutting modules; see each file's top comment.
 
 ## Running
 

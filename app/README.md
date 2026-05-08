@@ -4,21 +4,12 @@ This package is the entire Python backend. It is wired up by the
 `create_app()` factory in [`__init__.py`](__init__.py) and exposed to
 gunicorn through the top-level `run_app.py`.
 
-## What's in here
-
-| Path | Purpose |
-|------|---------|
-| `__init__.py` | The `create_app()` factory: config, blueprints, login, OAuth, CORS, SQLite pragmas, error handlers. |
-| [`models/`](models/README.md) | SQLAlchemy ORM models. |
-| [`routes/`](routes/README.md) | Flask blueprints - every route lives under `/_api/`. |
-| [`services/`](services/README.md) | Application workflows; routes call into these. |
-| [`utils/`](utils/README.md) | Cross-cutting helpers: scheduling, ASS DSL, datetime, video pipeline, auth helpers. |
-| [`domain/`](domain/README.md) | Domain enums (`MatchStatus`, `ScheduleType`, ...). |
-| [`serializers/`](serializers/README.md) | DB row -> JSON dict conversion for API responses. |
-| `error_handlers.py` | Registers a single handler for `ArctosError` that picks JSON vs. HTML. |
-| `error_values.py` | `Result`/`Option` types and the `@allow_Q` decorator (Rust-style errors-as-values). |
-| `exceptions.py` | Domain exceptions (`ArctosError`, `NotFoundError`, `ValidationError`, ...). |
-| `filters.py` | Jinja template filters. |
+Each subpackage (`models/`, `routes/`, `services/`, `utils/`,
+`domain/`, `serializers/`) has its own README; the top-level
+[`README.md`](../README.md#repository-structure) lists what they
+cover. The top-level files in this directory (`__init__.py`,
+`error_handlers.py`, `error_values.py`, `exceptions.py`, `filters.py`)
+are documented by their own module docstrings.
 
 ## How a request gets served
 

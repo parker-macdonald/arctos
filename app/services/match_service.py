@@ -1,5 +1,15 @@
-"""
-Match operations service.
+"""High-level match lifecycle operations: start, end, finalise.
+
+Routes call into ``MatchService`` for any non-trivial transition.  The
+service orchestrates the model mutations, eligibility checks, dual-write
+roster updates, and downstream schedule recomputation that follow each
+transition; it does not own match-action endpoints (those live in
+``match_actions_service``).
+
+Like the other services in this package, ``MatchService`` is a
+``@dataclass(frozen=True)`` with ``@staticmethod`` methods - call them as
+``MatchService.start_match(...)`` - and returns ``Result[T, ArctosError]``
+rather than raising.
 """
 
 from __future__ import annotations

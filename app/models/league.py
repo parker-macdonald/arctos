@@ -1,4 +1,11 @@
-"""SQLAlchemy model for Jugger leagues."""
+"""League model.
+
+Defines :class:`League` - the optional parent of a
+:class:`~app.models.tournament.Tournament`.
+
+League tournaments inherit the league's :class:`~app.models.registrable_config.RegistrableConfig`
+instead of owning one directly.
+"""
 
 from __future__ import annotations
 

@@ -3,14 +3,8 @@
 Scripts for backups, data-quality checks, and one-off backfills. Most
 are `uv run`-able; the database backup is a shell script.
 
-## What's in here
-
-| Script | Purpose | When to run |
-|--------|---------|-------------|
-| `backup_db.sh` | Snapshot the live SQLite DB to `backups/` using SQLite's `.backup` command (atomic, locks-aware). | **Before every `make db-migrate`.** Also wired up as `make db-backup`. |
-| `backfill_normalised_tables.py` | Populate the join tables (`headref_allowlist`, `match_referees`, `match_players`, `camera_timepoints`) from the original column data. | Only relevant when bringing up a database from a dump that predates those tables. |
-| `check_duplicates.py` | Report rows that violate would-be-unique column groups (e.g. duplicate `(team, event)` in `team_registrations`, duplicate `(name, event)` in `matches`). | Before applying any migration that adds a new `UNIQUE` constraint, so the migration won't fail on existing data. Wired up as `make db-check-duplicates`. |
-| `cleanup_data_quality.py` | Find and (optionally) fix three classes of pre-migration issue: empty-string emails colliding on `UNIQUE`, orphan FK references, and duplicates. | When `check_duplicates.py` flags violations, or before introducing FK-strict migrations. Defaults to dry-run; pass an explicit flag to actually mutate data. |
+Each script's top-level docstring states what it does and when to run
+it. The "Examples" section below shows the most common invocations.
 
 ## Conventions
 

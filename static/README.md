@@ -2,15 +2,9 @@
 
 Files Flask serves directly from `/static/...`.
 
-## What's in here
-
-| Path | What it is |
-|------|------------|
-| `jeb.png` | Mascot image referenced by some pages. |
-| `js/kalman_filter.js` | Client-side Kalman filter used by the recording page for stream-time smoothing. |
-| `question-mark.svg`, `reference.svg`, `ribbon.svg`, `tag.svg` | UI icons. |
-| `run_match_pipeline.png` | Architecture diagram embedded in docs. |
-| `stones/*.mp3` | Stone-elimination sound effects (one per stone "voice"). |
+The contents are mostly self-explanatory: a few mascot / UI icons, a
+client-side Kalman filter under `js/`, and stone-elimination sound
+effects under `stones/`.
 
 The directory is also the parent of two app-managed subtrees that are
 **not** in version control:

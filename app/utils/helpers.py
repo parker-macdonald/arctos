@@ -1,5 +1,7 @@
-"""
-General helper functions for the tournament site.
+"""Cross-cutting helpers used by routes, services, and serializers.
+
+Anything that has a clearly named workflow belongs in a service; this
+module is the home for small, generally-applicable helpers that don't.
 """
 
 import hmac

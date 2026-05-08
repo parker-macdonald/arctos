@@ -6,6 +6,24 @@ Or, *what the fog site always wanted to be*
 
 See [CONTRIBUTING](CONTRIBUTING.md) for how to get involved.
 
+## New here?
+
+1. **This README** - architecture, conventions, end-to-end request trace.
+2. **[`app/README.md`](app/README.md)** - what the backend factory does
+   and how a request flows through the route -> service -> model -> db
+   layers.
+3. **[`app/models/README.md`](app/models/README.md)** - the canonical
+   domain shape (entity diagram, scope-column invariants, money / time
+   conventions).
+4. **[`docs/arctos-schedule-script.md`](docs/arctos-schedule-script.md)** -
+   the ASS DSL.
+5. **[`tests/README.md`](tests/README.md)** plus
+   **[`TESTING.md`](TESTING.md)** - fixtures and how to write a test that
+   pulls its weight.
+
+After that, dip into the other per-directory READMEs as you encounter
+their code.
+
 ## Architecture
 
 ```

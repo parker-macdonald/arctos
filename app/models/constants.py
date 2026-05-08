@@ -1,4 +1,11 @@
-"""Column-length constants for SQLAlchemy model definitions."""
+"""Column-length constants for SQLAlchemy model definitions.
+
+Every ``db.Column(db.String(N))`` in :mod:`app.models` should pull
+``N`` from a constant here rather than hard-coding a literal. Grouping
+the lengths in one place keeps related FK columns the same width as
+the PKs they reference and makes "widen this column" a one-line edit
+plus a migration.
+"""
 
 from typing import Final
 

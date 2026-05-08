@@ -5,23 +5,14 @@ here. Models are imported via `from app.models import ...` (preferred) or
 `from models import ...` - the top-level `models.py` re-exports
 everything in this package so both forms work.
 
-## What's in here
+## Conventions
 
-| File | Defines | Notes |
-|------|---------|-------|
-| `base.py` | `db = SQLAlchemy()` | The single shared SQLAlchemy instance. Import `db` from `app.models.base` (or `app.models`). |
-| `constants.py` | Column-length constants (`URL_SLUG_LEN`, `USER_ID_LEN`, ...). | Use these instead of hand-typing column lengths. |
-| `user.py` | `Player`, `Team` | Both subclass `UserMixin` - Flask-Login can log either in. |
-| `league.py` | `League` | Groups multiple tournaments under one registration config. |
-| `tournament.py` | `Tournament`, `TO`, `Field`, `Tag` | Plus the TO (Tournament Organiser) assignment table and field/tag entities. |
-| `registrable_config.py` | `RegistrableConfig` | Shared registration settings (fees, caps, waiver). Tournaments link to one (directly or through their league). |
-| `registration.py` | `TeamRegistration`, `PlayerRegistration` | Per-event team / player registrations. |
-| `match.py` | `Match`, `Point`, `MatchNote` | Matches, scored points, and notes attached to matches. |
-| `penalty_type.py` | `PenaltyType` | TO-defined penalty categories used in match notes. |
-| `records.py` | `Injury`, `HeadRef` | Player injury records and per-event head-ref assignments. |
-| `sidecomp.py` | `SideComp`, `SideCompResult` | Side competitions (accuracy throw, distance, etc.). |
-| `camera.py` | `Camera` | One row per recorded video clip; tracks upload lifecycle. |
-| `normalised.py` | `HeadRefAllowList`, `MatchReferee`, `MatchPlayer`, `CameraTimepoint` | Join tables for multi-value relationships. |
+- One model class per file. `base.py` exports the shared
+  `db = SQLAlchemy()`; everything else imports it from there.
+- Column lengths come from `constants.py` (`URL_SLUG_LEN`, `USER_ID_LEN`,
+  ...). Don't hand-type lengths.
+- Each module's docstring describes what it defines; the API reference
+  (Sphinx `automodule`) is the authoritative file-by-file map.
 
 ## Mental model
 

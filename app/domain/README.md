@@ -3,11 +3,6 @@
 Domain enums separated from the models so that services, serializers,
 and routes can import them without pulling in SQLAlchemy.
 
-## What's in here
-
-- `enums.py` - every enum used by the project, plus `parse_enum`
-  (a tolerant string -> enum coercion that returns `Option[Enum]`).
-
 ## The enums
 
 | Enum | Values | Stored as |

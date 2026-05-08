@@ -17,42 +17,15 @@ uv run pytest tests/ --cov=app           # coverage
 
 ## Layout
 
-```
-tests/
-├── conftest.py                     # shared fixtures (app, test_db, client, tournament, ...)
-├── utils.py                        # make_registrable_config, login_as
-├── test_basic.py
-├── test_dsl_dependency_analyzer.py
-├── test_dsl_parser.py
-├── test_dynamic_scheduling.py
-├── test_enums.py
-├── test_error_handlers.py
-├── test_error_values.py
-├── test_matches_api.py
-├── test_model_helpers.py
-├── test_registration_flow.py
-├── test_registration_reregister.py
-│
-├── unit/                            # marked @pytest.mark.unit
-│   ├── test_cleanup_data_quality.py
-│   ├── test_dependencies.py
-│   ├── test_dual_write.py
-│   ├── test_match_start_eligibility.py
-│   ├── test_perm_key.py
-│   ├── test_permissions.py
-│   ├── test_phase1_schema.py
-│   ├── test_schedule_import_export.py
-│   ├── test_serializers.py
-│   ├── test_services_unit.py
-│   ├── test_tag_resolution.py
-│   └── test_tournament_service.py
-│
-└── integration/                     # marked @pytest.mark.integration
-    ├── test_dual_write_parity.py
-    ├── test_match_start.py
-    ├── test_permissions.py
-    └── test_update_tags_recompute.py
-```
+- `conftest.py` - shared fixtures (`app`, `test_db`, `client`,
+  `tournament`, ...). Documented below.
+- `utils.py` - `make_registrable_config`, `login_as`.
+- Top-level `test_*.py` - mixed unit / integration tests for
+  cross-cutting concerns (the DSL parser, error values, registration
+  flows).
+- `unit/` - `@pytest.mark.unit` tests; pure logic, no HTTP, fast.
+- `integration/` - `@pytest.mark.integration` tests; spin up the test
+  client, hit `/_api/...`, assert on JSON.
 
 ## Markers
 
@@ -72,7 +45,29 @@ def test_full_tournament(): ...
 Configured in `pyproject.toml` under `[tool.pytest.ini_options]`. Strict
 markers are on (`--strict-markers`), so an unknown marker is an error.
 
-## Key fixtures (in `conftest.py`)
+## Fixtures and `conftest.py`
+
+If you are new to pytest: a **fixture** is a function whose return value
+is injected into any test that names the fixture as a parameter. They
+are how pytest provides set-up data and tear-down for tests without
+each test rebuilding its own world.
+
+```python
+def test_register_team(client, tournament, team):  # 3 fixtures injected
+    resp = client.post(f"/_api/{tournament.url}/register-team", ...)
+```
+
+`conftest.py` is the file pytest auto-loads to make fixtures available
+to every test in that directory (and subdirectories) without an
+explicit import. That is why nothing in our test files imports `app` or
+`client` - they are pulled in by name.
+
+See the pytest docs for fixtures
+([explanation](https://docs.pytest.org/en/stable/explanation/fixtures.html),
+[how-to](https://docs.pytest.org/en/stable/how-to/fixtures.html)) and
+[`conftest.py`](https://docs.pytest.org/en/stable/reference/fixtures.html#conftest-py-sharing-fixtures-across-multiple-files).
+
+### Key fixtures
 
 | Fixture | Scope | What it gives you |
 |---------|-------|-------------------|
