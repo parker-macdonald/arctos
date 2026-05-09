@@ -9,8 +9,8 @@ Adds two new columns to the ``sidecomps`` table:
 
 Both changes are additive; existing rows are unaffected.
 
-Revision ID: 0007_sidecomp_open_close_description
-Revises: 0006_sidecomp_registrations
+Revision ID: 0005_sidecomp_open_close_description
+Revises: 0004_sidecomp_registrations
 Create Date: 2026-05-06
 """
 
@@ -23,8 +23,8 @@ from alembic import op
 
 
 # revision identifiers, used by Alembic.
-revision: str = "0007_sidecomp_open_close_description"
-down_revision: Union[str, Sequence[str], None] = "0006_sidecomp_registrations"
+revision: str = "0005_sidecomp_open_close_description"
+down_revision: Union[str, Sequence[str], None] = "0004_sidecomp_registrations"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

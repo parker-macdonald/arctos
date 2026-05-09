@@ -8,8 +8,8 @@ continues to work against the schema unchanged after this migration is
 applied (the new table sits empty until backfilled or written by the new
 sign-up flow; ``created_at`` backfills via the server default).
 
-Revision ID: 0006_sidecomp_registrations
-Revises: 0005_rename_is_day_event
+Revision ID: 0004_sidecomp_registrations
+Revises: 0003_phase4_cleanup
 Create Date: 2026-05-06
 """
 
@@ -22,8 +22,8 @@ from alembic import op
 
 
 # revision identifiers, used by Alembic.
-revision: str = "0006_sidecomp_registrations"
-down_revision: Union[str, Sequence[str], None] = "0005_rename_is_day_event"
+revision: str = "0004_sidecomp_registrations"
+down_revision: Union[str, Sequence[str], None] = "0003_phase4_cleanup"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

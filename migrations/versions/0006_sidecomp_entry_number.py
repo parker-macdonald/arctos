@@ -4,8 +4,8 @@ Adds a 1-indexed ``entry_number`` to each row in
 ``sidecomp_registrations``, unique within a comp. Existing rows are
 backfilled per-comp ordered by ``id`` (earliest registration gets 1).
 
-Revision ID: 0008_sidecomp_entry_number
-Revises: 0007_sidecomp_open_close_description
+Revision ID: 0006_sidecomp_entry_number
+Revises: 0005_sidecomp_open_close_description
 Create Date: 2026-05-06
 """
 
@@ -18,8 +18,8 @@ from alembic import op
 
 
 # revision identifiers, used by Alembic.
-revision: str = "0008_sidecomp_entry_number"
-down_revision: Union[str, Sequence[str], None] = "0007_sidecomp_open_close_description"
+revision: str = "0006_sidecomp_entry_number"
+down_revision: Union[str, Sequence[str], None] = "0005_sidecomp_open_close_description"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
