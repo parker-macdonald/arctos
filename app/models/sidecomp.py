@@ -23,7 +23,7 @@ class SideComp(db.Model):
         type: One of :class:`SideCompType`.
         description: Optional free-form description of the side competition.
         registration_open: When ``True``, players can self-register; when
-            ``False`` (default), only TO check-in can add registrants.
+            ``False`` (default), only TO can add registrants.
         created_at: Timestamp when the side competition was created.
     """
 
@@ -53,7 +53,7 @@ class SideCompRegistration(db.Model):
             registration time, unique within a comp. Numbers are not reused
             after a deregistration.
         registered_at: Timestamp when the registration was created.
-        registered_by_to: ``True`` when the row was created via TO check-in,
+        registered_by_to: ``True`` when the row was created via TO registration,
             ``False`` for player self-registration.
     """
 
