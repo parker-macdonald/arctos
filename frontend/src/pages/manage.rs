@@ -561,8 +561,8 @@ pub fn Manage(url: String) -> Element {
                             if let Some(player) = selected_player() {
                                 {
                                     let teams = d.team_registrations.clone();
-                                    let waiver_required = d.waiver_required;
-                                    let waiver_url = d.waiver_url.clone();
+                                    let waiver_required = d.tournament.waiver_required;
+                                    let waiver_url = d.tournament.waiver_filepath.clone();
                                     let url_submit = url.clone();
                                     rsx! {
                                         div { class: "card mb-3",

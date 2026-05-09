@@ -2115,8 +2115,6 @@ def tournament_manage_api(tournament_url):
         return jsonify({"error": "Forbidden"}), 403
 
     tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
-    cfg = get_registrable_config(tournament)
-    waiver_filepath = getattr(cfg, "waiver_filepath", None) if cfg else None
     if tournament.league_id:
         return (
             jsonify(
@@ -2246,8 +2244,6 @@ def tournament_manage_api(tournament_url):
                 for tr in teams_with_registrations
             ],
             "player_registrations": manage_player_rows,
-            "waiver_required": bool(waiver_filepath),
-            "waiver_url": waiver_filepath,
         }
     )
 

@@ -181,8 +181,6 @@ pub struct TournamentManageResponse {
     pub search_type: String,
     pub team_registrations: Vec<ManageTeamRegistration>,
     pub player_registrations: Vec<ManagePlayerRegistration>,
-    pub waiver_required: bool,
-    pub waiver_url: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

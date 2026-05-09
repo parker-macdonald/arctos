@@ -540,7 +540,7 @@ def register_player_as_to(tournament_url: str):
         tournament_url: Tournament URL slug from the path.
 
     Request JSON:
-        player_id (str): ID of the existing player to check in. Required.
+        player_id (str): ID of the existing player to register on behalf. Required.
         team (str | None): Team ID to register under, or null/omitted for
             unaffiliated.
         jersey_number (str): Jersey number; defaults to ``"0"`` when blank.

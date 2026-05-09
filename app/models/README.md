@@ -95,14 +95,6 @@ db.session.add(t)
 db.session.commit()
 ```
 
-## Organizer check-in
-
-The `organizer_checkin_enabled` boolean on `Tournament` (default `False`) enables
-organizer-assisted player check-in for the event. When `True`, TOs can use the
-`POST /_api/<url>/checkin` endpoint to check in pre-registered players, setting
-jersey details and recording waiver signatures. TOs toggle this flag manually
-around the event date - there is no server-side date enforcement.
-
 ## Money
 
 `team_reg_fee`, `player_reg_fee`, and both `amount_paid` columns are

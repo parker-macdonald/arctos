@@ -267,7 +267,7 @@ class RegistrationService:
             user_type=actor_user_type,
         ).first()
         if not is_to:
-            return Err(UnauthorizedError("Only tournament organizers can check in players"))
+            return Err(UnauthorizedError("Only tournament organizers can register players on behalf"))
 
         target = Player.query.get(player_id)
         if target is None:
@@ -309,7 +309,7 @@ class RegistrationService:
                 RegistrationStatus.CANCELLED,
                 RegistrationStatus.REJECTED,
             ):
-                return Err(ValidationError("This player is already checked in"))
+                return Err(ValidationError("This player is already registered"))
             registration = existing_reg
             registration.team = team_id
             registration.jersey_number = jersey_number_value

@@ -167,7 +167,7 @@ def test_checkin_rejects_already_confirmed(checkin_tournament, to_player, target
     assert isinstance(second, Err)
     err = second.unwrap_err()
     assert isinstance(err, ValidationError)
-    assert "already checked in" in err.message
+    assert "already registered" in err.message
 
 
 @pytest.mark.integration
@@ -373,7 +373,7 @@ def test_post_checkin_already_confirmed(client, checkin_tournament, to_player, t
     )
     assert second.status_code == 400
     assert second.json["success"] is False
-    assert "already checked in" in second.json["error"]
+    assert "already registered" in second.json["error"]
 
 
 def _make_team(test_db, *, team_id="green-team", name="Green Team"):
