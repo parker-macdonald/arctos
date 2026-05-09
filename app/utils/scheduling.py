@@ -216,17 +216,12 @@ def _all_participating_teams_resolved(
     ):
         return False
 
-    refs_raw = (getattr(match, "refs", None) or "") or ""
-    refs_initial_raw = (getattr(match, "refs_initial", None) or "") or ""
-    refs_parts = [p.strip() for p in refs_raw.split(",")]
-    refs_initial_parts = [p.strip() for p in refs_initial_raw.split(",")]
-    n_refs = max(len(refs_parts), len(refs_initial_parts))
-    for i in range(n_refs):
-        team_id = refs_parts[i] if i < len(refs_parts) else None
-        initial = refs_initial_parts[i] if i < len(refs_initial_parts) else None
-        if not team_id and not initial:
+    from app.services.dual_write import get_match_referee_rows
+
+    for row in get_match_referee_rows(match):
+        if not row.team_id and not row.initial:
             continue
-        if not _slot_resolved(team_id, initial, tournament_url, name_to_match, tag_by_name):
+        if not _slot_resolved(row.team_id, row.initial, tournament_url, name_to_match, tag_by_name):
             return False
 
     return True

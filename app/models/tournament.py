@@ -21,21 +21,23 @@ class Tournament(db.Model):
     is set directly).  Exactly one of these must be non-null, enforced by a
     database check constraint.
 
+    Team-size and registration-cap settings live on the
+    :class:`~app.models.registrable_config.RegistrableConfig` (linked via
+    ``registrable_config_id`` for standalone events, or via the parent
+    league for league events). The head-referee allow-list lives in the
+    ``headref_allowlist`` join table; access it through the helpers in
+    :mod:`app.services.dual_write`.
+
     Attributes:
         url: URL slug used as the primary key and public identifier.
         name: Human-readable tournament name.
         start_date: Date and time the tournament begins (UTC, naive).
         end_date: Date and time the tournament ends, or ``None``.
         location: Venue name or address.
-        n_max_teams: Maximum number of registered teams allowed.
-        max_team_size_roster: Maximum players on a team's full roster.
-        max_team_size_field: Maximum players allowed on the field at once.
         max_field_size: Maximum total players per side on the field.
         schedule_published: Whether the match schedule is visible to the public.
         league_id: Foreign key to the parent league, or ``None`` for standalone
             tournaments.
-        head_refs_allowed_list: Comma-separated player IDs permitted as head
-            refs.
         head_refs_allow_reffing_teams: When ``True``, reffing teams and their
             members may also head-ref.
         head_refs_allow_anyone: When ``True``, any registered participant may
@@ -56,13 +58,9 @@ class Tournament(db.Model):
     start_date = db.Column(db.DateTime, nullable=False)
     end_date = db.Column(db.DateTime, nullable=True)
     location = db.Column(db.String(LONG_NAME_LEN))
-    n_max_teams = db.Column(db.Integer)
-    max_team_size_roster = db.Column(db.Integer)  # Maximum players on team roster
-    max_team_size_field = db.Column(db.Integer)  # Maximum players on field at once
     max_field_size = db.Column(db.Integer)
     schedule_published = db.Column(db.Boolean, default=False)
     league_id = db.Column(db.String(URL_SLUG_LEN), db.ForeignKey("leagues.url"), nullable=True)
-    head_refs_allowed_list = db.Column(db.Text)  # comma-separated list of allowed usernames
     head_refs_allow_reffing_teams = db.Column(db.Boolean, default=False)  # allow reffing teams and their members
     head_refs_allow_anyone = db.Column(db.Boolean, default=False)  # allow anyone registered
     bracket = db.Column(db.Text)  # TOML string defining bracket visualizations
@@ -114,6 +112,15 @@ class TO(db.Model):
     user_type = db.Column(db.String(SHORT_CODE_LEN), nullable=False)  # 'player' or 'team'
     event = db.Column(db.String(URL_SLUG_LEN), db.ForeignKey("tournaments.url"), nullable=True)
     league_id = db.Column(db.String(URL_SLUG_LEN), db.ForeignKey("leagues.url"), nullable=True)
+
+    __table_args__ = (
+        # Same exactly-one-of-(event, league_id) invariant as Tournament,
+        # PenaltyType, and the registration tables.
+        db.CheckConstraint(
+            "(event IS NOT NULL AND league_id IS NULL) OR (event IS NULL     AND league_id IS NOT NULL)",
+            name="ck_tos_event_league_mutual_exclusive",
+        ),
+    )
 
 
 class Field(db.Model):

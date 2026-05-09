@@ -1,5 +1,12 @@
-"""
-Match notes management routes.
+"""Match-note CRUD routes (head refs only).
+
+Hosts the ``notes`` blueprint.
+
+Endpoints here let the head ref of a match attach, edit, or remove notes targeting the match itself, one
+side, or a specific player.
+
+The serialised shape is produced by ``app.serializers.match_note_serializer`` so it stays consistent with
+the rest of the API.
 """
 
 from flask import Blueprint, request

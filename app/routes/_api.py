@@ -1,6 +1,9 @@
-"""
-Internal JSON API for the Dioxus SPA. All routes live under /_api/.
-Do not use /api/ — that is reserved for a future public API.
+"""Internal JSON API for the Dioxus SPA.
+
+Hosts the ``_api`` blueprint - the catch-all for endpoints that don't
+have a more specific home (tournament listing, match detail, points
+CRUD, schedule queries, rosters, head-ref permissions, photos, profile
+updates, search, ...).
 """
 
 from flask import Blueprint, request, jsonify, session, redirect, current_app
@@ -29,6 +32,18 @@ from app.utils.match_ref_resolution import (
     resolve_team_slot,
 )
 from app.utils.dependencies import apply_match_dependencies
+from app.services.dual_write import (
+    clear_match_referees,
+    get_camera_timepoint_arrays,
+    get_head_ref_allowlist_ids,
+    get_match_player_ids,
+    get_match_ref_initials,
+    get_match_ref_team_ids,
+    get_match_referee_rows,
+    get_match_refs_csv,
+    get_match_refs_initial_csv,
+    set_match_referees_from_csv,
+)
 from app.serializers.match_note_serializer import MatchNoteSerializer
 from app.error_values import Ok, Err
 from app.routes.tournaments import update_match_previous_link
@@ -423,12 +438,8 @@ def _tournament_to_dict(t) -> dict:
     cfg = get_registrable_config(t)
     end = t.end_date.isoformat() if t.end_date else None
     start = t.start_date.isoformat() if t.start_date else None
-    # Prefer new per-role flags if present; fall back to legacy registration_open.
-    team_reg_open = False
-    player_reg_open = False
-    if cfg:
-        team_reg_open = getattr(cfg, "team_registration_open", cfg.registration_open)
-        player_reg_open = getattr(cfg, "player_registration_open", cfg.registration_open)
+    team_reg_open = bool(cfg.team_registration_open) if cfg else False
+    player_reg_open = bool(cfg.player_registration_open) if cfg else False
 
     out = {
         "url": t.url,
@@ -450,7 +461,7 @@ def _tournament_to_dict(t) -> dict:
         "max_team_size_roster": (getattr(cfg, "max_team_size_roster", None) if cfg else None),
         "max_team_size_field": (getattr(cfg, "max_team_size_field", None) if cfg else None),
         "terms_link": cfg.terms_link if cfg else None,
-        "head_refs_allowed_list": getattr(t, "head_refs_allowed_list", None),
+        "head_refs_allowed_list": ",".join(get_head_ref_allowlist_ids(t)) or None,
         "head_refs_allow_reffing_teams": bool(getattr(t, "head_refs_allow_reffing_teams", False)),
         "head_refs_allow_anyone": bool(getattr(t, "head_refs_allow_anyone", False)),
     }
@@ -467,14 +478,14 @@ def _tournament_to_dict(t) -> dict:
         league = League.query.get(t.league_id)
         if league and league.registrable_config:
             rc = league.registrable_config
-            l_team_open = getattr(rc, "team_registration_open", rc.registration_open)
-            l_player_open = getattr(rc, "player_registration_open", rc.registration_open)
+            l_team_open = bool(rc.team_registration_open)
+            l_player_open = bool(rc.player_registration_open)
             out["league"] = {
                 "league_url": league.url,
                 "name": league.name,
-                "registration_open": bool(l_team_open or l_player_open),
-                "team_registration_open": bool(l_team_open),
-                "player_registration_open": bool(l_player_open),
+                "registration_open": l_team_open or l_player_open,
+                "team_registration_open": l_team_open,
+                "player_registration_open": l_player_open,
                 "team_reg_fee": rc.team_reg_fee,
                 "player_reg_fee": rc.player_reg_fee,
             }
@@ -533,11 +544,8 @@ def _league_to_dict(league) -> dict:
         A JSON-serialisable dictionary suitable for the SPA.
     """
     rc = league.registrable_config
-    team_reg_open = False
-    player_reg_open = False
-    if rc:
-        team_reg_open = getattr(rc, "team_registration_open", rc.registration_open)
-        player_reg_open = getattr(rc, "player_registration_open", rc.registration_open)
+    team_reg_open = bool(rc.team_registration_open) if rc else False
+    player_reg_open = bool(rc.player_registration_open) if rc else False
     wf = getattr(rc, "waiver_filepath", None) if rc else None
     return {
         "league_url": league.url,
@@ -957,17 +965,10 @@ def league_update_settings(league_url):
         if data.get("require_waiver_signature") is False:
             rc.waiver_filepath = None
             rc.waiver_sha256 = None
-        # Legacy combined flag; if provided, acts as default for team/player when
-        # more specific flags are absent.
-        legacy_reg_open = data.get("registration_open", None)
         if "team_registration_open" in data:
             rc.team_registration_open = bool(data["team_registration_open"])
-        elif legacy_reg_open is not None:
-            rc.team_registration_open = bool(legacy_reg_open)
         if "player_registration_open" in data:
             rc.player_registration_open = bool(data["player_registration_open"])
-        elif legacy_reg_open is not None:
-            rc.player_registration_open = bool(legacy_reg_open)
         if "terms_link" in data:
             rc.terms_link = data["terms_link"] or None
         if "payment_info" in data:
@@ -1370,11 +1371,7 @@ def update_my_player_registration_league(league_url):
     if err:
         return jsonify({"error": "Not found" if err == 404 else "Forbidden"}), err
 
-    if not league.registrable_config or not getattr(
-        league.registrable_config,
-        "player_registration_open",
-        league.registrable_config.registration_open,
-    ):
+    if not league.registrable_config or not league.registrable_config.player_registration_open:
         return jsonify({"error": "Registration changes are locked"}), 403
 
     class LeagueContext:
@@ -1469,11 +1466,7 @@ def update_my_team_registration_league(league_url):
     if err:
         return jsonify({"error": "Not found" if err == 404 else "Forbidden"}), err
 
-    if not league.registrable_config or not getattr(
-        league.registrable_config,
-        "team_registration_open",
-        league.registrable_config.registration_open,
-    ):
+    if not league.registrable_config or not league.registrable_config.team_registration_open:
         return jsonify({"error": "Registration changes are locked"}), 403
 
     class LeagueContext:
@@ -2714,7 +2707,7 @@ def start_match_data_api(tournament_url):
                 "name": match.name,
                 "field": match.field,
                 "set_type": match.set_type.value if match.set_type else None,
-                "refs": match.refs,
+                "refs": get_match_refs_csv(match) or None,
                 "team1_name": _team_name_for_match(tournament, match, "team1"),
                 "team2_name": _team_name_for_match(tournament, match, "team2"),
             },
@@ -3151,12 +3144,12 @@ def tournament_schedule_setup(tournament_url):
                 "nominal_length": m.nominal_length,
                 "previous_match": m.previous_match,
                 "next_match": m.next_match,
-                "refs": m.refs,
-                "refs_initial": m.refs_initial,
+                "refs": get_match_refs_csv(m) or None,
+                "refs_initial": get_match_refs_initial_csv(m) or None,
                 "ribbon": m.ribbon,
                 "skip_condition": m.skip_condition,
                 "nsets": m.nsets,
-                "stones_per_set": m.stones_per_set or m.nstonesperset,
+                "stones_per_set": m.stones_per_set,
                 "stones_remaining": m.stones_remaining,
                 "match_winner": m.match_winner.value if m.match_winner else None,
             }
@@ -3221,17 +3214,19 @@ def _team_display_name(tournament, team_id):
 
 def _refs_display_for_match(tournament, match):
     """Refs as comma-separated display names (pseudonym for each ref team), like team1_name/team2_name."""
-    if not match.refs:
-        return match.refs_initial
+    team_ids = get_match_ref_team_ids(match)
+    initials_csv = get_match_refs_initial_csv(match) or None
+    if not any(team_ids):
+        return initials_csv
     parts = []
-    for tid in (match.refs or "").split(","):
+    for tid in team_ids:
         tid = tid.strip()
         if not tid:
             continue
         name = _team_display_name(tournament, tid)
         if name:
             parts.append(name)
-    return ",".join(parts) if parts else match.refs_initial
+    return ",".join(parts) if parts else initials_csv
 
 
 @bp.route("/tournaments/<tournament_url>/match", methods=["GET"])
@@ -3313,16 +3308,9 @@ def tournament_match_detail(tournament_url):
     )
     for idx, cam in enumerate(camera_rows):
         cam_type = "youtube" if (cam.source_type or "").strip() == "youtube_livestream" else "recorded"
-        time_world = None
-        time_video = None
-        try:
-            time_world = json.loads(cam.time_world) if cam.time_world else None
-        except (json.JSONDecodeError, TypeError):
-            time_world = None
-        try:
-            time_video = json.loads(cam.time_video) if cam.time_video else None
-        except (json.JSONDecodeError, TypeError):
-            time_video = None
+        worlds, videos = get_camera_timepoint_arrays(cam)
+        time_world = worlds or None
+        time_video = videos or None
 
         # Only provide YouTube URL/id once upload succeeded.
         url = cam.link if cam.status == "SUCCESS" else None
@@ -3441,19 +3429,8 @@ def tournament_match_detail(tournament_url):
     from app.utils.player_helpers import get_player_display_from_registration
 
     # Parse selected players for "in_this_match" check
-    team1_selected = set()
-    if match.team1_players:
-        try:
-            team1_selected = set(json.loads(match.team1_players))
-        except:
-            pass
-
-    team2_selected = set()
-    if match.team2_players:
-        try:
-            team2_selected = set(json.loads(match.team2_players))
-        except:
-            pass
+    team1_selected = set(get_match_player_ids(match, WinnerSide.TEAM1))
+    team2_selected = set(get_match_player_ids(match, WinnerSide.TEAM2))
 
     # Helper to add players from a team (registration). Skip any player whose id is in exclude_ids (e.g. playing for the other team).
     def add_team_players(team_id, team_side, selected_ids, exclude_ids=None):
@@ -3639,14 +3616,14 @@ def tournament_match_detail(tournament_url):
                 "confirmed_start_time": _dt_iso(match.confirmed_start_time),
                 "completed_time": _dt_iso(match.completed_time),
                 "set_type": match.set_type.value if match.set_type else None,
-                "stones_per_set": match.stones_per_set or match.nstonesperset,
+                "stones_per_set": match.stones_per_set,
                 "stones_remaining": match.stones_remaining,
                 "match_winner": (match.match_winner.value if match.match_winner else None),
                 "schedule_type": (match.schedule_type.value if match.schedule_type else None),
                 "nominal_length": match.nominal_length,
                 "previous_match": match.previous_match,
-                "refs": match.refs,
-                "refs_initial": match.refs_initial,
+                "refs": get_match_refs_csv(match) or None,
+                "refs_initial": get_match_refs_initial_csv(match) or None,
                 "refs_display": _refs_display_for_match(tournament, match),
                 "ribbon": match.ribbon,
                 "skip_condition": match.skip_condition,
@@ -4481,8 +4458,7 @@ def update_match_api(tournament_url, match_id):
         match.team1_initial = None
         match.team2 = None
         match.team2_initial = None
-        match.refs = None
-        match.refs_initial = None
+        clear_match_referees(match)
     else:
         # Helper to check if a value is an explicit team ID (not a tag or match reference)
         def is_explicit_team_id(val: str) -> bool:
@@ -4541,13 +4517,10 @@ def update_match_api(tournament_url, match_id):
         if refs is not None:
             if isinstance(refs, list):
                 r_csv, i_csv = resolve_refs_slots(refs, tournament_url)
-                match.refs = r_csv
-                match.refs_initial = i_csv
             else:
                 toks = refs_string_to_tokens(refs)
                 r_csv, i_csv = resolve_refs_slots(toks, tournament_url)
-                match.refs = r_csv
-                match.refs_initial = i_csv
+            set_match_referees_from_csv(match, r_csv, i_csv)
 
     # Set Type
     if set_type_str:
@@ -4561,7 +4534,6 @@ def update_match_api(tournament_url, match_id):
 
     if stones_per_set is not None:
         match.stones_per_set = int(stones_per_set)
-        match.nstonesperset = int(stones_per_set)  # Legacy field
 
     if ribbon is not None:
         match.ribbon = bool(ribbon)
@@ -4743,8 +4715,7 @@ def force_start_match_api(tournament_url, match_id):
 
     # Refs: preserve slot count (registration, explicit id, tag)
     r_csv, i_csv = resolve_refs_slots(refs_list, tournament_url)
-    match.refs = r_csv
-    match.refs_initial = i_csv
+    set_match_referees_from_csv(match, r_csv, i_csv)
 
     # Convert to static
     match.schedule_type = ScheduleType.STATIC
@@ -5109,12 +5080,13 @@ def create_match_api(tournament_url):
         match.team1_initial = team1_name or None
         match.team2_initial = team2_name or None
 
-    # Refs: parallel refs / refs_initial (same slot count)
+    # Refs: parallel refs / refs_initial (same slot count). Resolved here but
+    # written below after the flush so the match has a uuid the join-table
+    # rows can reference.
     refs = data.get("refs")
+    refs_csv_pair: tuple[str, str] | None = None
     if refs and isinstance(refs, list):
-        r_csv, i_csv = resolve_refs_slots(refs, tournament_url)
-        match.refs = r_csv
-        match.refs_initial = i_csv
+        refs_csv_pair = resolve_refs_slots(refs, tournament_url)
 
     # Format
     set_type_str = data.get("set_type")
@@ -5128,7 +5100,6 @@ def create_match_api(tournament_url):
         match.nsets = int(data.get("nsets"))
     if match.set_type == SetType.STONES and data.get("stones_per_set") is not None:
         match.stones_per_set = int(data.get("stones_per_set"))
-        match.nstonesperset = match.stones_per_set
 
     if data.get("ribbon") is not None:
         match.ribbon = bool(data.get("ribbon"))
@@ -5137,6 +5108,9 @@ def create_match_api(tournament_url):
 
     db.session.add(match)
     db.session.flush()  # Ensure uuid exists before link updates and validation.
+
+    if refs_csv_pair is not None:
+        set_match_referees_from_csv(match, refs_csv_pair[0], refs_csv_pair[1])
 
     # Handle linked list insert
     prev_match_id = (
@@ -5278,11 +5252,8 @@ def _tag_usage(tournament_url, tag_name):
             used.append(f'Team 1 of match "{m.name}"')
         if m.team2_initial and m.team2_initial.strip() == tag_ref:
             used.append(f'Team 2 of match "{m.name}"')
-        if m.refs_initial:
-            for r in (r.strip() for r in m.refs_initial.split(",")):
-                if r == tag_ref:
-                    used.append(f'Refs of match "{m.name}"')
-                    break
+        if any(initial == tag_ref for initial in get_match_ref_initials(m)):
+            used.append(f'Refs of match "{m.name}"')
         if m.skip_condition and (tag_ref in m.skip_condition or tag_name in m.skip_condition):
             used.append(f'Skip condition of match "{m.name}"')
     return used
@@ -5678,7 +5649,7 @@ def update_my_player_registration(tournament_url):
 
     tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
     cfg = get_registrable_config(tournament)
-    reg_open = getattr(cfg, "player_registration_open", cfg.registration_open) if cfg else False
+    reg_open = bool(cfg.player_registration_open) if cfg else False
     if not reg_open:
         return jsonify({"error": "Registration changes are locked"}), 403
 
@@ -5758,7 +5729,7 @@ def update_my_team_registration(tournament_url):
 
     tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
     cfg = get_registrable_config(tournament)
-    reg_open = getattr(cfg, "team_registration_open", cfg.registration_open) if cfg else False
+    reg_open = bool(cfg.team_registration_open) if cfg else False
     if not reg_open:
         return jsonify({"error": "Registration changes are locked"}), 403
 
@@ -5871,20 +5842,9 @@ def update_tags_api(tournament_url):
         if m.team2_initial == tag_ref:
             m.team2 = team_id
 
-        if m.refs_initial:
-            refs = [r.strip() for r in m.refs_initial.split(",")]
-            current_refs = [r.strip() for r in (m.refs or "").split(",")]
-            if len(current_refs) != len(refs):
-                current_refs = [""] * len(refs)
-
-            changed = False
-            for i, r in enumerate(refs):
-                if r == tag_ref:
-                    current_refs[i] = team_id
-                    changed = True
-
-            if changed:
-                m.refs = ",".join(current_refs)
+        for row in get_match_referee_rows(m):
+            if (row.initial or "").strip() == tag_ref:
+                row.team_id = team_id
 
     db.session.commit()
     recompute_all_match_times(tournament_url)

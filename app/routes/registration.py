@@ -1,5 +1,14 @@
-"""
-Tournament registration management routes.
+"""Team and player registration routes.
+
+Hosts the ``registration`` blueprint.
+
+Endpoints cover the full
+register / cancel / re-register lifecycle for both teams and players
+and for both standalone tournaments and league-scoped events.
+
+The multi-model workflow itself lives in
+``app.services.registration_service``; this file is the thin HTTP
+layer in front of it.
 """
 
 from flask import Blueprint, request, jsonify

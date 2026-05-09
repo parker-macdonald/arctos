@@ -53,48 +53,19 @@ class RegistrationService:
 
     @staticmethod
     def _tournament_team_reg_open(tournament) -> bool:
-        """Return whether team registration is currently open for *tournament*.
-
-        Prefers the ``team_registration_open`` field; falls back to the
-        legacy ``registration_open`` field for older records.
-
-        Args:
-            tournament: The tournament to check.
-
-        Returns:
-            ``True`` if team registration is open.
-        """
+        """Return whether team registration is currently open for *tournament*."""
         from app.utils.helpers import get_registrable_config
 
         cfg = get_registrable_config(tournament)
-        if not cfg:
-            return False
-        # Prefer new field; fall back to legacy registration_open for older data.
-        if hasattr(cfg, "team_registration_open"):
-            return bool(cfg.team_registration_open)
-        return bool(cfg.registration_open)
+        return bool(cfg.team_registration_open) if cfg else False
 
     @staticmethod
     def _tournament_player_reg_open(tournament) -> bool:
-        """Return whether player registration is currently open for *tournament*.
-
-        Prefers the ``player_registration_open`` field; falls back to the
-        legacy ``registration_open`` field for older records.
-
-        Args:
-            tournament: The tournament to check.
-
-        Returns:
-            ``True`` if player registration is open.
-        """
+        """Return whether player registration is currently open for *tournament*."""
         from app.utils.helpers import get_registrable_config
 
         cfg = get_registrable_config(tournament)
-        if not cfg:
-            return False
-        if hasattr(cfg, "player_registration_open"):
-            return bool(cfg.player_registration_open)
-        return bool(cfg.registration_open)
+        return bool(cfg.player_registration_open) if cfg else False
 
     @staticmethod
     def _require_team_registration_open_for_register(
@@ -143,9 +114,20 @@ class RegistrationService:
         if pn_err:
             return Err(ValidationError(pn_err))
 
-        existing_reg = TeamRegistration.query.filter_by(event=tournament_url, team=team_id, status="CONFIRMED").first()
+        existing_reg = TeamRegistration.query.filter_by(event=tournament_url, team=team_id).first()
         if existing_reg:
-            return Err(ValidationError("Your team is already registered for this tournament"))
+            if existing_reg.status != TeamRegistrationStatus.CANCELLED:
+                return Err(ValidationError("Your team is already registered for this tournament"))
+            team_registration = existing_reg
+            team_registration.pseudonym = pseudonym
+            team_registration.status = TeamRegistrationStatus.CONFIRMED
+            team_registration.registered_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        else:
+            team_registration = TeamRegistration(
+                event=tournament_url,
+                team=team_id,
+                pseudonym=pseudonym,
+            )
 
         from app.utils.helpers import get_registrable_config
 
@@ -165,8 +147,6 @@ class RegistrationService:
                 ).count()
             if current_team_count >= n_max:
                 return Err(ValidationError(f"Maximum number of teams ({n_max}) already registered"))
-
-        team_registration = TeamRegistration(event=tournament_url, team=team_id, pseudonym=pseudonym)
 
         # Auto-mark as paid if registration fee is zero
         from app.utils.helpers import get_registrable_config
@@ -276,7 +256,7 @@ class RegistrationService:
         if in_progress:
             return Err(ValidationError("Cannot deregister once your team has played in a match that is in progress."))
 
-        team_registration.status = RegistrationStatus.CANCELLED
+        team_registration.status = TeamRegistrationStatus.CANCELLED
 
         PlayerRegistration.query.filter_by(event=tournament_url, team=team_id).update(
             {"status": RegistrationStatus.CANCELLED}
@@ -334,7 +314,7 @@ class RegistrationService:
         if not league:
             return Err(ValidationError("League not found"))
         rc = league.registrable_config
-        if not (rc and getattr(rc, "team_registration_open", rc.registration_open)):
+        if not (rc and rc.team_registration_open):
             return Err(RegistrationClosedError("Registration is not open for this league"))
 
         pseudonym = (pseudonym or "").strip()
@@ -344,9 +324,21 @@ class RegistrationService:
         if pn_err:
             return Err(ValidationError(pn_err))
 
-        existing_reg = TeamRegistration.query.filter_by(league_id=league_id, team=team_id, status="CONFIRMED").first()
+        existing_reg = TeamRegistration.query.filter_by(league_id=league_id, team=team_id).first()
         if existing_reg:
-            return Err(ValidationError("Your team is already registered for this league"))
+            if existing_reg.status != TeamRegistrationStatus.CANCELLED:
+                return Err(ValidationError("Your team is already registered for this league"))
+            team_registration = existing_reg
+            team_registration.pseudonym = pseudonym
+            team_registration.status = TeamRegistrationStatus.CONFIRMED
+            team_registration.registered_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        else:
+            team_registration = TeamRegistration(
+                event=None,
+                league_id=league_id,
+                team=team_id,
+                pseudonym=pseudonym,
+            )
 
         n_max = getattr(rc, "n_max_teams", None) if rc else None
         if n_max is not None:
@@ -356,13 +348,6 @@ class RegistrationService:
             ).count()
             if current_team_count >= n_max:
                 return Err(ValidationError(f"Maximum number of teams ({n_max}) already registered"))
-
-        team_registration = TeamRegistration(
-            event=None,
-            league_id=league_id,
-            team=team_id,
-            pseudonym=pseudonym,
-        )
 
         rc = league.registrable_config
         if not rc or not rc.team_reg_fee or rc.team_reg_fee == 0:
@@ -391,7 +376,7 @@ class RegistrationService:
         if not league:
             return Err(ValidationError("League not found"))
         rc = league.registrable_config
-        if not (rc and getattr(rc, "player_registration_open", rc.registration_open)):
+        if not (rc and rc.player_registration_open):
             return Err(RegistrationClosedError("Registration is not open for this league"))
 
         team_id = (team_id or "").strip() or None
@@ -455,7 +440,7 @@ class RegistrationService:
         if not league:
             return Err(ValidationError("League not found"))
         rc = league.registrable_config
-        if not (rc and getattr(rc, "team_registration_open", rc.registration_open)):
+        if not (rc and rc.team_registration_open):
             return Err(ValidationError("Registration changes are locked for this league"))
 
         team_registration = TeamRegistration.query.filter_by(
@@ -496,7 +481,7 @@ class RegistrationService:
         if not league:
             return Err(ValidationError("League not found"))
         rc = league.registrable_config
-        if not (rc and getattr(rc, "player_registration_open", rc.registration_open)):
+        if not (rc and rc.player_registration_open):
             return Err(ValidationError("Registration changes are locked for this league"))
 
         player_registration = (

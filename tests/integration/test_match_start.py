@@ -1,11 +1,10 @@
 """Integration tests for match-start flow (HEAD ref starts a match via POST)."""
 
-import json
-
 import pytest
 
-from app.domain.enums import MatchStatus
-from models import Field, Match, db
+from app.domain.enums import MatchStatus, WinnerSide
+from app.services.dual_write import get_match_player_ids
+from models import Field, Match, Player, db
 from tests.utils import login_as
 
 
@@ -17,6 +16,8 @@ def test_start_match_post_starts_match(app, client, tournament, head_ref_player,
         ref = db.session.merge(head_ref_player)
         tournament_url = t.url
         ref_id = ref.id
+        for pid in ("p1", "p2", "p3"):
+            db.session.add(Player(id=pid, name=pid, pw_hash="h"))
         login_as(client, ref)
 
         m = Match(
@@ -49,8 +50,8 @@ def test_start_match_post_starts_match(app, client, tournament, head_ref_player,
         m2 = Match.query.get(match_id)
         assert m2.status == MatchStatus.IN_PROGRESS
         assert m2.started_by == ref_id
-        assert json.loads(m2.team1_players) == ["p1", "p2"]
-        assert json.loads(m2.team2_players) == ["p3"]
+        assert get_match_player_ids(m2, WinnerSide.TEAM1) == ["p1", "p2"]
+        assert get_match_player_ids(m2, WinnerSide.TEAM2) == ["p3"]
 
 
 @pytest.mark.integration

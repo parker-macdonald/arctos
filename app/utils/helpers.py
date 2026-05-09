@@ -1,5 +1,7 @@
-"""
-General helper functions for the tournament site.
+"""Cross-cutting helpers used by routes, services, and serializers.
+
+Anything that has a clearly named workflow belongs in a service; this
+module is the home for small, generally-applicable helpers that don't.
 """
 
 import hmac
@@ -109,15 +111,15 @@ def can_head_ref_match(tournament_url: str, player_id: str, match=None) -> bool:
     Returns:
         True if the player can head ref, False otherwise
     """
+    from app.services.dual_write import get_head_ref_allowlist_ids, get_match_ref_team_ids
+
     tournament = Tournament.query.get(tournament_url)
     if not tournament:
         return False
 
     # Check explicit allowed list
-    if tournament.head_refs_allowed_list:
-        allowed_list = [ref.strip() for ref in tournament.head_refs_allowed_list.split(",") if ref.strip()]
-        if player_id in allowed_list:
-            return True
+    if player_id in get_head_ref_allowlist_ids(tournament):
+        return True
 
     # If allow anyone is enabled, check if player is registered
     if tournament.head_refs_allow_anyone:
@@ -130,18 +132,17 @@ def can_head_ref_match(tournament_url: str, player_id: str, match=None) -> bool:
 
     # Check reffing teams (requires match context)
     if tournament.head_refs_allow_reffing_teams and match:
-        if match.refs:
-            ref_teams = [team.strip() for team in match.refs.split(",") if team.strip()]
-            # Check if player is registered on any of the ref teams
-            for team_id in ref_teams:
-                player_reg = PlayerRegistration.query.filter_by(
-                    event=tournament_url,
-                    player=player_id,
-                    team=team_id,
-                    status=RegistrationStatus.CONFIRMED,
-                ).first()
-                if player_reg:
-                    return True
+        for team_id in get_match_ref_team_ids(match):
+            if not team_id:
+                continue
+            player_reg = PlayerRegistration.query.filter_by(
+                event=tournament_url,
+                player=player_id,
+                team=team_id,
+                status=RegistrationStatus.CONFIRMED,
+            ).first()
+            if player_reg:
+                return True
 
     return False
 
@@ -280,54 +281,6 @@ def check_tournament_access(tournament_url: str):
         return False, tournament
 
     return True, tournament
-
-
-def generate_permission_key(url_slug: str, secret_key=None):
-    """
-    Generate a permission key for a specific URL slug.
-
-    Args:
-        url_slug: The tournament URL slug
-        secret_key: Optional secret key (defaults to app SECRET_KEY)
-
-    Returns:
-        A short hex string (first 16 characters of HMAC-SHA256)
-    """
-    if secret_key is None:
-        secret_key = current_app.config.get("SECRET_KEY", "default-secret-key")
-
-    # only use first 16 chars bc otherwise its annoying
-    # if you need to type it out without copy-pasting
-    return hmac.new(
-        secret_key.encode("utf-8"),
-        url_slug.lower().strip().encode("utf-8"),
-        hashlib.sha256,
-    ).hexdigest()[:16]
-
-
-def validate_permission_key(url_slug, provided_key, secret_key=None):
-    """
-    Validate a permission key for a specific URL slug.
-
-    Args:
-        url_slug: The tournament URL slug
-        provided_key: The permission key provided by the user
-        secret_key: Optional secret key (defaults to app SECRET_KEY)
-
-    Returns:
-        True if the key is valid, False otherwise
-    """
-    if not provided_key or not url_slug:
-        return False
-
-    # Normalize the provided key (strip whitespace, lowercase)
-    provided_key = provided_key.strip().lower()
-
-    # Generate expected key
-    expected_key = generate_permission_key(url_slug, secret_key)
-
-    # Use constant-time comparison to prevent timing attacks
-    return hmac.compare_digest(provided_key, expected_key.lower())
 
 
 def is_valid_url_username(username):

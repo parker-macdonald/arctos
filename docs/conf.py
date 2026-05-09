@@ -38,9 +38,7 @@ html_extra_path = ["../static"]
 # Suppress warnings that originate from pre-existing content written for the
 # Flask/python-markdown renderer rather than Sphinx/MyST.
 suppress_warnings = [
-    "myst.xref_missing",  # {#anchor} TOC links in docs.md use python-markdown attr_list syntax
-    "myst.header",        # H2→H4 level jumps in docs.md
-    "image.not_readable", # covered by html_extra_path above; residual during read phase
+    "myst.header",  # H2->H4 level jumps in docs.md
 ]
 
 autodoc_typehints = "description"

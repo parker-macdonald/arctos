@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timedelta, timezone
 
+import sqlalchemy as sa
 
 from app.domain.enums import (
     MatchStatus,
@@ -34,16 +35,18 @@ class Match(db.Model):
     scheduling (``SAFE`` / ``FAST``) recomputes :attr:`nominal_start_time`
     based on predecessor match outcomes and the :attr:`schedule_type`.
 
+    Referees and team rosters are stored in the ``match_referees`` and
+    ``match_players`` join tables; access them through the helpers in
+    :mod:`app.services.dual_write` rather than by attribute on this model.
+
     Attributes:
         uuid: UUID primary key, auto-generated.
-        name: Human-readable match name (unique within the tournament).
+        name: Human-readable match name.
         event: Tournament URL slug (FK).
         team1: ID of the first team, or ``None`` while unresolved.
         team2: ID of the second team, or ``None`` while unresolved.
         team1_initial: ASS expression or label for team1 before resolution.
         team2_initial: ASS expression or label for team2 before resolution.
-        refs: Comma-separated team IDs confirmed as referees.
-        refs_initial: Comma-separated ASS expressions for referee slots.
         field: Name of the field (court) where the match takes place.
         nominal_start_time: Scheduled start time (may be updated dynamically).
         confirmed_start_time: Actual start time once the match begins.
@@ -53,11 +56,8 @@ class Match(db.Model):
         set_type: Scoring mode (:class:`~app.domain.enums.SetType`).
         ribbon: ``True`` for ribbon (exhibition) games not counted in standings.
         nsets: Number of sets required to win the match.
-        nstonesperset: Deprecated; use :attr:`stones_per_set` instead.
         status: Current lifecycle state (:class:`~app.domain.enums.MatchStatus`).
         initial_notes: Free-text notes set when the match is created.
-        team1_players: JSON array of player IDs on team1's field roster.
-        team2_players: JSON array of player IDs on team2's field roster.
         started_by: User ID of whoever started the match.
         started_at: Timestamp when the match was started.
         stones_per_set: Number of stones per set for STONES-mode matches.
@@ -79,6 +79,23 @@ class Match(db.Model):
     """
 
     __tablename__ = "matches"
+    __table_args__ = (
+        db.Index(
+            "unique_with_field",
+            "name",
+            "event",
+            "field",
+            unique=True,
+            sqlite_where=sa.text("schedule_type IN ('BREAK', 'JOIN')"),
+        ),
+        db.Index(
+            "unique_without_field",
+            "name",
+            "event",
+            unique=True,
+            sqlite_where=sa.text("schedule_type NOT IN ('BREAK', 'JOIN')"),
+        ),
+    )
 
     uuid = db.Column(db.String(UUID_LEN), primary_key=True, default=lambda: str(uuid.uuid4()))
     name = db.Column(db.String(LONG_NAME_LEN), nullable=False)
@@ -87,8 +104,6 @@ class Match(db.Model):
     team2 = db.Column(db.String(USER_ID_LEN), db.ForeignKey("teams.id"))
     team1_initial = db.Column(db.String(LONG_NAME_LEN))
     team2_initial = db.Column(db.String(LONG_NAME_LEN))
-    refs = db.Column(db.Text)  # comma separated team ids
-    refs_initial = db.Column(db.Text)
     field = db.Column(db.String(SHORT_NAME_LEN))
     nominal_start_time = db.Column(db.DateTime)
     confirmed_start_time = db.Column(db.DateTime)
@@ -98,11 +113,8 @@ class Match(db.Model):
     set_type = db.Column(db.Enum(SetType), default=SetType.SETS)  # SETS, STONES (only for non-BREAK/JOIN matches)
     ribbon = db.Column(db.Boolean, default=False)  # True if this is a ribbon game (not counted in results)
     nsets = db.Column(db.Integer)
-    nstonesperset = db.Column(db.Integer)  # DEPRECATED: Use stones_per_set instead. Kept for backward compatibility.
     status = db.Column(db.Enum(MatchStatus), default=MatchStatus.NOT_STARTED)  # NOT_STARTED, IN_PROGRESS, COMPLETED
     initial_notes = db.Column(db.Text)  # notes (initial match notes, distinct from MatchNote objects)
-    team1_players = db.Column(db.Text)  # JSON array of player IDs
-    team2_players = db.Column(db.Text)  # JSON array of player IDs
     started_by = db.Column(db.String(USER_ID_LEN))  # user ID who started the match
     started_at = db.Column(db.DateTime)  # when match started
     stones_per_set = db.Column(db.Integer)  # for STONES matches

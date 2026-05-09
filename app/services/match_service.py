@@ -1,5 +1,15 @@
-"""
-Match operations service.
+"""High-level match lifecycle operations: start, end, finalise.
+
+Routes call into ``MatchService`` for any non-trivial transition.  The
+service orchestrates the model mutations, eligibility checks, dual-write
+roster updates, and downstream schedule recomputation that follow each
+transition; it does not own match-action endpoints (those live in
+``match_actions_service``).
+
+Like the other services in this package, ``MatchService`` is a
+``@dataclass(frozen=True)`` with ``@staticmethod`` methods - call them as
+``MatchService.start_match(...)`` - and returns ``Result[T, ArctosError]``
+rather than raising.
 """
 
 from __future__ import annotations
@@ -130,8 +140,9 @@ class MatchService:
         match.confirmed_start_time = datetime.now(timezone.utc).replace(tzinfo=None)
 
         match.initial_notes = match_notes or ""
-        match.team1_players = json.dumps(team1_players)
-        match.team2_players = json.dumps(team2_players)
+        from app.services.dual_write import set_match_players
+
+        set_match_players(match, team1_players, team2_players)
         match.started_by = user.id
         match.started_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
@@ -142,8 +153,7 @@ class MatchService:
                 except ValueError:
                     return Err(ValidationError("Invalid stones per set value"))
             else:
-                # Use stones_per_set with fallback to deprecated nstonesperset for backward compatibility
-                spp = match.stones_per_set or match.nstonesperset or 100
+                spp = match.stones_per_set or 100
             match.stones_per_set = spp
             match.stones_remaining = spp
 

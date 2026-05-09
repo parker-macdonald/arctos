@@ -1,8 +1,11 @@
 name: Deploy dev server
 
 on:
+  workflow_dispatch:
   push:
     branches: [ dev ]
+    paths-ignore:
+      - '.github/workflows/**'
 
 jobs:
   deploy:
@@ -11,9 +14,17 @@ jobs:
     steps:     
     - name: deploy via ssh pull
       uses: appleboy/ssh-action@v1.0.3
+      env: 
+        GIT_BRANCH: "origin/dev"
+        BUILD_DOCS: "1"
+        REPO_ROOT: "/home/reid/arctos"
+        FRONTEND_SERVER_ROOT: "/var/www/html/"
+        DOCS_SERVER_ROOT: "/var/www/docs/"
+        CARGO_ENV_FILE: "/home/reid/.cargo/env"
       with:
         host: ${{ secrets.DEV_SERVER_HOST}}
         username: ${{ secrets.DEV_SERVER_USER }}
         key: ${{ secrets.DEV_SERVER_SSH_KEY }}
         port: ${{ secrets.DEV_SERVER_SSH_PORT }}
         script: ~/arctos/update.sh
+        envs: GIT_BRANCH,BUILD_DOCS,REPO_ROOT,FRONTEND_SERVER_ROOT,DOCS_SERVER_ROOT,CARGO_ENV_FILE

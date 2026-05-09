@@ -244,10 +244,7 @@ def _media_profile_summary(profile: UserUploadMediaProfile) -> str:
     if profile.channels:
         audio_bits.append(f"{profile.channels}ch")
     audio_part = ", ".join(audio_bits) if audio_bits else "no audio"
-    return (
-        f"video={profile.video_codec} {profile.width}x{profile.height} {profile.pix_fmt}; "
-        f"audio={audio_part}"
-    )
+    return f"video={profile.video_codec} {profile.width}x{profile.height} {profile.pix_fmt}; audio={audio_part}"
 
 
 def build_clip_plans_for_points(
@@ -1078,10 +1075,12 @@ def user_autoclips_from_uploaded_batch_worker(
             uploaded_by_user_type=uploader_user_type,
             status="UPLOADING",
             file=final_highlight_rel,
-            time_world=json.dumps(time_world),
-            time_video=json.dumps(time_video),
         )
         db.session.add(camera_row)
+        db.session.flush()  # so camera_row.uuid is assigned before set_camera_timepoints
+        from app.services.dual_write import set_camera_timepoints
+
+        set_camera_timepoints(camera_row, time_world, time_video)
         db.session.commit()
 
         app_obj = current_app._get_current_object()
@@ -1205,8 +1204,6 @@ def create_direct_user_upload_camera(
         uploaded_by_user_type=uploader_user_type,
         status="UPLOADING",
         file=final_rel,
-        time_world=None,
-        time_video=None,
     )
     db.session.add(camera_row)
     db.session.commit()

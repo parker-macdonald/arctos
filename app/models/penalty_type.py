@@ -1,4 +1,12 @@
-"""SQLAlchemy model for configurable penalty types."""
+"""TO-defined penalty categories.
+
+Defines :class:`PenaltyType` - the named penalty entries that head
+refs attach to :class:`~app.models.match.MatchNote` records during a
+match.
+
+Each type is scoped to either a tournament or a league (never
+both), the same scope-column invariant the registration tables use.
+"""
 
 from __future__ import annotations
 

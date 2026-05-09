@@ -1,5 +1,9 @@
-"""
-Shared logic for computing team stats from matches (tournament or league results).
+"""Compute team standings (wins, losses, points) from a set of matches.
+
+The same logic is used for tournament results and league results, so
+the function takes the matches as input rather than querying them
+itself.  Skipped matches and incomplete matches are excluded; only
+``COMPLETED`` matches contribute to standings.
 """
 
 from __future__ import annotations

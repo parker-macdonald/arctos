@@ -3,6 +3,11 @@
 import pytest
 
 from app.domain.enums import MatchStatus
+from app.services.dual_write import (
+    get_match_ref_initials,
+    get_match_ref_team_ids,
+    set_match_referees,
+)
 from app.utils.dependencies import apply_match_dependencies
 from models import Match, db
 
@@ -27,12 +32,17 @@ def test_apply_match_dependencies_substitutes_winner_loser_and_refs(test_db, tou
         status=MatchStatus.NOT_STARTED,
         team1=None,
         team2=None,
-        refs=None,
         team1_initial="Match A::winner",
         team2_initial="Match A::loser",
-        refs_initial="Match A::winner, some_ref, Match A::loser",
     )
     db.session.add_all([completed, dependent])
+    db.session.flush()
+    # team3 is a real team (seeded_teams); the surrounding slots hold winner/loser placeholders.
+    set_match_referees(
+        dependent,
+        ["", "team3", ""],
+        ["Match A::winner", "team3", "Match A::loser"],
+    )
     db.session.commit()
 
     apply_match_dependencies(tournament_url, completed)
@@ -41,8 +51,8 @@ def test_apply_match_dependencies_substitutes_winner_loser_and_refs(test_db, tou
     assert dep is not None
     assert dep.team1 == "team_1"
     assert dep.team2 == "team_2"
-    assert dep.refs is not None
-    assert dep.refs == "team_1, some_ref, team_2"
+    assert get_match_ref_team_ids(dep) == ["team_1", "team3", "team_2"]
+    assert get_match_ref_initials(dep) == ["Match A::winner", "team3", "Match A::loser"]
 
 
 @pytest.mark.unit
