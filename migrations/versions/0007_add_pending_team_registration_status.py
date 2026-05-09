@@ -4,8 +4,8 @@ PENDING is a transient state used by the registration cap-enforcement
 savepoint pattern. No row is committed in PENDING state at rest, but
 the column's CHECK constraint must allow the value.
 
-Revision ID: 0009_add_pending_team_registration_status
-Revises: 0008_sidecomp_entry_number
+Revision ID: 0007_add_pending_team_registration_status
+Revises: 0006_sidecomp_entry_number
 Create Date: 2026-05-07
 """
 
@@ -17,8 +17,8 @@ import sqlalchemy as sa
 from alembic import op
 
 
-revision: str = "0009_add_pending_team_registration_status"
-down_revision: Union[str, Sequence[str], None] = "0008_sidecomp_entry_number"
+revision: str = "0007_add_pending_team_registration_status"
+down_revision: Union[str, Sequence[str], None] = "0006_sidecomp_entry_number"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
