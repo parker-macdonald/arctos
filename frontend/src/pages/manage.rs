@@ -72,7 +72,7 @@ pub fn Manage(url: String) -> Element {
     let mut team_pseudonym_input = use_signal(String::new);
     let mut team_submit_error = use_signal(|| None::<String>);
 
-    // Session log for Register on behalf tab
+    // Session log for Quick Register tab
     let mut session_log = use_signal(Vec::<SessionLogEntry>::new);
 
     // Player search effect
@@ -138,7 +138,7 @@ pub fn Manage(url: String) -> Element {
                         r#type: "button",
                         class: if active_tab() == ManageTab::RegisterOnBehalf { "nav-link active" } else { "nav-link" },
                         onclick: move |_| active_tab.set(ManageTab::RegisterOnBehalf),
-                        "Register on behalf"
+                        "Quick Register"
                     }
                 }
             }
@@ -483,6 +483,10 @@ pub fn Manage(url: String) -> Element {
             }
 
             if active_tab() == ManageTab::RegisterOnBehalf {
+                div { class: "alert alert-info",
+                    strong { "Note: " }
+                    "Quick Register bypasses payment (registration is marked paid for $0) and skips the usual approval steps (registrations land as confirmed immediately)."
+                }
                 // Sub-tab pills: Players / Teams
                 ul { class: "nav nav-pills mb-3",
                     li { class: "nav-item",
