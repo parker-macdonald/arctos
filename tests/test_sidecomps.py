@@ -361,7 +361,7 @@ def test_deregister_player_idempotent_when_missing(test_db, tournament):
     assert isinstance(res, Ok)
 
 
-def test_organizer_check_in_succeeds(test_db, tournament):
+def test_register_player_as_to_succeeds(test_db, tournament):
     to_user = _make_player("to_user", "TO User")
     other = _make_player("p_other", "Other")
     _make_to(tournament.url, to_user.id)
@@ -372,7 +372,7 @@ def test_organizer_check_in_succeeds(test_db, tournament):
 
     from app.services.sidecomp_service import SideCompService
 
-    res = SideCompService.organizer_check_in(
+    res = SideCompService.register_player_as_to(
         sc.id,
         actor_user_id=to_user.id,
         actor_user_type="player",
@@ -383,7 +383,7 @@ def test_organizer_check_in_succeeds(test_db, tournament):
     assert reg.registered_by_to is True
 
 
-def test_organizer_check_in_non_to_forbidden(test_db, tournament):
+def test_register_player_as_to_non_to_forbidden(test_db, tournament):
     actor = _make_player("not_to", "Not TO")
     target = _make_player("p_other", "Other")
     _confirm_event_registration(tournament.url, target.id)
@@ -393,7 +393,7 @@ def test_organizer_check_in_non_to_forbidden(test_db, tournament):
 
     from app.services.sidecomp_service import SideCompService
 
-    res = SideCompService.organizer_check_in(
+    res = SideCompService.register_player_as_to(
         sc.id,
         actor_user_id=actor.id,
         actor_user_type="player",
@@ -403,7 +403,7 @@ def test_organizer_check_in_non_to_forbidden(test_db, tournament):
     assert res.unwrap_err().status_code == 403
 
 
-def test_organizer_check_in_target_not_event_registered(test_db, tournament):
+def test_register_player_as_to_target_not_event_registered(test_db, tournament):
     to_user = _make_player("to_user", "TO User")
     target = _make_player("p_other", "Other")
     _make_to(tournament.url, to_user.id)
@@ -413,7 +413,7 @@ def test_organizer_check_in_target_not_event_registered(test_db, tournament):
 
     from app.services.sidecomp_service import SideCompService
 
-    res = SideCompService.organizer_check_in(
+    res = SideCompService.register_player_as_to(
         sc.id,
         actor_user_id=to_user.id,
         actor_user_type="player",
@@ -423,7 +423,7 @@ def test_organizer_check_in_target_not_event_registered(test_db, tournament):
     assert res.unwrap_err().status_code == 400
 
 
-def test_organizer_remove_idempotent(test_db, tournament):
+def test_deregister_player_as_to_idempotent(test_db, tournament):
     to_user = _make_player("to_user", "TO User")
     target = _make_player("p_other", "Other")
     _make_to(tournament.url, to_user.id)
@@ -433,7 +433,7 @@ def test_organizer_remove_idempotent(test_db, tournament):
 
     from app.services.sidecomp_service import SideCompService
 
-    res = SideCompService.organizer_remove(
+    res = SideCompService.deregister_player_as_to(
         sc.id,
         actor_user_id=to_user.id,
         actor_user_type="player",
@@ -484,8 +484,8 @@ def test_register_player_succeeds_when_opened(test_db, tournament):
     assert isinstance(res, Ok)
 
 
-def test_organizer_check_in_works_when_closed(test_db, tournament):
-    """TO check-in must work regardless of registration_open state."""
+def test_register_player_as_to_works_when_closed(test_db, tournament):
+    """TO-driven registration must work regardless of registration_open state."""
     to_user = _make_player("to_user", "TO User")
     target = _make_player("p_other", "Other")
     _make_to(tournament.url, to_user.id)
@@ -497,7 +497,7 @@ def test_organizer_check_in_works_when_closed(test_db, tournament):
 
     from app.services.sidecomp_service import SideCompService
 
-    res = SideCompService.organizer_check_in(
+    res = SideCompService.register_player_as_to(
         sc.id,
         actor_user_id=to_user.id,
         actor_user_type="player",
@@ -577,7 +577,7 @@ def test_entry_numbers_independent_per_comp(test_db, tournament):
     assert r2.entry_number == 1
 
 
-def test_organizer_check_in_assigns_entry_number(test_db, tournament):
+def test_register_player_as_to_assigns_entry_number(test_db, tournament):
     to_user = _make_player("to_user", "TO User")
     target = _make_player("p_other", "Other")
     _make_to(tournament.url, to_user.id)
@@ -588,7 +588,7 @@ def test_organizer_check_in_assigns_entry_number(test_db, tournament):
 
     from app.services.sidecomp_service import SideCompService
 
-    res = SideCompService.organizer_check_in(
+    res = SideCompService.register_player_as_to(
         sc.id,
         actor_user_id=to_user.id,
         actor_user_type="player",
@@ -1031,7 +1031,7 @@ def test_route_player_deregister_succeeds(app, client, tournament):
         assert SideCompRegistration.query.filter_by(comp=comp_id, player=p.id).count() == 0
 
 
-def test_route_to_checkin_succeeds(app, client, tournament):
+def test_route_register_player_as_to_succeeds(app, client, tournament):
     with app.app_context():
         to_user = _make_player("to_user", "TO User")
         _make_to(tournament.url, to_user.id)
@@ -1045,7 +1045,7 @@ def test_route_to_checkin_succeeds(app, client, tournament):
         login_as(client, to_user)
 
     resp = client.post(
-        f"/_api/sidecomps/{comp_id}/checkin",
+        f"/_api/sidecomps/{comp_id}/register-player-as-to",
         json={"player_id": target_id},
     )
     assert resp.status_code == 200

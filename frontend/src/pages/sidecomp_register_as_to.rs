@@ -10,7 +10,7 @@ struct LogEntry {
 }
 
 #[component]
-pub fn SideCompCheckin(url: String, comp_id: i32) -> Element {
+pub fn SideCompRegisterAsTo(url: String, comp_id: i32) -> Element {
     let mut eligible = use_signal(Vec::<EligiblePlayer>::new);
     let mut filter = use_signal(String::new);
     let mut session_log = use_signal(Vec::<LogEntry>::new);
@@ -35,7 +35,7 @@ pub fn SideCompCheckin(url: String, comp_id: i32) -> Element {
                     class: "btn btn-link",
                     "<- Back to side competition"
                 }
-                h1 { "Check in players" }
+                h1 { "Quick Register players" }
                 input {
                     class: "form-control mb-3",
                     r#type: "text",
@@ -62,7 +62,7 @@ pub fn SideCompCheckin(url: String, comp_id: i32) -> Element {
                                         key: "{p.player_id}",
                                         p: p.clone(),
                                         comp_id,
-                                        on_checked_in: move |entry: LogEntry| {
+                                        on_registered: move |entry: LogEntry| {
                                             let pid = entry.player_id.clone();
                                             session_log.write().insert(0, entry);
                                             eligible.write().retain(|x| x.player_id != pid);
@@ -76,11 +76,11 @@ pub fn SideCompCheckin(url: String, comp_id: i32) -> Element {
                 }
                 h2 { "Session log ({session_log().len()})" }
                 if session_log().is_empty() {
-                    p { class: "text-muted", "No one checked in yet." }
+                    p { class: "text-muted", "No one registered yet." }
                 } else {
                     ul { class: "list-group",
                         for entry in session_log().iter() {
-                            li { class: "list-group-item", "{entry.player_name} (checked in)" }
+                            li { class: "list-group-item", "{entry.player_name} (registered)" }
                         }
                     }
                 }
@@ -93,7 +93,7 @@ pub fn SideCompCheckin(url: String, comp_id: i32) -> Element {
 fn EligibleRow(
     p: EligiblePlayer,
     comp_id: i32,
-    on_checked_in: EventHandler<LogEntry>,
+    on_registered: EventHandler<LogEntry>,
     on_error: EventHandler<String>,
 ) -> Element {
     let mut busy = use_signal(|| false);
@@ -116,14 +116,14 @@ fn EligibleRow(
                     let pname = p_click.player_name.clone();
                     busy.set(true);
                     spawn(async move {
-                        match api::sidecomp_to_checkin(comp_id, &pid).await {
-                            Ok(_) => on_checked_in.call(LogEntry { player_id: pid, player_name: pname }),
+                        match api::sidecomp_to_register_player_as_to(comp_id, &pid).await {
+                            Ok(_) => on_registered.call(LogEntry { player_id: pid, player_name: pname }),
                             Err(e) => on_error.call(e),
                         }
                         busy.set(false);
                     });
                 },
-                if busy() { "Checking in..." } else { "Check in" }
+                if busy() { "Registering..." } else { "Quick Register" }
             }
         }
     }

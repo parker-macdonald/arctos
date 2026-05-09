@@ -66,7 +66,7 @@ fn page_title_for_route(route: &Route) -> String {
         Route::SideCompNew { url } => format!("{url} New Side Competition"),
         Route::SideCompDetail { url, .. } => format!("{url} Side Competition"),
         Route::SideCompEdit { url, .. } => format!("{url} Edit Side Competition"),
-        Route::SideCompCheckin { url, .. } => format!("{url} Side Competition Check-in"),
+        Route::SideCompRegisterAsTo { url, .. } => format!("{url} Side Competition Quick Register"),
     }
 }
 

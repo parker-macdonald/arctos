@@ -3615,11 +3615,11 @@ pub async fn sidecomp_deregister(comp_id: i32) -> Result<Value, String> {
     response_json(r).await
 }
 
-pub async fn sidecomp_to_checkin(comp_id: i32, player_id: &str) -> Result<Value, String> {
+pub async fn sidecomp_to_register_player_as_to(comp_id: i32, player_id: &str) -> Result<Value, String> {
     let c = client();
     let body = serde_json::json!({"player_id": player_id});
     let r = with_credentials(
-        c.post(format!("{}/_api/sidecomps/{}/checkin", base(), comp_id))
+        c.post(format!("{}/_api/sidecomps/{}/register-player-as-to", base(), comp_id))
             .json(&body),
     )
     .send()

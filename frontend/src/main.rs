@@ -101,8 +101,8 @@ enum Route {
     #[route("/:url/sidecomps/:comp_id/edit")]
     SideCompEdit { url: String, comp_id: i32 },
 
-    #[route("/:url/sidecomps/:comp_id/checkin")]
-    SideCompCheckin { url: String, comp_id: i32 },
+    #[route("/:url/sidecomps/:comp_id/register-player-as-to")]
+    SideCompRegisterAsTo { url: String, comp_id: i32 },
 
 
     #[route("/:url/manage")]

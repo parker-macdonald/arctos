@@ -9,7 +9,7 @@ pub fn SideCompDetail(url: String, comp_id: i32) -> Element {
 
     let url_for_back = url.clone();
     let url_for_edit = url.clone();
-    let url_for_checkin = url.clone();
+    let url_for_register = url.clone();
 
     rsx! {
         div { class: "row",
@@ -50,9 +50,9 @@ pub fn SideCompDetail(url: String, comp_id: i32) -> Element {
                                         "Edit"
                                     }
                                     Link {
-                                        to: Route::SideCompCheckin { url: url_for_checkin.clone(), comp_id },
+                                        to: Route::SideCompRegisterAsTo { url: url_for_register.clone(), comp_id },
                                         class: "btn btn-outline-primary",
-                                        "Check in players"
+                                        "Quick Register players"
                                     }
                                 }
                             }

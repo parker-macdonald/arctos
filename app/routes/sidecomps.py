@@ -221,10 +221,10 @@ def player_deregister(comp_id: int):
             return _err_response(err)
 
 
-@bp.route("/sidecomps/<int:comp_id>/checkin", methods=["POST"])
+@bp.route("/sidecomps/<int:comp_id>/register-player-as-to", methods=["POST"])
 @login_required
-def to_checkin(comp_id: int):
-    """TO-only: check a player into a side competition."""
+def register_player_as_to(comp_id: int):
+    """TO-only: register a player into a side competition on their behalf."""
     if not request.is_json:
         return jsonify({"success": False, "error": "Content-Type must be application/json"}), 415
     data = request.get_json() or {}
@@ -232,7 +232,7 @@ def to_checkin(comp_id: int):
     if not player_id:
         return jsonify({"success": False, "error": "player_id is required"}), 400
 
-    res = SideCompService.organizer_check_in(
+    res = SideCompService.register_player_as_to(
         comp_id,
         actor_user_id=current_user.id,
         actor_user_type=current_user.__class__.__name__.lower(),
@@ -256,10 +256,10 @@ def to_checkin(comp_id: int):
             return _err_response(err)
 
 
-@bp.route("/sidecomps/<int:comp_id>/uncheckin", methods=["POST"])
+@bp.route("/sidecomps/<int:comp_id>/deregister-player-as-to", methods=["POST"])
 @login_required
-def to_uncheckin(comp_id: int):
-    """TO-only: remove a player from a side competition."""
+def deregister_player_as_to(comp_id: int):
+    """TO-only: deregister a player from a side competition on their behalf."""
     if not request.is_json:
         return jsonify({"success": False, "error": "Content-Type must be application/json"}), 415
     data = request.get_json() or {}
@@ -267,7 +267,7 @@ def to_uncheckin(comp_id: int):
     if not player_id:
         return jsonify({"success": False, "error": "player_id is required"}), 400
 
-    res = SideCompService.organizer_remove(
+    res = SideCompService.deregister_player_as_to(
         comp_id,
         actor_user_id=current_user.id,
         actor_user_type=current_user.__class__.__name__.lower(),

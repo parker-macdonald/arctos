@@ -1,7 +1,7 @@
 """Side competition service.
 
 Encapsulates side-competition CRUD, player self-registration, and TO-driven
-check-in. Mirrors the style of :class:`~app.services.registration_service.RegistrationService`.
+registration. Mirrors the style of :class:`~app.services.registration_service.RegistrationService`.
 """
 
 from __future__ import annotations
@@ -336,14 +336,14 @@ class SideCompService:
 
     @staticmethod
     @allow_Q
-    def organizer_check_in(
+    def register_player_as_to(
         comp_id: int,
         *,
         actor_user_id: str,
         actor_user_type: str,
         player_id: str,
     ) -> Result["SideCompRegistration", ArctosError]:
-        """Register *player_id* for side competition *comp_id* on behalf of a TO.
+        """Register *player_id* for side competition *comp_id* via TO-driven registration.
 
         The resulting :class:`~app.models.sidecomp.SideCompRegistration` row has
         ``registered_by_to=True`` so it is distinguishable from a player's
@@ -351,10 +351,10 @@ class SideCompService:
 
         Args:
             comp_id: Primary key of the :class:`~app.models.sidecomp.SideComp`.
-            actor_user_id: ID of the user performing the check-in. Must be a TO
-                of the parent event.
+            actor_user_id: ID of the TO registering on behalf of the player.
+                Must be a TO of the parent event.
             actor_user_type: ``"player"`` or ``"team"``.
-            player_id: ID of the player being checked in.
+            player_id: ID of the player being registered on their behalf.
 
         Returns:
             :class:`~app.error_values.Ok` wrapping the persisted
@@ -407,24 +407,24 @@ class SideCompService:
 
     @staticmethod
     @allow_Q
-    def organizer_remove(
+    def deregister_player_as_to(
         comp_id: int,
         *,
         actor_user_id: str,
         actor_user_type: str,
         player_id: str,
     ) -> Result[None, ArctosError]:
-        """Remove *player_id*'s side-competition registration on behalf of a TO.
+        """Deregister *player_id* from side competition *comp_id* via TO-driven registration.
 
         Idempotent: removing a row that doesn't exist returns
         :class:`~app.error_values.Ok`.
 
         Args:
             comp_id: Primary key of the :class:`~app.models.sidecomp.SideComp`.
-            actor_user_id: ID of the user performing the removal. Must be a TO
-                of the parent event.
+            actor_user_id: ID of the TO deregistering on behalf of the player.
+                Must be a TO of the parent event.
             actor_user_type: ``"player"`` or ``"team"``.
-            player_id: ID of the player being removed.
+            player_id: ID of the player being deregistered on their behalf.
 
         Returns:
             :class:`~app.error_values.Ok` wrapping ``None`` on success, or an
