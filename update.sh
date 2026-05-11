@@ -2,6 +2,8 @@
 
 set -e
 
+. $BASHRC_PATH
+
 cd $REPO_ROOT
 
 
