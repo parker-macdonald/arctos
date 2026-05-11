@@ -20,7 +20,7 @@ jobs:
         REPO_ROOT: "/home/reid/arctos"
         FRONTEND_SERVER_ROOT: "/var/www/reid/arctos/"
         CARGO_ENV_FILE: "/home/reid/.cargo/env"
-        BASHRC_PATH: "/home/reid/.bashrc"
+        BASHRC_PATH: "/home/reid/.zshrc"
       with:
         host: ${{ secrets.PROD_SERVER_HOST }}
         username: ${{ secrets.PROD_SERVER_USER }}
