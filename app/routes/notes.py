@@ -66,14 +66,14 @@ def get_notes(tournament_url: str):
     match_id = request.args.get("match_id")
 
     if not match_id:
-        return json_error("Match ID required")
+        return json_error("Match ID required", status_code=400)
 
     match = Match.query.get(match_id)
     if not match or not _match_in_tournament_scope(match, tournament_url):
-        return json_error("Match not found")
+        return json_error("Match not found", status_code=404)
 
     if not can_head_ref_match(tournament_url, current_user.id, match=match):
-        return json_error("Not authorized")
+        return json_error("Not authorized", status_code=403)
 
     point_id = request.args.get("point_id")
 
@@ -121,14 +121,14 @@ def add_note(tournament_url: str):
     player_id = request.json.get("player_id")
 
     if not match_id or not text:
-        return json_error("Match ID and text required")
+        return json_error("Match ID and text required", status_code=400)
 
     match = Match.query.get(match_id)
     if not match or not _match_in_tournament_scope(match, tournament_url):
-        return json_error("Match not found")
+        return json_error("Match not found", status_code=404)
 
     if not can_head_ref_match(tournament_url, current_user.id, match=match):
-        return json_error("Not authorized")
+        return json_error("Not authorized", status_code=403)
 
     note = MatchNote(
         match=match_id,
@@ -167,18 +167,18 @@ def assign_notes_to_point(tournament_url: str):
     note_ids = request.json.get("note_ids", [])
 
     if not point_id or not note_ids:
-        return json_error("Point ID and note IDs required")
+        return json_error("Point ID and note IDs required", status_code=400)
 
     point = Point.query.get(point_id)
     if not point:
-        return json_error("Point not found")
+        return json_error("Point not found", status_code=404)
 
     match = Match.query.get(point.match)
     if not match or not _match_in_tournament_scope(match, tournament_url):
-        return json_error("Match not found")
+        return json_error("Match not found", status_code=404)
 
     if not is_head_ref(tournament_url, current_user.id):
-        return json_error("Not authorized")
+        return json_error("Not authorized", status_code=403)
 
     assigned_count = 0
     for note_id in note_ids:
@@ -215,11 +215,11 @@ def get_point_notes(tournament_url: str):
     point_id = request.args.get("point_id")
 
     if not match_id or not point_id:
-        return json_error("Match ID and Point ID required")
+        return json_error("Match ID and Point ID required", status_code=400)
 
     match = Match.query.get(match_id)
     if not match or not _match_in_tournament_scope(match, tournament_url):
-        return json_error("Match not found")
+        return json_error("Match not found", status_code=404)
 
     # Check if user is a head ref (for full access to all notes)
     is_head_ref = False
@@ -272,21 +272,21 @@ def add_point_note(tournament_url: str):
     penalty_type_id = request.json.get("penalty_type_id")
 
     if not match_id or not point_id:
-        return json_error("Match ID and Point ID required")
+        return json_error("Match ID and Point ID required", status_code=400)
 
     if not text and not penalty_type_id:
-        return json_error("Text or penalty type required")
+        return json_error("Text or penalty type required", status_code=400)
 
     match = Match.query.get(match_id)
     if not match or not _match_in_tournament_scope(match, tournament_url):
-        return json_error("Match not found")
+        return json_error("Match not found", status_code=404)
 
     if not can_head_ref_match(tournament_url, current_user.id, match=match):
-        return json_error("Not authorized")
+        return json_error("Not authorized", status_code=403)
 
     point = Point.query.get(point_id)
     if not point or point.match != match_id:
-        return json_error("Point not found")
+        return json_error("Point not found", status_code=404)
 
     note = MatchNote(
         match=match_id,
@@ -329,18 +329,18 @@ def set_point_note(tournament_url: str):
     text = (request.json.get("text") or "").strip()
 
     if not match_id or not point_id:
-        return json_error("Match ID and Point ID required")
+        return json_error("Match ID and Point ID required", status_code=400)
 
     match = Match.query.get(match_id)
     if not match or not _match_in_tournament_scope(match, tournament_url):
-        return json_error("Match not found")
+        return json_error("Match not found", status_code=404)
 
     if not can_head_ref_match(tournament_url, current_user.id, match=match):
-        return json_error("Not authorized")
+        return json_error("Not authorized", status_code=403)
 
     point = Point.query.get(point_id)
     if not point or point.match != match_id:
-        return json_error("Point not found")
+        return json_error("Point not found", status_code=404)
 
     # Remove existing point note(s) for this point (target=match only)
     MatchNote.query.filter_by(
@@ -384,20 +384,20 @@ def delete_point_note(tournament_url: str):
     note_id = request.json.get("note_id")
 
     if not note_id:
-        return json_error("Note ID required")
+        return json_error("Note ID required", status_code=400)
 
     note = MatchNote.query.get(note_id)
     if not note:
-        return json_error("Note not found")
+        return json_error("Note not found", status_code=404)
 
     match = Match.query.get(note.match)
     if not match or not _match_in_tournament_scope(match, tournament_url):
-        return json_error("Match not found")
+        return json_error("Match not found", status_code=404)
 
     from app.utils.helpers import can_head_ref_match
 
     if not can_head_ref_match(tournament_url, current_user.id, note.match):
-        return json_error("Not authorized")
+        return json_error("Not authorized", status_code=403)
 
     db.session.delete(note)
     db.session.commit()
@@ -428,18 +428,18 @@ def unassign_notes_from_point(tournament_url: str):
     note_ids = request.json.get("note_ids", [])
 
     if not point_id or not note_ids:
-        return json_error("Point ID and note IDs required")
+        return json_error("Point ID and note IDs required", status_code=400)
 
     point = Point.query.get(point_id)
     if not point:
-        return json_error("Point not found")
+        return json_error("Point not found", status_code=404)
 
     match = Match.query.get(point.match)
     if not match or not _match_in_tournament_scope(match, tournament_url):
-        return json_error("Match not found")
+        return json_error("Match not found", status_code=404)
 
     if not is_head_ref(tournament_url, current_user.id):
-        return json_error("Not authorized")
+        return json_error("Not authorized", status_code=403)
 
     unassigned_count = 0
     for note_id in note_ids:

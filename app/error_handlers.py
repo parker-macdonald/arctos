@@ -40,8 +40,8 @@ def register_error_handlers(app: Flask) -> None:
         prefers_json = (accepts.best == "application/json") and not accepts.accept_html
         is_api_path = request.path.startswith("/_api")
         if request.is_json or is_api_path or prefers_json:
-            # Keep prior behavior: many endpoints historically returned 200 even on errors.
-            return json_error(e.message if e.public else "Request failed", status_code=200)
+            # Surface the domain status_code so SPA clients can distinguish 4xx/5xx by HTTP status.
+            return json_error(e.message if e.public else "Request failed", status_code=e.status_code)
 
         flash(e.message if e.public else "Request failed", "error")
         return redirect(request.referrer or "/")

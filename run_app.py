@@ -17,12 +17,9 @@ Example:
 
 import os
 from app import create_app
-import logging
 
 # Create the app instance
 app = create_app()
-
-app.logger.setLevel(logging.INFO)
 
 if __name__ == "__main__":
     # Port from env (e.g. 5006). For Dioxus dev (dx serve on 8080), run Flask on http:

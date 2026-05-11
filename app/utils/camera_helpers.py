@@ -181,6 +181,50 @@ def calculate_stream_timestamp(point_stamp, stream_start_time):
     if not point_stamp or not stream_start_time:
         return None
 
+    try:
+        # Parse point timestamp
+        if isinstance(point_stamp, datetime):
+            point_dt = point_stamp
+            if point_dt.tzinfo is None:
+                point_dt = point_dt.replace(tzinfo=timezone.utc)
+        else:
+            point_str = str(point_stamp)
+            if not re.search(r"[zZ]|[\+\-]\d{2}:?\d{2}$", point_str):
+                point_str = re.sub(r"\.\d+$", "", point_str) + "Z"
+            point_dt = datetime.fromisoformat(point_str.replace("Z", "+00:00"))
+            if point_dt.tzinfo is None:
+                point_dt = point_dt.replace(tzinfo=timezone.utc)
+
+        # Parse stream start time
+        # Stream start time should be in ISO format, ideally with 'Z' suffix for UTC
+        stream_str = str(stream_start_time)
+
+        # Normalize to ISO format with timezone
+        if stream_str.endswith("Z"):
+            # Already has 'Z' suffix, convert to +00:00 for fromisoformat
+            stream_dt = datetime.fromisoformat(stream_str.replace("Z", "+00:00"))
+        elif re.search(r"[\+\-]\d{2}:?\d{2}$", stream_str):
+            # Has timezone offset, parse directly
+            stream_dt = datetime.fromisoformat(stream_str)
+        else:
+            # No timezone info, assume UTC and add 'Z'
+            stream_str = re.sub(r"\.\d+$", "", stream_str) + "Z"
+            stream_dt = datetime.fromisoformat(stream_str.replace("Z", "+00:00"))
+
+        # Ensure it's timezone-aware UTC
+        if stream_dt.tzinfo is None:
+            stream_dt = stream_dt.replace(tzinfo=timezone.utc)
+        else:
+            # Convert to UTC if it's not already
+            stream_dt = stream_dt.astimezone(timezone.utc)
+
+        # Calculate difference in seconds
+        diff = (point_dt - stream_dt).total_seconds()
+        return diff if diff >= 0 else None
+    except Exception as e:
+        print(f"Error calculating stream timestamp: {e}")
+        return None
+
 
 # -----------------------------
 # Camera access key helpers
@@ -259,47 +303,3 @@ def require_camera_key(tournament_url: str, field_name: str):
     if not access_key or not validate_camera_key(tournament_url, field_name, access_key):
         return (False, (jsonify({"error": "Invalid or missing access key"}), 403))
     return (True, None)
-
-    try:
-        # Parse point timestamp
-        if isinstance(point_stamp, datetime):
-            point_dt = point_stamp
-            if point_dt.tzinfo is None:
-                point_dt = point_dt.replace(tzinfo=timezone.utc)
-        else:
-            point_str = str(point_stamp)
-            if not re.search(r"[zZ]|[\+\-]\d{2}:?\d{2}$", point_str):
-                point_str = re.sub(r"\.\d+$", "", point_str) + "Z"
-            point_dt = datetime.fromisoformat(point_str.replace("Z", "+00:00"))
-            if point_dt.tzinfo is None:
-                point_dt = point_dt.replace(tzinfo=timezone.utc)
-
-        # Parse stream start time
-        # Stream start time should be in ISO format, ideally with 'Z' suffix for UTC
-        stream_str = str(stream_start_time)
-
-        # Normalize to ISO format with timezone
-        if stream_str.endswith("Z"):
-            # Already has 'Z' suffix, convert to +00:00 for fromisoformat
-            stream_dt = datetime.fromisoformat(stream_str.replace("Z", "+00:00"))
-        elif re.search(r"[\+\-]\d{2}:?\d{2}$", stream_str):
-            # Has timezone offset, parse directly
-            stream_dt = datetime.fromisoformat(stream_str)
-        else:
-            # No timezone info, assume UTC and add 'Z'
-            stream_str = re.sub(r"\.\d+$", "", stream_str) + "Z"
-            stream_dt = datetime.fromisoformat(stream_str.replace("Z", "+00:00"))
-
-        # Ensure it's timezone-aware UTC
-        if stream_dt.tzinfo is None:
-            stream_dt = stream_dt.replace(tzinfo=timezone.utc)
-        else:
-            # Convert to UTC if it's not already
-            stream_dt = stream_dt.astimezone(timezone.utc)
-
-        # Calculate difference in seconds
-        diff = (point_dt - stream_dt).total_seconds()
-        return diff if diff >= 0 else None
-    except Exception as e:
-        print(f"Error calculating stream timestamp: {e}")
-        return None

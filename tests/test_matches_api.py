@@ -30,7 +30,7 @@ def test_get_points_requires_match_id(app, client, tournament, head_ref_player):
         login_as(client, ref)
 
     resp = client.get(f"/_api/{t.url}/get-points")
-    assert resp.status_code == 200
+    assert resp.status_code == 400
     data = resp.get_json()
     assert data["success"] is False
     assert data["error"] == "Match ID required"

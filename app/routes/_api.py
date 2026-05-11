@@ -3916,81 +3916,6 @@ def _injury_json(inj):
     }
 
 
-@bp.route("/players/<player_id>/injuries", methods=["GET", "POST"])
-@login_required
-def player_injuries(player_id):
-    if current_user.id != player_id:
-        return jsonify({"error": "Forbidden"}), 403
-
-    if request.method == "GET":
-        injuries = Injury.query.filter_by(player=player_id).order_by(Injury.stamp.desc()).all()
-        return jsonify([_injury_json(inj) for inj in injuries])
-
-    data = request.get_json() or {}
-    message = (data.get("message") or "").strip()
-    if not message:
-        return jsonify({"error": "Message is required"}), 400
-
-    injury = Injury(
-        player=player_id,
-        message=message,
-        show=bool(data.get("show", False)),
-        active=bool(data.get("active", False)),
-    )
-
-    custom_date = data.get("custom_date")
-    if custom_date:
-        try:
-            injury.stamp = datetime.strptime(custom_date, "%Y-%m-%d")
-        except ValueError:
-            return jsonify({"error": "Invalid date format. Use YYYY-MM-DD."}), 400
-
-    db.session.add(injury)
-    db.session.commit()
-    return jsonify(_injury_json(injury))
-
-
-@bp.route("/players/<player_id>/injuries/<int:injury_id>", methods=["GET", "PUT", "DELETE"])
-@login_required
-def player_injury(player_id, injury_id):
-    if current_user.id != player_id:
-        return jsonify({"error": "Forbidden"}), 403
-
-    injury = Injury.query.filter_by(id=injury_id, player=player_id).first_or_404()
-
-    if request.method == "GET":
-        return jsonify(_injury_json(injury))
-
-    if request.method == "DELETE":
-        db.session.delete(injury)
-        db.session.commit()
-        return jsonify({"success": True})
-
-    data = request.get_json() or {}
-    message = (data.get("message") or "").strip()
-    if not message:
-        return jsonify({"error": "Message is required"}), 400
-    injury.message = message
-
-    if "show" in data:
-        injury.show = bool(data.get("show"))
-    if "active" in data:
-        injury.active = bool(data.get("active"))
-
-    if "custom_date" in data:
-        custom_date = data.get("custom_date")
-        if not custom_date:
-            injury.stamp = None
-        else:
-            try:
-                injury.stamp = datetime.strptime(custom_date, "%Y-%m-%d")
-            except ValueError:
-                return jsonify({"error": "Invalid date format. Use YYYY-MM-DD."}), 400
-
-    db.session.commit()
-    return jsonify(_injury_json(injury))
-
-
 @bp.route("/players/<player_id>/injuries/<int:injury_id>", methods=["GET"])
 @login_required
 def get_injury(player_id, injury_id):
@@ -4006,6 +3931,15 @@ def get_injury(player_id, injury_id):
             "show": bool(injury.show),
         }
     )
+
+
+@bp.route("/players/<player_id>/injuries", methods=["GET"])
+@login_required
+def list_injuries(player_id):
+    if current_user.id != player_id:
+        return jsonify({"error": "Forbidden"}), 403
+    injuries = Injury.query.filter_by(player=player_id).order_by(Injury.stamp.desc()).all()
+    return jsonify([_injury_json(inj) for inj in injuries])
 
 
 @bp.route("/players/<player_id>/injuries", methods=["POST"])

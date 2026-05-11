@@ -10,7 +10,7 @@ Workflow logic lives in ``app.services.match_service`` / ``match_actions_service
 just parse the request and convert the resulting ``Result`` to JSON.
 """
 
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, render_template, make_response
 from flask_login import login_required, current_user
 from datetime import datetime, timezone
 import json
@@ -40,8 +40,6 @@ bp = Blueprint("matches", __name__, url_prefix="/_api")
 @bp.route("/scoreboard")
 def scoreboard():
     """Scoreboard page for OBS overlay. Public endpoint."""
-    from flask import make_response
-
     tournament_url = request.args.get("tournament")
     field_name = request.args.get("field")
 
@@ -810,21 +808,21 @@ def get_selection_notes(tournament_url):
     player_ids_csv = request.args.get("player_ids", "")
 
     if not match_id or team_side not in ("team1", "team2"):
-        return json_error("match_id and team required")
+        return json_error("match_id and team required", status_code=400)
 
     tournament = Tournament.query.filter_by(url=tournament_url).first()
     if not tournament:
-        return json_error("Tournament not found")
+        return json_error("Tournament not found", status_code=404)
     from app.utils.helpers import match_event_urls_for_penalties
 
     event_urls = match_event_urls_for_penalties(tournament)
 
     match = Match.query.get(match_id)
     if not match or match.event not in event_urls:
-        return json_error("Match not found")
+        return json_error("Match not found", status_code=404)
 
     if not can_head_ref_match(tournament_url, current_user.id, match=match):
-        return json_error("bruh ur not a head ref")
+        return json_error("bruh ur not a head ref", status_code=403)
 
     team_id = match.team1 if team_side == "team1" else match.team2
     if not team_id:
@@ -1202,7 +1200,7 @@ def get_points(tournament_url):
     """Get points for a match."""
     match_id = request.args.get("match_id")
     if not match_id:
-        return json_error("Match ID required")
+        return json_error("Match ID required", status_code=400)
 
     from app.services.match_actions_service import MatchActionsService
 
@@ -1379,73 +1377,6 @@ def complete_match(tournament_url):
     res = MatchActionsService.complete_match(tournament_url, current_user.id, match_id=match_id)
     return json_from_result(res, ok_to_payload=lambda d: d)
 
-
-@bp.route("/stones")
-def stones_player():
-    """Stones audio player page with server time synchronization."""
-    import os
-    from flask import current_app
-    from flask_login import current_user
-
-    # Hardcoded list of usernames that can see all audio files
-    ALLOWED_USERS = os.environ.get("SILLY_USERS", "").split(":")  # Add usernames here
-
-    # Get the static folder path
-    static_folder = current_app.static_folder
-    stones_dir = os.path.join(static_folder, "stones")
-
-    # List all MP3 files in the stones directory
-    import re
-
-    mp3_files = []
-    if os.path.exists(stones_dir) and os.path.isdir(stones_dir):
-        for filename in os.listdir(stones_dir):
-            if filename.lower().endswith(".mp3"):
-                # Remove extension
-                name_without_ext = os.path.splitext(filename)[0]
-                # Remove numeric prefix (e.g., "1_", "2_", etc.) for display name
-                display_name = re.sub(r"^\d+_", "", name_without_ext)
-                # Extract numeric prefix for sorting (default to 0 if no prefix)
-                match = re.match(r"^(\d+)_", name_without_ext)
-                sort_order = int(match.group(1)) if match else 999999
-                # URL-encode the filename for use in URLs
-                from urllib.parse import quote
-
-                filename_encoded = quote(filename, safe="")
-
-                mp3_files.append(
-                    {
-                        "filename": filename,
-                        "filename_encoded": filename_encoded,
-                        "display_name": display_name,
-                        "sort_order": sort_order,
-                    }
-                )
-        # Sort by numeric prefix (sort_order), then by filename for consistent ordering
-        mp3_files.sort(key=lambda x: (x["sort_order"], x["filename"]))
-
-    # Filter files based on user permissions
-    # Only show "Classic" and "Snare" unless user is in the allowed list
-    user_can_see_all = current_user.is_authenticated and current_user.id in ALLOWED_USERS
-
-    if not user_can_see_all:
-        # Filter to only show "Classic" and "Snare" (case-insensitive)
-        mp3_files = [f for f in mp3_files if f["display_name"].lower() in ["classic", "snare"]]
-
-    return render_template("stones_player.html", mp3_files=mp3_files)
-
-
-@bp.route("/server-time")
-def server_time():
-    """Return current server time in unix timestamp format."""
-    import time
-
-    return jsonify(
-        {
-            "server_time": time.time(),
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        }
-    )
 
 
 @bp.route("/youtube-stream-start")
