@@ -20,9 +20,10 @@ jobs:
         REPO_ROOT: "/home/reid/arctos"
         FRONTEND_SERVER_ROOT: "/var/www/reid/arctos/"
         CARGO_ENV_FILE: "/home/reid/.cargo/env"
+        BASHRC_PATH: "/home/reid/.zshrc"
       with:
         host: ${{ secrets.PROD_SERVER_HOST }}
         username: ${{ secrets.PROD_SERVER_USER }}
         key: ${{ secrets.PROD_SERVER_SSH_KEY }}
         script: ~/arctos/update.sh
-        envs: GIT_BRANCH,BUILD_DOCS,REPO_ROOT,FRONTEND_SERVER_ROOT,CARGO_ENV_FILE
+        envs: GIT_BRANCH,BUILD_DOCS,REPO_ROOT,FRONTEND_SERVER_ROOT,CARGO_ENV_FILE,BASHRC_PATH
