@@ -11,6 +11,14 @@ fn get_form_value(id: &str) -> String {
         .unwrap_or_default()
 }
 
+fn get_form_check(id: &str) -> bool {
+    let doc = web_sys::window().and_then(|w| w.document()).unwrap();
+    doc.get_element_by_id(id)
+        .and_then(|e| e.dyn_into::<web_sys::HtmlInputElement>().ok())
+        .map(|e| e.checked())
+        .unwrap_or(false)
+}
+
 #[component]
 pub fn NewTournament() -> Element {
     let navigator = use_navigator();

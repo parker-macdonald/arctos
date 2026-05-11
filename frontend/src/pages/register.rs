@@ -110,11 +110,12 @@ fn RegisterPage(account_type: Option<String>) -> Element {
                                 err.set(None);
                                 let nav = navigator.clone();
                                 let mut auth_invalidate = auth_invalidate;
+                                let next = get_query_param("next").filter(|s| s.starts_with('/'));
                                 spawn(async move {
                                     match api::register(&u, &p, &n, &t).await {
                                         Ok(_) => {
                                             auth_invalidate.set(auth_invalidate() + 1);
-                                            let _ = nav.push("/");
+                                            let _ = nav.push(next.as_deref().unwrap_or("/"));
                                         }
                                         Err(e) => err.set(Some(e)),
                                     }

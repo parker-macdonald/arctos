@@ -2109,6 +2109,7 @@ def tournament_manage_api(tournament_url):
         team_registrations_for_tournament,
         player_registrations_for_tournament,
     )
+    from app.utils.helpers import get_registrable_config
 
     if not _check_to(tournament_url):
         return jsonify({"error": "Forbidden"}), 403

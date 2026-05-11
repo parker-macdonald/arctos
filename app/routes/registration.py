@@ -523,3 +523,137 @@ def decline_invitation(tournament_url: str, invitation_id: int):
     player_registration.status = RegistrationStatus.REJECTED
     db.session.commit()
     return jsonify({"success": True, "message": "Player request declined"}), 200
+
+
+@bp.route("/<tournament_url>/register-player-as-to", methods=["POST"])
+@login_required
+def register_player_as_to(tournament_url: str):
+    """Tournament-organizer-driven player registration.
+
+    ``POST /_api/<tournament_url>/register-player-as-to``
+
+    The caller must be a TO of this tournament (enforced in the service
+    layer). Registers an existing player to the tournament with an auto-confirmed,
+    fully-paid registration.
+
+    Args:
+        tournament_url: Tournament URL slug from the path.
+
+    Request JSON:
+        player_id (str): ID of the existing player to register on behalf. Required.
+        team (str | None): Team ID to register under, or null/omitted for
+            unaffiliated.
+        jersey_number (str): Jersey number; defaults to ``"0"`` when blank.
+        jersey_name (str): Jersey name; defaults to ``"N/A"`` when blank.
+        waiver_legal_name_signature (str): Player's legal-name signature
+            (typed by the TO on the player's behalf). Required when the
+            tournament has a waiver configured.
+
+    Returns:
+        ``200`` with the resolved registration fields on success, or
+        ``{success: false, error}`` with an appropriate status on failure.
+    """
+    if not request.is_json:
+        return jsonify({"success": False, "error": "Content-Type must be application/json"}), 415
+    data = request.get_json() or {}
+
+    player_id = (data.get("player_id") or "").strip()
+    if not player_id:
+        return jsonify({"success": False, "error": "player_id is required"}), 400
+
+    res = RegistrationService.register_player_as_to(
+        tournament_url,
+        actor_user_id=current_user.id,
+        actor_user_type=current_user.__class__.__name__.lower(),
+        player_id=player_id,
+        team_id=(data.get("team") or None),
+        jersey_number=data.get("jersey_number", ""),
+        jersey_name=data.get("jersey_name", ""),
+        waiver_legal_name_signature=data.get("waiver_legal_name_signature", ""),
+    )
+    match res:
+        case Ok(reg):
+            from models import Player
+
+            player = Player.query.get(reg.player)
+            return (
+                jsonify(
+                    {
+                        "success": True,
+                        "message": "Player registered",
+                        "player_id": reg.player,
+                        "player_name": player.name if player else reg.player,
+                        "team": reg.team,
+                        "jersey_number": reg.jersey_number,
+                        "jersey_name": reg.jersey_name,
+                    }
+                ),
+                200,
+            )
+        case Err(err):
+            from app.exceptions import ArctosError
+
+            status = err.status_code if isinstance(err, ArctosError) else 400
+            return jsonify({"success": False, "error": public_error_message(err)}), status
+
+
+@bp.route("/<tournament_url>/register-team-as-to", methods=["POST"])
+@login_required
+def register_team_as_to(tournament_url: str):
+    """Tournament-organizer-driven team registration.
+
+    ``POST /_api/<tournament_url>/register-team-as-to``
+
+    The caller must be a TO of this tournament (enforced in the service
+    layer). Adds an existing team to the tournament with an auto-confirmed,
+    fully-paid registration.
+
+    Args:
+        tournament_url: Tournament URL slug from the path.
+
+    Request JSON:
+        team_id (str): ID of the existing team to register. Required.
+        pseudonym (str): Per-tournament team display name. Optional;
+            defaults to ``team.name`` when blank.
+
+    Returns:
+        ``200`` with the resolved registration fields on success, or
+        ``{success: false, error}`` with an appropriate status on failure.
+    """
+    if not request.is_json:
+        return jsonify({"success": False, "error": "Content-Type must be application/json"}), 415
+    data = request.get_json() or {}
+
+    team_id = (data.get("team_id") or "").strip()
+    if not team_id:
+        return jsonify({"success": False, "error": "team_id is required"}), 400
+
+    res = RegistrationService.register_team_as_to(
+        tournament_url,
+        actor_user_id=current_user.id,
+        actor_user_type=current_user.__class__.__name__.lower(),
+        team_id=team_id,
+        pseudonym=data.get("pseudonym", ""),
+    )
+    match res:
+        case Ok(reg):
+            from models import Team
+
+            team = Team.query.get(reg.team)
+            return (
+                jsonify(
+                    {
+                        "success": True,
+                        "message": "Team registered",
+                        "team_id": reg.team,
+                        "team_name": team.name if team else reg.team,
+                        "pseudonym": reg.pseudonym,
+                    }
+                ),
+                200,
+            )
+        case Err(err):
+            from app.exceptions import ArctosError
+
+            status = err.status_code if isinstance(err, ArctosError) else 400
+            return jsonify({"success": False, "error": public_error_message(err)}), status

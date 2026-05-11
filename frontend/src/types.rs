@@ -1323,3 +1323,25 @@ pub struct RecordPointData {
     pub stamp: Option<String>,
     pub end_stamp: Option<String>,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RegisterPlayerAsToResponse {
+    pub success: bool,
+    pub message: Option<String>,
+    pub error: Option<String>,
+    pub player_id: Option<String>,
+    pub player_name: Option<String>,
+    pub team: Option<String>,
+    pub jersey_number: Option<String>,
+    pub jersey_name: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RegisterTeamAsToResponse {
+    pub success: bool,
+    pub message: Option<String>,
+    pub error: Option<String>,
+    pub team_id: Option<String>,
+    pub team_name: Option<String>,
+    pub pseudonym: Option<String>,
+}

@@ -700,6 +700,52 @@ pub async fn deregister_team(tournament_url: &str) -> Result<StatusResponse, Str
     post_form_status(&url, &[]).await
 }
 
+pub async fn register_player_as_to(
+    tournament_url: &str,
+    player_id: &str,
+    team_id: Option<&str>,
+    jersey_number: &str,
+    jersey_name: &str,
+    waiver_legal_name_signature: &str,
+) -> Result<crate::types::RegisterPlayerAsToResponse, String> {
+    let c = client();
+    let body = serde_json::json!({
+        "player_id": player_id,
+        "team": team_id,
+        "jersey_number": jersey_number,
+        "jersey_name": jersey_name,
+        "waiver_legal_name_signature": waiver_legal_name_signature,
+    });
+    let r = with_credentials(
+        c.post(format!("{}/_api/{}/register-player-as-to", base(), tournament_url))
+            .json(&body),
+    )
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    response_json(r).await
+}
+
+pub async fn register_team_as_to(
+    tournament_url: &str,
+    team_id: &str,
+    pseudonym: &str,
+) -> Result<crate::types::RegisterTeamAsToResponse, String> {
+    let c = client();
+    let body = serde_json::json!({
+        "team_id": team_id,
+        "pseudonym": pseudonym,
+    });
+    let r = with_credentials(
+        c.post(format!("{}/_api/{}/register-team-as-to", base(), tournament_url))
+            .json(&body),
+    )
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    response_json(r).await
+}
+
 pub async fn create_tournament(
     name: &str,
     url_slug: &str,
