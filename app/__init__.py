@@ -25,6 +25,7 @@ class ArctosJSONProvider(DefaultJSONProvider):
             return float(o)
         return super().default(o)
 
+
 # Initialize extensions (will be initialized in create_app)
 db = None
 login_manager = LoginManager()
@@ -222,6 +223,7 @@ def create_app(config: dict | None = None) -> Flask:
     from app.routes.matches import bp as matches_bp
     from app.routes.notes import bp as notes_bp
     from app.routes.registration import bp as registration_bp
+    from app.routes.sidecomps import bp as sidecomps_bp
     from app.routes._api import bp as _api_bp
 
     app.register_blueprint(_api_bp)
@@ -230,6 +232,7 @@ def create_app(config: dict | None = None) -> Flask:
     app.register_blueprint(matches_bp)
     app.register_blueprint(notes_bp)
     app.register_blueprint(registration_bp)
+    app.register_blueprint(sidecomps_bp)
 
     # Register template filters
     from app import filters

@@ -3508,3 +3508,135 @@ pub async fn delete_point_note(tournament_url: &str, note_id: &str) -> Result<Va
     .map_err(|e| e.to_string())?;
     response_json(r).await
 }
+
+pub async fn sidecomps_list(tournament_url: &str) -> Result<Vec<SideCompSummary>, String> {
+    let c = client();
+    let r = with_credentials(c.get(format!("{}/_api/{}/sidecomps", base(), tournament_url)))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    response_json(r).await
+}
+
+pub async fn sidecomp_detail(comp_id: i32) -> Result<SideCompDetail, String> {
+    let c = client();
+    let r = with_credentials(c.get(format!("{}/_api/sidecomps/{}", base(), comp_id)))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    response_json(r).await
+}
+
+pub async fn sidecomp_create(
+    tournament_url: &str,
+    name: &str,
+    type_: &str,
+    description: Option<&str>,
+) -> Result<Value, String> {
+    let c = client();
+    let body = serde_json::json!({
+        "name": name,
+        "type": type_,
+        "description": description.unwrap_or(""),
+    });
+    let r = with_credentials(
+        c.post(format!("{}/_api/{}/sidecomps", base(), tournament_url))
+            .json(&body),
+    )
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    response_json(r).await
+}
+
+pub async fn sidecomp_update(
+    comp_id: i32,
+    name: Option<&str>,
+    type_: Option<&str>,
+    description: Option<&str>,
+    registration_open: Option<bool>,
+) -> Result<Value, String> {
+    let c = client();
+    let mut body = serde_json::Map::new();
+    if let Some(n) = name {
+        body.insert("name".to_string(), serde_json::json!(n));
+    }
+    if let Some(t) = type_ {
+        body.insert("type".to_string(), serde_json::json!(t));
+    }
+    if let Some(d) = description {
+        body.insert("description".to_string(), serde_json::json!(d));
+    }
+    if let Some(open) = registration_open {
+        body.insert("registration_open".to_string(), serde_json::json!(open));
+    }
+    let r = with_credentials(
+        c.patch(format!("{}/_api/sidecomps/{}", base(), comp_id))
+            .json(&body),
+    )
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    response_json(r).await
+}
+
+pub async fn sidecomp_delete(comp_id: i32) -> Result<Value, String> {
+    let c = client();
+    let r = with_credentials(c.delete(format!("{}/_api/sidecomps/{}", base(), comp_id)))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    response_json(r).await
+}
+
+pub async fn sidecomp_register(comp_id: i32) -> Result<Value, String> {
+    let c = client();
+    let r = with_credentials(c.post(format!(
+        "{}/_api/sidecomps/{}/register",
+        base(),
+        comp_id
+    )))
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    response_json(r).await
+}
+
+pub async fn sidecomp_deregister(comp_id: i32) -> Result<Value, String> {
+    let c = client();
+    let r = with_credentials(c.post(format!(
+        "{}/_api/sidecomps/{}/deregister",
+        base(),
+        comp_id
+    )))
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    response_json(r).await
+}
+
+pub async fn sidecomp_to_register_player_as_to(comp_id: i32, player_id: &str) -> Result<Value, String> {
+    let c = client();
+    let body = serde_json::json!({"player_id": player_id});
+    let r = with_credentials(
+        c.post(format!("{}/_api/sidecomps/{}/register-player-as-to", base(), comp_id))
+            .json(&body),
+    )
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    response_json(r).await
+}
+
+pub async fn sidecomp_eligible_players(comp_id: i32) -> Result<Vec<EligiblePlayer>, String> {
+    let c = client();
+    let r = with_credentials(c.get(format!(
+        "{}/_api/sidecomps/{}/eligible-players",
+        base(),
+        comp_id
+    )))
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    response_json(r).await
+}

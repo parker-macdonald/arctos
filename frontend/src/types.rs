@@ -1345,3 +1345,55 @@ pub struct RegisterTeamAsToResponse {
     pub team_name: Option<String>,
     pub pseudonym: Option<String>,
 }
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SideCompSummary {
+    pub id: i32,
+    pub name: String,
+    #[serde(rename = "type")]
+    pub type_: String,
+    pub registrant_count: i64,
+    #[serde(default)]
+    pub registration_open: bool,
+    pub created_at: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SideCompRegistrant {
+    pub player_id: String,
+    pub player_name: String,
+    #[serde(default)]
+    pub entry_number: i32,
+    pub registered_at: Option<String>,
+    pub registered_by_to: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SideCompDetail {
+    pub id: i32,
+    pub event: String,
+    pub name: String,
+    #[serde(rename = "type")]
+    pub type_: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub registration_open: bool,
+    pub created_at: Option<String>,
+    pub registrants: Vec<SideCompRegistrant>,
+    #[serde(default)]
+    pub viewer_is_to: bool,
+    #[serde(default)]
+    pub viewer_can_register: bool,
+    #[serde(default)]
+    pub viewer_is_registered_in_comp: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct EligiblePlayer {
+    pub player_id: String,
+    pub player_name: String,
+    pub team_id: Option<String>,
+    pub team_pseudonym: Option<String>,
+    pub jersey_name: Option<String>,
+}

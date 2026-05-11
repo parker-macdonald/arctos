@@ -129,6 +129,14 @@ class SetType(StrEnum):
     STONES = "STONES"
 
 
+class SideCompType(StrEnum):
+    """Allowed side competition types."""
+
+    DUELING = "DUELING"
+    CHAIN_BREAKING = "CHAIN_BREAKING"
+    OTHER = "OTHER"
+
+
 class WinnerSide(StrEnum):
     """Identifies which team won a completed match.
 

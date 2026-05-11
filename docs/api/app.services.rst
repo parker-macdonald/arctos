@@ -16,5 +16,6 @@ app.services
    app.services.registration_resolver
    app.services.registration_service
    app.services.schedule_import_export_service
+   app.services.sidecomp_service
    app.services.team_stats_service
    app.services.tournament_service

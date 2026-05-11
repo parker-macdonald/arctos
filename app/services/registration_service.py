@@ -301,9 +301,7 @@ class RegistrationService:
                 return Err(ValidationError("Waiver is missing its checksum"))
             waiver_signature_data = (signature, current_waiver_sha, now)
 
-        existing_reg = PlayerRegistration.query.filter_by(
-            event=tournament_url, player=player_id
-        ).first()
+        existing_reg = PlayerRegistration.query.filter_by(event=tournament_url, player=player_id).first()
         if existing_reg:
             if existing_reg.status not in (
                 RegistrationStatus.CANCELLED,
@@ -392,15 +390,11 @@ class RegistrationService:
                     status=TeamRegistrationStatus.CONFIRMED,
                 ).count()
             if current_team_count >= n_max:
-                return Err(ValidationError(
-                    f"Maximum teams reached ({current_team_count}/{n_max})"
-                ))
+                return Err(ValidationError(f"Maximum teams reached ({current_team_count}/{n_max})"))
 
         now = datetime.now(timezone.utc).replace(tzinfo=None)
 
-        existing_reg = TeamRegistration.query.filter_by(
-            event=tournament_url, team=team_id
-        ).first()
+        existing_reg = TeamRegistration.query.filter_by(event=tournament_url, team=team_id).first()
         if existing_reg:
             if existing_reg.status != TeamRegistrationStatus.CANCELLED:
                 return Err(ValidationError("This team is already registered"))
@@ -449,9 +443,20 @@ class RegistrationService:
 
         team_registration.status = TeamRegistrationStatus.CANCELLED
 
+        affected_player_ids = [
+            r.player for r in PlayerRegistration.query.filter_by(event=tournament_url, team=team_id).all()
+        ]
+
         PlayerRegistration.query.filter_by(event=tournament_url, team=team_id).update(
             {"status": RegistrationStatus.CANCELLED}
         )
+
+        # Cascade: hard-delete side-competition registrations for each player
+        # whose event registration was just cancelled.
+        from app.services.sidecomp_service import SideCompService
+
+        for pid in affected_player_ids:
+            SideCompService.cancel_player_registrations_in_event(tournament_url, pid)
 
         db.session.commit()
         return Ok(None)
@@ -490,6 +495,13 @@ class RegistrationService:
                 return Err(ValidationError("Cannot deregister once you have played in a match that is in progress."))
 
         player_registration.status = RegistrationStatus.CANCELLED
+
+        # Cascade: hard-delete any side-competition registrations for this
+        # (event, player) since side comp participation requires an active
+        # event registration.
+        from app.services.sidecomp_service import SideCompService
+
+        SideCompService.cancel_player_registrations_in_event(tournament_url, player_id)
 
         db.session.commit()
         return Ok(None)

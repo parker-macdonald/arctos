@@ -201,9 +201,7 @@ def test_checkin_reuses_cancelled_row(checkin_tournament, to_player, target_play
     assert reg.jersey_name == "N/A"
     assert reg.jersey_number == "0"
 
-    rows = PlayerRegistration.query.filter_by(
-        event=checkin_tournament.url, player=target_player.id
-    ).count()
+    rows = PlayerRegistration.query.filter_by(event=checkin_tournament.url, player=target_player.id).count()
     assert rows == 1
 
 
@@ -492,9 +490,7 @@ def test_register_team_reuses_cancelled_row(checkin_tournament, to_player, test_
     assert reg.pseudonym == "New Name"
     assert reg.paid is True
 
-    rows = TeamRegistration.query.filter_by(
-        event=checkin_tournament.url, team=target_team.id
-    ).count()
+    rows = TeamRegistration.query.filter_by(event=checkin_tournament.url, team=target_team.id).count()
     assert rows == 1
 
 
@@ -519,12 +515,14 @@ def test_register_team_n_max_cap_with_count_in_message(test_db):
         team.set_password("pw")
         db.session.add(team)
         db.session.flush()
-        db.session.add(TeamRegistration(
-            event=t.url,
-            team=team.id,
-            pseudonym=team.name,
-            status=TeamRegistrationStatus.CONFIRMED,
-        ))
+        db.session.add(
+            TeamRegistration(
+                event=t.url,
+                team=team.id,
+                pseudonym=team.name,
+                status=TeamRegistrationStatus.CONFIRMED,
+            )
+        )
     overflow = Team(id="overflow-team", name="Overflow Team")
     overflow.set_password("pw")
     db.session.add(overflow)

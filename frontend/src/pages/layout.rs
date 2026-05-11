@@ -62,6 +62,11 @@ fn page_title_for_route(route: &Route) -> String {
         Route::License { .. } => "License".into(),
         Route::ArctosScheduleScript { .. } => "Arctos Schedule Script".into(),
         Route::DataAccessibilityGuide { .. } => "Data Accessibility Guide".into(),
+        Route::SideCompsList { url } => format!("{url} Side Competitions"),
+        Route::SideCompNew { url } => format!("{url} New Side Competition"),
+        Route::SideCompDetail { url, .. } => format!("{url} Side Competition"),
+        Route::SideCompEdit { url, .. } => format!("{url} Edit Side Competition"),
+        Route::SideCompRegisterAsTo { url, .. } => format!("{url} Side Competition Quick Register"),
     }
 }
 
