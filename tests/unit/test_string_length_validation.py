@@ -55,6 +55,7 @@ def test_validator_passes_through_non_string_values(test_db):
     # validator should not be what catches it - it should be a no-op so that
     # SQLAlchemy's own type handling owns the error path.
     player.location = 12345  # must not raise ValidationError
+    assert player.location == 12345
 
 
 @pytest.mark.unit
@@ -97,5 +98,6 @@ def test_every_mapped_string_column_rejects_overflow(test_db):
             assert str(n) in msg, f"{cls.__name__}.{field}: max length missing from error"
             checked.append((cls.__name__, field, n))
 
-    # Sanity floor: if this drops to zero, the sweep is silently a no-op.
-    assert len(checked) >= 20, f"expected coverage sweep to hit many columns, got {checked!r}"
+    # Sanity floor: the codebase has ~103 String(N) columns; a regression that
+    # silently dropped a large chunk should fail here, not just an empty sweep.
+    assert len(checked) >= 80, f"expected coverage sweep to hit many columns, got {checked!r}"
