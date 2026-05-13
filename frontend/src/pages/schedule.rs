@@ -1,4 +1,5 @@
 use crate::api;
+use crate::display::short_or_truncate;
 use crate::types::*;
 use crate::Route;
 use dioxus::html::ModifiersInteraction;
@@ -2522,41 +2523,51 @@ fn TableView(
                 tbody {
                     {matches.iter().map(|m| {
                         let match_id = m.uuid.clone();
-                        // Team 1 column: only m.team1 / m.team1_initial (first token if comma-separated)
+                        // Team 1 column: only m.team1 / m.team1_initial (first token if comma-separated).
+                        // t1_raw is the full pseudonym (for highlight-filter matching); t1_label is the
+                        // possibly-shortened/truncated form that gets rendered in the cell.
                         let opt1 = m.team1.as_ref().and_then(|id| data.team_options.iter().find(|o| &o.id == id));
                         let t1_raw = opt1.and_then(|o| o.pseudonym.as_deref()).map(String::from)
+                            .unwrap_or_else(|| m.team1_initial.as_deref().unwrap_or("").to_string());
+                        let t1_label = opt1.map(|o| short_or_truncate(o.pseudonym.as_deref().unwrap_or(o.id.as_str()), o.shortname.as_deref()))
                             .unwrap_or_else(|| m.team1_initial.as_deref().unwrap_or("").to_string());
                         let photo1 = opt1.and_then(|o| o.profile_photo.clone());
                         // Team 2 column: only m.team2 / m.team2_initial (first token if comma-separated)
                         let opt2 = m.team2.as_ref().and_then(|id| data.team_options.iter().find(|o| &o.id == id));
                         let t2_raw = opt2.and_then(|o| o.pseudonym.as_deref()).map(String::from)
                             .unwrap_or_else(|| m.team2_initial.as_deref().unwrap_or("").to_string());
+                        let t2_label = opt2.map(|o| short_or_truncate(o.pseudonym.as_deref().unwrap_or(o.id.as_str()), o.shortname.as_deref()))
+                            .unwrap_or_else(|| m.team2_initial.as_deref().unwrap_or("").to_string());
                         let photo2 = opt2.and_then(|o| o.profile_photo.clone());
-                        // Refs column: only m.refs / m.refs_initial (comma-separated list)
-                        let refs_list: Vec<(String, Option<String>)> = m.refs.as_deref().or(m.refs_initial.as_deref()).unwrap_or("")
+                        // Refs column: only m.refs / m.refs_initial (comma-separated list).
+                        // Track both raw (for filter) and label (for display) per ref token.
+                        let refs_entries: Vec<(String, String, Option<String>)> = m.refs.as_deref().or(m.refs_initial.as_deref()).unwrap_or("")
                             .split(',')
                             .map(|s| s.trim())
                             .filter(|s| !s.is_empty())
                             .map(|token| {
                                 let opt = data.team_options.iter().find(|o| o.id == token);
-                                let display = opt.and_then(|o| o.pseudonym.as_deref()).map(String::from).unwrap_or_else(|| token.to_string());
+                                let raw = opt.and_then(|o| o.pseudonym.as_deref()).map(String::from).unwrap_or_else(|| token.to_string());
+                                let label = opt.map(|o| short_or_truncate(o.pseudonym.as_deref().unwrap_or(o.id.as_str()), o.shortname.as_deref())).unwrap_or_else(|| token.to_string());
                                 let photo = opt.and_then(|o| o.profile_photo.clone());
-                                (display, photo)
+                                (raw, label, photo)
                             })
                             .collect();
-                        // Same rules as ScheduleTimeline (before t1_raw/t2_raw are moved into display strings)
+                        let refs_list: Vec<(String, Option<String>)> = refs_entries.iter().map(|(_, l, p)| (l.clone(), p.clone())).collect();
+                        // Highlight: match against raw (full) pseudonyms so a query for the full team
+                        // name still matches teams whose label was shortened/truncated.
                         let (highlight_playing, highlight_ref) = if highlight_team.is_empty() {
                             (false, false)
                         } else {
                             let ht = highlight_team.to_lowercase();
                             let playing = t1_raw.to_lowercase().contains(&ht)
                                 || t2_raw.to_lowercase().contains(&ht);
-                            let refs_joined = refs_list
+                            let refs_joined_raw = refs_entries
                                 .iter()
-                                .map(|(d, _)| d.as_str())
+                                .map(|(r, _, _)| r.as_str())
                                 .collect::<Vec<_>>()
                                 .join(", ");
-                            let reffing = !playing && refs_joined.to_lowercase().contains(&ht);
+                            let reffing = !playing && refs_joined_raw.to_lowercase().contains(&ht);
                             (playing, reffing)
                         };
                         let tr_row_class = {
@@ -2569,8 +2580,8 @@ fn TableView(
                             }
                             s
                         };
-                        let t1 = if t1_raw.contains(',') { t1_raw.split(',').next().map(|s| s.trim().to_string()).unwrap_or_default() } else { t1_raw };
-                        let t2 = if t2_raw.contains(',') { t2_raw.split(',').next().map(|s| s.trim().to_string()).unwrap_or_default() } else { t2_raw };
+                        let t1 = if t1_label.contains(',') { t1_label.split(',').next().map(|s| s.trim().to_string()).unwrap_or_default() } else { t1_label };
+                        let t2 = if t2_label.contains(',') { t2_label.split(',').next().map(|s| s.trim().to_string()).unwrap_or_default() } else { t2_label };
                         let (t1_kind, t1_label) = team_ref_display(&t1);
                         let (t2_kind, t2_label) = team_ref_display(&t2);
                         let refs_display_list: Vec<(String, Option<String>, u8, String)> = refs_list
@@ -2888,49 +2899,59 @@ fn ScheduleTimeline(
             // Don't filter by date here - we'll filter when rendering based on current_visible_date
             // This allows date navigation to work properly
             
-            // Display pseudonyms (from registration): prefer team_options pseudonym when team ID is set
-            let t1 = m.team1.as_ref()
-                .and_then(|id| data.team_options.iter().find(|o| &o.id == id))
-                .and_then(|o| o.pseudonym.as_deref())
-                .map(String::from)
+            // Display pseudonyms (from registration): prefer team_options pseudonym when team ID is set.
+            // We keep both a "raw" (full pseudonym) and a "label" (shortname/truncated) form:
+            // - label is what gets rendered in the timeline (limited horizontal space).
+            // - raw is what the highlight filter substring-matches against, so a user typing
+            //   the full team name still matches teams whose label was abbreviated.
+            let opt1 = m.team1.as_ref().and_then(|id| data.team_options.iter().find(|o| &o.id == id));
+            let t1_raw = opt1.and_then(|o| o.pseudonym.as_deref()).map(String::from)
                 .unwrap_or_else(|| m.team1_initial.as_deref().unwrap_or("").to_string());
-            let t2 = m.team2.as_ref()
-                .and_then(|id| data.team_options.iter().find(|o| &o.id == id))
-                .and_then(|o| o.pseudonym.as_deref())
-                .map(String::from)
+            let t1 = opt1.map(|o| short_or_truncate(o.pseudonym.as_deref().unwrap_or(o.id.as_str()), o.shortname.as_deref()))
+                .unwrap_or_else(|| m.team1_initial.as_deref().unwrap_or("").to_string());
+            let opt2 = m.team2.as_ref().and_then(|id| data.team_options.iter().find(|o| &o.id == id));
+            let t2_raw = opt2.and_then(|o| o.pseudonym.as_deref()).map(String::from)
                 .unwrap_or_else(|| m.team2_initial.as_deref().unwrap_or("").to_string());
-            
+            let t2 = opt2.map(|o| short_or_truncate(o.pseudonym.as_deref().unwrap_or(o.id.as_str()), o.shortname.as_deref()))
+                .unwrap_or_else(|| m.team2_initial.as_deref().unwrap_or("").to_string());
+
             // Team profile photos
-            let team1_photo = m.team1.as_ref()
-                .and_then(|id| data.team_options.iter().find(|o| &o.id == id))
-                .and_then(|o| o.profile_photo.clone());
-            let team2_photo = m.team2.as_ref()
-                .and_then(|id| data.team_options.iter().find(|o| &o.id == id))
-                .and_then(|o| o.profile_photo.clone());
-            // Refs as list of (display_name, profile_photo)
-            let refs_list: Vec<(String, Option<String>)> = m.refs.as_deref().or(m.refs_initial.as_deref()).unwrap_or("")
+            let team1_photo = opt1.and_then(|o| o.profile_photo.clone());
+            let team2_photo = opt2.and_then(|o| o.profile_photo.clone());
+            // Refs as list of (display_name, profile_photo). Keep a raw form for filter matching.
+            let refs_tokens: Vec<&str> = m.refs.as_deref().or(m.refs_initial.as_deref()).unwrap_or("")
                 .split(',')
                 .map(|s| s.trim())
                 .filter(|s| !s.is_empty())
+                .collect();
+            let refs_list: Vec<(String, Option<String>)> = refs_tokens.iter()
                 .map(|token| {
-                    let opt = data.team_options.iter().find(|o| o.id == token);
-                    let display = opt.and_then(|o| o.pseudonym.as_deref()).map(String::from).unwrap_or_else(|| token.to_string());
+                    let opt = data.team_options.iter().find(|o| &o.id == token);
+                    let display = opt.map(|o| short_or_truncate(o.pseudonym.as_deref().unwrap_or(o.id.as_str()), o.shortname.as_deref())).unwrap_or_else(|| token.to_string());
                     let photo = opt.and_then(|o| o.profile_photo.clone());
                     (display, photo)
                 })
                 .collect();
             let refs_display = refs_list.iter().map(|(d, _)| d.as_str()).collect::<Vec<_>>().join(", ");
-            
+            let refs_display_raw = refs_tokens.iter()
+                .map(|token| {
+                    let opt = data.team_options.iter().find(|o| &o.id == token);
+                    opt.and_then(|o| o.pseudonym.as_deref()).map(String::from).unwrap_or_else(|| token.to_string())
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+
             // Status tag palette only (never overwritten for highlight; highlight is on the block)
             let (color, _) = status_color_and_label(&m.status);
-            
-            // Highlight: match against pseudonyms only (t1/t2/refs_display are already pseudonyms)
+
+            // Highlight: match against the raw (untruncated) pseudonyms so the user's full-name
+            // query still matches teams whose rendered label was shortened.
             let (highlight_playing, highlight_ref) = if highlight_team.is_empty() {
                 (false, false)
             } else {
                 let ht = highlight_team.to_lowercase();
-                let playing = t1.to_lowercase().contains(&ht) || t2.to_lowercase().contains(&ht);
-                let reffing = !playing && refs_display.to_lowercase().contains(&ht);
+                let playing = t1_raw.to_lowercase().contains(&ht) || t2_raw.to_lowercase().contains(&ht);
+                let reffing = !playing && refs_display_raw.to_lowercase().contains(&ht);
                 (playing, reffing)
             };
             
@@ -4379,4 +4400,3 @@ fn team_ref_display(raw: &str) -> (u8, String) {
         (0, raw.to_string())
     }
 }
-

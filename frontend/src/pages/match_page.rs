@@ -1,5 +1,6 @@
 use crate::api;
 use crate::components::{all_tokens_known, resolve_value_to_team_ids, PenaltyDisplay};
+use crate::display::short_or_truncate;
 use crate::pages::TeamSelectionField;
 use crate::time_format::format_match_display_local;
 use crate::Route;
@@ -703,7 +704,7 @@ fn ForceStartModal(
                                                         checked: conflicting_winner().as_deref() == Some("TEAM1"),
                                                         onchange: move |_| conflicting_winner.set(Some("TEAM1".to_string()))
                                                     }
-                                                    label { class: "form-check-label", r#for: "winner_team1", "{cm.team1_name}" }
+                                                    label { class: "form-check-label", r#for: "winner_team1", "{short_or_truncate(&cm.team1_name, cm.team1_shortname.as_deref())}" }
                                                 }
                                                 div { class: "form-check",
                                                     input {
@@ -714,7 +715,7 @@ fn ForceStartModal(
                                                         checked: conflicting_winner().as_deref() == Some("TEAM2"),
                                                         onchange: move |_| conflicting_winner.set(Some("TEAM2".to_string()))
                                                     }
-                                                    label { class: "form-check-label", r#for: "winner_team2", "{cm.team2_name}" }
+                                                    label { class: "form-check-label", r#for: "winner_team2", "{short_or_truncate(&cm.team2_name, cm.team2_shortname.as_deref())}" }
                                                 }
                                             }
                                         }
@@ -2110,11 +2111,11 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                                                     // Team names header
                                                     div { class: "row mb-2",
                                                         div { class: "col-5 text-center",
-                                                            small { class: "text-muted", "{d.match_data.team1_name}" }
+                                                            small { class: "text-muted", "{short_or_truncate(&d.match_data.team1_name, d.match_data.team1_shortname.as_deref())}" }
                                                         }
                                                         div { class: "col-2" }
                                                         div { class: "col-5 text-center",
-                                                            small { class: "text-muted", "{d.match_data.team2_name}" }
+                                                            small { class: "text-muted", "{short_or_truncate(&d.match_data.team2_name, d.match_data.team2_shortname.as_deref())}" }
                                                         }
                                                     }
                                                     // Scores for each set
