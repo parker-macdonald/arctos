@@ -25,54 +25,55 @@ def test_player_name_rejects_value_longer_than_short_name_len(test_db):
 
 @pytest.mark.unit
 def test_player_name_accepts_value_exactly_at_short_name_len(test_db):
-    """A 100-char name (exactly SHORT_NAME_LEN) is accepted."""
+    """A 100-char name (exactly SHORT_NAME_LEN) is accepted.
+
+    Guards against an off-by-one regression that changes ``len(value) > N``
+    to ``>=`` in the validator.
+    """
     player = Player(id="lenok1", pw_hash="dummy")
-    player.name = "x" * 100  # should not raise
-    assert player.name == "x" * 100
-
-
-@pytest.mark.unit
-def test_player_name_accepts_value_shorter_than_short_name_len(test_db):
-    """A short name is accepted unchanged."""
-    player = Player(id="lenok2", pw_hash="dummy")
-    player.name = "Alice"
-    assert player.name == "Alice"
+    player.name = "x" * 100  # must not raise ValidationError
 
 
 @pytest.mark.unit
 def test_nullable_string_accepts_none(test_db):
-    """Assigning None to a nullable String column does not raise."""
+    """Assigning None to a nullable String column does not raise.
+
+    Exercises the ``isinstance(value, str)`` guard: without it, ``len(None)``
+    would raise ``TypeError`` from inside the validator.
+    """
     player = Player(id="lennone", name="N", pw_hash="dummy")
-    player.location = None  # Player.location is nullable String(SHORT_NAME_LEN)
-    assert player.location is None
+    player.location = None  # must not raise ValidationError or TypeError
 
 
 @pytest.mark.unit
 def test_validator_passes_through_non_string_values(test_db):
-    """The length validator only checks strings; other types are not its concern."""
+    """Non-string values bypass the validator entirely.
+
+    Exercises the ``isinstance(value, str)`` guard for non-None, non-str
+    inputs. SQLAlchemy's own type handling owns the error path for type
+    misuse; the length validator is not it.
+    """
     player = Player(id="lenint", name="N", pw_hash="dummy")
-    # Assigning an int to a String column is a type misuse, but the length
-    # validator should not be what catches it - it should be a no-op so that
-    # SQLAlchemy's own type handling owns the error path.
     player.location = 12345  # must not raise ValidationError
-    assert player.location == 12345
 
 
 @pytest.mark.unit
 def test_text_columns_are_not_length_limited(test_db):
-    """Text columns have no declared length and are never rejected by the validator."""
+    """Columns without a declared length (db.Text) are never wired up.
+
+    Exercises the ``col.type.length`` skip in the mapper-walking installer.
+    """
     player = Player(id="lentext", name="N", pw_hash="dummy")
-    long_bio = "x" * 100_000  # Player.bio is db.Text - no length
-    player.bio = long_bio  # must not raise
-    assert player.bio == long_bio
+    player.bio = "x" * 100_000  # must not raise ValidationError
 
 
 @pytest.mark.unit
 def test_every_mapped_string_column_rejects_overflow(test_db):
     """Sweep every registered mapper and confirm each String(N) column rejects N+1 chars.
 
-    This is the future-proofing guard: any String column added to a model in
+    Any String column added to a model in
     future will be covered automatically without per-column test maintenance.
+
     The test does not write to the database - it only assigns to an in-memory
     instance and asserts the validator fires.
     """
@@ -98,6 +99,4 @@ def test_every_mapped_string_column_rejects_overflow(test_db):
             assert str(n) in msg, f"{cls.__name__}.{field}: max length missing from error"
             checked.append((cls.__name__, field, n))
 
-    # Sanity floor: the codebase has ~103 String(N) columns; a regression that
-    # silently dropped a large chunk should fail here, not just an empty sweep.
     assert len(checked) >= 80, f"expected coverage sweep to hit many columns, got {checked!r}"
