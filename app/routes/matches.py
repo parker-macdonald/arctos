@@ -56,7 +56,7 @@ def scoreboard():
 
     def get_team_info(m):
         if not m:
-            return None, None, None, None
+            return None, None, None, None, None, None
         team1_obj = Team.query.get(m.team1) if m.team1 else None
         team2_obj = Team.query.get(m.team2) if m.team2 else None
 
@@ -78,11 +78,13 @@ def scoreboard():
         # Only include photos if there's an actual team object with a photo (not dynamic teams)
         team1_photo = team1_obj.profile_photo if (team1_obj and team1_obj.profile_photo and m.team1) else None
         team2_photo = team2_obj.profile_photo if (team2_obj and team2_obj.profile_photo and m.team2) else None
-        return team1_name, team2_name, team1_photo, team2_photo
+        team1_shortname = reg1.shortname if (reg1 and reg1.shortname) else None
+        team2_shortname = reg2.shortname if (reg2 and reg2.shortname) else None
+        return team1_name, team2_name, team1_photo, team2_photo, team1_shortname, team2_shortname
 
     # If there's an active match, show it
     if match:
-        team1_name, team2_name, team1_photo, team2_photo = get_team_info(match)
+        team1_name, team2_name, team1_photo, team2_photo, team1_shortname, team2_shortname = get_team_info(match)
 
         # Get points and calculate scores by set
         points = Point.query.filter_by(match=match.uuid).order_by(Point.stamp).all()
@@ -113,6 +115,8 @@ def scoreboard():
                 team2_name=team2_name,
                 team1_photo=team1_photo,
                 team2_photo=team2_photo,
+                team1_shortname=team1_shortname,
+                team2_shortname=team2_shortname,
                 scores_by_set=scores_by_set,
                 sets=sets,
                 stones_info=stones_info,
@@ -170,30 +174,48 @@ def scoreboard():
 
     # Get team info for previous and next matches
     if prev_match:
-        prev_team1_name, prev_team2_name, prev_team1_photo, prev_team2_photo = get_team_info(prev_match)
+        (
+            prev_team1_name,
+            prev_team2_name,
+            prev_team1_photo,
+            prev_team2_photo,
+            prev_team1_shortname,
+            prev_team2_shortname,
+        ) = get_team_info(prev_match)
         # Ensure we always have names (fallback if somehow None)
         prev_team1_name = prev_team1_name or "Team 1"
         prev_team2_name = prev_team2_name or "Team 2"
     else:
-        prev_team1_name, prev_team2_name, prev_team1_photo, prev_team2_photo = (
-            None,
-            None,
-            None,
-            None,
-        )
+        (
+            prev_team1_name,
+            prev_team2_name,
+            prev_team1_photo,
+            prev_team2_photo,
+            prev_team1_shortname,
+            prev_team2_shortname,
+        ) = (None, None, None, None, None, None)
 
     if next_match:
-        next_team1_name, next_team2_name, next_team1_photo, next_team2_photo = get_team_info(next_match)
+        (
+            next_team1_name,
+            next_team2_name,
+            next_team1_photo,
+            next_team2_photo,
+            next_team1_shortname,
+            next_team2_shortname,
+        ) = get_team_info(next_match)
         # Ensure we always have names (fallback if somehow None)
         next_team1_name = next_team1_name or "Team 1"
         next_team2_name = next_team2_name or "Team 2"
     else:
-        next_team1_name, next_team2_name, next_team1_photo, next_team2_photo = (
-            None,
-            None,
-            None,
-            None,
-        )
+        (
+            next_team1_name,
+            next_team2_name,
+            next_team1_photo,
+            next_team2_photo,
+            next_team1_shortname,
+            next_team2_shortname,
+        ) = (None, None, None, None, None, None)
 
     # Determine winner for previous match
     prev_winner = None
@@ -210,12 +232,16 @@ def scoreboard():
             prev_team2_name=prev_team2_name,
             prev_team1_photo=prev_team1_photo,
             prev_team2_photo=prev_team2_photo,
+            prev_team1_shortname=prev_team1_shortname,
+            prev_team2_shortname=prev_team2_shortname,
             prev_winner=prev_winner,
             next_match=next_match,
             next_team1_name=next_team1_name,
             next_team2_name=next_team2_name,
             next_team1_photo=next_team1_photo,
             next_team2_photo=next_team2_photo,
+            next_team1_shortname=next_team1_shortname,
+            next_team2_shortname=next_team2_shortname,
             tournament_url=tournament_url,
             field_name=field_name,
         )
@@ -241,7 +267,7 @@ def scoreboard_state():
 
     def get_team_info(m):
         if not m:
-            return None, None, None, None
+            return None, None, None, None, None, None
         team1_obj = Team.query.get(m.team1) if m.team1 else None
         team2_obj = Team.query.get(m.team2) if m.team2 else None
 
@@ -263,11 +289,13 @@ def scoreboard_state():
         # Only include photos if there's an actual team object with a photo (not dynamic teams)
         team1_photo = team1_obj.profile_photo if (team1_obj and team1_obj.profile_photo and m.team1) else None
         team2_photo = team2_obj.profile_photo if (team2_obj and team2_obj.profile_photo and m.team2) else None
-        return team1_name, team2_name, team1_photo, team2_photo
+        team1_shortname = reg1.shortname if (reg1 and reg1.shortname) else None
+        team2_shortname = reg2.shortname if (reg2 and reg2.shortname) else None
+        return team1_name, team2_name, team1_photo, team2_photo, team1_shortname, team2_shortname
 
     # If there's an active match, return match state
     if match:
-        team1_name, team2_name, team1_photo, team2_photo = get_team_info(match)
+        team1_name, team2_name, team1_photo, team2_photo, team1_shortname, team2_shortname = get_team_info(match)
 
         # Get points and calculate scores by set
         points = Point.query.filter_by(match=match.uuid).order_by(Point.stamp).all()
@@ -316,6 +344,8 @@ def scoreboard_state():
                 "team2_name": team2_name,
                 "team1_photo": team1_photo,
                 "team2_photo": team2_photo,
+                "team1_shortname": team1_shortname,
+                "team2_shortname": team2_shortname,
                 "scores_by_set": scores_by_set,
                 "sets": sets,
                 "stones_info": stones_info,
@@ -356,7 +386,14 @@ def scoreboard_state():
     # Get team info for previous and next matches
     prev_data = None
     if prev_match:
-        prev_team1_name, prev_team2_name, prev_team1_photo, prev_team2_photo = get_team_info(prev_match)
+        (
+            prev_team1_name,
+            prev_team2_name,
+            prev_team1_photo,
+            prev_team2_photo,
+            prev_team1_shortname,
+            prev_team2_shortname,
+        ) = get_team_info(prev_match)
         prev_team1_name = prev_team1_name or "Team 1"
         prev_team2_name = prev_team2_name or "Team 2"
         prev_data = {
@@ -364,12 +401,21 @@ def scoreboard_state():
             "team2_name": prev_team2_name,
             "team1_photo": prev_team1_photo,
             "team2_photo": prev_team2_photo,
+            "team1_shortname": prev_team1_shortname,
+            "team2_shortname": prev_team2_shortname,
             "winner": prev_match.match_winner,
         }
 
     next_data = None
     if next_match:
-        next_team1_name, next_team2_name, next_team1_photo, next_team2_photo = get_team_info(next_match)
+        (
+            next_team1_name,
+            next_team2_name,
+            next_team1_photo,
+            next_team2_photo,
+            next_team1_shortname,
+            next_team2_shortname,
+        ) = get_team_info(next_match)
         next_team1_name = next_team1_name or "Team 1"
         next_team2_name = next_team2_name or "Team 2"
         next_data = {
@@ -377,6 +423,8 @@ def scoreboard_state():
             "team2_name": next_team2_name,
             "team1_photo": next_team1_photo,
             "team2_photo": next_team2_photo,
+            "team1_shortname": next_team1_shortname,
+            "team2_shortname": next_team2_shortname,
         }
 
     return jsonify(

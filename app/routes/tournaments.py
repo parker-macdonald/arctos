@@ -2710,6 +2710,7 @@ def tournament_autocomplete(tournament_url):
                     "type": "team",
                     "value": reg.team,  # Use team ID instead of pseudonym
                     "label": pseudonym,  # Display pseudonym in label
+                    "shortname": reg.shortname,
                     "id": reg.team,
                 }
             )

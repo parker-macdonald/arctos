@@ -277,17 +277,15 @@ def eligible_players(comp_id: int):
     team_ids = {er.team for er in eligible if er.team}
 
     players_by_id = {p.id: p for p in Player.query.filter(Player.id.in_(player_ids)).all()} if player_ids else {}
-    team_pseudonyms = (
-        {
-            tr.team: tr.pseudonym
-            for tr in TeamRegistration.query.filter(
-                TeamRegistration.event == sc.event,
-                TeamRegistration.team.in_(team_ids),
-            ).all()
-        }
-        if team_ids
-        else {}
-    )
+    team_pseudonyms = {}
+    team_shortnames = {}
+    if team_ids:
+        for tr in TeamRegistration.query.filter(
+            TeamRegistration.event == sc.event,
+            TeamRegistration.team.in_(team_ids),
+        ).all():
+            team_pseudonyms[tr.team] = tr.pseudonym
+            team_shortnames[tr.team] = tr.shortname
 
     out = [
         {
@@ -295,6 +293,7 @@ def eligible_players(comp_id: int):
             "player_name": players_by_id[er.player].name if er.player in players_by_id else er.player,
             "team_id": er.team,
             "team_pseudonym": team_pseudonyms.get(er.team) if er.team else None,
+            "team_shortname": team_shortnames.get(er.team) if er.team else None,
             "jersey_name": er.jersey_name,
         }
         for er in eligible
