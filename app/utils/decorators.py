@@ -151,9 +151,7 @@ def require_json_body():
         @wraps(fn)
         def wrapper(*args, **kwargs):
             if not request.is_json:
-                return json_error(
-                    "Content-Type must be application/json", status_code=415
-                )
+                return json_error("Content-Type must be application/json", status_code=415)
             parsed = request.get_json(silent=True)
             # Distinguish empty body (parsed is None AND no data) from malformed JSON
             # (parsed is None BUT data is present).
