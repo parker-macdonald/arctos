@@ -19,5 +19,10 @@ directory=$(dirname "${BASH_SOURCE[0]}")
 brew bundle --file="${directory}/Brewfile"
 echo "Installed Homebrew packages"
 
+if ! command -v cargo >/dev/null 2>&1; then
+    rustup-init -y --default-toolchain stable
+    echo "Installed rustup + stable Rust toolchain"
+fi
+
 chmod +x "${directory}/setup-python.sh"
 "${directory}/setup-python.sh"
