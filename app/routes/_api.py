@@ -16,7 +16,7 @@ from flask_login import current_user, login_user, logout_user, login_required
 from sqlalchemy import or_, func
 from sqlalchemy.orm import joinedload
 from sqlalchemy.orm.attributes import flag_modified
-from app.services._common import current_user_type
+from app.services._common import current_user_type, Scope
 from app.services.permission_service import PermissionService
 from app.services.tournament_service import TournamentService
 from app.utils.decorators import require_json_body
@@ -858,7 +858,9 @@ def league_register_team(league_url):
     league, err = _require_league(league_url)
     if err:
         return jsonify({"error": "Not found" if err == 404 else "Forbidden"}), err
-    res = RegistrationService.register_team_for_league(league.url, current_user.id, request.form.get("pseudonym", ""))
+    res = RegistrationService.register_team(
+        Scope.league(league.url), current_user.id, request.form.get("pseudonym", "")
+    )
     return json_from_result(
         res,
         ok_to_payload=lambda _: {"message": "Team registration successful!"},
@@ -885,8 +887,8 @@ def league_register_player(league_url):
         if team_id
         else "Player registration successful!"
     )
-    res = RegistrationService.register_player_for_league(
-        league.url,
+    res = RegistrationService.register_player(
+        Scope.league(league.url),
         current_user.id,
         team_id,
         jersey_number=request.form.get("jersey_number", ""),
@@ -913,7 +915,7 @@ def league_deregister_team(league_url):
     league, err = _require_league(league_url)
     if err:
         return jsonify({"error": "Not found" if err == 404 else "Forbidden"}), err
-    res = RegistrationService.deregister_team_from_league(league.url, current_user.id)
+    res = RegistrationService.deregister_team(Scope.league(league.url), current_user.id)
     return json_from_result(
         res,
         ok_to_payload=lambda _: {"message": "Team deregistered"},
@@ -1244,7 +1246,7 @@ def league_deregister_player(league_url):
     league, err = _require_league(league_url)
     if err:
         return jsonify({"error": "Not found" if err == 404 else "Forbidden"}), err
-    res = RegistrationService.deregister_player_from_league(league.url, current_user.id)
+    res = RegistrationService.deregister_player(Scope.league(league.url), current_user.id)
     return json_from_result(
         res,
         ok_to_payload=lambda _: {"message": "Player deregistered"},
@@ -1445,37 +1447,36 @@ def update_my_team_registration_league(league_url):
     return jsonify({"success": True})
 
 
-@bp.route("/leagues/<league_url>/manage", methods=["GET"])
-@login_required
-def league_manage_api(league_url):
-    """League registration management (TO only). Same structure as tournament manage."""
+def _serialize_manage(scope, search_query: str, search_type: str, cfg) -> dict:
+    """Build the manage-API payload for *scope*.
+
+    Handles search filtering, registration loading, and the team/player
+    summary construction shared between tournament_manage_api and
+    league_manage_api.
+
+    Args:
+        scope: :class:`~app.services._common.Scope` identifying event vs league.
+        search_query: Search string from request query args.
+        search_type: ``"team"`` / ``"player"`` / ``"both"``.
+        cfg: registrable_config object (shared between scopes).
+
+    Returns:
+        The manage payload dict ready to be jsonified.
+    """
     from app.services.registration_resolver import (
-        team_registrations_for_tournament,
-        player_registrations_for_tournament,
+        team_registrations_for_scope,
+        player_registrations_for_scope,
     )
 
-    league, err = _require_league(league_url)
-    if err:
-        return jsonify({"error": "Not found" if err == 404 else "Forbidden"}), err
-    if not PermissionService.is_league_organizer(league_url, current_user):
-        return jsonify({"error": "Forbidden"}), 403
-
-    class LeagueTournament:
-        league_id = league_url
-
-    fake_t = LeagueTournament()
-    search_query = (request.args.get("search") or "").strip()
-    search_type = (request.args.get("type") or "both").lower()
-
-    team_registrations = team_registrations_for_tournament(fake_t, exclude_cancelled=True)
+    team_registrations = team_registrations_for_scope(scope, exclude_cancelled=True)
     teams_with_registrations = []
     for team_reg in team_registrations:
         team = Team.query.get(team_reg.team)
         if team:
             teams_with_registrations.append({"registration": team_reg, "team": team})
 
-    player_registrations = player_registrations_for_tournament(
-        fake_t,
+    player_registrations = player_registrations_for_scope(
+        scope,
         statuses=[
             RegistrationStatus.PENDING_TEAM_APPROVAL,
             RegistrationStatus.CONFIRMED,
@@ -1515,24 +1516,29 @@ def league_manage_api(league_url):
         else:
             players_with_registrations = []
 
-    lrc = league.registrable_config
-    wf = getattr(lrc, "waiver_filepath", None) if lrc else None
-    tournament_dict = {
-        "url": league.url,
-        "name": league.name,
-        "start_date": "",
-        "end_date": None,
-        "location": None,
-        "published": league.published,
-        "league": {"league_url": league.url, "name": league.name},
-        "waiver_required": bool(wf),
-        "waiver_filepath": wf,
-        "waiver_sha256": getattr(lrc, "waiver_sha256", None) if lrc else None,
-    }
-    league_manage_player_rows = []
+    if scope.is_league:
+        league = League.query.get(scope.league_url)
+        wf = getattr(cfg, "waiver_filepath", None) if cfg else None
+        tournament_dict = {
+            "url": league.url,
+            "name": league.name,
+            "start_date": "",
+            "end_date": None,
+            "location": None,
+            "published": league.published,
+            "league": {"league_url": league.url, "name": league.name},
+            "waiver_required": bool(wf),
+            "waiver_filepath": wf,
+            "waiver_sha256": getattr(cfg, "waiver_sha256", None) if cfg else None,
+        }
+    else:
+        tournament = Tournament.query.filter_by(url=scope.event_url).first()
+        tournament_dict = _tournament_to_dict(tournament)
+
+    player_rows = []
     for pr in players_with_registrations:
-        w = _player_reg_waiver_api(pr["registration"], lrc)
-        league_manage_player_rows.append(
+        w = _player_reg_waiver_api(pr["registration"], cfg)
+        player_rows.append(
             {
                 "registration": {
                     "id": pr["registration"].id,
@@ -1568,37 +1574,50 @@ def league_manage_api(league_url):
             }
         )
 
-    return jsonify(
-        {
-            "tournament": tournament_dict,
-            "search_query": search_query,
-            "search_type": search_type,
-            "team_registrations": [
-                {
-                    "registration": {
-                        "id": tr["registration"].id,
-                        "team": tr["registration"].team,
-                        "pseudonym": tr["registration"].pseudonym,
-                        "status": (
-                            tr["registration"].status.value
-                            if hasattr(tr["registration"].status, "value")
-                            else str(tr["registration"].status)
-                        ),
-                        "paid": bool(tr["registration"].paid),
-                        "amount_paid": tr["registration"].amount_paid or 0.0,
-                        "registered_at": _dt_iso(tr["registration"].registered_at),
-                        "paid_at": _dt_iso(tr["registration"].paid_at),
-                    },
-                    "team": {
-                        "id": tr["team"].id,
-                        "name": tr["team"].name,
-                    },
-                }
-                for tr in teams_with_registrations
-            ],
-            "player_registrations": league_manage_player_rows,
-        }
-    )
+    return {
+        "tournament": tournament_dict,
+        "search_query": search_query,
+        "search_type": search_type,
+        "team_registrations": [
+            {
+                "registration": {
+                    "id": tr["registration"].id,
+                    "team": tr["registration"].team,
+                    "pseudonym": tr["registration"].pseudonym,
+                    "status": (
+                        tr["registration"].status.value
+                        if hasattr(tr["registration"].status, "value")
+                        else str(tr["registration"].status)
+                    ),
+                    "paid": bool(tr["registration"].paid),
+                    "amount_paid": tr["registration"].amount_paid or 0.0,
+                    "registered_at": _dt_iso(tr["registration"].registered_at),
+                    "paid_at": _dt_iso(tr["registration"].paid_at),
+                },
+                "team": {
+                    "id": tr["team"].id,
+                    "name": tr["team"].name,
+                },
+            }
+            for tr in teams_with_registrations
+        ],
+        "player_registrations": player_rows,
+    }
+
+
+@bp.route("/leagues/<league_url>/manage", methods=["GET"])
+@login_required
+def league_manage_api(league_url):
+    """League registration management (TO only)."""
+    league, err = _require_league(league_url)
+    if err:
+        return jsonify({"error": "Not found" if err == 404 else "Forbidden"}), err
+    if not PermissionService.is_league_organizer(league_url, current_user):
+        return jsonify({"error": "Forbidden"}), 403
+
+    search_query = (request.args.get("search") or "").strip()
+    search_type = (request.args.get("type") or "both").lower()
+    return jsonify(_serialize_manage(Scope.league(league_url), search_query, search_type, league.registrable_config))
 
 
 @bp.route("/leagues/<league_url>/invitations", methods=["GET"])
@@ -2026,12 +2045,7 @@ def tournament_detail(tournament_url):
 @bp.route("/tournaments/<tournament_url>/manage", methods=["GET"])
 @login_required
 def tournament_manage_api(tournament_url):
-    from app.services.registration_resolver import (
-        team_registrations_for_tournament,
-        player_registrations_for_tournament,
-    )
-    from app.utils.helpers import get_registrable_config
-
+    """Tournament registration management (TO only)."""
     if not _check_to(tournament_url):
         return jsonify({"error": "Forbidden"}), 403
 
@@ -2045,128 +2059,11 @@ def tournament_manage_api(tournament_url):
             ),
             403,
         )
+
     search_query = (request.args.get("search") or "").strip()
     search_type = (request.args.get("type") or "both").lower()
-
-    team_registrations = team_registrations_for_tournament(tournament, exclude_cancelled=True)
-    teams_with_registrations = []
-    for team_reg in team_registrations:
-        team = Team.query.get(team_reg.team)
-        if team:
-            teams_with_registrations.append({"registration": team_reg, "team": team})
-
-    player_registrations = player_registrations_for_tournament(
-        tournament,
-        statuses=[
-            RegistrationStatus.PENDING_TEAM_APPROVAL,
-            RegistrationStatus.CONFIRMED,
-            RegistrationStatus.REJECTED,
-        ],
-    )
-    players_with_registrations = []
-    for player_reg in player_registrations:
-        player = Player.query.get(player_reg.player)
-        team = Team.query.get(player_reg.team) if player_reg.team else None
-        if player:
-            players_with_registrations.append({"registration": player_reg, "player": player, "team": team})
-
-    if search_query:
-        q = search_query.lower()
-        if search_type in ("both", "teams"):
-            teams_with_registrations = [
-                t
-                for t in teams_with_registrations
-                if (
-                    (t["team"].name or "").lower().find(q) != -1
-                    or (t["registration"].pseudonym or "").lower().find(q) != -1
-                )
-            ]
-        else:
-            teams_with_registrations = []
-
-        if search_type in ("both", "players"):
-            players_with_registrations = [
-                p
-                for p in players_with_registrations
-                if (
-                    (p["player"].name or "").lower().find(q) != -1
-                    or (p["registration"].jersey_name or "").lower().find(q) != -1
-                )
-            ]
-        else:
-            players_with_registrations = []
-
-    manage_cfg = get_registrable_config(tournament)
-    manage_player_rows = []
-    for pr in players_with_registrations:
-        w = _player_reg_waiver_api(pr["registration"], manage_cfg)
-        manage_player_rows.append(
-            {
-                "registration": {
-                    "id": pr["registration"].id,
-                    "player": pr["registration"].player,
-                    "team": pr["registration"].team,
-                    "jersey_name": pr["registration"].jersey_name,
-                    "jersey_number": pr["registration"].jersey_number,
-                    "status": (
-                        pr["registration"].status.value
-                        if hasattr(pr["registration"].status, "value")
-                        else str(pr["registration"].status)
-                    ),
-                    "paid": bool(pr["registration"].paid),
-                    "amount_paid": pr["registration"].amount_paid or 0.0,
-                    "registered_at": _dt_iso(pr["registration"].registered_at),
-                    "paid_at": _dt_iso(pr["registration"].paid_at),
-                    "waiver_required": w["waiver_required"],
-                    "waiver_status": w["waiver_status"],
-                    "waiver_legal_name_signature": w["waiver_legal_name_signature"],
-                },
-                "player": {
-                    "id": pr["player"].id,
-                    "name": pr["player"].name,
-                },
-                "team": (
-                    {
-                        "id": pr["team"].id,
-                        "name": pr["team"].name,
-                    }
-                    if pr["team"]
-                    else None
-                ),
-            }
-        )
-
-    return jsonify(
-        {
-            "tournament": _tournament_to_dict(tournament),
-            "search_query": search_query,
-            "search_type": search_type,
-            "team_registrations": [
-                {
-                    "registration": {
-                        "id": tr["registration"].id,
-                        "team": tr["registration"].team,
-                        "pseudonym": tr["registration"].pseudonym,
-                        "status": (
-                            tr["registration"].status.value
-                            if hasattr(tr["registration"].status, "value")
-                            else str(tr["registration"].status)
-                        ),
-                        "paid": bool(tr["registration"].paid),
-                        "amount_paid": tr["registration"].amount_paid or 0.0,
-                        "registered_at": _dt_iso(tr["registration"].registered_at),
-                        "paid_at": _dt_iso(tr["registration"].paid_at),
-                    },
-                    "team": {
-                        "id": tr["team"].id,
-                        "name": tr["team"].name,
-                    },
-                }
-                for tr in teams_with_registrations
-            ],
-            "player_registrations": manage_player_rows,
-        }
-    )
+    cfg = get_registrable_config(tournament)
+    return jsonify(_serialize_manage(Scope.event(tournament_url), search_query, search_type, cfg))
 
 
 @bp.route("/tournaments/<tournament_url>/invitations", methods=["GET"])

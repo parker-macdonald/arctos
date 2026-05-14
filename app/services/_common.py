@@ -6,6 +6,8 @@ Anything more domain-specific should live in its own service module.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from app.error_values import Err, Ok, Result
 from app.exceptions import ArctosError
 
@@ -24,9 +26,7 @@ def get_tournament_or_err(tournament_url: str) -> Result["Tournament", ArctosErr
 
     tournament = Tournament.query.filter_by(url=tournament_url).first()
     if tournament is None:
-        return Err(
-            ArctosError("Tournament not found", status_code=404, public=True)
-        )
+        return Err(ArctosError("Tournament not found", status_code=404, public=True))
     return Ok(tournament)
 
 
@@ -76,6 +76,58 @@ def current_user_type() -> str:
             return str(user_type)
         case _:
             raise RuntimeError(
-                "current_user_type() called without an authenticated Player/Team; "
-                "is @login_required missing?"
+                "current_user_type() called without an authenticated Player/Team; is @login_required missing?"
             )
+
+
+@dataclass(frozen=True)
+class Scope:
+    """Identifies a registration / manage context as either an event or league.
+
+    Use the factory methods (:meth:`event`, :meth:`league`) to construct
+    instances; they enforce the mutual-exclusion invariant and produce
+    immutable values that can be threaded through the service layer without
+    mutation hazards.
+
+    Attributes:
+        event_url: URL slug of a standalone tournament, or ``None``.
+        league_url: URL slug of a league, or ``None``.
+    """
+
+    event_url: str | None = None
+    league_url: str | None = None
+
+    @classmethod
+    def event(cls, url: str) -> "Scope":
+        """Build a Scope referring to a standalone tournament."""
+        return cls(event_url=url)
+
+    @classmethod
+    def league(cls, url: str) -> "Scope":
+        """Build a Scope referring to a league."""
+        return cls(league_url=url)
+
+    @property
+    def is_event(self) -> bool:
+        return self.event_url is not None
+
+    @property
+    def is_league(self) -> bool:
+        return self.league_url is not None
+
+    @property
+    def url(self) -> str:
+        """Return whichever URL is set.
+
+        Always returns a non-None string; the ``__post_init__`` invariant
+        guarantees exactly one of ``event_url`` / ``league_url`` is set.
+        """
+        if self.event_url is not None:
+            return self.event_url
+        assert self.league_url is not None  # invariant guarantees this
+        return self.league_url
+
+    def __post_init__(self) -> None:
+        # Block direct constructor misuse - exactly one URL must be set.
+        if (self.event_url is None) == (self.league_url is None):
+            raise ValueError("Scope must have exactly one of event_url or league_url set")
