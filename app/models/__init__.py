@@ -7,6 +7,7 @@ compatibility layer that re-exports from here.
 """
 
 from app.models.base import db, init_db
+from app.models import validators  # noqa: F401 - registers length validators before any mapper is configured
 from app.models import (
     constants,
 )  # noqa: F401 — re-export for ``from app.models import constants``
