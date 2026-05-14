@@ -133,9 +133,7 @@ def test_is_tournament_organizer_grants_via_league_id(app, test_db, player):
 
 
 @pytest.mark.unit
-def test_is_tournament_organizer_denies_when_no_event_or_league_to(
-    app, test_db, tournament, player
-):
+def test_is_tournament_organizer_denies_when_no_event_or_league_to(app, test_db, tournament, player):
     """is_tournament_organizer returns False when no matching TO exists."""
     with app.app_context():
         t = db.session.merge(tournament)
@@ -193,3 +191,67 @@ def test_is_league_organizer_false_when_no_to(app, test_db, player):
 def test_is_league_organizer_false_for_none_user(app, test_db):
     with app.app_context():
         assert PermissionService.is_league_organizer("league-x", None) is False
+
+
+@pytest.mark.unit
+def test_is_tournament_organizer_of_grants_for_loaded_tournament(app, test_db, tournament, player):
+    from app.services.permission_service import PermissionService
+    from models import TO, db
+
+    with app.app_context():
+        t = db.session.merge(tournament)
+        p = db.session.merge(player)
+        db.session.add(TO(user_id=p.id, user_type="player", event=t.url))
+        db.session.commit()
+
+        assert PermissionService.is_tournament_organizer_of(t, p) is True
+
+
+@pytest.mark.unit
+def test_is_tournament_organizer_of_denies_when_no_to(app, test_db, tournament, player):
+    from app.services.permission_service import PermissionService
+
+    with app.app_context():
+        t = db.session.merge(tournament)
+        p = db.session.merge(player)
+        assert PermissionService.is_tournament_organizer_of(t, p) is False
+
+
+@pytest.mark.unit
+def test_is_tournament_organizer_of_grants_via_league_id(app, test_db, player):
+    from app.models.league import League
+
+    with app.app_context():
+        p = db.session.merge(player)
+
+        league = League(
+            url="otof-league-1",
+            name="OTOF League 1",
+            registrable_config_id=make_registrable_config().id,
+        )
+        db.session.add(league)
+        db.session.commit()
+
+        t = Tournament(
+            url="otof-event-1",
+            name="OTOF Event 1",
+            start_date=datetime.now(timezone.utc),
+            end_date=datetime.now(timezone.utc) + timedelta(days=1),
+            location="L",
+            max_field_size=14,
+            published=True,
+            league_id=league.url,
+        )
+        db.session.add(t)
+        db.session.flush()
+        db.session.add(TO(user_id=p.id, user_type="player", league_id=league.url))
+        db.session.commit()
+
+        assert PermissionService.is_tournament_organizer_of(t, p) is True
+
+
+@pytest.mark.unit
+def test_is_tournament_organizer_of_returns_false_for_none():
+    from app.services.permission_service import PermissionService
+
+    assert PermissionService.is_tournament_organizer_of(None, None) is False

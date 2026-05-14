@@ -360,7 +360,7 @@ class RegistrationService:
         from models import Player
 
         actor = resolve_actor(actor_user_id, actor_user_type)
-        if not PermissionService.is_tournament_organizer(tournament_url, actor):
+        if not PermissionService.is_tournament_organizer_of(tournament, actor):
             return Err(UnauthorizedError("Only tournament organizers can register players on behalf"))
 
         target = Player.query.get(player_id)
@@ -455,7 +455,7 @@ class RegistrationService:
         from app.services.permission_service import PermissionService
 
         actor = resolve_actor(actor_user_id, actor_user_type)
-        if not PermissionService.is_tournament_organizer(tournament_url, actor):
+        if not PermissionService.is_tournament_organizer_of(tournament, actor):
             return Err(UnauthorizedError("Only tournament organizers can register teams"))
 
         team = Team.query.get(team_id)

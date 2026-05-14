@@ -45,6 +45,40 @@ class PermissionService:
         return Null()
 
     @staticmethod
+    def is_tournament_organizer_of(tournament, user) -> bool:
+        """Return whether *user* is a TO for the pre-loaded *tournament*.
+
+        Same semantics as :meth:`is_tournament_organizer` but skips the
+        Tournament fetch when the caller already has the row loaded - intended
+        for hot service-layer paths where the Tournament was loaded for other
+        reasons.
+
+        Args:
+            tournament: A loaded :class:`~app.models.tournament.Tournament`, or
+                ``None``.
+            user: Flask-Login user object, or ``None``.
+
+        Returns:
+            ``True`` if a matching :class:`~app.models.tournament.TO` row exists.
+        """
+        if tournament is None or user is None:
+            return False
+        match PermissionService.user_type(user):
+            case Some(user_type):
+                pass
+            case _:
+                return False
+
+        from models import TO
+
+        q = TO.query.filter_by(user_id=user.id, user_type=str(user_type))
+        if tournament.league_id:
+            q = q.filter_by(league_id=tournament.league_id)
+        else:
+            q = q.filter_by(event=tournament.url)
+        return q.first() is not None
+
+    @staticmethod
     def is_tournament_organizer(tournament_url: str, user) -> bool:
         """Return whether *user* is a Tournament Organiser for this tournament.
 
@@ -61,24 +95,10 @@ class PermissionService:
         """
         if not tournament_url or user is None:
             return False
-        match PermissionService.user_type(user):
-            case Some(user_type):
-                pass
-            case _:
-                return False
-
-        from models import TO, Tournament
+        from models import Tournament
 
         tournament = Tournament.query.filter_by(url=tournament_url).first()
-        if tournament is None:
-            return False
-
-        q = TO.query.filter_by(user_id=user.id, user_type=str(user_type))
-        if tournament.league_id:
-            q = q.filter_by(league_id=tournament.league_id)
-        else:
-            q = q.filter_by(event=tournament_url)
-        return q.first() is not None
+        return PermissionService.is_tournament_organizer_of(tournament, user)
 
     @staticmethod
     def is_league_organizer(league_url: str, user) -> bool:
@@ -101,12 +121,7 @@ class PermissionService:
 
         from models import TO
 
-        return (
-            TO.query.filter_by(
-                user_id=user.id, user_type=str(user_type), league_id=league_url
-            ).first()
-            is not None
-        )
+        return TO.query.filter_by(user_id=user.id, user_type=str(user_type), league_id=league_url).first() is not None
 
     @staticmethod
     def can_view_tournament(tournament_url: str, user) -> bool:
