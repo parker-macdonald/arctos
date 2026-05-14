@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 
-from app.error_values import Err, Ok, Result, allow_Q, option
+from app.error_values import Err, Ok, Result, allow_Q
 from app.exceptions import (
     ArctosError,
     NotFoundError,
@@ -46,11 +46,9 @@ class SideCompService:
 
     @staticmethod
     def _get_tournament(tournament_url: str) -> Result["Tournament", ArctosError]:
-        from app.exceptions import TournamentNotFoundError
-        from models import Tournament
+        from app.services._common import get_tournament_or_err
 
-        tournament = Tournament.query.filter_by(url=tournament_url).first()
-        return option(tournament).ok_or(TournamentNotFoundError(tournament_url))
+        return get_tournament_or_err(tournament_url)
 
     @staticmethod
     def _next_entry_number(comp_id: int) -> int:
@@ -68,15 +66,49 @@ class SideCompService:
         return (current_max or 0) + 1
 
     @staticmethod
-    def _require_to(tournament_url: str, actor_user_id: str, actor_user_type: str) -> Result[None, ArctosError]:
-        from models import TO
+    def _insert_registration_with_entry_number(
+        *,
+        comp_id: int,
+        player_id: str,
+        registered_by_to: bool,
+    ) -> "SideCompRegistration":
+        """Insert a SideCompRegistration with a fresh entry_number.
 
-        is_to = TO.query.filter_by(
-            event=tournament_url,
-            user_id=actor_user_id,
-            user_type=actor_user_type,
-        ).first()
-        if not is_to:
+        Retries once on IntegrityError to handle entry_number collision
+        under concurrent inserts (uq_sidecomp_registrations_comp_entry_number).
+        Caller is responsible for any pre-insert validation.
+        """
+        from sqlalchemy.exc import IntegrityError
+
+        from models import SideCompRegistration, db
+
+        last_exc: Exception | None = None
+        for _ in range(2):
+            entry_number = SideCompService._next_entry_number(comp_id)
+            reg = SideCompRegistration(
+                comp=comp_id,
+                player=player_id,
+                entry_number=entry_number,
+                registered_by_to=registered_by_to,
+            )
+            db.session.add(reg)
+            try:
+                db.session.commit()
+                return reg
+            except IntegrityError as exc:
+                db.session.rollback()
+                last_exc = exc
+                continue
+        assert last_exc is not None
+        raise last_exc
+
+    @staticmethod
+    def _require_to(tournament_url: str, actor_user_id: str, actor_user_type: str) -> Result[None, ArctosError]:
+        from app.services._common import resolve_actor
+        from app.services.permission_service import PermissionService
+
+        actor = resolve_actor(actor_user_id, actor_user_type)
+        if not PermissionService.is_tournament_organizer(tournament_url, actor):
             return Err(UnauthorizedError("Only tournament organizers can do that"))
         return Ok(None)
 
@@ -301,7 +333,6 @@ class SideCompService:
             PlayerRegistration,
             SideComp,
             SideCompRegistration,
-            db,
         )
 
         sc = SideComp.query.get(comp_id)
@@ -323,15 +354,11 @@ class SideCompService:
         if existing:
             return Err(ValidationError("You are already registered for this side competition"))
 
-        entry_number = SideCompService._next_entry_number(comp_id)
-        reg = SideCompRegistration(
-            comp=comp_id,
-            player=player_id,
-            entry_number=entry_number,
+        reg = SideCompService._insert_registration_with_entry_number(
+            comp_id=comp_id,
+            player_id=player_id,
             registered_by_to=False,
         )
-        db.session.add(reg)
-        db.session.commit()
         return Ok(reg)
 
     @staticmethod
@@ -369,7 +396,6 @@ class SideCompService:
             PlayerRegistration,
             SideComp,
             SideCompRegistration,
-            db,
         )
 
         sc = SideComp.query.get(comp_id)
@@ -394,15 +420,11 @@ class SideCompService:
         if existing:
             return Err(ValidationError("Player is already registered for this side competition"))
 
-        entry_number = SideCompService._next_entry_number(comp_id)
-        reg = SideCompRegistration(
-            comp=comp_id,
-            player=player_id,
-            entry_number=entry_number,
+        reg = SideCompService._insert_registration_with_entry_number(
+            comp_id=comp_id,
+            player_id=player_id,
             registered_by_to=True,
         )
-        db.session.add(reg)
-        db.session.commit()
         return Ok(reg)
 
     @staticmethod

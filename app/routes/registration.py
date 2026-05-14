@@ -11,21 +11,22 @@ The multi-model workflow itself lives in
 layer in front of it.
 """
 
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, g, request, jsonify
 from flask_login import login_required, current_user  # type: ignore[import-untyped]
-from datetime import datetime, timezone
 from models import (
     Tournament,
     TeamRegistration,
     PlayerRegistration,
-    TO,
     db,
 )
 from app.domain.enums import RegistrationStatus
+from app.services._common import current_user_type
 from app.services.registration_service import RegistrationService
+from app.services.permission_service import PermissionService
+from app.utils.decorators import require_json_body, require_tournament_organizer
 from app.utils.user_helpers import is_player, is_team
-from app.error_values import Ok, Err
-from app.utils.result_helpers import public_error_message
+from app.utils.result_helpers import json_from_result
+from app.utils.datetime_helpers import now_utc_naive
 
 bp = Blueprint("registration", __name__, url_prefix="/_api")
 
@@ -57,14 +58,11 @@ def register_team_for_tournament(tournament_url: str):
         )
 
     res = RegistrationService.register_team(tournament_url, current_user.id, request.form.get("pseudonym", ""))
-    match res:
-        case Ok(_):
-            return (
-                jsonify({"success": True, "message": "Team registration successful!"}),
-                200,
-            )
-        case Err(err):
-            return jsonify({"success": False, "error": public_error_message(err)}), 400
+    return json_from_result(
+        res,
+        ok_to_payload=lambda _: {"message": "Team registration successful!"},
+        err_status_code=400,
+    )
 
 
 @bp.route("/<tournament_url>/register-player", methods=["POST"])
@@ -107,15 +105,17 @@ def register_player_for_tournament(tournament_url: str):
         jersey_name=request.form.get("jersey_name", ""),
         waiver_legal_name_signature=request.form.get("waiver_legal_name_signature", ""),
     )
-    match res:
-        case Ok(_):
-            if team_id:
-                msg = "Registration submitted! The team will need to approve your request."
-            else:
-                msg = "Player registration successful! You are now registered for the tournament."
-            return jsonify({"success": True, "message": msg}), 200
-        case Err(err):
-            return jsonify({"success": False, "error": public_error_message(err)}), 400
+    return json_from_result(
+        res,
+        ok_to_payload=lambda _: {
+            "message": (
+                "Registration submitted! The team will need to approve your request."
+                if team_id
+                else "Player registration successful! You are now registered for the tournament."
+            )
+        },
+        err_status_code=400,
+    )
 
 
 @bp.route("/<tournament_url>/deregister-team", methods=["POST"])
@@ -145,19 +145,11 @@ def deregister_team_from_tournament(tournament_url: str):
         )
 
     res = RegistrationService.deregister_team(tournament_url, current_user.id)
-    match res:
-        case Ok(_):
-            return (
-                jsonify(
-                    {
-                        "success": True,
-                        "message": "Team successfully deregistered from tournament",
-                    }
-                ),
-                200,
-            )
-        case Err(err):
-            return jsonify({"success": False, "error": public_error_message(err)}), 400
+    return json_from_result(
+        res,
+        ok_to_payload=lambda _: {"message": "Team successfully deregistered from tournament"},
+        err_status_code=400,
+    )
 
 
 @bp.route("/<tournament_url>/deregister-player", methods=["POST"])
@@ -187,23 +179,15 @@ def deregister_player_from_tournament(tournament_url: str):
         )
 
     res = RegistrationService.deregister_player(tournament_url, current_user.id)
-    match res:
-        case Ok(_):
-            return (
-                jsonify(
-                    {
-                        "success": True,
-                        "message": "Player successfully deregistered from tournament",
-                    }
-                ),
-                200,
-            )
-        case Err(err):
-            return jsonify({"success": False, "error": public_error_message(err)}), 400
+    return json_from_result(
+        res,
+        ok_to_payload=lambda _: {"message": "Player successfully deregistered from tournament"},
+        err_status_code=400,
+    )
 
 
 @bp.route("/<tournament_url>/mark-team-paid", methods=["POST"])
-@login_required
+@require_tournament_organizer("Only tournament organizers can perform this action")
 def mark_team_paid(tournament_url: str):
     """Update payment status for a team registration (TO only).
 
@@ -227,21 +211,6 @@ def mark_team_paid(tournament_url: str):
         JSON ``{"success": true, "message": "..."}`` on success, or 403/404.
     """
     tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
-    is_to = TO.query.filter_by(
-        user_id=current_user.id,
-        user_type=current_user.__class__.__name__.lower(),
-        event=tournament_url,
-    ).first()
-    if not is_to:
-        return (
-            jsonify(
-                {
-                    "success": False,
-                    "error": "Only tournament organizers can perform this action",
-                }
-            ),
-            403,
-        )
 
     reg_id = request.form.get("registration_id")
     paid = request.form.get("paid") == "on"
@@ -256,13 +225,13 @@ def mark_team_paid(tournament_url: str):
     reg.payment_method = payment_method
     reg.payment_reference = payment_reference
     reg.payment_notes = payment_notes
-    reg.paid_at = datetime.now(timezone.utc).replace(tzinfo=None) if paid else None
+    reg.paid_at = now_utc_naive() if paid else None
     db.session.commit()
     return jsonify({"success": True, "message": "Team payment updated"}), 200
 
 
 @bp.route("/<tournament_url>/mark-player-paid", methods=["POST"])
-@login_required
+@require_tournament_organizer("Only tournament organizers can perform this action")
 def mark_player_paid(tournament_url: str):
     """Update payment status for a player registration (TO only).
 
@@ -286,21 +255,6 @@ def mark_player_paid(tournament_url: str):
         JSON ``{"success": true, "message": "..."}`` on success, or 403/404.
     """
     tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
-    is_to = TO.query.filter_by(
-        user_id=current_user.id,
-        user_type=current_user.__class__.__name__.lower(),
-        event=tournament_url,
-    ).first()
-    if not is_to:
-        return (
-            jsonify(
-                {
-                    "success": False,
-                    "error": "Only tournament organizers can perform this action",
-                }
-            ),
-            403,
-        )
 
     reg_id = request.form.get("registration_id")
     paid = request.form.get("paid") == "on"
@@ -315,13 +269,13 @@ def mark_player_paid(tournament_url: str):
     reg.payment_method = payment_method
     reg.payment_reference = payment_reference
     reg.payment_notes = payment_notes
-    reg.paid_at = datetime.now(timezone.utc).replace(tzinfo=None) if paid else None
+    reg.paid_at = now_utc_naive() if paid else None
     db.session.commit()
     return jsonify({"success": True, "message": "Player payment updated"}), 200
 
 
 @bp.route("/<tournament_url>/deregister-any-team", methods=["POST"])
-@login_required
+@require_tournament_organizer("Only tournament organizers can perform this action")
 def deregister_any_team(tournament_url: str):
     """Forcibly cancel a team's registration (TO only).
 
@@ -340,23 +294,6 @@ def deregister_any_team(tournament_url: str):
         JSON success or error body.
     """
     tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
-
-    is_to = TO.query.filter_by(
-        user_id=current_user.id,
-        user_type=current_user.__class__.__name__.lower(),
-        event=tournament_url,
-    ).first()
-
-    if not is_to:
-        return (
-            jsonify(
-                {
-                    "success": False,
-                    "error": "Only tournament organizers can perform this action",
-                }
-            ),
-            403,
-        )
 
     team_id = request.form.get("team_id")
     if not team_id:
@@ -395,7 +332,7 @@ def deregister_any_team(tournament_url: str):
 
 
 @bp.route("/<tournament_url>/deregister-any-player", methods=["POST"])
-@login_required
+@require_tournament_organizer("Only tournament organizers can perform this action")
 def deregister_any_player(tournament_url: str):
     """Forcibly cancel a player's registration (TO only).
 
@@ -414,23 +351,6 @@ def deregister_any_player(tournament_url: str):
         JSON success or error body.
     """
     tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
-
-    is_to = TO.query.filter_by(
-        user_id=current_user.id,
-        user_type=current_user.__class__.__name__.lower(),
-        event=tournament_url,
-    ).first()
-
-    if not is_to:
-        return (
-            jsonify(
-                {
-                    "success": False,
-                    "error": "Only tournament organizers can perform this action",
-                }
-            ),
-            403,
-        )
 
     player_id = request.form.get("player_id")
     if not player_id:
@@ -540,6 +460,7 @@ def decline_invitation(tournament_url: str, invitation_id: int):
 
 @bp.route("/<tournament_url>/register-player-as-to", methods=["POST"])
 @login_required
+@require_json_body()
 def register_player_as_to(tournament_url: str):
     """Tournament-organizer-driven player registration.
 
@@ -566,9 +487,7 @@ def register_player_as_to(tournament_url: str):
         ``200`` with the resolved registration fields on success, or
         ``{success: false, error}`` with an appropriate status on failure.
     """
-    if not request.is_json:
-        return jsonify({"success": False, "error": "Content-Type must be application/json"}), 415
-    data = request.get_json() or {}
+    data = g.json_body
 
     player_id = (data.get("player_id") or "").strip()
     if not player_id:
@@ -577,41 +496,32 @@ def register_player_as_to(tournament_url: str):
     res = RegistrationService.register_player_as_to(
         tournament_url,
         actor_user_id=current_user.id,
-        actor_user_type=current_user.__class__.__name__.lower(),
+        actor_user_type=current_user_type(),
         player_id=player_id,
         team_id=(data.get("team") or None),
         jersey_number=data.get("jersey_number", ""),
         jersey_name=data.get("jersey_name", ""),
         waiver_legal_name_signature=data.get("waiver_legal_name_signature", ""),
     )
-    match res:
-        case Ok(reg):
-            from models import Player
+    from models import Player
 
-            player = Player.query.get(reg.player)
-            return (
-                jsonify(
-                    {
-                        "success": True,
-                        "message": "Player registered",
-                        "player_id": reg.player,
-                        "player_name": player.name if player else reg.player,
-                        "team": reg.team,
-                        "jersey_number": reg.jersey_number,
-                        "jersey_name": reg.jersey_name,
-                    }
-                ),
-                200,
-            )
-        case Err(err):
-            from app.exceptions import ArctosError
+    def _checkin_payload(reg):
+        player = Player.query.get(reg.player)
+        return {
+            "message": "Player registered",
+            "player_id": reg.player,
+            "player_name": player.name if player else reg.player,
+            "team": reg.team,
+            "jersey_number": reg.jersey_number,
+            "jersey_name": reg.jersey_name,
+        }
 
-            status = err.status_code if isinstance(err, ArctosError) else 400
-            return jsonify({"success": False, "error": public_error_message(err)}), status
+    return json_from_result(res, ok_to_payload=_checkin_payload)
 
 
 @bp.route("/<tournament_url>/register-team-as-to", methods=["POST"])
 @login_required
+@require_json_body()
 def register_team_as_to(tournament_url: str):
     """Tournament-organizer-driven team registration.
 
@@ -633,9 +543,7 @@ def register_team_as_to(tournament_url: str):
         ``200`` with the resolved registration fields on success, or
         ``{success: false, error}`` with an appropriate status on failure.
     """
-    if not request.is_json:
-        return jsonify({"success": False, "error": "Content-Type must be application/json"}), 415
-    data = request.get_json() or {}
+    data = g.json_body
 
     team_id = (data.get("team_id") or "").strip()
     if not team_id:
@@ -644,29 +552,19 @@ def register_team_as_to(tournament_url: str):
     res = RegistrationService.register_team_as_to(
         tournament_url,
         actor_user_id=current_user.id,
-        actor_user_type=current_user.__class__.__name__.lower(),
+        actor_user_type=current_user_type(),
         team_id=team_id,
         pseudonym=data.get("pseudonym", ""),
     )
-    match res:
-        case Ok(reg):
-            from models import Team
+    from models import Team
 
-            team = Team.query.get(reg.team)
-            return (
-                jsonify(
-                    {
-                        "success": True,
-                        "message": "Team registered",
-                        "team_id": reg.team,
-                        "team_name": team.name if team else reg.team,
-                        "pseudonym": reg.pseudonym,
-                    }
-                ),
-                200,
-            )
-        case Err(err):
-            from app.exceptions import ArctosError
+    def _checkin_team_payload(reg):
+        team = Team.query.get(reg.team)
+        return {
+            "message": "Team registered",
+            "team_id": reg.team,
+            "team_name": team.name if team else reg.team,
+            "pseudonym": reg.pseudonym,
+        }
 
-            status = err.status_code if isinstance(err, ArctosError) else 400
-            return jsonify({"success": False, "error": public_error_message(err)}), status
+    return json_from_result(res, ok_to_payload=_checkin_team_payload)

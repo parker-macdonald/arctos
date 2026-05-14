@@ -11,9 +11,9 @@ transparently.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 
 from app.models.base import db
+from app.utils.datetime_helpers import now_utc_naive
 from app.models.constants import (
     SHA256_HEX_LEN,
     SHORT_CODE_LEN,
@@ -62,7 +62,7 @@ class TeamRegistration(db.Model):  # type: ignore[misc]
     status = db.Column(
         db.Enum(TeamRegistrationStatus), default=TeamRegistrationStatus.CONFIRMED
     )  # CONFIRMED, CANCELLED
-    registered_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+    registered_at = db.Column(db.DateTime, default=now_utc_naive)
     # Payment fields
     paid = db.Column(db.Boolean, default=False)
     amount_paid = db.Column(db.Numeric(10, 2), default=0)
@@ -129,7 +129,7 @@ class PlayerRegistration(db.Model):  # type: ignore[misc]
     jersey_number = db.Column(db.String(SHORT_CODE_LEN))
     jersey_name = db.Column(db.String(SHORT_NAME_LEN))  # Player name for this tournament
     status = db.Column(db.Enum(RegistrationStatus), default=RegistrationStatus.PENDING_TEAM_APPROVAL)
-    registered_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+    registered_at = db.Column(db.DateTime, default=now_utc_naive)
     # Payment fields
     paid = db.Column(db.Boolean, default=False)
     amount_paid = db.Column(db.Numeric(10, 2), default=0)
@@ -146,7 +146,7 @@ class PlayerRegistration(db.Model):  # type: ignore[misc]
     # Server timestamp when the signature was submitted.
     waiver_signature_submitted_at = db.Column(
         db.DateTime,
-        default=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
+        default=now_utc_naive,
         nullable=True,
     )
 

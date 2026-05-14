@@ -23,36 +23,41 @@ class PermissionService:
     """
 
     @staticmethod
-    def user_type(user) -> Option[str]:
-        """Return the account type string for *user*.
+    def user_type(user) -> "Option[UserType]":
+        """Return the account type for *user*.
 
         Args:
             user: Any Flask-Login user object, or ``None``.
 
         Returns:
-            :class:`~app.error_values.Some` containing ``"player"`` or
-            ``"team"``, or :class:`~app.error_values.Null` for ``None`` /
-            unsupported types.
+            :class:`~app.error_values.Some` containing
+            :class:`~app.domain.enums.UserType`, or
+            :class:`~app.error_values.Null` for ``None`` / unsupported types.
         """
+        from app.domain.enums import UserType
+
         if user is None:
             return Null()
         if is_player(user):
-            return Some("player")
+            return Some(UserType.PLAYER)
         if is_team(user):
-            return Some("team")
+            return Some(UserType.TEAM)
         return Null()
 
     @staticmethod
     def is_tournament_organizer(tournament_url: str, user) -> bool:
-        """Return whether *user* is a Tournament Organiser for this event.
+        """Return whether *user* is a Tournament Organiser for this tournament.
+
+        For tournaments attached to a league (``Tournament.league_id`` is set),
+        league-season TOs grant access; otherwise event-specific TOs are
+        consulted. Mirrors :func:`~app.services.registration_resolver.to_entries_for_tournament`.
 
         Args:
             tournament_url: URL slug of the tournament.
             user: Flask-Login user object (player or team), or ``None``.
 
         Returns:
-            ``True`` if a :class:`~app.models.tournament.TO` record exists
-            for *user* and *tournament_url*.
+            ``True`` if a matching :class:`~app.models.tournament.TO` row exists.
         """
         if not tournament_url or user is None:
             return False
@@ -62,9 +67,46 @@ class PermissionService:
             case _:
                 return False
 
+        from models import TO, Tournament
+
+        tournament = Tournament.query.filter_by(url=tournament_url).first()
+        if tournament is None:
+            return False
+
+        q = TO.query.filter_by(user_id=user.id, user_type=str(user_type))
+        if tournament.league_id:
+            q = q.filter_by(league_id=tournament.league_id)
+        else:
+            q = q.filter_by(event=tournament_url)
+        return q.first() is not None
+
+    @staticmethod
+    def is_league_organizer(league_url: str, user) -> bool:
+        """Return whether *user* is a TO for the league at *league_url*.
+
+        Args:
+            league_url: URL slug of the league.
+            user: Flask-Login user object, or ``None``.
+
+        Returns:
+            ``True`` if a matching :class:`~app.models.tournament.TO` row exists.
+        """
+        if not league_url or user is None:
+            return False
+        match PermissionService.user_type(user):
+            case Some(user_type):
+                pass
+            case _:
+                return False
+
         from models import TO
 
-        return TO.query.filter_by(user_id=user.id, user_type=user_type, event=tournament_url).first() is not None
+        return (
+            TO.query.filter_by(
+                user_id=user.id, user_type=str(user_type), league_id=league_url
+            ).first()
+            is not None
+        )
 
     @staticmethod
     def can_view_tournament(tournament_url: str, user) -> bool:

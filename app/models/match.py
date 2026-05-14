@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 
 import sqlalchemy as sa
 
@@ -26,6 +26,7 @@ from app.models.constants import (
     UUID_LEN,
 )
 from app.error_values import Some
+from app.utils.datetime_helpers import now_utc_naive
 
 
 class Match(db.Model):
@@ -229,7 +230,7 @@ class Match(db.Model):
         For all other schedule types the caller is responsible for setting
         :attr:`status` and :attr:`completed_time`.
         """
-        self.finalized_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        self.finalized_at = now_utc_naive()
         if self.schedule_type in (ScheduleType.JOIN, ScheduleType.BREAK):
             self.confirmed_start_time = self.nominal_start_time
             self.status = MatchStatus.COMPLETED
@@ -270,7 +271,7 @@ class Point(db.Model):
     match = db.Column(db.String(UUID_LEN), db.ForeignKey("matches.uuid"), nullable=False)
     winner = db.Column(db.String(SHORT_CODE_LEN))  # TEAM1, TEAM2
     rerolled = db.Column(db.Boolean, default=False)
-    stamp = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+    stamp = db.Column(db.DateTime, default=now_utc_naive)
     end_stamp = db.Column(db.DateTime)
     footage = db.Column(db.String(LONG_URL_LEN))
     camera_index = db.Column(db.Integer)  # Index of camera in field's camera array (0-based)
@@ -310,7 +311,7 @@ class MatchNote(db.Model):
     text = db.Column(db.Text, nullable=False)
     target = db.Column(db.Enum(MatchNoteTarget, values_callable=lambda obj: [e.value for e in obj]))
     created_by = db.Column(db.String(USER_ID_LEN), db.ForeignKey("players.id"), nullable=False)
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+    created_at = db.Column(db.DateTime, default=now_utc_naive)
     # Optional link to a specific player
     player_id = db.Column(db.String(USER_ID_LEN), db.ForeignKey("players.id"))
     # Optional link to a specific point

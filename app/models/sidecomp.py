@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 
 from app.domain.enums import SideCompType
 from app.models.base import db
+from app.utils.datetime_helpers import now_utc_naive
 from app.models.constants import (
     SHORT_NAME_LEN,
     URL_SLUG_LEN,
@@ -37,7 +37,7 @@ class SideComp(db.Model):
     registration_open = db.Column(db.Boolean, nullable=False, default=False)
     created_at = db.Column(
         db.DateTime,
-        default=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
+        default=now_utc_naive,
         nullable=False,
     )
 
@@ -65,7 +65,7 @@ class SideCompRegistration(db.Model):
     entry_number = db.Column(db.Integer, nullable=False)
     registered_at = db.Column(
         db.DateTime,
-        default=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
+        default=now_utc_naive,
         nullable=False,
     )
     registered_by_to = db.Column(db.Boolean, default=False, nullable=False)
@@ -94,4 +94,4 @@ class SideCompResult(db.Model):
     comp = db.Column(db.Integer, db.ForeignKey("sidecomps.id"), nullable=False)
     player = db.Column(db.String(USER_ID_LEN), db.ForeignKey("players.id"), nullable=False)
     scanner_id = db.Column(db.Integer)
-    stamp = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+    stamp = db.Column(db.DateTime, default=now_utc_naive)

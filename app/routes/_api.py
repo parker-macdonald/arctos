@@ -6,7 +6,7 @@ CRUD, schedule queries, rosters, head-ref permissions, photos, profile
 updates, search, ...).
 """
 
-from flask import Blueprint, request, jsonify, session, redirect, current_app
+from flask import Blueprint, g, request, jsonify, session, redirect, current_app
 from datetime import datetime, timezone
 from pathlib import Path
 import hashlib
@@ -16,7 +16,10 @@ from flask_login import current_user, login_user, logout_user, login_required
 from sqlalchemy import or_, func
 from sqlalchemy.orm import joinedload
 from sqlalchemy.orm.attributes import flag_modified
+from app.services._common import current_user_type
+from app.services.permission_service import PermissionService
 from app.services.tournament_service import TournamentService
+from app.utils.decorators import require_json_body
 from app.utils.helpers import (
     is_valid_url_username,
     check_tournament_access,
@@ -45,7 +48,6 @@ from app.services.dual_write import (
     set_match_referees_from_csv,
 )
 from app.serializers.match_note_serializer import MatchNoteSerializer
-from app.error_values import Ok, Err
 from app.routes.tournaments import update_match_previous_link
 from app.utils.scheduling import (
     recompute_all_match_times,
@@ -53,7 +55,7 @@ from app.utils.scheduling import (
     validate_match_input,
 )
 from app.utils.name_validation import match_name_char_error, team_pseudonym_char_error
-from app.utils.datetime_helpers import to_iso_z
+from app.utils.datetime_helpers import to_iso_z, now_utc_naive
 from app.utils.recording_retry import current_user_can_retry_finalization
 from app.domain.enums import (
     RegistrationStatus,
@@ -183,13 +185,10 @@ def server_time():
 
 
 @bp.route("/login", methods=["POST"])
+@require_json_body()
 def login():
     """JSON body: { username, password }. Sets session cookie on success."""
-    if not request.is_json:
-        return jsonify({"error": "Content-Type must be application/json"}), 415
-    data = request.get_json()
-    if not data:
-        return jsonify({"error": "Invalid JSON"}), 400
+    data = g.json_body
     username = data.get("username")
     password = data.get("password")
     if not username or not password:
@@ -213,13 +212,10 @@ def logout():
 
 @bp.route("/change-password", methods=["POST"])
 @login_required
+@require_json_body()
 def change_password():
     """JSON body: { current_password, new_password }. Change authenticated user's password."""
-    if not request.is_json:
-        return jsonify({"error": "Content-Type must be application/json"}), 415
-    data = request.get_json()
-    if not data:
-        return jsonify({"error": "Invalid JSON"}), 400
+    data = g.json_body
     current_password = data.get("current_password")
     new_password = data.get("new_password")
     if not current_password or not new_password:
@@ -242,13 +238,10 @@ def change_password():
 
 
 @bp.route("/register", methods=["POST"])
+@require_json_body()
 def register():
     """JSON body: { username, password, name, user_type?: "player"|"team" }. Creates user and logs in."""
-    if not request.is_json:
-        return jsonify({"error": "Content-Type must be application/json"}), 415
-    data = request.get_json()
-    if not data:
-        return jsonify({"error": "Invalid JSON"}), 400
+    data = g.json_body
     username = data.get("username")
     password = data.get("password")
     name = data.get("name")
@@ -520,12 +513,7 @@ def _require_league(league_url: str):
         return league, None
     if not current_user.is_authenticated:
         return league, 403
-    is_to = TO.query.filter_by(
-        user_id=current_user.id,
-        user_type=current_user.__class__.__name__.lower(),
-        league_id=league_url,
-    ).first()
-    if not is_to:
+    if not PermissionService.is_league_organizer(league_url, current_user):
         return league, 403
     return league, None
 
@@ -635,7 +623,7 @@ def leagues_list():
 def leagues_organized():
     """List leagues that the current user organizes (TO). For tournament create/edit league selector."""
     user_id = current_user.id
-    user_type = current_user.__class__.__name__.lower()
+    user_type = current_user_type()
     to_entries = TO.query.filter(
         TO.league_id.isnot(None),
         TO.user_id == user_id,
@@ -721,7 +709,7 @@ def league_detail(league_url):
         is_current = (
             current_user.is_authenticated
             and current_user.id == e.user_id
-            and current_user.__class__.__name__.lower() == e.user_type
+            and current_user_type() == e.user_type
         )
         to_entries.append(
             {
@@ -865,7 +853,7 @@ def league_register_team(league_url):
     """Register a team for a league."""
     from app.utils.user_helpers import is_team
     from app.services.registration_service import RegistrationService
-    from app.utils.result_helpers import public_error_message
+    from app.utils.result_helpers import json_from_result
 
     if not is_team(current_user):
         return jsonify({"success": False, "error": "Only teams can register"}), 403
@@ -873,14 +861,11 @@ def league_register_team(league_url):
     if err:
         return jsonify({"error": "Not found" if err == 404 else "Forbidden"}), err
     res = RegistrationService.register_team_for_league(league.url, current_user.id, request.form.get("pseudonym", ""))
-    match res:
-        case Ok(_):
-            return (
-                jsonify({"success": True, "message": "Team registration successful!"}),
-                200,
-            )
-        case Err(e):
-            return jsonify({"success": False, "error": public_error_message(e)}), 400
+    return json_from_result(
+        res,
+        ok_to_payload=lambda _: {"message": "Team registration successful!"},
+        err_status_code=400,
+    )
 
 
 @bp.route("/leagues/<league_url>/register-player", methods=["POST"])
@@ -889,7 +874,7 @@ def league_register_player(league_url):
     """Register a player for a league."""
     from app.utils.user_helpers import is_player
     from app.services.registration_service import RegistrationService
-    from app.utils.result_helpers import public_error_message
+    from app.utils.result_helpers import json_from_result
 
     if not is_player(current_user):
         return jsonify({"success": False, "error": "Only players can register"}), 403
@@ -897,6 +882,11 @@ def league_register_player(league_url):
     if err:
         return jsonify({"error": "Not found" if err == 404 else "Forbidden"}), err
     team_id = request.form.get("team", "") or None
+    msg = (
+        "Registration submitted! The team will need to approve your request."
+        if team_id
+        else "Player registration successful!"
+    )
     res = RegistrationService.register_player_for_league(
         league.url,
         current_user.id,
@@ -905,16 +895,11 @@ def league_register_player(league_url):
         jersey_name=request.form.get("jersey_name", ""),
         waiver_legal_name_signature=request.form.get("waiver_legal_name_signature", ""),
     )
-    match res:
-        case Ok(_):
-            msg = (
-                "Registration submitted! The team will need to approve your request."
-                if team_id
-                else "Player registration successful!"
-            )
-            return jsonify({"success": True, "message": msg}), 200
-        case Err(e):
-            return jsonify({"success": False, "error": public_error_message(e)}), 400
+    return json_from_result(
+        res,
+        ok_to_payload=lambda _: {"message": msg},
+        err_status_code=400,
+    )
 
 
 @bp.route("/leagues/<league_url>/deregister-team", methods=["POST"])
@@ -923,7 +908,7 @@ def league_deregister_team(league_url):
     """Deregister a team from a league."""
     from app.utils.user_helpers import is_team
     from app.services.registration_service import RegistrationService
-    from app.utils.result_helpers import public_error_message
+    from app.utils.result_helpers import json_from_result
 
     if not is_team(current_user):
         return jsonify({"success": False, "error": "Only teams can deregister"}), 403
@@ -931,11 +916,11 @@ def league_deregister_team(league_url):
     if err:
         return jsonify({"error": "Not found" if err == 404 else "Forbidden"}), err
     res = RegistrationService.deregister_team_from_league(league.url, current_user.id)
-    match res:
-        case Ok(_):
-            return jsonify({"success": True, "message": "Team deregistered"}), 200
-        case Err(e):
-            return jsonify({"success": False, "error": public_error_message(e)}), 400
+    return json_from_result(
+        res,
+        ok_to_payload=lambda _: {"message": "Team deregistered"},
+        err_status_code=400,
+    )
 
 
 @bp.route("/leagues/<league_url>/settings", methods=["POST"])
@@ -945,12 +930,7 @@ def league_update_settings(league_url):
     league, err = _require_league(league_url)
     if err:
         return jsonify({"error": "Not found" if err == 404 else "Forbidden"}), err
-    is_to = TO.query.filter_by(
-        user_id=current_user.id,
-        user_type=current_user.__class__.__name__.lower(),
-        league_id=league_url,
-    ).first()
-    if not is_to:
+    if not PermissionService.is_league_organizer(league_url, current_user):
         return jsonify({"error": "Only league organizers can update settings"}), 403
 
     data = request.get_json() or {}
@@ -1008,12 +988,7 @@ def create_league_penalty_type(league_url):
     league, err = _require_league(league_url)
     if err:
         return jsonify({"error": "Not found" if err == 404 else "Forbidden"}), err
-    is_to = TO.query.filter_by(
-        user_id=current_user.id,
-        user_type=current_user.__class__.__name__.lower(),
-        league_id=league_url,
-    ).first()
-    if not is_to:
+    if not PermissionService.is_league_organizer(league_url, current_user):
         return jsonify({"error": "Forbidden"}), 403
 
     data = request.get_json()
@@ -1057,12 +1032,7 @@ def update_league_penalty_type(league_url, pt_id):
     league, err = _require_league(league_url)
     if err:
         return jsonify({"error": "Not found" if err == 404 else "Forbidden"}), err
-    is_to = TO.query.filter_by(
-        user_id=current_user.id,
-        user_type=current_user.__class__.__name__.lower(),
-        league_id=league_url,
-    ).first()
-    if not is_to:
+    if not PermissionService.is_league_organizer(league_url, current_user):
         return jsonify({"error": "Forbidden"}), 403
 
     pt = PenaltyType.query.filter_by(id=pt_id, league_id=league_url).first_or_404()
@@ -1089,12 +1059,7 @@ def delete_league_penalty_type(league_url, pt_id):
     league, err = _require_league(league_url)
     if err:
         return jsonify({"error": "Not found" if err == 404 else "Forbidden"}), err
-    is_to = TO.query.filter_by(
-        user_id=current_user.id,
-        user_type=current_user.__class__.__name__.lower(),
-        league_id=league_url,
-    ).first()
-    if not is_to:
+    if not PermissionService.is_league_organizer(league_url, current_user):
         return jsonify({"error": "Forbidden"}), 403
 
     pt = PenaltyType.query.filter_by(id=pt_id, league_id=league_url).first_or_404()
@@ -1113,12 +1078,7 @@ def league_add_to(league_url):
     league, err = _require_league(league_url)
     if err:
         return jsonify({"error": "Not found" if err == 404 else "Forbidden"}), err
-    is_to = TO.query.filter_by(
-        user_id=current_user.id,
-        user_type=current_user.__class__.__name__.lower(),
-        league_id=league_url,
-    ).first()
-    if not is_to:
+    if not PermissionService.is_league_organizer(league_url, current_user):
         return (
             jsonify({"success": False, "error": "Only league organizers can add TOs"}),
             403,
@@ -1171,12 +1131,7 @@ def league_remove_to(league_url):
     league, err = _require_league(league_url)
     if err:
         return jsonify({"error": "Not found" if err == 404 else "Forbidden"}), err
-    is_to = TO.query.filter_by(
-        user_id=current_user.id,
-        user_type=current_user.__class__.__name__.lower(),
-        league_id=league_url,
-    ).first()
-    if not is_to:
+    if not PermissionService.is_league_organizer(league_url, current_user):
         return (
             jsonify({"success": False, "error": "Only league organizers can remove TOs"}),
             403,
@@ -1190,7 +1145,7 @@ def league_remove_to(league_url):
     if to_to_remove.league_id != league_url:
         return jsonify({"success": False, "error": "Invalid TO entry"}), 400
 
-    if to_to_remove.user_id == current_user.id and to_to_remove.user_type == current_user.__class__.__name__.lower():
+    if to_to_remove.user_id == current_user.id and to_to_remove.user_type == current_user_type():
         return (
             jsonify({"success": False, "error": "You cannot remove yourself as a TO"}),
             400,
@@ -1215,12 +1170,7 @@ def delete_league(league_url):
     if err:
         return jsonify({"error": "Not found" if err == 404 else "Forbidden"}), err
 
-    is_to = TO.query.filter_by(
-        user_id=current_user.id,
-        user_type=current_user.__class__.__name__.lower(),
-        league_id=league_url,
-    ).first()
-    if not is_to:
+    if not PermissionService.is_league_organizer(league_url, current_user):
         return (
             jsonify(
                 {
@@ -1289,7 +1239,7 @@ def league_deregister_player(league_url):
     """Deregister a player from a league."""
     from app.utils.user_helpers import is_player
     from app.services.registration_service import RegistrationService
-    from app.utils.result_helpers import public_error_message
+    from app.utils.result_helpers import json_from_result
 
     if not is_player(current_user):
         return jsonify({"success": False, "error": "Only players can deregister"}), 403
@@ -1297,11 +1247,11 @@ def league_deregister_player(league_url):
     if err:
         return jsonify({"error": "Not found" if err == 404 else "Forbidden"}), err
     res = RegistrationService.deregister_player_from_league(league.url, current_user.id)
-    match res:
-        case Ok(_):
-            return jsonify({"success": True, "message": "Player deregistered"}), 200
-        case Err(e):
-            return jsonify({"success": False, "error": public_error_message(e)}), 400
+    return json_from_result(
+        res,
+        ok_to_payload=lambda _: {"message": "Player deregistered"},
+        err_status_code=400,
+    )
 
 
 @bp.route("/leagues/<league_url>/registrations/player/me", methods=["GET"])
@@ -1409,7 +1359,7 @@ def update_my_player_registration_league(league_url):
         if rc and getattr(rc, "waiver_filepath", None) and sig:
             sha_cur = getattr(rc, "waiver_sha256", None)
             if sha_cur:
-                now = datetime.now(timezone.utc).replace(tzinfo=None)
+                now = now_utc_naive()
                 reg.waiver_legal_name_signature = sig
                 reg.waiver_legal_name_signature_sha256 = sha_cur
                 reg.waiver_signature_submitted_at = now
@@ -1509,12 +1459,7 @@ def league_manage_api(league_url):
     league, err = _require_league(league_url)
     if err:
         return jsonify({"error": "Not found" if err == 404 else "Forbidden"}), err
-    is_to = TO.query.filter_by(
-        user_id=current_user.id,
-        user_type=current_user.__class__.__name__.lower(),
-        league_id=league_url,
-    ).first()
-    if not is_to:
+    if not PermissionService.is_league_organizer(league_url, current_user):
         return jsonify({"error": "Forbidden"}), 403
 
     class LeagueTournament:
@@ -1765,12 +1710,7 @@ def league_mark_team_paid(league_url):
     league, err = _require_league(league_url)
     if err:
         return jsonify({"error": "Not found" if err == 404 else "Forbidden"}), err
-    is_to = TO.query.filter_by(
-        user_id=current_user.id,
-        user_type=current_user.__class__.__name__.lower(),
-        league_id=league_url,
-    ).first()
-    if not is_to:
+    if not PermissionService.is_league_organizer(league_url, current_user):
         return (
             jsonify(
                 {
@@ -1794,7 +1734,7 @@ def league_mark_team_paid(league_url):
     reg.payment_method = payment_method
     reg.payment_reference = payment_reference
     reg.payment_notes = payment_notes
-    reg.paid_at = datetime.now(timezone.utc).replace(tzinfo=None) if paid else None
+    reg.paid_at = now_utc_naive() if paid else None
     db.session.commit()
     return jsonify({"success": True, "message": "Team payment updated"}), 200
 
@@ -1806,12 +1746,7 @@ def league_mark_player_paid(league_url):
     league, err = _require_league(league_url)
     if err:
         return jsonify({"error": "Not found" if err == 404 else "Forbidden"}), err
-    is_to = TO.query.filter_by(
-        user_id=current_user.id,
-        user_type=current_user.__class__.__name__.lower(),
-        league_id=league_url,
-    ).first()
-    if not is_to:
+    if not PermissionService.is_league_organizer(league_url, current_user):
         return (
             jsonify(
                 {
@@ -1835,7 +1770,7 @@ def league_mark_player_paid(league_url):
     reg.payment_method = payment_method
     reg.payment_reference = payment_reference
     reg.payment_notes = payment_notes
-    reg.paid_at = datetime.now(timezone.utc).replace(tzinfo=None) if paid else None
+    reg.paid_at = now_utc_naive() if paid else None
     db.session.commit()
     return jsonify({"success": True, "message": "Player payment updated"}), 200
 
@@ -1847,12 +1782,7 @@ def league_deregister_any_team(league_url):
     league, err = _require_league(league_url)
     if err:
         return jsonify({"error": "Not found" if err == 404 else "Forbidden"}), err
-    is_to = TO.query.filter_by(
-        user_id=current_user.id,
-        user_type=current_user.__class__.__name__.lower(),
-        league_id=league_url,
-    ).first()
-    if not is_to:
+    if not PermissionService.is_league_organizer(league_url, current_user):
         return (
             jsonify(
                 {
@@ -1894,12 +1824,7 @@ def league_deregister_any_player(league_url):
     league, err = _require_league(league_url)
     if err:
         return jsonify({"error": "Not found" if err == 404 else "Forbidden"}), err
-    is_to = TO.query.filter_by(
-        user_id=current_user.id,
-        user_type=current_user.__class__.__name__.lower(),
-        league_id=league_url,
-    ).first()
-    if not is_to:
+    if not PermissionService.is_league_organizer(league_url, current_user):
         return (
             jsonify(
                 {
@@ -2064,7 +1989,7 @@ def tournament_detail(tournament_url):
         is_current = (
             current_user.is_authenticated
             and current_user.id == e.user_id
-            and current_user.__class__.__name__.lower() == e.user_type
+            and current_user_type() == e.user_type
         )
         to_entries.append(
             {
@@ -2369,6 +2294,7 @@ def tournament_bracket_setup_data_api(tournament_url):
 
 @bp.route("/tournaments/<tournament_url>/bracket-setup", methods=["POST"])
 @login_required
+@require_json_body()
 def tournament_bracket_setup_save_api(tournament_url):
     """Save bracket configuration from the SPA."""
     if not _check_to(tournament_url):
@@ -2376,10 +2302,7 @@ def tournament_bracket_setup_save_api(tournament_url):
 
     tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
 
-    if not request.is_json:
-        return jsonify({"error": "Content-Type must be application/json"}), 415
-
-    data = request.get_json(silent=True) or {}
+    data = g.json_body
     brackets = data.get("brackets", [])
 
     def escape_toml_string(s):
@@ -2486,14 +2409,7 @@ def tournament_bracket_api(tournament_url):
 
     is_to = False
     if current_user.is_authenticated:
-        is_to = (
-            TO.query.filter_by(
-                user_id=current_user.id,
-                user_type=current_user.__class__.__name__.lower(),
-                event=tournament_url,
-            ).first()
-            is not None
-        )
+        is_to = PermissionService.is_tournament_organizer(tournament_url, current_user)
 
     if not tournament.bracket:
         return jsonify({"error": "Bracket is not available"}), 404
@@ -2728,6 +2644,7 @@ def start_match_post_api(tournament_url):
         return jsonify({"error": "Match ID required"}), 400
 
     from app.services.match_service import MatchService
+    from app.utils.result_helpers import json_from_result
 
     team1_players = ",".join(data.get("team1_players") or [])
     team2_players = ",".join(data.get("team2_players") or [])
@@ -2743,11 +2660,11 @@ def start_match_post_api(tournament_url):
         match_notes=match_notes,
         stones_per_set=stones_per_set,
     )
-    match res:
-        case Ok(match_obj):
-            return jsonify({"match_id": match_obj.uuid})
-        case Err(err):
-            return jsonify({"error": str(err)}), 400
+    return json_from_result(
+        res,
+        ok_to_payload=lambda v: {"match_id": v.uuid},
+        err_status_code=400,
+    )
 
 
 @bp.route("/tournaments/<tournament_url>/finalize-match", methods=["GET"])
@@ -2861,11 +2778,11 @@ def finalize_match_post_api(tournament_url):
     if not match_winner:
         return jsonify({"error": "Match winner required"}), 400
 
-    match.completed_time = datetime.now(timezone.utc).replace(tzinfo=None)
+    match.completed_time = now_utc_naive()
     match.finalized_by = current_user.id
     match.final_notes = data.get("final_notes") or ""
     match.match_winner = match_winner
-    match.finalized_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    match.finalized_at = now_utc_naive()
 
     if match.field:
         field_obj = Field.query.filter_by(event=tournament_url, name=match.field).first()
@@ -2912,11 +2829,7 @@ def _schedule_published_check(tournament_url, tournament):
         return True
     if not current_user.is_authenticated:
         return False
-    if TO.query.filter_by(
-        user_id=current_user.id,
-        user_type=current_user.__class__.__name__.lower(),
-        event=tournament_url,
-    ).first():
+    if PermissionService.is_tournament_organizer(tournament_url, current_user):
         return True
     if current_user.__class__.__name__ == "Player" and can_head_ref_match(tournament_url, current_user.id, match=None):
         return True
@@ -3916,81 +3829,6 @@ def _injury_json(inj):
     }
 
 
-@bp.route("/players/<player_id>/injuries", methods=["GET", "POST"])
-@login_required
-def player_injuries(player_id):
-    if current_user.id != player_id:
-        return jsonify({"error": "Forbidden"}), 403
-
-    if request.method == "GET":
-        injuries = Injury.query.filter_by(player=player_id).order_by(Injury.stamp.desc()).all()
-        return jsonify([_injury_json(inj) for inj in injuries])
-
-    data = request.get_json() or {}
-    message = (data.get("message") or "").strip()
-    if not message:
-        return jsonify({"error": "Message is required"}), 400
-
-    injury = Injury(
-        player=player_id,
-        message=message,
-        show=bool(data.get("show", False)),
-        active=bool(data.get("active", False)),
-    )
-
-    custom_date = data.get("custom_date")
-    if custom_date:
-        try:
-            injury.stamp = datetime.strptime(custom_date, "%Y-%m-%d")
-        except ValueError:
-            return jsonify({"error": "Invalid date format. Use YYYY-MM-DD."}), 400
-
-    db.session.add(injury)
-    db.session.commit()
-    return jsonify(_injury_json(injury))
-
-
-@bp.route("/players/<player_id>/injuries/<int:injury_id>", methods=["GET", "PUT", "DELETE"])
-@login_required
-def player_injury(player_id, injury_id):
-    if current_user.id != player_id:
-        return jsonify({"error": "Forbidden"}), 403
-
-    injury = Injury.query.filter_by(id=injury_id, player=player_id).first_or_404()
-
-    if request.method == "GET":
-        return jsonify(_injury_json(injury))
-
-    if request.method == "DELETE":
-        db.session.delete(injury)
-        db.session.commit()
-        return jsonify({"success": True})
-
-    data = request.get_json() or {}
-    message = (data.get("message") or "").strip()
-    if not message:
-        return jsonify({"error": "Message is required"}), 400
-    injury.message = message
-
-    if "show" in data:
-        injury.show = bool(data.get("show"))
-    if "active" in data:
-        injury.active = bool(data.get("active"))
-
-    if "custom_date" in data:
-        custom_date = data.get("custom_date")
-        if not custom_date:
-            injury.stamp = None
-        else:
-            try:
-                injury.stamp = datetime.strptime(custom_date, "%Y-%m-%d")
-            except ValueError:
-                return jsonify({"error": "Invalid date format. Use YYYY-MM-DD."}), 400
-
-    db.session.commit()
-    return jsonify(_injury_json(injury))
-
-
 @bp.route("/players/<player_id>/injuries/<int:injury_id>", methods=["GET"])
 @login_required
 def get_injury(player_id, injury_id):
@@ -4006,6 +3844,15 @@ def get_injury(player_id, injury_id):
             "show": bool(injury.show),
         }
     )
+
+
+@bp.route("/players/<player_id>/injuries", methods=["GET"])
+@login_required
+def list_injuries(player_id):
+    if current_user.id != player_id:
+        return jsonify({"error": "Forbidden"}), 403
+    injuries = Injury.query.filter_by(player=player_id).order_by(Injury.stamp.desc()).all()
+    return jsonify([_injury_json(inj) for inj in injuries])
 
 
 @bp.route("/players/<player_id>/injuries", methods=["POST"])
@@ -4690,7 +4537,7 @@ def force_start_match_api(tournament_url, match_id):
                 400,
             )
 
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        now = now_utc_naive()
         # Close unfinished points on the conflicting match
         for pt in Point.query.filter_by(match=other_match.uuid).all():
             if pt.end_stamp is None:
@@ -4720,7 +4567,7 @@ def force_start_match_api(tournament_url, match_id):
 
     # Convert to static
     match.schedule_type = ScheduleType.STATIC
-    match.nominal_start_time = datetime.now(timezone.utc).replace(tzinfo=None)
+    match.nominal_start_time = now_utc_naive()
     match.status = MatchStatus.READY_TO_START
 
     # Unlink previous/next
@@ -4751,26 +4598,7 @@ def force_start_match_api(tournament_url, match_id):
 def _check_to(tournament_url):
     if not current_user.is_authenticated:
         return False
-    tournament = Tournament.query.filter_by(url=tournament_url).first()
-    if not tournament:
-        return False
-    if tournament.league_id:
-        return (
-            TO.query.filter_by(
-                user_id=current_user.id,
-                user_type=current_user.__class__.__name__.lower(),
-                league_id=tournament.league_id,
-            ).first()
-            is not None
-        )
-    return (
-        TO.query.filter_by(
-            user_id=current_user.id,
-            user_type=current_user.__class__.__name__.lower(),
-            event=tournament_url,
-        ).first()
-        is not None
-    )
+    return PermissionService.is_tournament_organizer(tournament_url, current_user)
 
 
 @bp.route("/tournaments/<tournament_url>/fields/<int:field_id>", methods=["GET"])
@@ -5684,7 +5512,7 @@ def update_my_player_registration(tournament_url):
         if cfg and getattr(cfg, "waiver_filepath", None) and sig:
             sha_cur = getattr(cfg, "waiver_sha256", None)
             if sha_cur:
-                now = datetime.now(timezone.utc).replace(tzinfo=None)
+                now = now_utc_naive()
                 reg.waiver_legal_name_signature = sig
                 reg.waiver_legal_name_signature_sha256 = sha_cur
                 reg.waiver_signature_submitted_at = now
@@ -5858,18 +5686,11 @@ def export_schedule_api(tournament_url):
     if not _check_to(tournament_url):
         return jsonify({"error": "Forbidden"}), 403
 
-    from app.error_values import Err, Ok
     from app.services.schedule_import_export_service import ScheduleImportExportService
-    from app.utils.responses import json_error
-    from app.utils.result_helpers import public_error_message
+    from app.utils.result_helpers import json_from_result
 
     res = ScheduleImportExportService.export_schedule(tournament_url)
-    match res:
-        case Ok(toml_content):
-            return jsonify({"toml": toml_content})
-        case Err(err):
-            status_code = err.status_code if hasattr(err, "status_code") else 400
-            return json_error(public_error_message(err), status_code=status_code)
+    return json_from_result(res, ok_to_payload=lambda v: {"toml": v})
 
 
 @bp.route("/tournaments/<tournament_url>/import-schedule", methods=["POST"])
@@ -5883,19 +5704,15 @@ def import_schedule_api(tournament_url):
     if not toml_content:
         return jsonify({"error": "TOML content required"}), 400
 
-    from app.error_values import Err, Ok
     from app.services.schedule_import_export_service import ScheduleImportExportService
-    from app.utils.responses import json_error
-    from app.utils.result_helpers import public_error_message
+    from app.utils.result_helpers import json_from_result
+
+    def _ok_payload(_):
+        recompute_all_match_times(tournament_url)
+        return {}
 
     res = ScheduleImportExportService.import_schedule(tournament_url, toml_content)
-    match res:
-        case Ok(_):
-            recompute_all_match_times(tournament_url)
-            return jsonify({"success": True})
-        case Err(err):
-            status_code = err.status_code if hasattr(err, "status_code") else 400
-            return json_error(public_error_message(err), status_code=status_code)
+    return json_from_result(res, ok_to_payload=_ok_payload)
 
 
 @bp.route("/<tournament_url>/upload-waiver", methods=["POST"])
@@ -5950,12 +5767,7 @@ def league_upload_waiver_api(league_url):
     league, err = _require_league(league_url)
     if err:
         return jsonify({"error": "Not found" if err == 404 else "Forbidden"}), err
-    is_to = TO.query.filter_by(
-        user_id=current_user.id,
-        user_type=current_user.__class__.__name__.lower(),
-        league_id=league_url,
-    ).first()
-    if not is_to:
+    if not PermissionService.is_league_organizer(league_url, current_user):
         return jsonify({"error": "Only league organizers can upload waivers"}), 403
 
     rc = league.registrable_config

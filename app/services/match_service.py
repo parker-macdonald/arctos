@@ -16,10 +16,10 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Iterable, List, Optional
 
 from app.error_values import Err, Ok, Result, allow_Q
+from app.utils.datetime_helpers import now_utc_naive
 from app.exceptions import (
     ArctosError,
     NotFoundError,
@@ -92,7 +92,8 @@ class MatchService:
             :class:`~app.models.match.Match`, or
             :class:`~app.error_values.Err` wrapping a domain error.
         """
-        from models import Match, Tournament, Field, db
+        from models import Match, Field, db
+        from app.services._common import get_tournament_or_err
         from app.domain.enums import MatchStatus
         from app.utils.scheduling import recompute_all_match_times
 
@@ -119,7 +120,7 @@ class MatchService:
         if overlap:
             return Err(ValidationError("A player cannot be selected for both teams"))
 
-        tournament_obj = Tournament.query.get(tournament_url)
+        tournament_obj = get_tournament_or_err(tournament_url).Q()
         from app.utils.helpers import get_registrable_config
 
         cfg = get_registrable_config(tournament_obj)
@@ -137,14 +138,14 @@ class MatchService:
         # Mutations start here (after validation)
         match.status = MatchStatus.IN_PROGRESS
         # Use UTC time (stored as naive in DB, treated as UTC)
-        match.confirmed_start_time = datetime.now(timezone.utc).replace(tzinfo=None)
+        match.confirmed_start_time = now_utc_naive()
 
         match.initial_notes = match_notes or ""
         from app.services.dual_write import set_match_players
 
         set_match_players(match, team1_players, team2_players)
         match.started_by = user.id
-        match.started_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        match.started_at = now_utc_naive()
 
         if match.set_type == "STONES":
             if stones_per_set:

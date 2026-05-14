@@ -8,22 +8,29 @@ de-registering teams/players for a tournament.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Optional
 
 from app.domain.enums import MatchStatus, RegistrationStatus, TeamRegistrationStatus
-from app.error_values import Err, Ok, Result, allow_Q, option
+from app.error_values import Err, Ok, Result, allow_Q
 from app.exceptions import (
     ArctosError,
     RegistrationClosedError,
-    TournamentNotFoundError,
     UnauthorizedError,
     ValidationError,
 )
 from app.utils.name_validation import team_pseudonym_char_error
+from app.utils.datetime_helpers import now_utc_naive
 
 if TYPE_CHECKING:  # pragma: no cover
     from models import PlayerRegistration, TeamRegistration, Tournament
+
+
+class _CapExceeded(Exception):
+    """Internal sentinel for n_max savepoint rollback."""
+
+    def __init__(self, n_max: int, confirmed_count: int) -> None:
+        self.n_max = n_max
+        self.confirmed_count = confirmed_count
 
 
 @dataclass(frozen=True)
@@ -47,10 +54,9 @@ class RegistrationService:
             :class:`~app.error_values.Err` wrapping a
             :class:`~app.exceptions.TournamentNotFoundError`.
         """
-        from models import Tournament
+        from app.services._common import get_tournament_or_err
 
-        tournament = Tournament.query.filter_by(url=tournament_url).first()
-        return option(tournament).ok_or(TournamentNotFoundError(tournament_url))
+        return get_tournament_or_err(tournament_url)
 
     @staticmethod
     def _tournament_team_reg_open(tournament) -> bool:
@@ -121,8 +127,7 @@ class RegistrationService:
                 return Err(ValidationError("Your team is already registered for this tournament"))
             team_registration = existing_reg
             team_registration.pseudonym = pseudonym
-            team_registration.status = TeamRegistrationStatus.CONFIRMED
-            team_registration.registered_at = datetime.now(timezone.utc).replace(tzinfo=None)
+            team_registration.registered_at = now_utc_naive()
         else:
             team_registration = TeamRegistration(
                 event=tournament_url,
@@ -134,31 +139,40 @@ class RegistrationService:
 
         cfg = get_registrable_config(tournament)
         n_max = getattr(cfg, "n_max_teams", None) if cfg else None
-        if n_max is not None:
-            # For league tournaments, team registrations are stored on league_id.
-            if getattr(tournament, "league_id", None):
-                current_team_count = TeamRegistration.query.filter_by(
-                    league_id=tournament.league_id,
-                    status=TeamRegistrationStatus.CONFIRMED,
-                ).count()
-            else:
-                current_team_count = TeamRegistration.query.filter_by(
-                    event=tournament_url,
-                    status=TeamRegistrationStatus.CONFIRMED,
-                ).count()
-            if current_team_count >= n_max:
-                return Err(ValidationError(f"Maximum number of teams ({n_max}) already registered"))
 
-        # Auto-mark as paid if registration fee is zero
-        from app.utils.helpers import get_registrable_config
+        team_registration.status = TeamRegistrationStatus.PENDING
 
-        cfg = get_registrable_config(tournament)
-        if not cfg or not cfg.team_reg_fee or cfg.team_reg_fee == 0:
-            team_registration.paid = True
-            team_registration.amount_paid = 0.0
-            team_registration.paid_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        try:
+            with db.session.begin_nested():
+                if not existing_reg:
+                    db.session.add(team_registration)
+                db.session.flush()  # row visible to the recount
 
-        db.session.add(team_registration)
+                if n_max is not None:
+                    # For league tournaments, team registrations are stored on league_id.
+                    if getattr(tournament, "league_id", None):
+                        confirmed_count = TeamRegistration.query.filter_by(
+                            league_id=tournament.league_id,
+                            status=TeamRegistrationStatus.CONFIRMED,
+                        ).count()
+                    else:
+                        confirmed_count = TeamRegistration.query.filter_by(
+                            event=tournament_url,
+                            status=TeamRegistrationStatus.CONFIRMED,
+                        ).count()
+                    if confirmed_count >= n_max:
+                        raise _CapExceeded(n_max=n_max, confirmed_count=confirmed_count)
+
+                team_registration.status = TeamRegistrationStatus.CONFIRMED
+
+                # Auto-mark as paid if registration fee is zero
+                if not cfg or not cfg.team_reg_fee or cfg.team_reg_fee == 0:
+                    team_registration.paid = True
+                    team_registration.amount_paid = 0.0
+                    team_registration.paid_at = now_utc_naive()
+        except _CapExceeded as exc:
+            return Err(ValidationError(f"Maximum number of teams ({exc.n_max}) already registered"))
+
         db.session.commit()
         return Ok(team_registration)
 
@@ -213,7 +227,7 @@ class RegistrationService:
         if not cfg or not cfg.player_reg_fee or cfg.player_reg_fee == 0:
             player_registration.paid = True
             player_registration.amount_paid = 0.0
-            player_registration.paid_at = datetime.now(timezone.utc).replace(tzinfo=None)
+            player_registration.paid_at = now_utc_naive()
 
         # If a waiver is configured, players must sign it.
         waiver_filepath = getattr(cfg, "waiver_filepath", None) if cfg else None
@@ -225,7 +239,7 @@ class RegistrationService:
             if not current_waiver_sha:
                 return Err(ValidationError("Waiver is missing its checksum"))
 
-            now = datetime.now(timezone.utc).replace(tzinfo=None)
+            now = now_utc_naive()
             player_registration.waiver_legal_name_signature = signature
             player_registration.waiver_legal_name_signature_sha256 = current_waiver_sha
             player_registration.waiver_signature_submitted_at = now
@@ -255,18 +269,16 @@ class RegistrationService:
         created or updated :class:`~app.models.registration.PlayerRegistration`
         on success.
         """
-        from models import PlayerRegistration, TeamRegistration, TO, db
+        from models import PlayerRegistration, TeamRegistration, db
 
         tournament = RegistrationService._get_tournament(tournament_url).Q()
 
+        from app.services._common import resolve_actor
+        from app.services.permission_service import PermissionService
         from models import Player
 
-        is_to = TO.query.filter_by(
-            event=tournament_url,
-            user_id=actor_user_id,
-            user_type=actor_user_type,
-        ).first()
-        if not is_to:
+        actor = resolve_actor(actor_user_id, actor_user_type)
+        if not PermissionService.is_tournament_organizer(tournament_url, actor):
             return Err(UnauthorizedError("Only tournament organizers can register players on behalf"))
 
         target = Player.query.get(player_id)
@@ -285,7 +297,7 @@ class RegistrationService:
             if not team_reg:
                 return Err(ValidationError("Selected team is not registered for this event"))
 
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        now = now_utc_naive()
 
         from app.utils.helpers import get_registrable_config
 
@@ -353,16 +365,15 @@ class RegistrationService:
         already exist. Returns the created or updated
         :class:`~app.models.registration.TeamRegistration` on success.
         """
-        from models import Team, TeamRegistration, TO, db
+        from models import Team, TeamRegistration, db
 
         tournament = RegistrationService._get_tournament(tournament_url).Q()
 
-        is_to = TO.query.filter_by(
-            event=tournament_url,
-            user_id=actor_user_id,
-            user_type=actor_user_type,
-        ).first()
-        if not is_to:
+        from app.services._common import resolve_actor
+        from app.services.permission_service import PermissionService
+
+        actor = resolve_actor(actor_user_id, actor_user_type)
+        if not PermissionService.is_tournament_organizer(tournament_url, actor):
             return Err(UnauthorizedError("Only tournament organizers can register teams"))
 
         team = Team.query.get(team_id)
@@ -378,43 +389,50 @@ class RegistrationService:
 
         cfg = get_registrable_config(tournament)
         n_max = getattr(cfg, "n_max_teams", None) if cfg else None
-        if n_max is not None:
-            if getattr(tournament, "league_id", None):
-                current_team_count = TeamRegistration.query.filter_by(
-                    league_id=tournament.league_id,
-                    status=TeamRegistrationStatus.CONFIRMED,
-                ).count()
-            else:
-                current_team_count = TeamRegistration.query.filter_by(
-                    event=tournament_url,
-                    status=TeamRegistrationStatus.CONFIRMED,
-                ).count()
-            if current_team_count >= n_max:
-                return Err(ValidationError(f"Maximum teams reached ({current_team_count}/{n_max})"))
 
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        now = now_utc_naive()
 
         existing_reg = TeamRegistration.query.filter_by(event=tournament_url, team=team_id).first()
+        if existing_reg and existing_reg.status != TeamRegistrationStatus.CANCELLED:
+            return Err(ValidationError("This team is already registered"))
+
         if existing_reg:
-            if existing_reg.status != TeamRegistrationStatus.CANCELLED:
-                return Err(ValidationError("This team is already registered"))
             registration = existing_reg
-            registration.pseudonym = pseudonym_value
-            registration.status = TeamRegistrationStatus.CONFIRMED
-            registration.paid = True
-            registration.amount_paid = 0
-            registration.paid_at = now
         else:
             registration = TeamRegistration(
                 event=tournament_url,
                 team=team_id,
                 pseudonym=pseudonym_value,
-                status=TeamRegistrationStatus.CONFIRMED,
-                paid=True,
-                amount_paid=0,
-                paid_at=now,
             )
-            db.session.add(registration)
+
+        try:
+            with db.session.begin_nested():
+                registration.status = TeamRegistrationStatus.PENDING
+                if not existing_reg:
+                    db.session.add(registration)
+                db.session.flush()
+
+                if n_max is not None:
+                    if getattr(tournament, "league_id", None):
+                        confirmed_count = TeamRegistration.query.filter_by(
+                            league_id=tournament.league_id,
+                            status=TeamRegistrationStatus.CONFIRMED,
+                        ).count()
+                    else:
+                        confirmed_count = TeamRegistration.query.filter_by(
+                            event=tournament_url,
+                            status=TeamRegistrationStatus.CONFIRMED,
+                        ).count()
+                    if confirmed_count >= n_max:
+                        raise _CapExceeded(n_max=n_max, confirmed_count=confirmed_count)
+
+                registration.pseudonym = pseudonym_value
+                registration.status = TeamRegistrationStatus.CONFIRMED
+                registration.paid = True
+                registration.amount_paid = 0
+                registration.paid_at = now
+        except _CapExceeded as exc:
+            return Err(ValidationError(f"Maximum teams reached ({exc.confirmed_count}/{exc.n_max})"))
 
         db.session.commit()
         return Ok(registration)
@@ -533,8 +551,7 @@ class RegistrationService:
                 return Err(ValidationError("Your team is already registered for this league"))
             team_registration = existing_reg
             team_registration.pseudonym = pseudonym
-            team_registration.status = TeamRegistrationStatus.CONFIRMED
-            team_registration.registered_at = datetime.now(timezone.utc).replace(tzinfo=None)
+            team_registration.registered_at = now_utc_naive()
         else:
             team_registration = TeamRegistration(
                 event=None,
@@ -544,21 +561,32 @@ class RegistrationService:
             )
 
         n_max = getattr(rc, "n_max_teams", None) if rc else None
-        if n_max is not None:
-            current_team_count = TeamRegistration.query.filter_by(
-                league_id=league_id,
-                status=TeamRegistrationStatus.CONFIRMED,
-            ).count()
-            if current_team_count >= n_max:
-                return Err(ValidationError(f"Maximum number of teams ({n_max}) already registered"))
 
-        rc = league.registrable_config
-        if not rc or not rc.team_reg_fee or rc.team_reg_fee == 0:
-            team_registration.paid = True
-            team_registration.amount_paid = 0.0
-            team_registration.paid_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        team_registration.status = TeamRegistrationStatus.PENDING
 
-        db.session.add(team_registration)
+        try:
+            with db.session.begin_nested():
+                if not existing_reg:
+                    db.session.add(team_registration)
+                db.session.flush()
+
+                if n_max is not None:
+                    confirmed_count = TeamRegistration.query.filter_by(
+                        league_id=league_id,
+                        status=TeamRegistrationStatus.CONFIRMED,
+                    ).count()
+                    if confirmed_count >= n_max:
+                        raise _CapExceeded(n_max=n_max, confirmed_count=confirmed_count)
+
+                team_registration.status = TeamRegistrationStatus.CONFIRMED
+
+                if not rc or not rc.team_reg_fee or rc.team_reg_fee == 0:
+                    team_registration.paid = True
+                    team_registration.amount_paid = 0.0
+                    team_registration.paid_at = now_utc_naive()
+        except _CapExceeded as exc:
+            return Err(ValidationError(f"Maximum number of teams ({exc.n_max}) already registered"))
+
         db.session.commit()
         return Ok(team_registration)
 
@@ -613,7 +641,7 @@ class RegistrationService:
         if not rc or not rc.player_reg_fee or rc.player_reg_fee == 0:
             player_registration.paid = True
             player_registration.amount_paid = 0.0
-            player_registration.paid_at = datetime.now(timezone.utc).replace(tzinfo=None)
+            player_registration.paid_at = now_utc_naive()
 
         # If a waiver is configured, players must sign it.
         waiver_filepath = getattr(rc, "waiver_filepath", None) if rc else None
@@ -625,7 +653,7 @@ class RegistrationService:
             if not current_waiver_sha:
                 return Err(ValidationError("Waiver is missing its checksum"))
 
-            now = datetime.now(timezone.utc).replace(tzinfo=None)
+            now = now_utc_naive()
             player_registration.waiver_legal_name_signature = signature
             player_registration.waiver_legal_name_signature_sha256 = current_waiver_sha
             player_registration.waiver_signature_submitted_at = now

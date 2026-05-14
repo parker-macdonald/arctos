@@ -62,11 +62,29 @@ class RegistrationStatus(StrEnum):
     CANCELLED = "CANCELLED"
 
 
+class UserType(StrEnum):
+    """Account type for a Flask-Login user.
+
+    Members compare equal to their bare-string DB representation, which
+    keeps storage shape compatible with the legacy ``user_type`` columns.
+    """
+
+    PLAYER = "player"
+    TEAM = "team"
+
+
 class TeamRegistrationStatus(StrEnum):
-    """Lifecycle status of a team's registration in an event."""
+    """Lifecycle status of a team's registration in an event.
+
+    PENDING is a transient scratch state used by the cap-enforcement
+    insert-and-recount pattern in RegistrationService. Rows are never
+    committed in PENDING state - they are either promoted to CONFIRMED
+    or rolled back via savepoint.
+    """
 
     CONFIRMED = "CONFIRMED"
     CANCELLED = "CANCELLED"
+    PENDING = "PENDING"
 
 
 class MatchStatus(StrEnum):

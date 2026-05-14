@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 
 from app.models.base import db
 from app.models.constants import URL_SLUG_LEN, USER_ID_LEN
+from app.utils.datetime_helpers import now_utc_naive
 
 
 class Injury(db.Model):
@@ -27,7 +27,7 @@ class Injury(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     player = db.Column(db.String(USER_ID_LEN), db.ForeignKey("players.id"), nullable=False)
     message = db.Column(db.Text, nullable=False)
-    stamp = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+    stamp = db.Column(db.DateTime, default=now_utc_naive)
     show = db.Column(db.Boolean, default=True)
     active = db.Column(db.Boolean, default=True)
 

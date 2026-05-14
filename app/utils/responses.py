@@ -1,9 +1,7 @@
 """
 Response helper utilities.
 
-Keep the existing API behavior stable: by default, Arctos has historically
-returned JSON error payloads with HTTP 200 for many endpoints. These helpers
-therefore default to status_code=200 unless a caller overrides it.
+Helpers for building consistent JSON responses from Flask view functions.
 """
 
 from __future__ import annotations
@@ -30,15 +28,15 @@ def json_success(data: Optional[Dict[str, Any]] = None, status_code: int = 200) 
     return jsonify(payload), status_code
 
 
-def json_error(message: str, status_code: int = 200, **extra: Any) -> Tuple[Response, int]:
+def json_error(message: str, status_code: int = 400, **extra: Any) -> Tuple[Response, int]:
     """Return a ``{"success": false, "error": "..."}`` JSON response.
 
-    Defaults to HTTP 200 to preserve historical API compatibility.  Pass an
-    explicit *status_code* when the client needs a real error code.
+    Defaults to HTTP 400 (Bad Request). Pass an explicit *status_code* when the
+    route should signal a different error code (e.g. 403, 404).
 
     Args:
         message: Human-readable error description.
-        status_code: HTTP status code to use (default 200).
+        status_code: HTTP status code to use (default 400).
         **extra: Additional key-value pairs merged into the response payload.
 
     Returns:
