@@ -317,8 +317,7 @@ def deregister_any_team(tournament_url: str):
 
         from app.services.sidecomp_service import SideCompService
 
-        for pid in affected_player_ids:
-            SideCompService.cancel_player_registrations_in_event(tournament_url, pid)
+        SideCompService.cancel_players_in_event(tournament_url, affected_player_ids)
 
         db.session.commit()
         return (

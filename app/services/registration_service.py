@@ -10,6 +10,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 
+from sqlalchemy import select
+
 from app.domain.enums import MatchStatus, RegistrationStatus, TeamRegistrationStatus
 from app.error_values import Err, Ok, Result, allow_Q
 from app.exceptions import (
@@ -554,10 +556,10 @@ class RegistrationService:
         if scope.is_league:
             from models import Tournament
 
-            tournament_urls = [t.url for t in Tournament.query.filter_by(league_id=scope.league_url).all()]
+            tournament_urls_subq = select(Tournament.url).where(Tournament.league_id == scope.league_url)
             in_progress = (
                 Match.query.filter(
-                    Match.event.in_(tournament_urls),
+                    Match.event.in_(tournament_urls_subq),
                     Match.status == MatchStatus.IN_PROGRESS,
                 )
                 .filter((Match.team1 == team_id) | (Match.team2 == team_id))
@@ -587,12 +589,11 @@ class RegistrationService:
                 {"status": RegistrationStatus.CANCELLED}
             )
 
-            # Cascade: hard-delete side-competition registrations for each player
+            # Cascade: hard-delete side-competition registrations for the players
             # whose event registration was just cancelled.
             from app.services.sidecomp_service import SideCompService
 
-            for pid in affected_player_ids:
-                SideCompService.cancel_player_registrations_in_event(scope.event_url, pid)
+            SideCompService.cancel_players_in_event(scope.event_url, affected_player_ids)
 
         db.session.commit()
         return Ok(None)
@@ -652,10 +653,10 @@ class RegistrationService:
             if scope.is_league:
                 from models import Tournament
 
-                tournament_urls = [t.url for t in Tournament.query.filter_by(league_id=scope.league_url).all()]
+                tournament_urls_subq = select(Tournament.url).where(Tournament.league_id == scope.league_url)
                 in_progress = (
                     Match.query.filter(
-                        Match.event.in_(tournament_urls),
+                        Match.event.in_(tournament_urls_subq),
                         Match.status == MatchStatus.IN_PROGRESS,
                     )
                     .filter((Match.team1 == player_team) | (Match.team2 == player_team))

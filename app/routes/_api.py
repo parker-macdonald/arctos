@@ -9,11 +9,12 @@ updates, search, ...).
 from flask import Blueprint, g, request, jsonify, session, redirect, current_app
 from datetime import datetime, timezone
 from pathlib import Path
+import collections
 import hashlib
 import os
 import re
 from flask_login import current_user, login_user, logout_user, login_required
-from sqlalchemy import or_, func
+from sqlalchemy import or_, and_, func
 from sqlalchemy.orm import joinedload
 from sqlalchemy.orm.attributes import flag_modified
 from app.services._common import current_user_type, Scope
@@ -646,11 +647,11 @@ def leagues_organized():
 def league_detail(league_url):
     """League detail: events (tournaments), teams, TOs, is_current_*_registered."""
     from app.services.registration_resolver import (
-        team_registrations_for_tournament,
-        player_registrations_for_tournament,
         is_team_registered,
         is_player_registered,
         to_entries_for_tournament,
+        team_registrations_for_scope,
+        player_registrations_for_scope,
     )
 
     league, err = _require_league(league_url)
@@ -661,51 +662,71 @@ def league_detail(league_url):
     tournaments_in_league = Tournament.query.filter_by(league_id=league_url).order_by(Tournament.start_date).all()
     events = [_tournament_to_dict(t) for t in tournaments_in_league]
 
-    # Create a simple object with league_id for resolver
+    # Create a simple object with league_id for resolvers that lack a _for_scope variant
     class LeagueContext:
         def __init__(self, league):
             self.league_id = league.url
             self.url = None
 
     ctx = LeagueContext(league)
-    team_regs = team_registrations_for_tournament(ctx)
+    scope = Scope.league(league_url)
+
+    # Pattern 1: Teams with player counts - batch fetched
+    team_regs = team_registrations_for_scope(scope)
+    team_ids = [tr.team for tr in team_regs]
+    teams_by_id = {t.id: t for t in Team.query.filter(Team.id.in_(team_ids)).all()} if team_ids else {}
+    all_prs = player_registrations_for_scope(scope, statuses=[RegistrationStatus.CONFIRMED])
+    counts_by_team = collections.Counter(pr.team for pr in all_prs if pr.team)
     teams_with_counts = []
     for team_reg in team_regs:
-        prs = player_registrations_for_tournament(ctx, team_id=team_reg.team, statuses=[RegistrationStatus.CONFIRMED])
-        n = len(prs)
-        team = Team.query.get(team_reg.team)
+        team = teams_by_id.get(team_reg.team)
         teams_with_counts.append(
             {
                 "team_id": team_reg.team,
                 "team_name": team.name if team else team_reg.team,
                 "pseudonym": team_reg.pseudonym,
-                "player_count": n,
+                "player_count": counts_by_team[team_reg.team],
                 "registered_at": _dt_iso(getattr(team_reg, "registered_at", None)),
                 "profile_photo": team.profile_photo if team else None,
             }
         )
-    unattached = []
-    for pr in player_registrations_for_tournament(ctx, unattached_only=True, statuses=[RegistrationStatus.CONFIRMED]):
-        p = Player.query.get(pr.player)
-        unattached.append(
-            {
-                "player_id": pr.player,
-                "player_name": p.name if p else pr.player,
-                "jersey_number": getattr(pr, "jersey_number", None),
-                "jersey_name": getattr(pr, "jersey_name", None),
-                "registered_at": _dt_iso(getattr(pr, "registered_at", None)),
-                "profile_photo": getattr(p, "profile_photo", None) if p else None,
-            }
-        )
+
+    # Pattern 2: Unattached players - batch fetched
+    unattached_prs = player_registrations_for_scope(
+        scope, unattached_only=True, statuses=[RegistrationStatus.CONFIRMED]
+    )
+    unattached_player_ids = [pr.player for pr in unattached_prs]
+    unattached_players_by_id = (
+        {p.id: p for p in Player.query.filter(Player.id.in_(unattached_player_ids)).all()}
+        if unattached_player_ids
+        else {}
+    )
+    unattached = [
+        {
+            "player_id": pr.player,
+            "player_name": unattached_players_by_id[pr.player].name
+            if pr.player in unattached_players_by_id
+            else pr.player,
+            "jersey_number": getattr(pr, "jersey_number", None),
+            "jersey_name": getattr(pr, "jersey_name", None),
+            "registered_at": _dt_iso(getattr(pr, "registered_at", None)),
+            "profile_photo": getattr(unattached_players_by_id.get(pr.player), "profile_photo", None),
+        }
+        for pr in unattached_prs
+    ]
+
+    # Pattern 3: TO entries - batch fetched (to_entries_for_tournament has no _for_scope variant)
     to_rows = to_entries_for_tournament(ctx)
+    to_player_ids = [e.user_id for e in to_rows if e.user_type == "player"]
+    to_team_ids = [e.user_id for e in to_rows if e.user_type == "team"]
+    to_players_by_id = (
+        {p.id: p for p in Player.query.filter(Player.id.in_(to_player_ids)).all()} if to_player_ids else {}
+    )
+    to_teams_by_id = {t.id: t for t in Team.query.filter(Team.id.in_(to_team_ids)).all()} if to_team_ids else {}
     to_entries = []
     for e in to_rows:
-        if e.user_type == "player":
-            user = Player.query.get(e.user_id)
-            user_name = user.name if user else e.user_id
-        else:
-            user = Team.query.get(e.user_id)
-            user_name = user.name if user else e.user_id
+        user = (to_players_by_id if e.user_type == "player" else to_teams_by_id).get(e.user_id)
+        user_name = user.name if user else e.user_id
         is_current = (
             current_user.is_authenticated and current_user.id == e.user_id and current_user_type() == e.user_type
         )
@@ -1960,30 +1981,39 @@ def tournament_detail(tournament_url):
     if err:
         return jsonify({"error": "Not found"}), err
     team_regs = team_registrations_for_tournament(tournament)
+    team_ids = [tr.team for tr in team_regs]
+    teams_by_id = {t.id: t for t in Team.query.filter(Team.id.in_(team_ids)).all()} if team_ids else {}
+    all_prs = player_registrations_for_tournament(tournament, statuses=[RegistrationStatus.CONFIRMED])
+    counts_by_team = collections.Counter(pr.team for pr in all_prs if pr.team)
     teams_with_counts = []
     for team_reg in team_regs:
-        prs = player_registrations_for_tournament(
-            tournament, team_id=team_reg.team, statuses=[RegistrationStatus.CONFIRMED]
-        )
-        n = len(prs)
-        team = Team.query.get(team_reg.team)
+        team = teams_by_id.get(team_reg.team)
         teams_with_counts.append(
             {
                 "team_id": team_reg.team,
                 "team_name": team.name if team else team_reg.team,
                 "pseudonym": team_reg.pseudonym,
-                "player_count": n,
+                "player_count": counts_by_team.get(team_reg.team, 0),
                 "registered_at": _dt_iso(getattr(team_reg, "registered_at", None)),
                 "profile_photo": team.profile_photo if team else None,
             }
         )
+    unattached_prs = list(
+        player_registrations_for_tournament(
+            tournament,
+            unattached_only=True,
+            statuses=[RegistrationStatus.CONFIRMED],
+        )
+    )
+    unattached_player_ids = [pr.player for pr in unattached_prs]
+    unattached_players_by_id = (
+        {p.id: p for p in Player.query.filter(Player.id.in_(unattached_player_ids)).all()}
+        if unattached_player_ids
+        else {}
+    )
     unattached = []
-    for pr in player_registrations_for_tournament(
-        tournament,
-        unattached_only=True,
-        statuses=[RegistrationStatus.CONFIRMED],
-    ):
-        p = Player.query.get(pr.player)
+    for pr in unattached_prs:
+        p = unattached_players_by_id.get(pr.player)
         unattached.append(
             {
                 "player_id": pr.player,
@@ -1995,14 +2025,19 @@ def tournament_detail(tournament_url):
             }
         )
     to_rows = to_entries_for_tournament(tournament)
+    to_player_ids = [e.user_id for e in to_rows if e.user_type == "player"]
+    to_team_ids = [e.user_id for e in to_rows if e.user_type == "team"]
+    to_players_by_id = (
+        {p.id: p for p in Player.query.filter(Player.id.in_(to_player_ids)).all()} if to_player_ids else {}
+    )
+    to_teams_by_id = {t.id: t for t in Team.query.filter(Team.id.in_(to_team_ids)).all()} if to_team_ids else {}
     to_entries = []
     for e in to_rows:
         if e.user_type == "player":
-            user = Player.query.get(e.user_id)
-            user_name = user.name if user else e.user_id
+            user = to_players_by_id.get(e.user_id)
         else:
-            user = Team.query.get(e.user_id)
-            user_name = user.name if user else e.user_id
+            user = to_teams_by_id.get(e.user_id)
+        user_name = user.name if user else e.user_id
         is_current = (
             current_user.is_authenticated and current_user.id == e.user_id and current_user_type() == e.user_type
         )
@@ -3569,18 +3604,31 @@ def player_profile(player_id):
                 .order_by(MatchNote.created_at.desc())
                 .all()
             )
+            # Site 1: batch-fetch matches for access-check loop
+            _all_note_match_ids = [n.match for n in all_player_notes if n.match]
+            _all_matches_by_id = (
+                {m.uuid: m for m in Match.query.filter(Match.uuid.in_(_all_note_match_ids)).all()}
+                if _all_note_match_ids
+                else {}
+            )
             for note in all_player_notes:
                 can_see_note = False
                 if current_user.id == player_id:
                     can_see_note = True
                 elif current_user.__class__.__name__ == "Player":
-                    match_obj = Match.query.get(note.match) if note.match else None
+                    match_obj = _all_matches_by_id.get(note.match) if note.match else None
                     if match_obj and can_head_ref_match(match_obj.event, current_user.id, match=match_obj):
                         can_see_note = True
                 if can_see_note:
                     player_notes.append(note)
         except Exception:
             player_notes = []
+
+    # Batch-fetch matches referenced by notes (Sites 1+2)
+    note_match_ids = [n.match for n in player_notes if n.match]
+    matches_by_id = (
+        {m.uuid: m for m in Match.query.filter(Match.uuid.in_(note_match_ids)).all()} if note_match_ids else {}
+    )
 
     penalty_type_ids = {
         getattr(n, "penalty_type_id", None) for n in player_notes if getattr(n, "penalty_type_id", None)
@@ -3595,7 +3643,7 @@ def player_profile(player_id):
         match_to_points = {}
         for note in player_notes:
             idx = "-"
-            match_obj = Match.query.get(note.match) if note.match else None
+            match_obj = matches_by_id.get(note.match) if note.match else None
             if match_obj and note.point_id:
                 match_id = match_obj.uuid
                 if match_id not in match_to_points:
@@ -3643,27 +3691,62 @@ def player_profile(player_id):
                 }
             )
 
-    def _team_pseudonym(event_or_league_key, team_id, league_id=None):
-        if not team_id:
+    # Site 3: batch-fetch Tournaments and Leagues for registration loop
+    event_urls = {r.event for r in regs if r.event}
+    league_ids = {r.league_id for r in regs if r.league_id and not r.event}
+    tournaments_by_url = (
+        {t.url: t for t in Tournament.query.filter(Tournament.url.in_(event_urls)).all()} if event_urls else {}
+    )
+    leagues_by_id = {lg.url: lg for lg in League.query.filter(League.url.in_(league_ids)).all()} if league_ids else {}
+
+    # Site 4: batch-fetch TeamRegistrations for pseudonym lookup
+    team_keys_needed = set()
+    for r in regs:
+        if not r.team:
+            continue
+        if r.event:
+            team_keys_needed.add(("event", r.event, r.team))
+        elif r.league_id:
+            team_keys_needed.add(("league", r.league_id, r.team))
+
+    team_pseudonym_by_key = {}
+    event_team_pairs = [(e, t) for kind, e, t in team_keys_needed if kind == "event"]
+    league_team_pairs = [(lg, t) for kind, lg, t in team_keys_needed if kind == "league"]
+    if event_team_pairs:
+        ev_urls = {e for e, t in event_team_pairs}
+        ev_team_ids = {t for e, t in event_team_pairs}
+        for tr in TeamRegistration.query.filter(
+            TeamRegistration.event.in_(ev_urls),
+            TeamRegistration.team.in_(ev_team_ids),
+        ).all():
+            team_pseudonym_by_key[("event", tr.event, tr.team)] = tr.pseudonym
+    if league_team_pairs:
+        lg_ids = {lg for lg, t in league_team_pairs}
+        lg_team_ids = {t for lg, t in league_team_pairs}
+        for tr in TeamRegistration.query.filter(
+            TeamRegistration.league_id.in_(lg_ids),
+            TeamRegistration.team.in_(lg_team_ids),
+        ).all():
+            team_pseudonym_by_key[("league", tr.league_id, tr.team)] = tr.pseudonym
+
+    def _team_pseudonym(r):
+        if not r.team:
             return None
-        if event_or_league_key and event_or_league_key.startswith("league:"):
-            lid = event_or_league_key[7:] if len(event_or_league_key) > 7 else league_id
-            if lid:
-                reg = TeamRegistration.query.filter_by(league_id=lid, team=team_id).first()
-                return reg.pseudonym if reg else None
-            return None
-        reg = TeamRegistration.query.filter_by(event=event_or_league_key, team=team_id).first()
-        return reg.pseudonym if reg else None
+        if r.event:
+            return team_pseudonym_by_key.get(("event", r.event, r.team))
+        if r.league_id:
+            return team_pseudonym_by_key.get(("league", r.league_id, r.team))
+        return None
 
     registration_rows = []
     for r in regs:
         rcfg = None
         if r.event:
-            tour = Tournament.query.filter_by(url=r.event).first()
+            tour = tournaments_by_url.get(r.event)
             if tour:
                 rcfg = get_registrable_config(tour)
         elif r.league_id:
-            lg = League.query.get(r.league_id)
+            lg = leagues_by_id.get(r.league_id)
             if lg:
                 rcfg = lg.registrable_config
         w = _player_reg_waiver_api(r, rcfg)
@@ -3671,11 +3754,7 @@ def player_profile(player_id):
             {
                 "event": r.event or (f"league:{r.league_id}" if r.league_id else ""),
                 "team": r.team,
-                "team_pseudonym": _team_pseudonym(
-                    r.event or (f"league:{r.league_id}" if r.league_id else ""),
-                    r.team,
-                    r.league_id,
-                ),
+                "team_pseudonym": _team_pseudonym(r),
                 "status": (r.status.value if hasattr(r.status, "value") else str(r.status)),
                 "jersey_name": r.jersey_name,
                 "jersey_number": r.jersey_number,
@@ -3916,11 +3995,14 @@ def team_profile(team_id):
     if not team:
         return jsonify({"error": "Not found"}), 404
     regs = TeamRegistration.query.filter_by(team=team_id, status=RegistrationStatus.CONFIRMED).all()
-    tournaments = Tournament.query.all()
+    event_urls = [r.event for r in regs if r.event]
+    tournaments = Tournament.query.filter(Tournament.url.in_(event_urls)).all() if event_urls else []
     tournament_start = {t.url: t.start_date for t in tournaments}
 
     tournament_players = {}
     if current_user.is_authenticated and current_user.id == team_id and current_user.__class__.__name__ == "Team":
+        all_player_ids = set()
+        team_reg_to_players = {}
         for team_reg in regs:
             event_key = (
                 team_reg.event if team_reg.event else (f"league:{team_reg.league_id}" if team_reg.league_id else None)
@@ -3939,9 +4021,17 @@ def team_profile(team_id):
                     team=team_id,
                     status=RegistrationStatus.CONFIRMED,
                 ).all()
+            team_reg_to_players[event_key] = accepted_players
+            all_player_ids.update(pr.player for pr in accepted_players)
+
+        players_by_id = (
+            {p.id: p for p in Player.query.filter(Player.id.in_(list(all_player_ids))).all()} if all_player_ids else {}
+        )
+
+        for event_key, accepted_players in team_reg_to_players.items():
             players_with_data = []
             for player_reg in accepted_players:
-                player = Player.query.get(player_reg.player)
+                player = players_by_id.get(player_reg.player)
                 players_with_data.append(
                     {
                         "registration": {
@@ -3975,16 +4065,24 @@ def team_profile(team_id):
     if current_user.is_authenticated:
         try:
             candidate_notes = (
-                MatchNote.query.filter(or_(MatchNote.target == "team1", MatchNote.target == "team2"))
+                MatchNote.query.join(Match, Match.uuid == MatchNote.match)
+                .filter(
+                    or_(
+                        and_(MatchNote.target == "team1", Match.team1 == team_id),
+                        and_(MatchNote.target == "team2", Match.team2 == team_id),
+                    )
+                )
                 .order_by(MatchNote.created_at.desc())
                 .all()
             )
+            match_ids = list({n.match for n in candidate_notes})
+            matches_by_id = (
+                {m.uuid: m for m in Match.query.filter(Match.uuid.in_(match_ids)).all()} if match_ids else {}
+            )
             match_to_points = {}
             for n in candidate_notes:
-                m = Match.query.get(n.match)
+                m = matches_by_id.get(n.match)
                 if not m:
-                    continue
-                if not ((n.target == "team1" and m.team1 == team_id) or (n.target == "team2" and m.team2 == team_id)):
                     continue
 
                 can_see_note = False
