@@ -4,10 +4,7 @@ Anything that has a clearly named workflow belongs in a service; this
 module is the home for small, generally-applicable helpers that don't.
 """
 
-import hmac
-import hashlib
 import re
-from flask import current_app
 from flask_login import current_user
 from app.domain.enums import RegistrationStatus
 from app.services._common import current_user_type
