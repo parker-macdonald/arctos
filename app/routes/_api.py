@@ -707,9 +707,7 @@ def league_detail(league_url):
             user = Team.query.get(e.user_id)
             user_name = user.name if user else e.user_id
         is_current = (
-            current_user.is_authenticated
-            and current_user.id == e.user_id
-            and current_user_type() == e.user_type
+            current_user.is_authenticated and current_user.id == e.user_id and current_user_type() == e.user_type
         )
         to_entries.append(
             {
@@ -1987,9 +1985,7 @@ def tournament_detail(tournament_url):
             user = Team.query.get(e.user_id)
             user_name = user.name if user else e.user_id
         is_current = (
-            current_user.is_authenticated
-            and current_user.id == e.user_id
-            and current_user_type() == e.user_type
+            current_user.is_authenticated and current_user.id == e.user_id and current_user_type() == e.user_type
         )
         to_entries.append(
             {
@@ -3766,9 +3762,9 @@ def player_profile(player_id):
     for r in regs:
         rcfg = None
         if r.event:
-            te = Tournament.query.filter_by(url=r.event).first()
-            if te:
-                rcfg = get_registrable_config(te)
+            tour = Tournament.query.filter_by(url=r.event).first()
+            if tour:
+                rcfg = get_registrable_config(tour)
         elif r.league_id:
             lg = League.query.get(r.league_id)
             if lg:
