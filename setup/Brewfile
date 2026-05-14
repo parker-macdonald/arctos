@@ -1,4 +1,6 @@
 brew "git"
-brew "uv"
-brew "sqlite"
+brew "openssl@3"
+brew "pkg-config"
 brew "rustup"
+brew "sqlite"
+brew "uv"
