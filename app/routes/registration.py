@@ -400,7 +400,7 @@ def accept_invitation(tournament_url: str, invitation_id: int):
     Returns:
         JSON success or 403/404 error body.
     """
-    if current_user.__class__.__name__ != "Team":
+    if not is_team(current_user):
         return (
             jsonify({"success": False, "error": "Only teams can accept invitations"}),
             403,
@@ -440,7 +440,7 @@ def decline_invitation(tournament_url: str, invitation_id: int):
     Returns:
         JSON success or 403/404 error body.
     """
-    if current_user.__class__.__name__ != "Team":
+    if not is_team(current_user):
         return (
             jsonify({"success": False, "error": "Only teams can decline invitations"}),
             403,

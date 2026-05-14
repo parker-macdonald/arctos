@@ -58,6 +58,7 @@ from app.utils.scheduling import (
 from app.utils.name_validation import match_name_char_error, team_pseudonym_char_error
 from app.utils.datetime_helpers import to_iso_z, now_utc_naive
 from app.utils.recording_retry import current_user_can_retry_finalization
+from app.utils.user_helpers import is_player, is_team
 from app.domain.enums import (
     RegistrationStatus,
     MatchStatus,
@@ -153,7 +154,7 @@ def _user_json() -> dict | None:
     """
     if not current_user.is_authenticated:
         return None
-    t = "player" if current_user.__class__.__name__ == "Player" else "team"
+    t = current_user_type()
     has_password = bool(getattr(current_user, "pw_hash", None))
     return {
         "id": current_user.id,
@@ -581,8 +582,6 @@ def leagues_list():
     # Current user registration status per league (team or player)
     user_reg_status = {}
     if current_user.is_authenticated:
-        from app.utils.user_helpers import is_team, is_player
-
         for l in leagues:
             reg = None
             if is_team(current_user):
@@ -671,7 +670,6 @@ def league_detail(league_url):
     ctx = LeagueContext(league)
     scope = Scope.league(league_url)
 
-    # Pattern 1: Teams with player counts - batch fetched
     team_regs = team_registrations_for_scope(scope)
     team_ids = [tr.team for tr in team_regs]
     teams_by_id = {t.id: t for t in Team.query.filter(Team.id.in_(team_ids)).all()} if team_ids else {}
@@ -691,7 +689,6 @@ def league_detail(league_url):
             }
         )
 
-    # Pattern 2: Unattached players - batch fetched
     unattached_prs = player_registrations_for_scope(
         scope, unattached_only=True, statuses=[RegistrationStatus.CONFIRMED]
     )
@@ -715,7 +712,7 @@ def league_detail(league_url):
         for pr in unattached_prs
     ]
 
-    # Pattern 3: TO entries - batch fetched (to_entries_for_tournament has no _for_scope variant)
+    # to_entries_for_tournament has no _for_scope variant
     to_rows = to_entries_for_tournament(ctx)
     to_player_ids = [e.user_id for e in to_rows if e.user_type == "player"]
     to_team_ids = [e.user_id for e in to_rows if e.user_type == "team"]
@@ -742,7 +739,7 @@ def league_detail(league_url):
     is_current_team_registered = False
     is_current_player_registered = False
     if current_user.is_authenticated:
-        if current_user.__class__.__name__ == "Team":
+        if is_team(current_user):
             is_current_team_registered = is_team_registered(ctx, current_user.id)
         else:
             is_current_player_registered = is_player_registered(ctx, current_user.id)
@@ -870,7 +867,6 @@ def league_results_team_matches(league_url, team_id):
 @login_required
 def league_register_team(league_url):
     """Register a team for a league."""
-    from app.utils.user_helpers import is_team
     from app.services.registration_service import RegistrationService
     from app.utils.result_helpers import json_from_result
 
@@ -893,7 +889,6 @@ def league_register_team(league_url):
 @login_required
 def league_register_player(league_url):
     """Register a player for a league."""
-    from app.utils.user_helpers import is_player
     from app.services.registration_service import RegistrationService
     from app.utils.result_helpers import json_from_result
 
@@ -927,7 +922,6 @@ def league_register_player(league_url):
 @login_required
 def league_deregister_team(league_url):
     """Deregister a team from a league."""
-    from app.utils.user_helpers import is_team
     from app.services.registration_service import RegistrationService
     from app.utils.result_helpers import json_from_result
 
@@ -1258,7 +1252,6 @@ def delete_league(league_url):
 @login_required
 def league_deregister_player(league_url):
     """Deregister a player from a league."""
-    from app.utils.user_helpers import is_player
     from app.services.registration_service import RegistrationService
     from app.utils.result_helpers import json_from_result
 
@@ -1279,7 +1272,7 @@ def league_deregister_player(league_url):
 @login_required
 def get_my_player_registration_league(league_url):
     """Get current player's registration for this league."""
-    if current_user.__class__.__name__ != "Player":
+    if not is_player(current_user):
         return jsonify({"error": "Only players have player registrations"}), 400
 
     from app.services.registration_resolver import (
@@ -1335,7 +1328,7 @@ def update_my_player_registration_league(league_url):
     """Update current player's registration for this league."""
     from app.services.registration_resolver import player_registration_for_tournament
 
-    if current_user.__class__.__name__ != "Player":
+    if not is_player(current_user):
         return jsonify({"error": "Only players can edit their registration"}), 400
 
     league, err = _require_league(league_url)
@@ -1395,7 +1388,7 @@ def get_my_team_registration_league(league_url):
     """Get current team's registration for this league."""
     from app.services.registration_resolver import team_registration_for_tournament
 
-    if current_user.__class__.__name__ != "Team":
+    if not is_team(current_user):
         return jsonify({"error": "Only teams have team registrations"}), 400
 
     league, err = _require_league(league_url)
@@ -1430,7 +1423,7 @@ def update_my_team_registration_league(league_url):
     """Update current team's registration for this league."""
     from app.services.registration_resolver import team_registration_for_tournament
 
-    if current_user.__class__.__name__ != "Team":
+    if not is_team(current_user):
         return jsonify({"error": "Only teams can edit their registration"}), 400
 
     league, err = _require_league(league_url)
@@ -1645,7 +1638,7 @@ def league_manage_api(league_url):
 @login_required
 def league_invitations_api(league_url):
     """League roster/invitations for a team. Same structure as tournament invitations."""
-    if current_user.__class__.__name__ != "Team":
+    if not is_team(current_user):
         return jsonify({"error": "Only teams can view invitations"}), 403
 
     league, err = _require_league(league_url)
@@ -1900,7 +1893,7 @@ def league_deregister_any_player(league_url):
 @login_required
 def league_accept_invitation(league_url, invitation_id):
     """Accept a pending player registration (league roster)."""
-    if current_user.__class__.__name__ != "Team":
+    if not is_team(current_user):
         return (
             jsonify({"success": False, "error": "Only teams can accept invitations"}),
             403,
@@ -1925,7 +1918,7 @@ def league_accept_invitation(league_url, invitation_id):
 @login_required
 def league_decline_invitation(league_url, invitation_id):
     """Decline a pending player registration (league roster)."""
-    if current_user.__class__.__name__ != "Team":
+    if not is_team(current_user):
         return (
             jsonify({"success": False, "error": "Only teams can decline invitations"}),
             403,
@@ -2053,7 +2046,7 @@ def tournament_detail(tournament_url):
     is_current_team_registered = False
     is_current_player_registered = False
     if current_user.is_authenticated:
-        if current_user.__class__.__name__ == "Team":
+        if is_team(current_user):
             is_current_team_registered = is_team_registered(tournament, current_user.id)
         else:
             is_current_player_registered = is_player_registered(tournament, current_user.id)
@@ -2104,7 +2097,7 @@ def tournament_manage_api(tournament_url):
 @bp.route("/tournaments/<tournament_url>/invitations", methods=["GET"])
 @login_required
 def tournament_invitations_api(tournament_url):
-    if current_user.__class__.__name__ != "Team":
+    if not is_team(current_user):
         return jsonify({"error": "Only teams can view invitations"}), 403
 
     tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
@@ -2759,7 +2752,7 @@ def _schedule_published_check(tournament_url, tournament):
         return False
     if PermissionService.is_tournament_organizer(tournament_url, current_user):
         return True
-    if current_user.__class__.__name__ == "Player" and can_head_ref_match(tournament_url, current_user.id, match=None):
+    if is_player(current_user) and can_head_ref_match(tournament_url, current_user.id, match=None):
         return True
     return False
 
@@ -3212,8 +3205,6 @@ def tournament_match_detail(tournament_url):
     # Check if user is head ref
     is_head_ref = False
     if current_user.is_authenticated:
-        from app.utils.user_helpers import is_player
-
         if is_player(current_user):
             is_head_ref = can_head_ref_match(tournament_url, current_user.id, match=match)
 
@@ -3604,7 +3595,6 @@ def player_profile(player_id):
                 .order_by(MatchNote.created_at.desc())
                 .all()
             )
-            # Site 1: batch-fetch matches for access-check loop
             _all_note_match_ids = [n.match for n in all_player_notes if n.match]
             _all_matches_by_id = (
                 {m.uuid: m for m in Match.query.filter(Match.uuid.in_(_all_note_match_ids)).all()}
@@ -3615,7 +3605,7 @@ def player_profile(player_id):
                 can_see_note = False
                 if current_user.id == player_id:
                     can_see_note = True
-                elif current_user.__class__.__name__ == "Player":
+                elif is_player(current_user):
                     match_obj = _all_matches_by_id.get(note.match) if note.match else None
                     if match_obj and can_head_ref_match(match_obj.event, current_user.id, match=match_obj):
                         can_see_note = True
@@ -3624,7 +3614,6 @@ def player_profile(player_id):
         except Exception:
             player_notes = []
 
-    # Batch-fetch matches referenced by notes (Sites 1+2)
     note_match_ids = [n.match for n in player_notes if n.match]
     matches_by_id = (
         {m.uuid: m for m in Match.query.filter(Match.uuid.in_(note_match_ids)).all()} if note_match_ids else {}
@@ -3691,7 +3680,6 @@ def player_profile(player_id):
                 }
             )
 
-    # Site 3: batch-fetch Tournaments and Leagues for registration loop
     event_urls = {r.event for r in regs if r.event}
     league_ids = {r.league_id for r in regs if r.league_id and not r.event}
     tournaments_by_url = (
@@ -3699,7 +3687,6 @@ def player_profile(player_id):
     )
     leagues_by_id = {lg.url: lg for lg in League.query.filter(League.url.in_(league_ids)).all()} if league_ids else {}
 
-    # Site 4: batch-fetch TeamRegistrations for pseudonym lookup
     team_keys_needed = set()
     for r in regs:
         if not r.team:
@@ -4000,7 +3987,7 @@ def team_profile(team_id):
     tournament_start = {t.url: t.start_date for t in tournaments}
 
     tournament_players = {}
-    if current_user.is_authenticated and current_user.id == team_id and current_user.__class__.__name__ == "Team":
+    if current_user.is_authenticated and current_user.id == team_id and is_team(current_user):
         all_player_ids = set()
         team_reg_to_players = {}
         for team_reg in regs:
@@ -4055,7 +4042,7 @@ def team_profile(team_id):
     team_notes = []
     player_played_with_team = False
     player_tournament_registrations = set()
-    if current_user.is_authenticated and current_user.__class__.__name__ == "Player":
+    if current_user.is_authenticated and is_player(current_user):
         player_regs = PlayerRegistration.query.filter_by(
             player=current_user.id, team=team_id, status=RegistrationStatus.CONFIRMED
         ).all()
@@ -4091,7 +4078,7 @@ def team_profile(team_id):
                 elif player_played_with_team and current_user.id != team_id:
                     if m.event in player_tournament_registrations:
                         can_see_note = True
-                elif current_user.__class__.__name__ == "Player":
+                elif is_player(current_user):
                     if can_head_ref_match(m.event, current_user.id, match=m):
                         can_see_note = True
 
@@ -4496,8 +4483,6 @@ def force_start_match_api(tournament_url, match_id):
     # Auth: require head ref
     if not current_user.is_authenticated:
         return jsonify({"error": "Must be logged in"}), 401
-    from app.utils.user_helpers import is_player
-
     if not is_player(current_user):
         return jsonify({"error": "Only player accounts can force start matches"}), 403
     if not can_head_ref_match(tournament_url, current_user.id, match=match):
@@ -5297,7 +5282,7 @@ def _safe_profile_photo_filename(prefix, entity_id):
 @login_required
 def upload_player_profile_photo(player_id):
     """Upload or replace player profile photo. Uses predictable path so overwrites previous."""
-    if current_user.id != player_id or current_user.__class__.__name__ != "Player":
+    if current_user.id != player_id or not is_player(current_user):
         return (
             jsonify({"error": "You can only upload a photo for your own profile"}),
             403,
@@ -5334,7 +5319,7 @@ def upload_player_profile_photo(player_id):
 @login_required
 def upload_team_profile_photo(team_id):
     """Upload or replace team profile photo. Uses predictable path so overwrites previous."""
-    if current_user.id != team_id or current_user.__class__.__name__ != "Team":
+    if current_user.id != team_id or not is_team(current_user):
         return (
             jsonify({"error": "You can only upload a photo for your own team profile"}),
             403,
@@ -5370,7 +5355,7 @@ def upload_team_profile_photo(team_id):
 @login_required
 def delete_player_profile_photo(player_id):
     """Remove player profile photo."""
-    if current_user.id != player_id or current_user.__class__.__name__ != "Player":
+    if current_user.id != player_id or not is_player(current_user):
         return (
             jsonify({"error": "You can only remove a photo from your own profile"}),
             403,
@@ -5393,7 +5378,7 @@ def delete_player_profile_photo(player_id):
 @login_required
 def delete_team_profile_photo(team_id):
     """Remove team profile photo."""
-    if current_user.id != team_id or current_user.__class__.__name__ != "Team":
+    if current_user.id != team_id or not is_team(current_user):
         return (
             jsonify({"error": "You can only remove a photo from your own team profile"}),
             403,
@@ -5416,7 +5401,7 @@ def delete_team_profile_photo(team_id):
 @login_required
 def get_my_player_registration(tournament_url):
     """Get current player's registration for this tournament."""
-    if current_user.__class__.__name__ != "Player":
+    if not is_player(current_user):
         return jsonify({"error": "Only players have player registrations"}), 400
 
     from app.services.registration_resolver import (
@@ -5464,7 +5449,7 @@ def update_my_player_registration(tournament_url):
     """Update current player's registration."""
     from app.services.registration_resolver import player_registration_for_tournament
 
-    if current_user.__class__.__name__ != "Player":
+    if not is_player(current_user):
         return jsonify({"error": "Only players can edit their registration"}), 400
 
     tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
@@ -5518,7 +5503,7 @@ def get_my_team_registration(tournament_url):
     """Get current team's registration for this tournament."""
     from app.services.registration_resolver import team_registration_for_tournament
 
-    if current_user.__class__.__name__ != "Team":
+    if not is_team(current_user):
         return jsonify({"error": "Only teams have team registrations"}), 400
 
     tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
@@ -5544,7 +5529,7 @@ def update_my_team_registration(tournament_url):
     """Update current team's registration."""
     from app.services.registration_resolver import team_registration_for_tournament
 
-    if current_user.__class__.__name__ != "Team":
+    if not is_team(current_user):
         return jsonify({"error": "Only teams can edit their registration"}), 400
 
     tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()

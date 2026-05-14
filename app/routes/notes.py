@@ -17,6 +17,7 @@ from app.filters import is_head_ref
 from app.utils.helpers import can_head_ref_match, match_event_urls_for_penalties
 from app.serializers.match_note_serializer import MatchNoteSerializer
 from app.utils.responses import json_error, json_success
+from app.utils.user_helpers import is_player
 
 bp = Blueprint("notes", __name__, url_prefix="/_api")
 
@@ -223,7 +224,7 @@ def get_point_notes(tournament_url: str):
 
     # Check if user is a head ref (for full access to all notes)
     is_head_ref = False
-    if current_user.is_authenticated and current_user.__class__.__name__ == "Player":
+    if current_user.is_authenticated and is_player(current_user):
         is_head_ref = can_head_ref_match(tournament_url, current_user.id, match=match)
 
     # Get all notes for this point
