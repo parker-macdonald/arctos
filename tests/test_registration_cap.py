@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 
 from app.domain.enums import TeamRegistrationStatus
 from app.error_values import Err
+from app.services._common import Scope
 from app.services.registration_service import RegistrationService
 from models import Team, TeamRegistration, Tournament, db
 from tests.utils import make_registrable_config
@@ -44,9 +45,9 @@ def test_register_team_blocks_third_when_cap_is_two(cap_setup):
     """Two registrations succeed; the third returns Err."""
     teams = cap_setup["teams"]
 
-    res1 = RegistrationService.register_team("capt", teams[0].id, "ps0")
-    res2 = RegistrationService.register_team("capt", teams[1].id, "ps1")
-    res3 = RegistrationService.register_team("capt", teams[2].id, "ps2")
+    res1 = RegistrationService.register_team(Scope.event("capt"), teams[0].id, "ps0")
+    res2 = RegistrationService.register_team(Scope.event("capt"), teams[1].id, "ps1")
+    res3 = RegistrationService.register_team(Scope.event("capt"), teams[2].id, "ps2")
 
     assert not isinstance(res1, Err), repr(res1)
     assert not isinstance(res2, Err), repr(res2)
@@ -58,15 +59,11 @@ def test_register_team_blocks_third_when_cap_is_two(cap_setup):
 def test_no_pending_rows_remain_at_rest(cap_setup):
     """After a cap-rejected registration, no PENDING rows persist."""
     teams = cap_setup["teams"]
-    RegistrationService.register_team("capt", teams[0].id, "ps0")
-    RegistrationService.register_team("capt", teams[1].id, "ps1")
-    RegistrationService.register_team("capt", teams[2].id, "ps2")  # rejected
+    RegistrationService.register_team(Scope.event("capt"), teams[0].id, "ps0")
+    RegistrationService.register_team(Scope.event("capt"), teams[1].id, "ps1")
+    RegistrationService.register_team(Scope.event("capt"), teams[2].id, "ps2")  # rejected
 
-    pending = TeamRegistration.query.filter_by(
-        event="capt", status=TeamRegistrationStatus.PENDING
-    ).count()
+    pending = TeamRegistration.query.filter_by(event="capt", status=TeamRegistrationStatus.PENDING).count()
     assert pending == 0
-    confirmed = TeamRegistration.query.filter_by(
-        event="capt", status=TeamRegistrationStatus.CONFIRMED
-    ).count()
+    confirmed = TeamRegistration.query.filter_by(event="capt", status=TeamRegistrationStatus.CONFIRMED).count()
     assert confirmed == 2

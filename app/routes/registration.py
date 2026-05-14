@@ -20,9 +20,8 @@ from models import (
     db,
 )
 from app.domain.enums import RegistrationStatus
-from app.services._common import current_user_type
+from app.services._common import current_user_type, Scope
 from app.services.registration_service import RegistrationService
-from app.services.permission_service import PermissionService
 from app.utils.decorators import require_json_body, require_tournament_organizer
 from app.utils.user_helpers import is_player, is_team
 from app.utils.result_helpers import json_from_result
@@ -57,7 +56,9 @@ def register_team_for_tournament(tournament_url: str):
             403,
         )
 
-    res = RegistrationService.register_team(tournament_url, current_user.id, request.form.get("pseudonym", ""))
+    res = RegistrationService.register_team(
+        Scope.event(tournament_url), current_user.id, request.form.get("pseudonym", "")
+    )
     return json_from_result(
         res,
         ok_to_payload=lambda _: {"message": "Team registration successful!"},
@@ -98,7 +99,7 @@ def register_player_for_tournament(tournament_url: str):
 
     team_id = request.form.get("team", "") or None
     res = RegistrationService.register_player(
-        tournament_url,
+        Scope.event(tournament_url),
         current_user.id,
         team_id,
         jersey_number=request.form.get("jersey_number", ""),
@@ -144,7 +145,7 @@ def deregister_team_from_tournament(tournament_url: str):
             403,
         )
 
-    res = RegistrationService.deregister_team(tournament_url, current_user.id)
+    res = RegistrationService.deregister_team(Scope.event(tournament_url), current_user.id)
     return json_from_result(
         res,
         ok_to_payload=lambda _: {"message": "Team successfully deregistered from tournament"},
@@ -178,7 +179,7 @@ def deregister_player_from_tournament(tournament_url: str):
             403,
         )
 
-    res = RegistrationService.deregister_player(tournament_url, current_user.id)
+    res = RegistrationService.deregister_player(Scope.event(tournament_url), current_user.id)
     return json_from_result(
         res,
         ok_to_payload=lambda _: {"message": "Player successfully deregistered from tournament"},
@@ -316,8 +317,7 @@ def deregister_any_team(tournament_url: str):
 
         from app.services.sidecomp_service import SideCompService
 
-        for pid in affected_player_ids:
-            SideCompService.cancel_player_registrations_in_event(tournament_url, pid)
+        SideCompService.cancel_players_in_event(tournament_url, affected_player_ids)
 
         db.session.commit()
         return (
@@ -400,7 +400,7 @@ def accept_invitation(tournament_url: str, invitation_id: int):
     Returns:
         JSON success or 403/404 error body.
     """
-    if current_user.__class__.__name__ != "Team":
+    if not is_team(current_user):
         return (
             jsonify({"success": False, "error": "Only teams can accept invitations"}),
             403,
@@ -440,7 +440,7 @@ def decline_invitation(tournament_url: str, invitation_id: int):
     Returns:
         JSON success or 403/404 error body.
     """
-    if current_user.__class__.__name__ != "Team":
+    if not is_team(current_user):
         return (
             jsonify({"success": False, "error": "Only teams can decline invitations"}),
             403,

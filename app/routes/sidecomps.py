@@ -20,22 +20,28 @@ def list_for_event(tournament_url: str):
     Returns a JSON array of summaries:
     ``[{id, name, type, registrant_count, created_at}, ...]``.
     """
-    from models import SideCompRegistration
+    from sqlalchemy import func
+    from models import SideComp, SideCompRegistration, db
 
-    rows = SideCompService.list_for_event(tournament_url)
-    out = []
-    for sc in rows:
-        count = SideCompRegistration.query.filter_by(comp=sc.id).count()
-        out.append(
-            {
-                "id": sc.id,
-                "name": sc.name,
-                "type": str(sc.type),
-                "registrant_count": count,
-                "registration_open": bool(sc.registration_open),
-                "created_at": sc.created_at.isoformat() if sc.created_at else None,
-            }
-        )
+    rows = (
+        db.session.query(SideComp, func.count(SideCompRegistration.id))
+        .outerjoin(SideCompRegistration, SideCompRegistration.comp == SideComp.id)
+        .filter(SideComp.event == tournament_url)
+        .group_by(SideComp.id)
+        .order_by(SideComp.created_at.asc())
+        .all()
+    )
+    out = [
+        {
+            "id": sc.id,
+            "name": sc.name,
+            "type": str(sc.type),
+            "registrant_count": count,
+            "registration_open": bool(sc.registration_open),
+            "created_at": sc.created_at.isoformat() if sc.created_at else None,
+        }
+        for sc, count in rows
+    ]
     return jsonify(out)
 
 
@@ -266,22 +272,31 @@ def eligible_players(comp_id: int):
         status=RegistrationStatus.CONFIRMED,
     ).all()
 
-    out = []
-    for er in event_regs:
-        if er.player in already_in:
-            continue
-        player = Player.query.get(er.player)
-        team_pseudonym = None
-        if er.team:
-            tr = TeamRegistration.query.filter_by(event=sc.event, team=er.team).first()
-            team_pseudonym = tr.pseudonym if tr else None
-        out.append(
-            {
-                "player_id": er.player,
-                "player_name": player.name if player else er.player,
-                "team_id": er.team,
-                "team_pseudonym": team_pseudonym,
-                "jersey_name": er.jersey_name,
-            }
-        )
+    eligible = [er for er in event_regs if er.player not in already_in]
+    player_ids = [er.player for er in eligible]
+    team_ids = {er.team for er in eligible if er.team}
+
+    players_by_id = {p.id: p for p in Player.query.filter(Player.id.in_(player_ids)).all()} if player_ids else {}
+    team_pseudonyms = (
+        {
+            tr.team: tr.pseudonym
+            for tr in TeamRegistration.query.filter(
+                TeamRegistration.event == sc.event,
+                TeamRegistration.team.in_(team_ids),
+            ).all()
+        }
+        if team_ids
+        else {}
+    )
+
+    out = [
+        {
+            "player_id": er.player,
+            "player_name": players_by_id[er.player].name if er.player in players_by_id else er.player,
+            "team_id": er.team,
+            "team_pseudonym": team_pseudonyms.get(er.team) if er.team else None,
+            "jersey_name": er.jersey_name,
+        }
+        for er in eligible
+    ]
     return jsonify(out)

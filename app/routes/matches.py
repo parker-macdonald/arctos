@@ -30,8 +30,7 @@ from app.serializers.match_note_serializer import MatchNoteSerializer
 from app.utils.player_helpers import get_player_display_from_registration
 from app.utils.responses import json_error, json_success
 from app.utils.datetime_helpers import to_iso_z, now_utc_naive
-from app.error_values import Ok, Err
-from app.utils.result_helpers import json_from_result, public_error_message
+from app.utils.result_helpers import json_from_result
 from app.domain.enums import RegistrationStatus, MatchStatus, ScheduleType
 
 bp = Blueprint("matches", __name__, url_prefix="/_api")
@@ -927,14 +926,11 @@ def start_match_post(tournament_url):
         stones_per_set=request.form.get("stones_per_set"),
     )
 
-    match res:
-        case Ok(match_obj):
-            return (
-                jsonify({"success": True, "message": "Match started successfully!"}),
-                200,
-            )
-        case Err(err):
-            return jsonify({"success": False, "error": public_error_message(err)}), 400
+    return json_from_result(
+        res,
+        ok_to_payload=lambda _: {"message": "Match started successfully!"},
+        err_status_code=400,
+    )
 
 
 @bp.route("/<tournament_url>/run-match")
@@ -1376,7 +1372,6 @@ def complete_match(tournament_url):
 
     res = MatchActionsService.complete_match(tournament_url, current_user.id, match_id=match_id)
     return json_from_result(res, ok_to_payload=lambda d: d)
-
 
 
 @bp.route("/youtube-stream-start")

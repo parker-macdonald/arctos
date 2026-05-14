@@ -205,10 +205,9 @@ class SideCompService:
         rows = (
             SideCompRegistration.query.filter_by(comp=comp_id).order_by(SideCompRegistration.registered_at.asc()).all()
         )
-        registrants = []
-        for r in rows:
-            p = Player.query.get(r.player)
-            registrants.append((r, p))
+        player_ids = [r.player for r in rows]
+        players_by_id = {p.id: p for p in Player.query.filter(Player.id.in_(player_ids)).all()} if player_ids else {}
+        registrants = [(r, players_by_id.get(r.player)) for r in rows]
         return Ok((sc, registrants))
 
     @staticmethod
@@ -482,6 +481,38 @@ class SideCompService:
             SideCompRegistration.comp.in_(comp_ids),
             SideCompRegistration.player == player,
         ).delete(synchronize_session=False)
+
+    @staticmethod
+    def cancel_players_in_event(event: str, player_ids: list[str]) -> int:
+        """Bulk-cancel side-comp registrations for *player_ids* in *event*.
+
+        Issues at most two SQL statements: one to enumerate side-comp IDs for
+        the event, and one ``DELETE WHERE comp IN (...) AND player IN (...)``.
+        Use this in place of looping over :meth:`cancel_player_registrations_in_event`
+        when cancelling many players at once.
+
+        No transaction commit - the caller is responsible for committing or
+        rolling back as part of its own transaction.
+
+        Args:
+            event: URL slug of the parent tournament.
+            player_ids: List of player IDs to cancel.
+
+        Returns:
+            Number of deleted rows.
+        """
+        from models import SideComp, SideCompRegistration
+
+        if not player_ids:
+            return 0
+        comp_ids = [c.id for c in SideComp.query.filter_by(event=event).all()]
+        if not comp_ids:
+            return 0
+        return (
+            SideCompRegistration.query.filter(SideCompRegistration.comp.in_(comp_ids))
+            .filter(SideCompRegistration.player.in_(player_ids))
+            .delete(synchronize_session=False)
+        )
 
     @staticmethod
     @allow_Q
