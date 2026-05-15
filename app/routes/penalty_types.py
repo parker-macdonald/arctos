@@ -19,7 +19,11 @@ from flask_login import current_user, login_required
 from app.routes._api import _check_to
 from app.serializers.league_serializer import require_league
 from app.services.permission_service import PermissionService
-from app.utils.helpers import get_next_penalty_color
+from app.utils.helpers import (
+    get_next_penalty_color,
+    get_penalty_types_for_tournament,
+    match_event_urls_for_penalties,
+)
 from models import Match, MatchNote, PenaltyType, Point, Tournament, db
 
 bp = Blueprint("penalty_types", __name__, url_prefix="/_api")
@@ -131,8 +135,6 @@ def delete_league_penalty_type(league_url, pt_id):
 def get_penalty_types(tournament_url):
     """Get all penalty types for a tournament (league's if league event, else event's)."""
     tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
-    from app.utils.helpers import get_penalty_types_for_tournament
-
     types = get_penalty_types_for_tournament(tournament)
     return jsonify(
         {
@@ -167,8 +169,6 @@ def create_penalty_type(tournament_url):
 
     desc = data.get("desc", "")
     color = data.get("color")
-
-    from app.utils.helpers import get_penalty_types_for_tournament
 
     existing = get_penalty_types_for_tournament(tournament)
     if not color:
@@ -263,8 +263,6 @@ def get_player_penalty_history(tournament_url, player_id):
     if not _check_to(tournament_url):
         return jsonify({"error": "Forbidden"}), 403
     tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
-    from app.utils.helpers import match_event_urls_for_penalties
-
     event_urls = match_event_urls_for_penalties(tournament)
     current_match_id = request.args.get("match_id")
     current_point_id = request.args.get("point_id")  # point from which Penalties button was clicked
