@@ -242,6 +242,7 @@ def create_app(config: dict | None = None) -> Flask:
     from app.routes.sidecomps import bp as sidecomps_bp
     from app.routes._api import bp as _api_bp
     from app.routes.content import bp as content_bp
+    from app.routes.penalty_types import bp as penalty_types_bp
 
     app.register_blueprint(_api_bp)
     app.register_blueprint(auth_bp)
@@ -251,6 +252,7 @@ def create_app(config: dict | None = None) -> Flask:
     app.register_blueprint(registration_bp)
     app.register_blueprint(sidecomps_bp)
     app.register_blueprint(content_bp)
+    app.register_blueprint(penalty_types_bp)
 
     # Register template filters
     from app import filters
