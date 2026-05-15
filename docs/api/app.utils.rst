@@ -21,6 +21,7 @@ app.utils
    app.utils.parser
    app.utils.player_helpers
    app.utils.preview_store
+   app.utils.profile_photo_helpers
    app.utils.recording_retry
    app.utils.responses
    app.utils.result_helpers
