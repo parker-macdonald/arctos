@@ -211,7 +211,7 @@ def create_app(config: dict | None = None) -> Flask:
 
     # Initialize login manager
     login_manager.init_app(app)
-    login_manager.login_view = "_api.login_redirect"
+    login_manager.login_view = "auth.login_redirect"
 
     @login_manager.unauthorized_handler
     def unauthorized():

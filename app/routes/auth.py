@@ -12,9 +12,12 @@ from flask import (
     session,
     current_app,
     url_for,
+    g,
 )
-from flask_login import login_user, logout_user, login_required
-from models import Player, Team
+from flask_login import current_user, login_user, logout_user, login_required
+from models import Player, Team, db
+from app.serializers.user_serializer import user_json
+from app.utils.decorators import require_json_body
 from app.utils.helpers import is_valid_url_username
 from authlib.integrations.flask_client import OAuth
 
@@ -199,3 +202,231 @@ def google_callback():
     except Exception as e:
         flash(f"Error during Google authentication: {str(e)}", "error")
         return _redirect_to_frontend("/")
+
+
+@bp.route("/")
+def login_redirect():
+    """Redirect to SPA root (used as login_view when unauthenticated)."""
+    return redirect("/")
+
+
+@bp.route("/me", methods=["GET"])
+def me():
+    """Return current user or 401."""
+    u = user_json()
+    if u is None:
+        return jsonify({"error": "Not authenticated"}), 401
+    return jsonify(u)
+
+
+@bp.route("/login", methods=["POST"])
+@require_json_body()
+def login():
+    """JSON body: { username, password }. Sets session cookie on success."""
+    data = g.json_body
+    username = data.get("username")
+    password = data.get("password")
+    if not username or not password:
+        return jsonify({"error": "username and password required"}), 400
+    user = Player.query.filter_by(id=username).first()
+    if not user:
+        user = Team.query.filter_by(id=username).first()
+    if not user or not user.check_password(password):
+        return jsonify({"error": "Invalid username or password"}), 401
+    login_user(user)
+    return jsonify(user_json())
+
+
+@bp.route("/logout", methods=["POST"])
+@login_required
+def logout_post():
+    """Clear session (JSON API for the SPA)."""
+    logout_user()
+    return jsonify({"ok": True})
+
+
+@bp.route("/change-password", methods=["POST"])
+@login_required
+@require_json_body()
+def change_password():
+    """JSON body: { current_password, new_password }. Change authenticated user's password."""
+    data = g.json_body
+    current_password = data.get("current_password")
+    new_password = data.get("new_password")
+    if not current_password or not new_password:
+        return jsonify({"error": "current_password and new_password required"}), 400
+    user = current_user
+    if not user.pw_hash:
+        return (
+            jsonify(
+                {
+                    "error": "This account uses Google sign-in. Password cannot be changed here.",
+                }
+            ),
+            400,
+        )
+    if not user.check_password(current_password):
+        return jsonify({"error": "Current password is incorrect"}), 401
+    user.set_password(new_password)
+    db.session.commit()
+    return jsonify({"ok": True})
+
+
+@bp.route("/register", methods=["POST"])
+@require_json_body()
+def register():
+    """JSON body: { username, password, name, user_type?: "player"|"team" }. Creates user and logs in."""
+    data = g.json_body
+    username = data.get("username")
+    password = data.get("password")
+    name = data.get("name")
+    user_type = data.get("user_type", "player")
+    if not username or not password or not name:
+        return jsonify({"error": "username, password, and name required"}), 400
+    if user_type not in ("player", "team"):
+        return jsonify({"error": "user_type must be player or team"}), 400
+    if not is_valid_url_username(username):
+        return (
+            jsonify(
+                {
+                    "error": "Username must be URL-safe: letters, numbers, hyphens, underscores. Cannot start or end with hyphen or underscore.",
+                }
+            ),
+            400,
+        )
+    if Player.query.filter_by(id=username).first() or Team.query.filter_by(id=username).first():
+        return jsonify({"error": "Username already exists"}), 409
+    if user_type == "player":
+        user = Player(id=username, name=name)
+    else:
+        user = Team(id=username, name=name)
+    user.set_password(password)
+    db.session.add(user)
+    db.session.commit()
+    login_user(user)
+    return jsonify(user_json())
+
+
+@bp.route("/google/choose-account-type", methods=["GET", "POST"])
+def google_choose_account_type_api():
+    """Select account type (player / team) after Google OAuth.
+
+    ``GET  /_api/google/choose-account-type`` — Returns the email stored in the
+    session so the frontend can pre-fill the form.
+
+    ``POST /_api/google/choose-account-type`` — Stores the chosen
+    ``user_type`` in the session and returns ``{"ok": true}``.
+
+    Request JSON (POST):
+        user_type (str): ``"player"`` or ``"team"``.
+
+    Returns:
+        JSON object or error with HTTP 400/401.
+    """
+    oauth_data = session.get("google_oauth_data")
+    if not oauth_data:
+        return jsonify({"error": "Session expired"}), 401
+
+    if request.method == "POST":
+        if not request.is_json:
+            return jsonify({"error": "Content-Type must be application/json"}), 415
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "Invalid JSON"}), 400
+        user_type = data.get("user_type")
+        if user_type not in ["player", "team"]:
+            return jsonify({"error": "Please select an account type"}), 400
+        oauth_data["user_type"] = user_type
+        session["google_oauth_data"] = oauth_data
+        session.modified = True
+        return jsonify({"ok": True})
+
+    return jsonify({"email": oauth_data.get("email", "")})
+
+
+@bp.route("/google/complete-profile", methods=["GET", "POST"])
+def google_complete_profile_api():
+    """Complete account creation for a new Google OAuth user.
+
+    ``GET  /_api/google/complete-profile`` — Returns the email, account type,
+    and a suggested display name derived from the session-stored OAuth data.
+
+    ``POST /_api/google/complete-profile`` — Validates the chosen username and
+    display name, creates the :class:`~app.models.user.Player` or
+    :class:`~app.models.user.Team` record, clears the OAuth session data, and
+    logs the user in.
+
+    Request JSON (POST):
+        username (str): Desired URL-safe username.
+        display_name (str): Public display name.
+
+    Returns:
+        JSON object with ``ok`` key on success, or error with HTTP 400/401/409.
+    """
+    oauth_data = session.get("google_oauth_data")
+    if not oauth_data:
+        return jsonify({"error": "Session expired"}), 401
+
+    user_type = oauth_data.get("user_type")
+    if not user_type:
+        return jsonify({"error": "Account type not selected"}), 400
+
+    email = oauth_data.get("email", "")
+    suggested_name = oauth_data.get("name", email.split("@")[0] if email else "User")
+
+    if request.method == "POST":
+        if not request.is_json:
+            return jsonify({"error": "Content-Type must be application/json"}), 415
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "Invalid JSON"}), 400
+        username = (data.get("username") or "").strip()
+        display_name = (data.get("display_name") or "").strip()
+
+        if not username:
+            return jsonify({"error": "Username is required"}), 400
+        if not is_valid_url_username(username):
+            return (
+                jsonify(
+                    {
+                        "error": "Username must be URL-safe: only letters, numbers, hyphens, and underscores. Cannot start or end with hyphen or underscore.",
+                    }
+                ),
+                400,
+            )
+        existing_player = Player.query.filter_by(id=username).first()
+        existing_team = Team.query.filter_by(id=username).first()
+        if existing_player or existing_team:
+            return jsonify({"error": "Username already exists"}), 409
+        if not display_name:
+            return jsonify({"error": "Display name is required"}), 400
+
+        if user_type == "player":
+            user = Player(
+                id=username,
+                name=display_name,
+                google_id=oauth_data["google_id"],
+                email=email,
+                profile_photo=(None if username.lower() not in ("jeb", "jebediah") else "jeb.png"),
+            )
+        else:
+            user = Team(
+                id=username,
+                name=display_name,
+                google_id=oauth_data["google_id"],
+                email=email,
+                profile_photo=(None if username.lower() not in ("jeb", "jebediah") else "jeb.png"),
+            )
+        db.session.add(user)
+        db.session.commit()
+        session.pop("google_oauth_data", None)
+        login_user(user)
+        return jsonify({"ok": True})
+
+    return jsonify(
+        {
+            "email": email,
+            "user_type": user_type,
+            "suggested_name": suggested_name,
+        }
+    )

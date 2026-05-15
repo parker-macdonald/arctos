@@ -28,7 +28,6 @@ GET /_api/auth/google/callback
 GET /_api/auth/google/login
 GET /_api/camera-url
 GET /_api/check-username
-GET /_api/check-username
 GET /_api/leagues
 GET /_api/leagues/<league_url>
 GET /_api/leagues/<league_url>/invitations
