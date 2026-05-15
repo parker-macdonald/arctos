@@ -18,7 +18,7 @@ from flask_login import current_user, login_required
 from sqlalchemy import and_, or_
 
 from app.domain.enums import RegistrationStatus
-from app.routes._api import _dt_iso
+from app.utils.datetime_helpers import dt_iso
 from app.utils.helpers import can_head_ref_match
 from app.utils.profile_photo_helpers import (
     profile_photo_upload_dir,
@@ -237,7 +237,7 @@ def team_profile(team_id):
                         idx = order.index(n.point_id) + 1
                 team_notes.append(
                     {
-                        "created_at": _dt_iso(n.created_at),
+                        "created_at": dt_iso(n.created_at),
                         "text": n.text,
                         "point_index": str(idx),
                         "match": {
@@ -267,7 +267,7 @@ def team_profile(team_id):
                     "status": (r.status.value if hasattr(r.status, "value") else str(r.status)),
                     "paid": bool(r.paid),
                     "amount_paid": r.amount_paid,
-                    "start_date": (_dt_iso(tournament_start.get(r.event)) if r.event else None),
+                    "start_date": (dt_iso(tournament_start.get(r.event)) if r.event else None),
                 }
                 for r in regs
             ],

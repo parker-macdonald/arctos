@@ -18,11 +18,10 @@ from datetime import datetime
 
 from flask import Blueprint, current_app, jsonify, request
 from flask_login import current_user, login_required
-from sqlalchemy import and_, or_
 from sqlalchemy.orm import joinedload
 
-from app.domain.enums import RegistrationStatus
-from app.routes._api import _dt_iso, _player_reg_waiver_api
+from app.serializers.registration_serializer import player_reg_waiver_api
+from app.utils.datetime_helpers import dt_iso
 from app.utils.helpers import can_head_ref_match, get_registrable_config
 from app.utils.profile_photo_helpers import (
     profile_photo_upload_dir,
@@ -50,7 +49,7 @@ def _injury_json(inj):
     return {
         "id": inj.id,
         "message": inj.message,
-        "stamp": _dt_iso(inj.stamp),
+        "stamp": dt_iso(inj.stamp),
         "active": bool(inj.active),
         "show": bool(inj.show),
     }
@@ -174,7 +173,7 @@ def player_profile(player_id):
                     }
             player_note_rows.append(
                 {
-                    "created_at": _dt_iso(note.created_at),
+                    "created_at": dt_iso(note.created_at),
                     "text": note.text or "",
                     "point_index": str(idx),
                     "penalty_type_id": pt_id,
@@ -249,7 +248,7 @@ def player_profile(player_id):
             lg = leagues_by_id.get(r.league_id)
             if lg:
                 rcfg = lg.registrable_config
-        w = _player_reg_waiver_api(r, rcfg)
+        w = player_reg_waiver_api(r, rcfg)
         registration_rows.append(
             {
                 "event": r.event or (f"league:{r.league_id}" if r.league_id else ""),
@@ -280,7 +279,7 @@ def player_profile(player_id):
                 {
                     "id": inj.id,
                     "message": inj.message,
-                    "stamp": _dt_iso(inj.stamp),
+                    "stamp": dt_iso(inj.stamp),
                     "active": bool(inj.active),
                     "show": bool(inj.show),
                 }
@@ -301,7 +300,7 @@ def get_injury(player_id, injury_id):
         {
             "id": injury.id,
             "message": injury.message,
-            "stamp": _dt_iso(injury.stamp),
+            "stamp": dt_iso(injury.stamp),
             "active": bool(injury.active),
             "show": bool(injury.show),
         }
@@ -346,7 +345,7 @@ def create_injury(player_id):
         {
             "id": injury.id,
             "message": injury.message,
-            "stamp": _dt_iso(injury.stamp),
+            "stamp": dt_iso(injury.stamp),
             "active": bool(injury.active),
             "show": bool(injury.show),
         }
@@ -384,7 +383,7 @@ def update_injury(player_id, injury_id):
         {
             "id": injury.id,
             "message": injury.message,
-            "stamp": _dt_iso(injury.stamp),
+            "stamp": dt_iso(injury.stamp),
             "active": bool(injury.active),
             "show": bool(injury.show),
         }
