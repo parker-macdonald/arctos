@@ -6,46 +6,36 @@ finalisation, the retry endpoint, and the user-upload pipeline
 """
 
 from flask import (
-    Blueprint,
     request,
     jsonify,
     current_app,
+    send_file,
+    make_response,
 )
 from flask_login import login_required, current_user
-from flask_executor import Executor
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
+import fcntl
+import io
 import json
+import os
+import re
 import time
+import traceback
 import uuid
+from urllib.parse import quote
 
 from models import (
     Tournament,
     Match,
     Field,
-    Tag,
     Camera,
     Point,
-    TeamRegistration,
-    PlayerRegistration,
-    Team,
-    TO,
-    League,
     db,
 )
 from app.services._common import current_user_type
-from app.utils.helpers import (
-    resolve_team_name_to_id,
-    resolve_tag_to_team,
-)
-from app.utils.scheduling import (
-    compute_dynamic_match_nominal_start_time,
-    validate_match_input,
-    recompute_all_match_times,
-)
-from app.utils.name_validation import match_name_char_error
+from app.services.dual_write import get_camera_timepoint_arrays
 from app.utils.decorators import require_tournament_organizer
-from app.utils.datetime_helpers import now_utc_naive
 
 from os import path, listdir
 
@@ -67,8 +57,6 @@ from app.utils import preview_store
 
 from app.domain.enums import (
     MatchStatus,
-    ScheduleType,
-    SetType,
 )
 from app.services.registration_resolver import is_player_registered
 from app.services.permission_service import PermissionService
@@ -101,8 +89,6 @@ def camera_url_api():
 
         # Generate the camera URL with key (frontend route, not a Flask endpoint)
         access_key = generate_camera_key(tournament_url, field_name)
-        from urllib.parse import quote
-
         base = request.url_root.rstrip("/")
         camera_url = (
             f"{base}/{tournament_url}/record?field={quote(field_name)}&camera_key={quote(access_key)}&camera_name="
@@ -110,8 +96,6 @@ def camera_url_api():
 
         return jsonify({"url": camera_url})
     except Exception as e:
-        import traceback
-
         print(f"Error in camera_url_api: {e}")
         print(traceback.format_exc())
         return jsonify({"error": f"Server error: {str(e)}"}), 500
@@ -120,8 +104,6 @@ def camera_url_api():
 @bp.route("/record/match-status")
 def record_match_status():
     """Check if a field has an active match for point recording. No access key required."""
-    from models import Point
-
     tournament_url = request.args.get("tournament")
     field_name = request.args.get("field")
     current_match_id = request.args.get("current_match_id")  # Optional: track specific match
@@ -386,9 +368,6 @@ def record_preview_cameras():
 @login_required
 def record_preview_frame_get():
     """TO: get latest preview frame for a camera. Moves A→B then serves B, or serves stale B or 204."""
-    from flask import send_file, make_response
-    import io
-
     tournament_url = request.args.get("tournament", "").strip()
     field_name = request.args.get("field", "").strip()
     camera_name = (request.args.get("camera_name") or "camera").strip() or "camera"
@@ -428,10 +407,6 @@ def record_preview_frame_get():
 @bp.route("/record/upload-chunk", methods=["POST"])
 def record_upload_chunk():
     """Receive one fMP4 fragment for point recording (container=mp4). Camera key required."""
-    import os
-    from flask import current_app
-    import fcntl
-
     tournament_url = request.form.get("tournament")
     field_name = request.form.get("field")
     match_id = request.form.get("match_id")
@@ -644,8 +619,6 @@ def record_finalize():
 )
 @login_required
 def retry_match_finalization(tournament_url: str, match_id: str):
-    import os
-
     if not current_user_can_retry_finalization(current_user):
         return (
             jsonify(
@@ -736,8 +709,6 @@ def retry_match_finalization(tournament_url: str, match_id: str):
 @login_required
 def user_upload_video_footage(tournament_url: str):
     """Authenticated endpoint for raw clip generation or direct edited uploads."""
-    import os
-
     _tournament, err = _require_registered_player_for_upload(tournament_url)
     if err:
         return err
@@ -1091,9 +1062,6 @@ def user_upload_video_footage_chunk(tournament_url: str):
     Chunked upload endpoint for large user footage files.
     Each request contains one chunk (<100MB from frontend).
     """
-    import os
-    import re
-
     _tournament, err = _require_registered_player_for_upload(tournament_url)
     if err:
         return err
@@ -1274,8 +1242,6 @@ def user_upload_video_footage_chunk(tournament_url: str):
 @login_required
 def user_upload_video_footage_complete(tournament_url: str):
     """Finalize a chunked upload, assemble source file on disk, then start processing worker."""
-    import os
-
     _tournament, err = _require_registered_player_for_upload(tournament_url)
     if err:
         return err
@@ -1440,8 +1406,6 @@ def user_upload_video_footage_complete(tournament_url: str):
 @require_tournament_organizer()
 def user_upload_delete_camera(tournament_url: str, camera_uuid: str):
     """TO-only: delete a user-uploaded camera highlight."""
-    import os
-
     cam = Camera.query.filter_by(uuid=camera_uuid, event=tournament_url).filter_by(source_type="user_upload").first()
     if not cam:
         return jsonify({"error": "Camera not found"}), 404
@@ -1469,8 +1433,6 @@ def user_upload_list_cameras(tournament_url: str):
         .order_by(Camera.match_uuid.asc(), Camera.name.asc())
         .all()
     )
-
-    from app.services.dual_write import get_camera_timepoint_arrays
 
     rows = []
     for cam in cams:
@@ -1504,5 +1466,3 @@ def user_upload_list_cameras(tournament_url: str):
 
     rows.extend(list_batch_manifest_rows(tournament_url))
     return jsonify({"cameras": rows})
-
-

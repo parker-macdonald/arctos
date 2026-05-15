@@ -5,25 +5,19 @@ TO membership management. Part of the ``tournaments`` blueprint.
 """
 
 from flask import (
-    Blueprint,
     request,
     jsonify,
-    current_app,
 )
 from flask_login import login_required, current_user
-from flask_executor import Executor
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 import json
-import time
-import uuid
 
 from models import (
     Tournament,
     Match,
     Field,
     Tag,
-    Camera,
     Point,
     TeamRegistration,
     PlayerRegistration,
@@ -31,46 +25,27 @@ from models import (
     TO,
     League,
     db,
+    RegistrableConfig,
+    Player,
+    MatchNote,
+    HeadRef,
+    SideComp,
+    SideCompRegistration,
+    SideCompResult,
+    PenaltyType,
 )
 from app.services._common import current_user_type
-from app.utils.helpers import (
-    resolve_team_name_to_id,
-    resolve_tag_to_team,
-)
-from app.utils.scheduling import (
-    compute_dynamic_match_nominal_start_time,
-    validate_match_input,
-    recompute_all_match_times,
-)
-from app.utils.name_validation import match_name_char_error
+from app.services.dual_write import set_head_ref_allowlist_from_csv
 from app.models.validators import URL_SLUG_ALLOWED_HINT, is_valid_url_slug
 from app.utils.decorators import require_tournament_organizer
 from app.utils.datetime_helpers import now_utc_naive
 
-from os import path, listdir
 
-from app.utils.footage import finalize_recording_worker
-from app.utils.user_uploads import (
-    create_direct_user_upload_camera,
-    list_batch_manifest_rows,
-    register_batch_upload_completion,
-)
 from app.utils.camera_helpers import (
-    generate_camera_key,
-    require_camera_key,
+    parse_camera_urls,
+    calculate_stream_timestamp,
 )
-from app.utils.recording_retry import (
-    RETRY_FINALIZATION_USER_IDS_ENV,
-    current_user_can_retry_finalization,
-)
-from app.utils import preview_store
 
-from app.domain.enums import (
-    MatchStatus,
-    ScheduleType,
-    SetType,
-)
-from app.services.registration_resolver import is_player_registered
 from app.services.permission_service import PermissionService
 
 from . import bp
@@ -137,8 +112,6 @@ def create_tournament():
             )
         league_id = raw_league_id
 
-    from models import RegistrableConfig
-
     start_date = now_utc_naive()
     tournament = Tournament(
         url=url,
@@ -183,8 +156,6 @@ def create_tournament():
 @login_required
 def create_league():
     """Create a new league. TOs create a new league for each season."""
-    from models import League, TO, db
-
     league_name = request.form.get("league_name", "").strip()
     league_url = request.form.get("league_url", "").strip()
 
@@ -203,8 +174,6 @@ def create_league():
 
     if League.query.filter_by(url=league_url).first():
         return jsonify({"success": False, "error": "League URL already exists"}), 400
-
-    from models import RegistrableConfig
 
     rc = RegistrableConfig(
         team_reg_fee=0.0,
@@ -250,8 +219,6 @@ def update_tournament_settings(tournament_url):
     tournament.name = request.form["name"]
     tournament.location = request.form.get("location", "")
     tournament.about = request.form.get("about", "")
-    from app.services.dual_write import set_head_ref_allowlist_from_csv
-
     set_head_ref_allowlist_from_csv(tournament, request.form.get("head_refs_allowed_list", ""))
     tournament.head_refs_allow_reffing_teams = "head_refs_allow_reffing_teams" in request.form
     tournament.head_refs_allow_anyone = "head_refs_allow_anyone" in request.form
@@ -316,20 +283,6 @@ def delete_tournament(tournament_url):
             400,
         )
 
-    # Import all necessary models
-    from models import (
-        Point,
-        MatchNote,
-        Match,
-        HeadRef,
-        Field,
-        Tag,
-        SideComp,
-        SideCompRegistration,
-        SideCompResult,
-        PenaltyType,
-    )
-
     # Delete in order to respect foreign key constraints.
     # Order: side comp results & registrations -> side comps; points & match notes -> matches;
     # then penalty types, head refs, registrations, TOs, fields, tags; finally tournament.
@@ -363,8 +316,6 @@ def delete_tournament(tournament_url):
     rc_id = tournament.registrable_config_id if not tournament.league_id else None
     db.session.delete(tournament)
     if rc_id:
-        from models import RegistrableConfig
-
         rc = RegistrableConfig.query.get(rc_id)
         if rc:
             db.session.delete(rc)
@@ -416,8 +367,6 @@ def add_to(tournament_url):
         return jsonify({"success": False, "error": "Invalid user ID or type"}), 400
 
     # Verify the user exists
-    from models import Player
-
     if user_type == "player":
         user = Player.query.get(user_id)
         if not user:
@@ -506,8 +455,6 @@ def remove_to(tournament_url):
         )
 
     # Get user info for flash message
-    from models import Player
-
     if to_to_remove.user_type == "player":
         user = Player.query.get(to_to_remove.user_id)
     else:
@@ -522,6 +469,8 @@ def remove_to(tournament_url):
         jsonify({"success": True, "message": f"Successfully removed {user_name} as a TO"}),
         200,
     )
+
+
 @bp.route("/<tournament_url>/add-field", methods=["POST"])
 @require_tournament_organizer("Only tournament organizers can access this page")
 def add_field(tournament_url):
@@ -567,8 +516,6 @@ def update_field(tournament_url):
     # Get old camera URLs for comparison
     old_camera_urls = []
     if field.camera:
-        from app.utils.camera_helpers import parse_camera_urls
-
         old_camera_urls = parse_camera_urls(field.camera)
 
     # Store as JSON array
@@ -616,9 +563,6 @@ def update_field(tournament_url):
 
         # Update points that reference this field (via the match)
         # Get all points for matches on this field
-        from models import Point
-        from app.utils.camera_helpers import calculate_stream_timestamp
-
         point_update_count = 0
         for match in matches_to_update:
             points = Point.query.filter_by(match=match.uuid).all()
@@ -735,5 +679,3 @@ def delete_tag(tournament_url):
     db.session.delete(tag)
     db.session.commit()
     return jsonify({"success": True, "message": "Tag deleted successfully!"}), 200
-
-

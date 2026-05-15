@@ -5,34 +5,27 @@ DSL validation. Part of the ``tournaments`` blueprint.
 """
 
 from flask import (
-    Blueprint,
     request,
     jsonify,
-    current_app,
+    send_file,
 )
-from flask_login import login_required, current_user
-from flask_executor import Executor
 
 from datetime import datetime, timedelta, timezone
-import json
-import time
-import uuid
+import io
 
 from models import (
     Tournament,
     Match,
-    Field,
     Tag,
-    Camera,
-    Point,
-    TeamRegistration,
-    PlayerRegistration,
-    Team,
-    TO,
-    League,
     db,
 )
-from app.services._common import current_user_type
+from app.error_values import Ok, Err
+from app.services.dual_write import (
+    clear_match_referees,
+    get_match_refs_initial_csv,
+    set_match_referees_from_csv,
+)
+from app.services.schedule_import_export_service import ScheduleImportExportService
 from app.utils.helpers import (
     resolve_team_name_to_id,
     resolve_tag_to_team,
@@ -44,33 +37,18 @@ from app.utils.scheduling import (
 )
 from app.utils.name_validation import match_name_char_error
 from app.utils.decorators import require_tournament_organizer
-from app.utils.datetime_helpers import now_utc_naive
+from app.utils.datetime_helpers import parse_datetime_local_to_utc
+from app.utils.dependencies import apply_match_dependencies
+from app.utils.responses import json_error
+from app.utils.result_helpers import json_from_result, public_error_message
 
-from os import path, listdir
-
-from app.utils.footage import finalize_recording_worker
-from app.utils.user_uploads import (
-    create_direct_user_upload_camera,
-    list_batch_manifest_rows,
-    register_batch_upload_completion,
-)
-from app.utils.camera_helpers import (
-    generate_camera_key,
-    require_camera_key,
-)
-from app.utils.recording_retry import (
-    RETRY_FINALIZATION_USER_IDS_ENV,
-    current_user_can_retry_finalization,
-)
-from app.utils import preview_store
 
 from app.domain.enums import (
     MatchStatus,
     ScheduleType,
     SetType,
 )
-from app.services.registration_resolver import is_player_registered
-from app.services.permission_service import PermissionService
+from app.services.registration_resolver import team_registrations_for_tournament
 
 from . import bp
 
@@ -93,11 +71,6 @@ def recompute_schedule(tournament_url):
 @require_tournament_organizer("You must be a tournament organizer to export schedules")
 def export_schedule(tournament_url):
     """Export schedule (tags, fields, matches) as TOML file download."""
-    from app.services.schedule_import_export_service import ScheduleImportExportService
-    from app.error_values import Ok, Err
-    from flask import send_file
-    import io
-
     res = ScheduleImportExportService.export_schedule(tournament_url)
 
     match res:
@@ -112,9 +85,6 @@ def export_schedule(tournament_url):
                 download_name=filename,
             )
         case Err(err):
-            from app.utils.responses import json_error
-            from app.utils.result_helpers import public_error_message
-
             return json_error(
                 public_error_message(err),
                 status_code=err.status_code if hasattr(err, "status_code") else 400,
@@ -125,9 +95,6 @@ def export_schedule(tournament_url):
 @require_tournament_organizer("You must be a tournament organizer to import schedules")
 def import_schedule(tournament_url):
     """Import schedule from uploaded TOML file."""
-    from app.services.schedule_import_export_service import ScheduleImportExportService
-    from app.utils.result_helpers import json_from_result
-
     # Validate file upload
     if "schedule_file" not in request.files:
         return jsonify({"success": False, "error": "No file uploaded"}), 400
@@ -341,8 +308,6 @@ def add_match(tournament_url):
     db.session.flush()  # Flush to get UUID before updating links
 
     if refs_initial:
-        from app.services.dual_write import set_match_referees_from_csv
-
         set_match_referees_from_csv(match, refs_resolved_csv, refs_initial)
 
     # For dynamic matches, set previous_match from form and compute start time from it
@@ -369,13 +334,9 @@ def add_match(tournament_url):
             except (ValueError, AttributeError):
                 # Fallback to old format
                 if request.form.get("start_time"):
-                    from app.utils.datetime_helpers import parse_datetime_local_to_utc
-
                     match.nominal_start_time = parse_datetime_local_to_utc(request.form["start_time"])
         elif request.form.get("start_time"):
             # Old format: datetime-local (assumed server-local), convert to UTC
-            from app.utils.datetime_helpers import parse_datetime_local_to_utc
-
             match.nominal_start_time = parse_datetime_local_to_utc(request.form["start_time"])
 
     # Set initial status: STATIC matches are TIME_FINALIZED, others are NOT_STARTED
@@ -608,12 +569,6 @@ def update_match(tournament_url):
     match.skip_condition = skip_condition_raw if schedule_type in (ScheduleType.SAFE, ScheduleType.FAST) else None
 
     # If refs_initial changed, repopulate referee slots with explicit team IDs and resolved tag references
-    from app.services.dual_write import (
-        clear_match_referees,
-        get_match_refs_initial_csv,
-        set_match_referees_from_csv,
-    )
-
     old_refs_initial = get_match_refs_initial_csv(match)
     if old_refs_initial != (refs_initial or ""):
         if refs_initial:
@@ -662,15 +617,11 @@ def update_match(tournament_url):
             except (ValueError, AttributeError):
                 # Fallback to old format
                 if request.form.get("start_time"):
-                    from app.utils.datetime_helpers import parse_datetime_local_to_utc
-
                     match.nominal_start_time = parse_datetime_local_to_utc(request.form["start_time"])
                 else:
                     match.nominal_start_time = None
         elif request.form.get("start_time"):
             # Old format: datetime-local (assumed server-local), convert to UTC
-            from app.utils.datetime_helpers import parse_datetime_local_to_utc
-
             match.nominal_start_time = parse_datetime_local_to_utc(request.form["start_time"])
         else:
             match.nominal_start_time = None
@@ -694,8 +645,6 @@ def update_match(tournament_url):
 @require_tournament_organizer("Only tournament organizers can access this page")
 def update_all_references(tournament_url):
     """Update all match references (winner/loser) for troubleshooting."""
-    from app.utils.dependencies import apply_match_dependencies
-
     # Get all completed matches (have a winner; skipped matches are excluded)
     completed_matches = Match.query.filter_by(event=tournament_url, status=MatchStatus.COMPLETED).all()
 
@@ -762,8 +711,6 @@ def tournament_autocomplete(tournament_url):
     suggestions = []
 
     tournament = Tournament.query.filter_by(url=tournament_url).first()
-    from app.services.registration_resolver import team_registrations_for_tournament
-
     # Teams registered for this tournament (event or league)
     team_regs = team_registrations_for_tournament(tournament) if tournament else []
     for reg in team_regs:
@@ -837,7 +784,8 @@ def validate_dsl(tournament_url):
     """Validate and simplify a DSL expression.
     Returns JSON with: valid (bool), value (the full interpreted value), simplified (str representation), error (str or None)
     """
-    from flask import jsonify
+    # Kept inline: app.utils.parser exports `Team` and `Match` names that
+    # would shadow `models.Team`/`models.Match` if hoisted to module top.
     from app.utils.parser import (
         get_parser,
         DSLValidationError,
@@ -939,5 +887,3 @@ def validate_dsl(tournament_url):
                 "error": f"Parse error: {str(e)}",
             }
         )
-
-
