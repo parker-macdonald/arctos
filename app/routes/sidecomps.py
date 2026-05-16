@@ -282,12 +282,10 @@ def eligible_players(comp_id: int):
     team_pseudonyms = {}
     team_shortnames = {}
     if team_ids:
-        for tr in TeamRegistration.query.filter(
-            TeamRegistration.event == sc.event,
-            TeamRegistration.team.in_(team_ids),
-        ).all():
-            team_pseudonyms[tr.team] = tr.pseudonym
-            team_shortnames[tr.team] = tr.shortname
+        for tr in team_registrations_for_tournament(tournament):
+            if tr.team in team_ids:
+                team_pseudonyms[tr.team] = tr.pseudonym
+                team_shortnames[tr.team] = tr.shortname
 
     out = [
         {
