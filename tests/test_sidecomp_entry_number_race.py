@@ -70,7 +70,5 @@ def test_register_player_retries_on_entry_number_collision(comp_setup):
         res1 = SideCompService.register_player(comp_id, player_id=p1.id)
     assert isinstance(res1, Ok), repr(res1)
 
-    rows = SideCompRegistration.query.filter_by(comp=comp_id).order_by(
-        SideCompRegistration.entry_number
-    ).all()
+    rows = SideCompRegistration.query.filter_by(comp=comp_id).order_by(SideCompRegistration.entry_number).all()
     assert [r.entry_number for r in rows] == [1, 2]

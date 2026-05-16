@@ -7,12 +7,14 @@ import pytest
 # wants_json helper tests  (use the session-scoped ``app`` - no HTTP requests)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 def test_wants_json_for_json_content_type(app):
     from app.utils.decorators import wants_json
 
     with app.test_request_context("/foo", json={"a": 1}):
         from flask import request
+
         assert wants_json(request) is True
 
 
@@ -22,6 +24,7 @@ def test_wants_json_for_api_path(app):
 
     with app.test_request_context("/_api/something"):
         from flask import request
+
         assert wants_json(request) is True
 
 
@@ -31,6 +34,7 @@ def test_wants_json_for_accept_header(app):
 
     with app.test_request_context("/foo", headers={"Accept": "application/json"}):
         from flask import request
+
         assert wants_json(request) is True
 
 
@@ -40,6 +44,7 @@ def test_wants_json_false_for_html_request(app):
 
     with app.test_request_context("/foo", headers={"Accept": "text/html"}):
         from flask import request
+
         assert wants_json(request) is False
 
 
@@ -52,6 +57,7 @@ def test_wants_json_false_for_no_accept_header(app):
 
     with app.test_request_context("/foo"):
         from flask import request
+
         assert wants_json(request) is False
 
 
@@ -63,6 +69,7 @@ def test_wants_json_false_for_no_accept_header(app):
 # ``app``.  This avoids Flask's "no new routes after first request" guard
 # when running under pytest-xdist.
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 def test_require_tournament_organizer_html_redirects_when_not_to(fresh_app):

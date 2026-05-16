@@ -47,10 +47,7 @@ def _make_length_validator(field_name: str, max_length: int) -> Callable[..., An
 
     def _validate(target: Any, value: Any, oldvalue: Any, initiator: Any) -> Any:
         if isinstance(value, str) and len(value) > max_length:
-            raise ValidationError(
-                f"{field_name} exceeds maximum length of {max_length} "
-                f"characters (got {len(value)})"
-            )
+            raise ValidationError(f"{field_name} exceeds maximum length of {max_length} characters (got {len(value)})")
         return value
 
     return _validate
