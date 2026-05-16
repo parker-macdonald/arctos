@@ -249,12 +249,15 @@ def deregister_player_as_to(comp_id: int):
 def eligible_players(comp_id: int):
     """TO-only: list players registered for the event but not yet in this side comp."""
     from app.domain.enums import RegistrationStatus
+    from app.services.registration_resolver import (
+        player_registrations_for_tournament,
+        team_registrations_for_tournament,
+    )
     from models import (
         Player,
-        PlayerRegistration,
         SideComp,
         SideCompRegistration,
-        TeamRegistration,
+        Tournament,
     )
 
     sc = SideComp.query.get(comp_id)
@@ -265,12 +268,11 @@ def eligible_players(comp_id: int):
     if auth_check.is_err():
         return json_from_result(auth_check)
 
+    tournament = Tournament.query.get(sc.event)
+
     already_in = {r.player for r in SideCompRegistration.query.filter_by(comp=comp_id).all()}
 
-    event_regs = PlayerRegistration.query.filter_by(
-        event=sc.event,
-        status=RegistrationStatus.CONFIRMED,
-    ).all()
+    event_regs = player_registrations_for_tournament(tournament, statuses=[RegistrationStatus.CONFIRMED])
 
     eligible = [er for er in event_regs if er.player not in already_in]
     player_ids = [er.player for er in eligible]

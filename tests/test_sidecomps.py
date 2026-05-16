@@ -1110,3 +1110,74 @@ def test_route_eligible_players_excludes_already_registered(app, client, tournam
     ids = {row["player_id"] for row in resp.get_json()}
     assert "p2" in ids
     assert "p1" not in ids
+
+
+def test_route_eligible_players_returns_league_scoped_registrations(app, client, test_db):
+    """A side comp on a league-linked tournament must surface league-scoped registrations.
+
+    For league tournaments, PlayerRegistration rows have league_id set and event NULL,
+    and team pseudonyms live on league-scoped TeamRegistration rows. The endpoint must
+    resolve registrations through the tournament's scope rather than filtering by event
+    directly.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from app.domain.enums import TeamRegistrationStatus
+    from models import League, Team, TeamRegistration, Tournament
+    from tests.utils import make_registrable_config
+
+    with app.app_context():
+        cfg = make_registrable_config(team_registration_open=True, player_registration_open=True)
+        league = League(url="lg", name="LG", registrable_config_id=cfg.id)
+        db.session.add(league)
+        db.session.flush()
+        tourn = Tournament(
+            url="lg-evt",
+            name="League Event",
+            start_date=datetime.now(timezone.utc),
+            end_date=datetime.now(timezone.utc) + timedelta(days=1),
+            league_id="lg",
+        )
+        db.session.add(tourn)
+        db.session.flush()
+
+        to_user = _make_player("lg_to", "LG TO")
+        db.session.add(TO(user_id=to_user.id, user_type="player", event=None, league_id="lg"))
+
+        team = Team(id="lg_team", name="LG Team", pw_hash="dummy_hash")
+        db.session.add(team)
+        db.session.flush()
+        db.session.add(
+            TeamRegistration(
+                event=None,
+                league_id="lg",
+                team=team.id,
+                pseudonym="LG Pseudonym",
+                status=TeamRegistrationStatus.CONFIRMED,
+            )
+        )
+
+        p1 = _make_player("lg_p1", "LG P1")
+        db.session.add(
+            PlayerRegistration(
+                event=None,
+                league_id="lg",
+                player=p1.id,
+                team=team.id,
+                jersey_number="7",
+                jersey_name="P1",
+                status=RegistrationStatus.CONFIRMED,
+            )
+        )
+
+        sc = SideComp(event=tourn.url, name="LG SC", type="DUELING")
+        db.session.add(sc)
+        db.session.commit()
+        comp_id = sc.id
+        login_as(client, to_user)
+
+    resp = client.get(f"/_api/sidecomps/{comp_id}/eligible-players")
+    assert resp.status_code == 200
+    rows = resp.get_json()
+    assert [row["player_id"] for row in rows] == ["lg_p1"]
+    assert rows[0]["team_pseudonym"] == "LG Pseudonym"
