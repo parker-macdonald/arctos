@@ -116,11 +116,6 @@ def create_app(config: dict | None = None) -> Flask:
     app.config["GOOGLE_CLIENT_ID"] = os.environ.get("GOOGLE_CLIENT_ID", "")
     app.config["GOOGLE_CLIENT_SECRET"] = os.environ.get("GOOGLE_CLIENT_SECRET", "")
 
-    # Public base URL for OAuth and redirects (e.g. https://example.com). When set, used for
-    # Google redirect_uri and post-login redirects so they work behind proxies and match
-    # the authorized redirect URI in Google Cloud Console. No trailing slash.
-    app.config["EXTERNAL_BASE_URL"] = os.environ.get("EXTERNAL_BASE_URL", "").rstrip("/")
-
     # S3 video storage: when S3_VIDEO_BUCKET is set, finalization uploads finished videos to S3.
     app.config["S3_VIDEO_BUCKET"] = os.environ.get("S3_VIDEO_BUCKET", "").strip() or None
     app.config["S3_ENDPOINT_URL"] = os.environ.get("S3_ENDPOINT_URL", "").strip() or None
