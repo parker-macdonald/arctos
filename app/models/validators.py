@@ -77,6 +77,7 @@ def _make_url_slug_validator(field_name: str) -> Callable[..., Any]:
 
     return _validate
 
+
 @event.listens_for(Mapper, "mapper_configured")
 def _install_string_length_validators(mapper: Mapper, cls: type) -> None:
     """Install per-column length validators on ``cls`` when its mapper is configured.
