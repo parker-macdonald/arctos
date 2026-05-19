@@ -46,6 +46,7 @@ from app.utils.scheduling import (
     recompute_all_match_times,
 )
 from app.utils.name_validation import match_name_char_error
+from app.models.validators import URL_SLUG_ALLOWED_HINT, is_valid_url_slug
 from app.utils.decorators import require_tournament_organizer
 from app.utils.datetime_helpers import now_utc_naive
 
@@ -181,8 +182,21 @@ def create_tournament():
         JSON ``{"success": true, "url": "<slug>"}`` on success, or error
         with HTTP 400/403.
     """
-    name = request.form["name"]
-    url = request.form["url"]
+    name = request.form["name"].strip()
+    url = request.form["url"].strip()
+
+    if not name or not url:
+        return (
+            jsonify(
+                {
+                    "success": False,
+                    "error": f"Name and URL slug are required. {URL_SLUG_ALLOWED_HINT}",
+                }
+            ),
+            400,
+        )
+    if not is_valid_url_slug(url):
+        return jsonify({"success": False, "error": URL_SLUG_ALLOWED_HINT}), 400
 
     if Tournament.query.filter_by(url=url).first():
         return (
@@ -264,11 +278,13 @@ def create_league():
             jsonify(
                 {
                     "success": False,
-                    "error": "League name and URL slug are required.",
+                    "error": f"League name and URL slug are required. {URL_SLUG_ALLOWED_HINT}",
                 }
             ),
             400,
         )
+    if not is_valid_url_slug(league_url):
+        return jsonify({"success": False, "error": URL_SLUG_ALLOWED_HINT}), 400
 
     if League.query.filter_by(url=league_url).first():
         return jsonify({"success": False, "error": "League URL already exists"}), 400

@@ -4,6 +4,7 @@ mod api;
 mod components;
 mod pages;
 mod time_format;
+mod url_slug;
 
 #[cfg(target_arch = "wasm32")]
 mod record_idb;

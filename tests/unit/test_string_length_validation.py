@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 
 from app.exceptions import ValidationError
-from models import Player
+from models import League, Player, TO
 
 
 @pytest.mark.unit
@@ -100,3 +100,25 @@ def test_every_mapped_string_column_rejects_overflow(test_db):
             checked.append((cls.__name__, field, n))
 
     assert len(checked) >= 80, f"expected coverage sweep to hit many columns, got {checked!r}"
+
+
+@pytest.mark.unit
+def test_league_url_rejects_invalid_slug_characters(test_db):
+    """League.url rejects characters outside the shared slug allowlist."""
+    league = League()
+    with pytest.raises(ValidationError) as exc:
+        league.url = "/league-slug"
+    assert "url" in str(exc.value)
+
+
+@pytest.mark.unit
+def test_event_and_league_fk_slugs_reject_invalid_characters(test_db):
+    """Foreign-key slug mirrors use the same validator as the primary slug fields."""
+    to_entry = TO()
+    with pytest.raises(ValidationError) as exc:
+        to_entry.event = "/event-slug"
+    assert "event" in str(exc.value)
+
+    with pytest.raises(ValidationError) as exc:
+        to_entry.league_id = "/league-slug"
+    assert "league_id" in str(exc.value)
