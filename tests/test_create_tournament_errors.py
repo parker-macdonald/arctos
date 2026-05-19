@@ -52,3 +52,46 @@ def test_create_event_for_league(client, player_user):
     t = Tournament.query.get("ha")
     assert t is not None
     assert t.league_id == "lg"
+
+
+@pytest.mark.integration
+def test_create_standalone_tournament_rejects_invalid_url_slug(client, player_user):
+    login_as(client, player_user)
+    resp = client.post(
+        "/_api/create-tournament",
+        data={"name": "Standalone", "url": "/bad-slug"},
+    )
+    assert resp.status_code == 400
+    body = resp.get_json()
+    assert body["success"] is False
+    assert "letters, numbers, or -_~." in body["error"]
+    assert Tournament.query.get("/bad-slug") is None
+    assert Tournament.query.get("bad-slug") is None
+
+
+@pytest.mark.integration
+def test_create_tournament_rejects_empty_cleaned_url_slug(client, player_user):
+    login_as(client, player_user)
+    resp = client.post(
+        "/_api/create-tournament",
+        data={"name": "Standalone", "url": " !!! "},
+    )
+    assert resp.status_code == 400
+    body = resp.get_json()
+    assert body["success"] is False
+    assert "letters, numbers, or -_~." in body["error"]
+
+
+@pytest.mark.integration
+def test_create_league_rejects_invalid_url_slug(client, player_user):
+    login_as(client, player_user)
+    resp = client.post(
+        "/_api/create-league",
+        data={"league_name": "League", "league_url": "/league-slug"},
+    )
+    assert resp.status_code == 400
+    body = resp.get_json()
+    assert body["success"] is False
+    assert "letters, numbers, or -_~." in body["error"]
+    assert League.query.get("/league-slug") is None
+    assert League.query.get("league-slug") is None

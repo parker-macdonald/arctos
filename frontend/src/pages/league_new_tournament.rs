@@ -1,4 +1,5 @@
 use crate::api;
+use crate::url_slug::{is_valid_url_slug, URL_SLUG_ALLOWED_HINT};
 use crate::Route;
 use dioxus::prelude::*;
 use wasm_bindgen::JsCast;
@@ -9,14 +10,6 @@ fn get_form_value(id: &str) -> String {
         .and_then(|e| e.dyn_into::<web_sys::HtmlInputElement>().ok())
         .map(|e| e.value())
         .unwrap_or_default()
-}
-
-fn get_form_check(id: &str) -> bool {
-    let doc = web_sys::window().and_then(|w| w.document()).unwrap();
-    doc.get_element_by_id(id)
-        .and_then(|e| e.dyn_into::<web_sys::HtmlInputElement>().ok())
-        .map(|e| e.checked())
-        .unwrap_or(false)
 }
 
 #[component]
@@ -46,10 +39,14 @@ pub fn LeagueNewTournament(league_url: String) -> Element {
                                 onsubmit: move |ev| {
                                     ev.prevent_default();
                                     error.set(None);
-                                    let name = get_form_value("name");
-                                    let url_slug = get_form_value("url");
+                                    let name = get_form_value("name").trim().to_string();
+                                    let url_slug = get_form_value("url").trim().to_string();
                                     if name.is_empty() || url_slug.is_empty() {
                                         error.set(Some("Name and URL slug are required.".to_string()));
+                                        return;
+                                    }
+                                    if !is_valid_url_slug(&url_slug) {
+                                        error.set(Some(URL_SLUG_ALLOWED_HINT.to_string()));
                                         return;
                                     }
                                     let nav = navigator.clone();
@@ -78,8 +75,16 @@ pub fn LeagueNewTournament(league_url: String) -> Element {
                                 }
                                 div { class: "mb-3",
                                     label { r#for: "url", class: "form-label", "URL Slug" }
-                                    input { r#type: "text", class: "form-control", id: "url", name: "url", required: true }
-                                    div { class: "form-text", "This will be used in the URL (e.g., /my-event)" }
+                                    input {
+                                        r#type: "text",
+                                        class: "form-control",
+                                        id: "url",
+                                        name: "url",
+                                        required: true,
+                                        pattern: "[A-Za-z0-9_~-]+",
+                                        title: URL_SLUG_ALLOWED_HINT,
+                                    }
+                                    div { class: "form-text", "This will be used in the URL (e.g., /my-event). {URL_SLUG_ALLOWED_HINT}" }
                                 }
                                 div { class: "d-flex gap-2",
                                     Link { to: Route::LeagueHome { league_url: lu_for_cancel.clone() }, class: "btn btn-outline-secondary", "Cancel" }
