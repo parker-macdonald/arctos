@@ -8,6 +8,21 @@ use chrono::{DateTime, SecondsFormat, Utc};
 use dioxus::prelude::*;
 use uuid::Uuid;
 
+fn get_query_param(name: &str) -> Option<String> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let window = web_sys::window()?;
+        let search = window.location().search().ok()?;
+        let params = web_sys::UrlSearchParams::new_with_str(&search).ok()?;
+        params.get(name)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = name;
+        None
+    }
+}
+
 #[derive(Clone)]
 struct PendingUpload {
     filename: String,
@@ -291,7 +306,13 @@ pub fn TournamentHome(url: String) -> Element {
         async move { api::sidecomps_list(&u).await }
     });
 
-    let mut info_tab = use_signal(|| "info".to_string());
+    let mut info_tab = use_signal(|| {
+        if get_query_param("tab").as_deref() == Some("sidecomps") {
+            "sidecomps".to_string()
+        } else {
+            "info".to_string()
+        }
+    });
 
     {
         let url_for_upload_planning = url.clone();

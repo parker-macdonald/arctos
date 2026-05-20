@@ -2,20 +2,24 @@ use crate::api;
 use crate::Route;
 use dioxus::prelude::*;
 
+fn sidecomps_tab_href(url: &str) -> String {
+    format!("/{url}?tab=sidecomps")
+}
+
 #[component]
 pub fn SideCompDetail(url: String, comp_id: i32) -> Element {
     let detail = use_resource(move || async move { api::sidecomp_detail(comp_id).await });
     let mut action_error = use_signal(|| None::<String>);
 
-    let url_for_back = url.clone();
+    let back_href = sidecomps_tab_href(&url);
     let url_for_edit = url.clone();
     let url_for_register = url.clone();
 
     rsx! {
         div { class: "row",
             div { class: "col-12",
-                Link {
-                    to: Route::SideCompsList { url: url_for_back },
+                a {
+                    href: "{back_href}",
                     class: "btn btn-link",
                     "<- Back to side competitions"
                 }

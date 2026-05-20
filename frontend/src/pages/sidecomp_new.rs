@@ -1,17 +1,19 @@
 use crate::api;
-use crate::Route;
 use dioxus::prelude::*;
+
+fn sidecomps_tab_href(url: &str) -> String {
+    format!("/{url}?tab=sidecomps")
+}
 
 #[component]
 pub fn SideCompNew(url: String) -> Element {
-    let navigator = use_navigator();
     let mut name = use_signal(String::new);
     let mut type_ = use_signal(|| "DUELING".to_string());
     let mut description = use_signal(String::new);
     let mut error = use_signal(|| None::<String>);
     let mut submitting = use_signal(|| false);
 
-    let url_for_back = url.clone();
+    let back_href = sidecomps_tab_href(&url);
     let url_for_submit = url.clone();
 
     rsx! {
@@ -19,8 +21,8 @@ pub fn SideCompNew(url: String) -> Element {
             div { class: "col-12",
                 h1 { "Create side competition" }
                 div { class: "mb-3",
-                    Link {
-                        to: Route::SideCompsList { url: url_for_back },
+                    a {
+                        href: "{back_href}",
                         class: "btn btn-link",
                         "<- Back"
                     }
@@ -38,7 +40,9 @@ pub fn SideCompNew(url: String) -> Element {
                         spawn(async move {
                             match api::sidecomp_create(&url_inner, &n, &t, d_opt.as_deref()).await {
                                 Ok(_) => {
-                                    navigator.push(Route::SideCompsList { url: url_inner });
+                                    if let Some(window) = web_sys::window() {
+                                        let _ = window.location().assign(&sidecomps_tab_href(&url_inner));
+                                    }
                                 }
                                 Err(e) => {
                                     error.set(Some(e));

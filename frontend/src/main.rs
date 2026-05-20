@@ -90,9 +90,6 @@ enum Route {
     #[route("/:url/register")]
     TournamentRegister { url: String },
 
-    #[route("/:url/sidecomps")]
-    SideCompsList { url: String },
-
     #[route("/:url/sidecomps/new")]
     SideCompNew { url: String },
 

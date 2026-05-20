@@ -2,6 +2,10 @@ use crate::api;
 use crate::Route;
 use dioxus::prelude::*;
 
+fn sidecomps_tab_href(url: &str) -> String {
+    format!("/{url}?tab=sidecomps")
+}
+
 #[component]
 pub fn SideCompEdit(url: String, comp_id: i32) -> Element {
     let navigator = use_navigator();
@@ -123,7 +127,9 @@ pub fn SideCompEdit(url: String, comp_id: i32) -> Element {
                         spawn(async move {
                             match api::sidecomp_delete(comp_id).await {
                                 Ok(_) => {
-                                    navigator.push(Route::SideCompsList { url: url_inner });
+                                    if let Some(window) = web_sys::window() {
+                                        let _ = window.location().assign(&sidecomps_tab_href(&url_inner));
+                                    }
                                 }
                                 Err(e) => error.set(Some(e)),
                             }
