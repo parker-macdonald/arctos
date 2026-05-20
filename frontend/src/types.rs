@@ -1396,4 +1396,15 @@ pub struct EligiblePlayer {
     pub team_id: Option<String>,
     pub team_pseudonym: Option<String>,
     pub jersey_name: Option<String>,
+    #[serde(default)]
+    pub sidecomp_registered: bool,
+    pub entry_number: Option<i32>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SideCompRegisterPlayerResponse {
+    pub player_id: String,
+    pub player_name: String,
+    pub entry_number: i32,
+    pub registered_at: Option<String>,
 }
