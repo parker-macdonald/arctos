@@ -17,7 +17,7 @@ fn page_title_for_route(route: &Route) -> String {
         Route::RegisterTeam { .. } => "Register as Team".into(),
         Route::GoogleChooseAccountType { .. } => "Choose Account Type".into(),
         Route::GoogleCompleteProfile { .. } => "Complete Profile".into(),
-        Route::TournamentHome { url } => format!("{url}"),
+        Route::TournamentHome { url } | Route::TournamentHomeWithTab { url, .. } => format!("{url}"),
         Route::Schedule { url } => format!("{url} Schedule"),
         Route::Results { url } => format!("{url} Results"),
         Route::Bracket { url } => format!("{url} Bracket"),

@@ -69,6 +69,9 @@ enum Route {
     #[route("/leagues/:league_url/invitations")]
     LeagueInvitations { league_url: String },
 
+    #[route("/:url?:tab")]
+    TournamentHomeWithTab { url: String, tab: String },
+
     #[route("/:url")]
     TournamentHome { url: String },
 

@@ -105,6 +105,6 @@ pub use team_profile::TeamProfilePage;
 pub use teams_list::TeamsList;
 pub use terms::Terms;
 pub use thanks::Thanks;
-pub use tournament_home::TournamentHome;
+pub use tournament_home::{TournamentHome, TournamentHomeWithTab};
 pub use tournament_register::TournamentRegister;
 pub use tournament_settings::TournamentSettings;
