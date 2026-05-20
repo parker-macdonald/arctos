@@ -40,6 +40,70 @@ def _confirm_event_registration(tournament_url, player_id, team_id=None):
     return reg
 
 
+def _make_league_sidecomp_context(registration_open=False):
+    from datetime import datetime, timedelta, timezone
+
+    from app.domain.enums import TeamRegistrationStatus
+    from models import League, Team, TeamRegistration, Tournament
+    from tests.utils import make_registrable_config
+
+    cfg = make_registrable_config(team_registration_open=True, player_registration_open=True)
+    league = League(url="lg", name="LG", registrable_config_id=cfg.id)
+    db.session.add(league)
+    db.session.flush()
+
+    tournament = Tournament(
+        url="lg-evt",
+        name="League Event",
+        start_date=datetime.now(timezone.utc),
+        end_date=datetime.now(timezone.utc) + timedelta(days=1),
+        league_id=league.url,
+    )
+    db.session.add(tournament)
+    db.session.flush()
+
+    to_user = _make_player("lg_to", "LG TO")
+    db.session.add(TO(user_id=to_user.id, user_type="player", event=None, league_id=league.url))
+
+    team = Team(id="lg_team", name="LG Team", pw_hash="dummy_hash")
+    db.session.add(team)
+    db.session.flush()
+    db.session.add(
+        TeamRegistration(
+            event=None,
+            league_id=league.url,
+            team=team.id,
+            pseudonym="LG Pseudonym",
+            status=TeamRegistrationStatus.CONFIRMED,
+        )
+    )
+
+    player = _make_player("lg_p1", "LG P1")
+    db.session.add(
+        PlayerRegistration(
+            event=None,
+            league_id=league.url,
+            player=player.id,
+            team=team.id,
+            jersey_number="7",
+            jersey_name="P1",
+            status=RegistrationStatus.CONFIRMED,
+            paid=True,
+        )
+    )
+
+    sidecomp = SideComp(event=tournament.url, name="LG SC", type="DUELING", registration_open=registration_open)
+    db.session.add(sidecomp)
+    db.session.commit()
+
+    return {
+        "tournament": tournament,
+        "to_user": to_user,
+        "player": player,
+        "sidecomp": sidecomp,
+    }
+
+
 def test_sidecomp_has_created_at(test_db, tournament):
     sc = SideComp(event=tournament.url, name="Dueling 1v1", type="DUELING")
     db.session.add(sc)
@@ -275,6 +339,20 @@ def test_register_player_succeeds_when_event_registered(test_db, tournament):
     assert reg.registered_by_to is False
 
 
+def test_register_player_succeeds_with_league_scoped_registration(test_db):
+    ctx = _make_league_sidecomp_context(registration_open=True)
+
+    from app.services.sidecomp_service import SideCompService
+
+    res = SideCompService.register_player(ctx["sidecomp"].id, player_id=ctx["player"].id)
+
+    assert isinstance(res, Ok)
+    reg = res.unwrap()
+    assert reg.comp == ctx["sidecomp"].id
+    assert reg.player == ctx["player"].id
+    assert reg.registered_by_to is False
+
+
 def test_register_player_no_event_registration(test_db, tournament):
     p = _make_player()
     sc = SideComp(event=tournament.url, name="A", type="DUELING", registration_open=True)
@@ -380,6 +458,25 @@ def test_register_player_as_to_succeeds(test_db, tournament):
     )
     assert isinstance(res, Ok)
     reg = res.unwrap()
+    assert reg.registered_by_to is True
+
+
+def test_register_player_as_to_succeeds_with_league_scoped_registration(test_db):
+    ctx = _make_league_sidecomp_context()
+
+    from app.services.sidecomp_service import SideCompService
+
+    res = SideCompService.register_player_as_to(
+        ctx["sidecomp"].id,
+        actor_user_id=ctx["to_user"].id,
+        actor_user_type="player",
+        player_id=ctx["player"].id,
+    )
+
+    assert isinstance(res, Ok)
+    reg = res.unwrap()
+    assert reg.comp == ctx["sidecomp"].id
+    assert reg.player == ctx["player"].id
     assert reg.registered_by_to is True
 
 
@@ -830,6 +927,20 @@ def test_route_detail_viewer_flags_already_registered(app, client, tournament):
     payload = resp.get_json()
     assert payload["viewer_can_register"] is False
     assert payload["viewer_is_registered_in_comp"] is True
+
+
+def test_route_detail_viewer_can_register_with_league_scoped_registration(app, client, test_db):
+    with app.app_context():
+        ctx = _make_league_sidecomp_context(registration_open=True)
+        comp_id = ctx["sidecomp"].id
+        login_as(client, ctx["player"])
+
+    resp = client.get(f"/_api/sidecomps/{comp_id}")
+
+    assert resp.status_code == 200
+    payload = resp.get_json()
+    assert payload["viewer_can_register"] is True
+    assert payload["viewer_is_registered_in_comp"] is False
 
 
 def test_route_detail_viewer_flags_to(app, client, tournament):

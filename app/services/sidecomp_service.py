@@ -113,6 +113,22 @@ class SideCompService:
         return Ok(None)
 
     @staticmethod
+    def _confirmed_player_registration_for_tournament(tournament_url: str, player_id: str):
+        from app.domain.enums import RegistrationStatus
+        from app.services.registration_resolver import player_registrations_for_tournament
+        from models import Tournament
+
+        tournament = Tournament.query.get(tournament_url)
+        if tournament is None:
+            return None
+
+        registrations = player_registrations_for_tournament(tournament, statuses=[RegistrationStatus.CONFIRMED])
+        for registration in registrations:
+            if registration.player == player_id:
+                return registration
+        return None
+
+    @staticmethod
     @allow_Q
     def create(
         tournament_url: str,
@@ -327,9 +343,7 @@ class SideCompService:
             found, player not registered for the parent event, or duplicate
             registration).
         """
-        from app.domain.enums import RegistrationStatus
         from models import (
-            PlayerRegistration,
             SideComp,
             SideCompRegistration,
         )
@@ -341,11 +355,7 @@ class SideCompService:
         if not sc.registration_open:
             return Err(RegistrationClosedError("This side competition is not open for registration"))
 
-        event_reg = PlayerRegistration.query.filter_by(
-            event=sc.event,
-            player=player_id,
-            status=RegistrationStatus.CONFIRMED,
-        ).first()
+        event_reg = SideCompService._confirmed_player_registration_for_tournament(sc.event, player_id)
         if not event_reg:
             return Err(ValidationError("You must be registered for the event before joining a side competition"))
 
@@ -389,10 +399,8 @@ class SideCompService:
             found, actor not a TO, target player not found, target not
             registered for the parent event, or duplicate registration).
         """
-        from app.domain.enums import RegistrationStatus
         from models import (
             Player,
-            PlayerRegistration,
             SideComp,
             SideCompRegistration,
         )
@@ -407,11 +415,7 @@ class SideCompService:
         if target is None:
             return Err(ValidationError("Player not found"))
 
-        event_reg = PlayerRegistration.query.filter_by(
-            event=sc.event,
-            player=player_id,
-            status=RegistrationStatus.CONFIRMED,
-        ).first()
+        event_reg = SideCompService._confirmed_player_registration_for_tournament(sc.event, player_id)
         if not event_reg:
             return Err(ValidationError("Player is not registered for this event"))
 
