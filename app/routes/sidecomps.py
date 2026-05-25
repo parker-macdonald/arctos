@@ -240,7 +240,7 @@ def deregister_player_as_to(comp_id: int):
 @bp.route("/sidecomps/<int:comp_id>/eligible-players", methods=["GET"])
 @login_required
 def eligible_players(comp_id: int):
-    """TO-only: list players registered for the event but not yet in this side comp."""
+    """TO-only: list event-registered players with side competition status."""
     from app.domain.enums import RegistrationStatus
     from app.services.registration_resolver import (
         player_registrations_for_tournament,
@@ -263,13 +263,12 @@ def eligible_players(comp_id: int):
 
     tournament = Tournament.query.get(sc.event)
 
-    already_in = {r.player for r in SideCompRegistration.query.filter_by(comp=comp_id).all()}
+    sidecomp_regs = {r.player: r for r in SideCompRegistration.query.filter_by(comp=comp_id).all()}
 
     event_regs = player_registrations_for_tournament(tournament, statuses=[RegistrationStatus.CONFIRMED])
 
-    eligible = [er for er in event_regs if er.player not in already_in]
-    player_ids = [er.player for er in eligible]
-    team_ids = {er.team for er in eligible if er.team}
+    player_ids = [er.player for er in event_regs]
+    team_ids = {er.team for er in event_regs if er.team}
 
     players_by_id = {p.id: p for p in Player.query.filter(Player.id.in_(player_ids)).all()} if player_ids else {}
     team_pseudonyms = (
@@ -285,7 +284,9 @@ def eligible_players(comp_id: int):
             "team_id": er.team,
             "team_pseudonym": team_pseudonyms.get(er.team) if er.team else None,
             "jersey_name": er.jersey_name,
+            "sidecomp_registered": er.player in sidecomp_regs,
+            "entry_number": sidecomp_regs[er.player].entry_number if er.player in sidecomp_regs else None,
         }
-        for er in eligible
+        for er in event_regs
     ]
     return jsonify(out)

@@ -1200,7 +1200,7 @@ def test_delete_tournament_cascades_sidecomp_registrations(app, client, tourname
         assert SideCompRegistration.query.filter_by(comp=comp_id).count() == 0
 
 
-def test_route_eligible_players_excludes_already_registered(app, client, tournament):
+def test_route_eligible_players_marks_sidecomp_registered_players(app, client, tournament):
     with app.app_context():
         to_user = _make_player("to_user", "TO User")
         _make_to(tournament.url, to_user.id)
@@ -1218,9 +1218,12 @@ def test_route_eligible_players_excludes_already_registered(app, client, tournam
 
     resp = client.get(f"/_api/sidecomps/{comp_id}/eligible-players")
     assert resp.status_code == 200
-    ids = {row["player_id"] for row in resp.get_json()}
-    assert "p2" in ids
-    assert "p1" not in ids
+    rows_by_id = {row["player_id"]: row for row in resp.get_json()}
+    assert set(rows_by_id) == {"p1", "p2"}
+    assert rows_by_id["p1"]["sidecomp_registered"] is True
+    assert rows_by_id["p1"]["entry_number"] == 1
+    assert rows_by_id["p2"]["sidecomp_registered"] is False
+    assert rows_by_id["p2"]["entry_number"] is None
 
 
 def test_route_eligible_players_returns_league_scoped_registrations(app, client, test_db):

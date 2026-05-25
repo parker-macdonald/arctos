@@ -1,19 +1,12 @@
 use crate::api;
-use crate::types::EligiblePlayer;
+use crate::types::{EligiblePlayer, SideCompRegisterPlayerResponse};
 use crate::Route;
 use dioxus::prelude::*;
-
-#[derive(Clone, Debug, PartialEq)]
-struct LogEntry {
-    player_id: String,
-    player_name: String,
-}
 
 #[component]
 pub fn SideCompRegisterAsTo(url: String, comp_id: i32) -> Element {
     let mut eligible = use_signal(Vec::<EligiblePlayer>::new);
     let mut filter = use_signal(String::new);
-    let mut session_log = use_signal(Vec::<LogEntry>::new);
     let mut error = use_signal(|| None::<String>);
 
     use_effect(move || {
@@ -54,7 +47,7 @@ pub fn SideCompRegisterAsTo(url: String, comp_id: i32) -> Element {
                         .collect();
                     rsx! {
                         if rows.is_empty() {
-                            p { class: "text-muted", "No eligible players found." }
+                            p { class: "text-muted", "No players found." }
                         } else {
                             ul { class: "list-group mb-4",
                                 for p in rows.iter().cloned() {
@@ -62,25 +55,17 @@ pub fn SideCompRegisterAsTo(url: String, comp_id: i32) -> Element {
                                         key: "{p.player_id}",
                                         p: p.clone(),
                                         comp_id,
-                                        on_registered: move |entry: LogEntry| {
-                                            let pid = entry.player_id.clone();
-                                            session_log.write().insert(0, entry);
-                                            eligible.write().retain(|x| x.player_id != pid);
+                                        on_registered: move |registered: SideCompRegisterPlayerResponse| {
+                                            let player_id = registered.player_id.clone();
+                                            if let Some(row) = eligible.write().iter_mut().find(|x| x.player_id == player_id) {
+                                                row.sidecomp_registered = true;
+                                                row.entry_number = Some(registered.entry_number);
+                                            }
                                         },
                                         on_error: move |e| error.set(Some(e)),
                                     }
                                 }
                             }
-                        }
-                    }
-                }
-                h2 { "Session log ({session_log().len()})" }
-                if session_log().is_empty() {
-                    p { class: "text-muted", "No one registered yet." }
-                } else {
-                    ul { class: "list-group",
-                        for entry in session_log().iter() {
-                            li { class: "list-group-item", "{entry.player_name} (registered)" }
                         }
                     }
                 }
@@ -93,7 +78,7 @@ pub fn SideCompRegisterAsTo(url: String, comp_id: i32) -> Element {
 fn EligibleRow(
     p: EligiblePlayer,
     comp_id: i32,
-    on_registered: EventHandler<LogEntry>,
+    on_registered: EventHandler<SideCompRegisterPlayerResponse>,
     on_error: EventHandler<String>,
 ) -> Element {
     let mut busy = use_signal(|| false);
@@ -108,22 +93,32 @@ fn EligibleRow(
                     span { class: "text-muted ms-2", "({team})" }
                 }
             }
-            button {
-                class: "btn btn-sm btn-primary",
-                disabled: busy(),
-                onclick: move |_| {
-                    let pid = p_click.player_id.clone();
-                    let pname = p_click.player_name.clone();
-                    busy.set(true);
-                    spawn(async move {
-                        match api::sidecomp_to_register_player_as_to(comp_id, &pid).await {
-                            Ok(_) => on_registered.call(LogEntry { player_id: pid, player_name: pname }),
-                            Err(e) => on_error.call(e),
-                        }
-                        busy.set(false);
-                    });
-                },
-                if busy() { "Registering..." } else { "Quick Register" }
+            if p_render.sidecomp_registered {
+                span {
+                    class: "badge bg-success",
+                    if let Some(entry_number) = p_render.entry_number {
+                        "Registered #{entry_number}"
+                    } else {
+                        "Registered"
+                    }
+                }
+            } else {
+                button {
+                    class: "btn btn-sm btn-primary",
+                    disabled: busy(),
+                    onclick: move |_| {
+                        let pid = p_click.player_id.clone();
+                        busy.set(true);
+                        spawn(async move {
+                            match api::sidecomp_to_register_player_as_to(comp_id, &pid).await {
+                                Ok(registered) => on_registered.call(registered),
+                                Err(e) => on_error.call(e),
+                            }
+                            busy.set(false);
+                        });
+                    },
+                    if busy() { "Registering..." } else { "Quick Register" }
+                }
             }
         }
     }
