@@ -50,18 +50,11 @@ def _detail_payload(sc, registrants):
     viewer_can_register = False
     viewer_is_registered_in_comp = False
     if current_user.is_authenticated:
-        from app.domain.enums import RegistrationStatus
-        from models import PlayerRegistration
-
         viewer_is_to = PermissionService.is_tournament_organizer(sc.event, current_user)
         if is_player(current_user):
             viewer_is_registered_in_comp = any(reg.player == current_user.id for reg, _ in registrants)
             if not viewer_is_registered_in_comp and sc.registration_open:
-                event_reg = PlayerRegistration.query.filter_by(
-                    event=sc.event,
-                    player=current_user.id,
-                    status=RegistrationStatus.CONFIRMED,
-                ).first()
+                event_reg = SideCompService._confirmed_player_registration_for_tournament(sc.event, current_user.id)
                 viewer_can_register = event_reg is not None
 
     return {
