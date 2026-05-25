@@ -117,7 +117,6 @@ make certs
 ```bash
 ARCTOS_CORS_DEV=1
 ARCTOS_API_BASE=http://127.0.0.1:8081
-EXTERNAL_BASE_URL=your_public_domain_or_ip
 YOUTUBE_API_KEY=your_youtube_api_key
 GOOGLE_CLIENT_SECRET=your_google_client_secret
 GOOGLE_CLIENT_ID=your_google_client_id
@@ -140,7 +139,7 @@ python -c "import os; print(os.urandom(12).hex())"
 > traffic and are thus hosting the frontend and backend on different
 > ports.
 
-4. Start the app:
+1. Start the app:
 
 ```bash
 make run

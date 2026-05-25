@@ -283,7 +283,7 @@ pub fn Layout() -> Element {
                     " - "
                     Link { to: Route::Terms {}, "Terms" }
                 }
-                p { style: "font-size: 0.8em;", "Arctos is an independent project and does not belong to nor represent CAJA in any way." }
+                p { style: "font-size: 0.8em;", "Arctos is an independent project and does not belong to nor represent CAJA or the US NJA in any way." }
             }
         }
     }
