@@ -192,12 +192,18 @@ output files to somewhere that your reverse proxy can serve.
 | Goal | Command |
 |------|---------|
 | Run all tests | `make test` |
+| Run with coverage | `uv run pytest tests/ --cov=app --cov-report=term-missing` |
 | Lint | `make lint` |
 | Format | `make format` |
 | Apply migrations | `make db-backup && make db-migrate` |
 | Generate a migration | `make db-revision MSG="snake_case_message"` |
 | Start dev backend | `make dev` (HTTP, :5006) or `make run` (TLS, :8081) |
 | Start dev frontend | `make frontend` |
+
+Coverage is configured under `[tool.coverage.*]` in `pyproject.toml`
+with a soft `fail_under = 30` floor; current actual is around 33% with
+branch coverage on. See [`TESTING.md`](TESTING.md#coverage) for the
+HTML report path and how the threshold is meant to move.
 
 ## Conventions
 
