@@ -5,6 +5,12 @@ __pycache__/
 .pytest_cache/
 *.py[cod]
 
+# coverage output
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
 # secrets
 .env
 run

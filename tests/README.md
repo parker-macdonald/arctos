@@ -11,9 +11,13 @@ make test          # everything
 make unit          # unit tests only (-m unit)
 make integration   # integration tests only (-m integration)
 
-uv run pytest tests/ -k "registration"   # by name
-uv run pytest tests/ --cov=app           # coverage
+uv run pytest tests/ -k "registration"                          # by name
+uv run pytest tests/ --cov=app --cov-report=term-missing        # coverage
+uv run pytest tests/ --cov=app --cov-report=html                # HTML report → htmlcov/
 ```
+
+See [`TESTING.md`](../TESTING.md#coverage) for the coverage threshold
+and what's configured under `[tool.coverage.*]` in `pyproject.toml`.
 
 ## Layout
 
