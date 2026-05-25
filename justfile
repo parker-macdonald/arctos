@@ -143,10 +143,10 @@ db-current:
 db-history:
     @uv run alembic history
 
-# Snapshot the live SQLite database to backups/.
-db-backup:
+# Snapshot the live SQLite database to backups/. Pass an optional tag.
+db-backup tag="":
     @chmod +x scripts/backup_db.sh
-    @scripts/backup_db.sh
+    @scripts/backup_db.sh {{tag}}
 
 # Report rows that violate would-be-unique column groups.
 db-check-duplicates:
@@ -158,9 +158,28 @@ db-shell:
 
 # ── Docs ──────────────────────────────────────────────────────────────────────
 
-# Build Sphinx docs in Docker (no local Python deps needed).
-docs:
-    @cd docs && make html
+docs_image := "arctos-sphinx"
+
+# Build the Sphinx docs Docker image.
+docs-image:
+    @docker build -t {{docs_image}} -f build_system/Dockerfile .
+
+# Build the Sphinx docs in Docker (no local Python deps needed).
+docs: docs-image
+    #!/usr/bin/env bash
+    set -euo pipefail
+    docker run --rm \
+        --user "$(id -u):$(id -g)" \
+        -v "$(pwd):/project" \
+        -w /project \
+        {{docs_image}} \
+        sphinx-build --color -j auto -b html docs docs/_build/html
+    echo "Docs built: docs/_build/html/index.html"
+
+# Delete the Sphinx build output.
+docs-clean:
+    @rm -rf docs/_build
+    @echo "Cleaned docs/_build"
 
 # ── Misc ──────────────────────────────────────────────────────────────────────
 

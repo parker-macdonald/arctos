@@ -33,14 +33,14 @@ config (`alembic.ini`) lives at the repository root.
 
 Run everything via `uv run` so the project's pinned alembic version is used.
 
-| Goal | Command (Makefile shortcut in parens) |
+| Goal | Command (justfile shortcut in parens) |
 |---|---|
-| Stamp an existing DB at the current head (one-shot) | `uv run alembic stamp head` (`make db-baseline`) |
-| Apply all outstanding migrations | `uv run alembic upgrade head` (`make db-migrate`) |
+| Stamp an existing DB at the current head (one-shot) | `uv run alembic stamp head` (`just db-baseline`) |
+| Apply all outstanding migrations | `uv run alembic upgrade head` (`just db-migrate`, or `just db-migrate-safe` for backup-then-migrate) |
 | Roll back the most recent migration | `uv run alembic downgrade -1` |
-| Generate a new migration from model changes | `uv run alembic revision --autogenerate -m "snake_case_message"` (`make db-revision MSG=...`) |
-| Inspect the current revision applied to the DB | `uv run alembic current` |
-| Show the full revision history | `uv run alembic history` |
+| Generate a new migration from model changes | `uv run alembic revision --autogenerate -m "snake_case_message"` (`just db-revision "..."`) |
+| Inspect the current revision applied to the DB | `uv run alembic current` (`just db-current`) |
+| Show the full revision history | `uv run alembic history` (`just db-history`) |
 
 ## Pointing alembic at a different database
 

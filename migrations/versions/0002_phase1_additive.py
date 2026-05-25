@@ -23,7 +23,7 @@ Concretely, this migration does five things:
    reconciliation across many partial payments accumulates rounding error.
 
 3. **UNIQUE constraints on logically-unique column pairs**. Adding these requires the live data to be
-   free of duplicates first — operators run ``make db-check-duplicates``
+   free of duplicates first — operators run ``just db-check-duplicates``
    as a pre-flight gate. Constraints are implemented as ``UNIQUE`` indexes
    (``op.create_index(..., unique=True)``) because SQLite supports adding
    those directly, whereas adding a table-level ``UNIQUE`` constraint

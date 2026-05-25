@@ -22,7 +22,7 @@ it. The "Examples" section below shows the most common invocations.
 **Backup before a migration:**
 
 ```bash
-make db-backup                # writes backups/tournament-pre-migration-<ts>.db
+just db-backup                # writes backups/tournament-pre-migration-<ts>.db
 # or with a tag
 ./scripts/backup_db.sh "before-phase1"
 ```
@@ -30,7 +30,7 @@ make db-backup                # writes backups/tournament-pre-migration-<ts>.db
 **Check for duplicates before adding a UNIQUE constraint:**
 
 ```bash
-make db-check-duplicates
+just db-check-duplicates
 # or directly
 uv run python scripts/check_duplicates.py
 uv run python scripts/check_duplicates.py --db /path/to/snapshot.db

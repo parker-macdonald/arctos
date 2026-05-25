@@ -5,13 +5,13 @@ contributor's machine.
 
 ## How it's used
 
-The container is consumed exclusively from
-[`docs/Makefile`](../docs/Makefile). From the `docs/` directory:
+The container is consumed exclusively from the root `justfile`. From
+the repo root:
 
 ```bash
-make image     # build (or rebuild) the arctos-sphinx image
-make html      # build the docs (also runs `make image` if needed)
-make clean     # delete docs/_build
+just docs-image  # build (or rebuild) the arctos-sphinx image
+just docs        # build the docs (also runs `docs-image` if needed)
+just docs-clean  # delete docs/_build
 ```
 
 The full doc-building workflow is in
@@ -26,6 +26,5 @@ The full doc-building workflow is in
 After changing the Dockerfile, force a rebuild:
 
 ```bash
-cd docs
-make image && make html
+just docs-image && just docs
 ```

@@ -57,7 +57,7 @@ Pre-conditions:
 
 * Phase 3b has been live for at least one full tournament cycle with no
   fallbacks to the legacy columns and CI green.
-* ``make db-backup`` has been run immediately before applying this
+* ``just db-backup`` has been run immediately before applying this
   migration. The drops are irreversible at the data level — the
   ``downgrade`` recreates the columns as nullable but cannot recover
   values that were not preserved elsewhere.

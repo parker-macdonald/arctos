@@ -5,14 +5,14 @@ The documentation is built using [Sphinx](https://www.sphinx-doc.org/) inside a 
 ## Prerequisites
 
 - [Docker](https://docs.docker.com/get-docker/) must be installed and running.
-- `make` must be available (standard on Linux/macOS; on Windows use WSL or Git Bash).
+- `just` must be installed (`just setup` covers this on macOS / Ubuntu; otherwise see [just.systems](https://just.systems/)).
 
 ## Building
 
-From this directory (`docs/`), run:
+From the repo root:
 
 ```bash
-make html
+just docs
 ```
 
 This does two things automatically:
@@ -22,25 +22,25 @@ This does two things automatically:
 
 Open `docs/_build/html/index.html` in a browser to view the result.
 
-## Other Targets
+## Other Recipes
 
-| Target        | Description                                      |
-|---------------|--------------------------------------------------|
-| `make html`   | Build (or rebuild) the Docker image and generate HTML docs |
-| `make image`  | Build the Docker image only, without running a doc build |
-| `make clean`  | Delete the `_build/` output directory            |
+| Recipe              | Description                                                  |
+|---------------------|--------------------------------------------------------------|
+| `just docs`         | Build (or rebuild) the Docker image and generate HTML docs   |
+| `just docs-image`   | Build the Docker image only, without running a doc build     |
+| `just docs-clean`   | Delete the `docs/_build/` output directory                   |
 
 ## Rebuilding the Docker Image
 
 The Docker image is only built once and then cached by Docker. If you change `build_system/Dockerfile` (e.g. to add a new Sphinx extension), force a rebuild with:
 
 ```bash
-make image && make html
+just docs-image && just docs
 ```
 
-Or remove the cached image manually and re-run `make html`:
+Or remove the cached image manually and re-run `just docs`:
 
 ```bash
 docker rmi arctos-sphinx
-make html
+just docs
 ```

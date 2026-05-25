@@ -7,12 +7,12 @@ document [`TESTING.md`](../TESTING.md) at the repo root has the deeper
 ## Running
 
 ```bash
-make test          # everything
-make unit          # unit tests only (-m unit)
-make integration   # integration tests only (-m integration)
+just test          # everything
+just unit          # unit tests only (-m unit)
+just integration   # integration tests only (-m integration)
 
-uv run pytest tests/ -k "registration"   # by name
-uv run pytest tests/ --cov=app           # coverage
+just test -k registration   # by name (any pytest args after `just test`)
+just coverage               # coverage report
 ```
 
 ## Layout
@@ -142,7 +142,7 @@ will fail with "transaction already in progress".
 2. Mark it (`@pytest.mark.unit` or `@pytest.mark.integration`).
 3. Reuse fixtures from `conftest.py` - only write a new fixture if the
    shared ones don't fit.
-4. Run `make test` (or `make unit` / `make integration`) before
+4. Run `just test` (or `just unit` / `just integration`) before
    pushing.
 
 For best practices and gotchas, read [`TESTING.md`](../TESTING.md).

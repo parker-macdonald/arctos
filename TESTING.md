@@ -11,12 +11,12 @@ uv sync --group test
 ## Running Tests
 
 ```bash
-make test          # full suite
-make unit          # unit tests only (fast, no DB)
-make integration   # integration tests only
+just test          # full suite
+just unit          # unit tests only (fast, no DB)
+just integration   # integration tests only
 ```
 
-Without `make`:
+Without `just`:
 
 ```bash
 uv run pytest tests/

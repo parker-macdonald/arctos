@@ -10,19 +10,19 @@ managed by `db.create_all()`, stamp it at the current baseline so
 subsequent migrations can be applied normally:
 
 ```bash
-make db-baseline
+just db-baseline
 ```
 
 This only inserts a row into the `alembic_version` table; it does not
 modify any data. **Run this once per database, ever.** After this point,
-every schema change goes through `make db-migrate`.
+every schema change goes through `just db-migrate`.
 
 ## The deploy loop
 
 Every deploy follows the same shape:
 
 1. **Pull** the latest code: `git pull origin dev`
-2. **Backup** the database (always): `make db-backup <tag>`
+2. **Backup** the database (always): `just db-backup <tag>`
 3. **Apply** the change — depends on what kind of change it is (see below)
 4. **Verify** — depends on the change
 5. **Restart** the application service
@@ -59,23 +59,23 @@ git pull origin dev
 # Pre-flight: if this migration adds a UNIQUE constraint anywhere, the
 # live data must be free of duplicates first. Skip this step if the PR
 # description says no UNIQUE constraint is added.
-make db-check-duplicates    # must exit 0 to continue
+just db-check-duplicates    # must exit 0 to continue
 
 # Backup. Tag descriptively so you can find this snapshot later.
-make db-backup pre-<short-name-of-change>
+just db-backup pre-<short-name-of-change>
 
 # Apply.
-make db-migrate
+just db-migrate
 
 # Verify the new revision is the head.
-make db-current
+just db-current
 
 # Restart.
 ```
 
 **If the migration fails partway:** SQLite + alembic does its best to keep
 DDL in a transaction; usually nothing was applied and you can investigate,
-fix the migration, and re-run. If `make db-current` shows a half-applied
+fix the migration, and re-run. If `just db-current` shows a half-applied
 state, restore the backup (see [Rollback reference](#rollback-reference)).
 
 **If `db-check-duplicates` reports duplicates:** the unique constraint
@@ -95,7 +95,7 @@ doesn't know about the new tables yet.
 ```bash
 git pull origin dev
 
-make db-backup pre-<short-name-of-change>
+just db-backup pre-<short-name-of-change>
 
 uv run python scripts/<backfill_script_name>.py
 ```
@@ -138,13 +138,13 @@ If missing, do not deploy. Talk to the PR author.
 git pull origin dev
 
 # Backup with a final-sounding tag — this is the one that matters.
-make db-backup pre-cutover-FINAL
+just db-backup pre-cutover-FINAL
 
 # Stop the app. SQLite's DROP COLUMN rebuilds the table internally and
 # does not coexist well with concurrent writers.
 
-make db-migrate
-make db-current
+just db-migrate
+just db-current
 ```
 
 **If anything is wrong after this:** stop the app, restore the backup,
@@ -171,7 +171,7 @@ cp backups/tournament-<tag>-<ts>.db instance/tournament.db
 rm -f instance/tournament.db-shm instance/tournament.db-wal
 ```
 
-Verify with `make db-current` (should print whichever revision the backup
+Verify with `just db-current` (should print whichever revision the backup
 was taken at) and a smoke test before considering the rollback complete.
 
 ---
@@ -180,12 +180,12 @@ was taken at) and a smoke test before considering the rollback complete.
 
 | Command | Purpose |
 |---|---|
-| `make db-baseline` | One-shot — stamp alembic baseline on a DB that has never had alembic |
-| `make db-backup [tag]` | Snapshot to `backups/tournament-<tag>-<unix_ts>.db` |
-| `make db-check-duplicates` | Report rows that would block a future UNIQUE constraint |
-| `make db-migrate` | Apply all pending migrations (`alembic upgrade head`) |
-| `make db-current` | Show the revision currently applied to the database |
-| `make db-history` | Show the full revision history |
+| `just db-baseline` | One-shot — stamp alembic baseline on a DB that has never had alembic |
+| `just db-backup [tag]` | Snapshot to `backups/tournament-<tag>-<unix_ts>.db` |
+| `just db-check-duplicates` | Report rows that would block a future UNIQUE constraint |
+| `just db-migrate` | Apply all pending migrations (`alembic upgrade head`) |
+| `just db-current` | Show the revision currently applied to the database |
+| `just db-history` | Show the full revision history |
 
 ---
 
@@ -198,11 +198,11 @@ that touches the database or schema:
 ## Deploy
 
 **Type:** schema migration
-**Pre-flight:** `make db-check-duplicates` must exit 0
+**Pre-flight:** `just db-check-duplicates` must exit 0
 **Steps:**
-1. `make db-backup pre-add-unique-emails`
-2. `make db-migrate`
-3. `make db-current` → expect `0003_add_unique_emails (head)`
+1. `just db-backup pre-add-unique-emails`
+2. `just db-migrate`
+3. `just db-current` → expect `0003_add_unique_emails (head)`
 4. `sudo systemctl restart arctos`
 5. Smoke test: register a player, then register a second player with the
    same email — expect 4xx.
