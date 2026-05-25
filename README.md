@@ -80,8 +80,10 @@ Top-level files:
   production runs; `python run_app.py` runs the dev server.
 - `models.py` - re-exports `app.models.*` so both
   `from app.models import ...` and `from models import ...` work.
-- `Makefile` - the canonical command surface. Run `make` (or
-  `make help`) to see every target.
+- `Makefile` / `justfile` - the command surface. Run `make help` or
+  `just --list` to see every recipe. The two share recipe names; the
+  Makefile is the long-standing entry point and the justfile is the
+  in-progress migration target. Use whichever you have installed.
 - `pyproject.toml` - dependencies and tool config (ruff, mypy, pytest).
 - `alembic.ini` - Alembic config; the env file lives in
   `migrations/env.py`.

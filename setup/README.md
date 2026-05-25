@@ -1,17 +1,25 @@
 # `setup/` - system bootstrap scripts
 
 These scripts install the **system-level** dependencies required to
-build and run Arctos. They're invoked through `make setup` (which
-auto-detects your OS) - you shouldn't normally call them directly.
+build and run Arctos. They're invoked through `make setup` or
+`just setup` (which auto-detects your OS) - you shouldn't normally call
+them directly.
+
+> Either `make` or `just` works; the recipe names are the same. The
+> Makefile is the long-standing entry point; the `justfile` is the
+> in-progress migration target. See the root [`README.md`](../README.md)
+> for context.
 
 Application Python deps are not handled here; those live in
-`pyproject.toml` and install via `make install` (`uv sync`).
+`pyproject.toml` and install via `make install` / `just install`
+(`uv sync`).
 
-`make setup` dispatches to `setup-macos.sh` or `setup-ubuntu.sh` based
-on your OS; both scripts install platform packages (from `Brewfile` or
-`apt-packages.txt`) and then chain into `setup-python.sh`, which pins
-CPython 3.12, runs `uv sync --group dev`, and installs the pre-commit
-hook. See each script's header comments for the exact steps.
+`make setup` (or `just setup`) dispatches to `setup-macos.sh` or
+`setup-ubuntu.sh` based on your OS; both scripts install platform
+packages (from `Brewfile` or `apt-packages.txt`), install `uv` and
+`just`, and then chain into `setup-python.sh`, which pins CPython 3.12,
+runs `uv sync --group dev`, and installs the pre-commit hook. See each
+script's header comments for the exact steps.
 
 Other targets:
 
