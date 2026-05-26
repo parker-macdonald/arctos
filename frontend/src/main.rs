@@ -2,6 +2,7 @@
 
 mod api;
 mod components;
+mod display;
 mod pages;
 mod time_format;
 mod url_slug;

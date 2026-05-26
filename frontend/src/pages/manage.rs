@@ -70,6 +70,7 @@ pub fn Manage(url: String) -> Element {
     let mut team_searching = use_signal(|| false);
     let mut selected_team_for_register = use_signal(|| None::<TeamListItem>);
     let mut team_pseudonym_input = use_signal(String::new);
+    let mut team_shortname_input = use_signal(String::new);
     let mut team_submit_error = use_signal(|| None::<String>);
 
     // Session log for Quick Register tab
@@ -769,6 +770,7 @@ pub fn Manage(url: String) -> Element {
                                                         r#type: "button",
                                                         onclick: move |_| {
                                                             team_pseudonym_input.set(t.name.clone());
+                                                            team_shortname_input.set(String::new());
                                                             selected_team_for_register.set(Some(t.clone()));
                                                             team_search_query.set(String::new());
                                                             team_search_results.set(Vec::new());
@@ -796,6 +798,7 @@ pub fn Manage(url: String) -> Element {
                                                     onclick: move |_| {
                                                         selected_team_for_register.set(None);
                                                         team_pseudonym_input.set(String::new());
+                                                        team_shortname_input.set(String::new());
                                                     },
                                                     "Change"
                                                 }
@@ -812,12 +815,14 @@ pub fn Manage(url: String) -> Element {
                                                         };
                                                         let u = url_team_submit.clone();
                                                         let pseudonym = team_pseudonym_input();
+                                                        let shortname_raw = team_shortname_input();
+                                                        let shortname = if shortname_raw.trim().is_empty() { None } else { Some(shortname_raw) };
 
                                                         team_submit_error.set(None);
                                                         submitting.set(true);
 
                                                         spawn(async move {
-                                                            let result: Result<RegisterTeamAsToResponse, String> = api::register_team_as_to(&u, &team.id, &pseudonym).await;
+                                                            let result: Result<RegisterTeamAsToResponse, String> = api::register_team_as_to(&u, &team.id, &pseudonym, shortname.as_deref()).await;
                                                             submitting.set(false);
                                                             match result {
                                                                 Ok(res) if res.success => {
@@ -829,6 +834,7 @@ pub fn Manage(url: String) -> Element {
                                                                     });
                                                                     selected_team_for_register.set(None);
                                                                     team_pseudonym_input.set(String::new());
+                                                                    team_shortname_input.set(String::new());
                                                                     refresh.set(refresh() + 1);
                                                                 }
                                                                 Ok(res) => {
@@ -853,6 +859,22 @@ pub fn Manage(url: String) -> Element {
                                                         }
                                                         div { class: "form-text",
                                                             "How this team's name displays for this tournament. Defaults to the team's account name."
+                                                        }
+                                                    }
+
+                                                    div { class: "mb-3",
+                                                        label { r#for: "team_shortname", class: "form-label", "Short name (optional)" }
+                                                        input {
+                                                            r#type: "text",
+                                                            class: "form-control",
+                                                            id: "team_shortname",
+                                                            maxlength: "12",
+                                                            placeholder: "e.g. BCS",
+                                                            value: "{team_shortname_input()}",
+                                                            oninput: move |e| team_shortname_input.set(e.value()),
+                                                        }
+                                                        div { class: "form-text",
+                                                            "Used in schedules and brackets. Leave blank to auto-shorten."
                                                         }
                                                     }
 

@@ -45,6 +45,8 @@ def register_team_for_tournament(tournament_url: str):
 
     Form Data:
         pseudonym (str): Team display name for this tournament.
+        shortname (str, optional): Short alias (<= 12 chars) used in
+            space-constrained UI. Blank/missing stores ``NULL``.
 
     Returns:
         JSON ``{"success": true, "message": "..."}`` on success, or
@@ -57,7 +59,10 @@ def register_team_for_tournament(tournament_url: str):
         )
 
     res = RegistrationService.register_team(
-        Scope.event(tournament_url), current_user.id, request.form.get("pseudonym", "")
+        Scope.event(tournament_url),
+        current_user.id,
+        request.form.get("pseudonym", ""),
+        shortname=request.form.get("shortname", "") or None,
     )
     return json_from_result(
         res,
@@ -538,6 +543,8 @@ def register_team_as_to(tournament_url: str):
         team_id (str): ID of the existing team to register. Required.
         pseudonym (str): Per-tournament team display name. Optional;
             defaults to ``team.name`` when blank.
+        shortname (str, optional): Short alias (<= 12 chars) used in
+            space-constrained UI. Blank/missing stores ``NULL``.
 
     Returns:
         ``200`` with the resolved registration fields on success, or
@@ -555,6 +562,7 @@ def register_team_as_to(tournament_url: str):
         actor_user_type=current_user_type(),
         team_id=team_id,
         pseudonym=data.get("pseudonym", ""),
+        shortname=data.get("shortname"),
     )
     from models import Team
 
@@ -565,6 +573,7 @@ def register_team_as_to(tournament_url: str):
             "team_id": reg.team,
             "team_name": team.name if team else reg.team,
             "pseudonym": reg.pseudonym,
+            "shortname": reg.shortname,
         }
 
     return json_from_result(res, ok_to_payload=_checkin_team_payload)

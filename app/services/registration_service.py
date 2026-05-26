@@ -142,7 +142,12 @@ class RegistrationService:
 
     @staticmethod
     @allow_Q
-    def register_team(scope: Scope, team_id: str, pseudonym: str) -> Result["TeamRegistration", ArctosError]:
+    def register_team(
+        scope: Scope,
+        team_id: str,
+        pseudonym: str,
+        shortname: str | None = None,
+    ) -> Result["TeamRegistration", ArctosError]:
         from models import TeamRegistration, db
 
         match RegistrationService._load_scope_context(scope):
@@ -162,6 +167,7 @@ class RegistrationService:
             RegistrationService._require_team_registration_open_for_register(ctx.parent).Q()
 
         pseudonym = (pseudonym or "").strip()
+        normalised_shortname: str | None = (shortname or "").strip() or None
         if not pseudonym:
             return Err(ValidationError("Team pseudonym is required"))
         pn_err = team_pseudonym_char_error(pseudonym)
@@ -177,6 +183,7 @@ class RegistrationService:
                 return Err(ValidationError(f"Your team is already registered for this {scope_label}"))
             team_registration = existing_reg
             team_registration.pseudonym = pseudonym
+            team_registration.shortname = normalised_shortname
             team_registration.registered_at = now_utc_naive()
         else:
             if scope.is_league:
@@ -185,12 +192,14 @@ class RegistrationService:
                     league_id=scope.league_url,
                     team=team_id,
                     pseudonym=pseudonym,
+                    shortname=normalised_shortname,
                 )
             else:
                 team_registration = TeamRegistration(
                     event=scope.event_url,
                     team=team_id,
                     pseudonym=pseudonym,
+                    shortname=normalised_shortname,
                 )
 
         n_max = getattr(cfg, "n_max_teams", None) if cfg else None
@@ -442,6 +451,7 @@ class RegistrationService:
         actor_user_type: str,
         team_id: str,
         pseudonym: str = "",
+        shortname: str | None = None,
     ) -> Result["TeamRegistration", ArctosError]:
         """Tournament-organizer-driven team registration.
 
@@ -465,6 +475,7 @@ class RegistrationService:
             return Err(ValidationError("Team not found"))
 
         pseudonym_value = (pseudonym or "").strip() or team.name
+        normalised_shortname: str | None = (shortname or "").strip() or None
         pn_err = team_pseudonym_char_error(pseudonym_value)
         if pn_err:
             return Err(ValidationError(pn_err))
@@ -487,6 +498,7 @@ class RegistrationService:
                 event=tournament_url,
                 team=team_id,
                 pseudonym=pseudonym_value,
+                shortname=normalised_shortname,
             )
 
         try:
@@ -511,6 +523,7 @@ class RegistrationService:
                         raise _CapExceeded(n_max=n_max, confirmed_count=confirmed_count)
 
                 registration.pseudonym = pseudonym_value
+                registration.shortname = normalised_shortname
                 registration.status = TeamRegistrationStatus.CONFIRMED
                 registration.paid = True
                 registration.amount_paid = 0

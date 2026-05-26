@@ -444,6 +444,7 @@ fn EditTeamRegistrationContent(
     on_success: EventHandler<()>,
 ) -> Element {
     let mut pseudonym = use_signal(|| "".to_string());
+    let mut shortname = use_signal(|| "".to_string());
     let mut error = use_signal(|| None::<String>);
     let mut loading = use_signal(|| true);
 
@@ -461,7 +462,10 @@ fn EditTeamRegistrationContent(
                 }
             };
             match res {
-                Ok(r) => pseudonym.set(r.registration.pseudonym.unwrap_or_default()),
+                Ok(r) => {
+                    pseudonym.set(r.registration.pseudonym.unwrap_or_default());
+                    shortname.set(r.registration.shortname.clone().unwrap_or_default());
+                }
                 Err(e) => error.set(Some(e)),
             }
             loading.set(false);
@@ -476,8 +480,10 @@ fn EditTeamRegistrationContent(
         async move {
             loading.set(true);
             error.set(None);
+            let trimmed_short = shortname().trim().to_string();
             let req = UpdateTeamRegistrationRequest {
                 pseudonym: Some(pseudonym()),
+                shortname: Some(trimmed_short),
             };
             let res = match &ctx {
                 EditRegistrationContext::League { league_url } => {
@@ -523,6 +529,18 @@ fn EditTeamRegistrationContent(
                         oninput: move |e| pseudonym.set(e.value()),
                         required: true
                     }
+                }
+                div { class: "mb-3",
+                    label { class: "form-label", "Short name (optional)" }
+                    input {
+                        class: "form-control",
+                        "type": "text",
+                        id: "shortname",
+                        maxlength: "12",
+                        value: "{shortname}",
+                        oninput: move |e| shortname.set(e.value()),
+                    }
+                    div { class: "form-text", "Used in schedules and brackets. Leave blank to auto-shorten." }
                 }
             }
         }

@@ -19,6 +19,7 @@ from app.models.constants import (
     SHORT_CODE_LEN,
     SHORT_LABEL_LEN,
     SHORT_NAME_LEN,
+    SHORTNAME_LEN,
     URL_SLUG_LEN,
     USER_ID_LEN,
 )
@@ -38,6 +39,9 @@ class TeamRegistration(db.Model):  # type: ignore[misc]
         league_id: League URL slug, or ``None`` for event registrations.
         team: ID of the registering team.
         pseudonym: Team display name specific to this event / league.
+        shortname: Optional short alias used in space-constrained UI
+            (schedule cells, bracket lines, match cards). ``None`` means
+            "fall back to truncating the pseudonym".
         status: Registration status
             (:class:`~app.domain.enums.TeamRegistrationStatus`).
         registered_at: Timestamp of initial registration.
@@ -59,6 +63,7 @@ class TeamRegistration(db.Model):  # type: ignore[misc]
     league_id = db.Column(db.String(URL_SLUG_LEN), db.ForeignKey("leagues.url"), nullable=True)
     team = db.Column(db.String(USER_ID_LEN), db.ForeignKey("teams.id"), nullable=False)
     pseudonym = db.Column(db.String(SHORT_NAME_LEN), nullable=False)  # Team name for this tournament
+    shortname = db.Column(db.String(SHORTNAME_LEN), nullable=True)  # Optional short alias for layout-constrained UI
     status = db.Column(
         db.Enum(TeamRegistrationStatus), default=TeamRegistrationStatus.CONFIRMED
     )  # CONFIRMED, CANCELLED
