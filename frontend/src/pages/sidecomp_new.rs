@@ -1,19 +1,17 @@
 use crate::api;
+use crate::Route;
 use dioxus::prelude::*;
-
-fn sidecomps_tab_href(url: &str) -> String {
-    format!("/{url}?tab=sidecomps")
-}
 
 #[component]
 pub fn SideCompNew(url: String) -> Element {
+    let navigator = use_navigator();
     let mut name = use_signal(String::new);
     let mut type_ = use_signal(|| "DUELING".to_string());
     let mut description = use_signal(String::new);
     let mut error = use_signal(|| None::<String>);
     let mut submitting = use_signal(|| false);
 
-    let back_href = sidecomps_tab_href(&url);
+    let url_for_back = url.clone();
     let url_for_submit = url.clone();
 
     rsx! {
@@ -21,8 +19,11 @@ pub fn SideCompNew(url: String) -> Element {
             div { class: "col-12",
                 h1 { "Create side competition" }
                 div { class: "mb-3",
-                    a {
-                        href: "{back_href}",
+                    Link {
+                        to: Route::TournamentHomeWithTab {
+                            url: url_for_back.clone(),
+                            tab: "sidecomps".to_string(),
+                        },
                         class: "btn btn-link",
                         "<- Back"
                     }
@@ -40,9 +41,10 @@ pub fn SideCompNew(url: String) -> Element {
                         spawn(async move {
                             match api::sidecomp_create(&url_inner, &n, &t, d_opt.as_deref()).await {
                                 Ok(_) => {
-                                    if let Some(window) = web_sys::window() {
-                                        let _ = window.location().assign(&sidecomps_tab_href(&url_inner));
-                                    }
+                                    navigator.push(Route::TournamentHomeWithTab {
+                                        url: url_inner,
+                                        tab: "sidecomps".to_string(),
+                                    });
                                 }
                                 Err(e) => {
                                     error.set(Some(e));
