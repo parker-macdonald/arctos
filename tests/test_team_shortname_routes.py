@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from models import TeamRegistration, db
+from app.models import TeamRegistration, db, constants
 from tests.utils import login_as
 
 
@@ -50,7 +50,7 @@ def test_register_team_for_tournament_omits_shortname_stores_null(app, client, t
 
 
 @pytest.mark.integration
-def test_register_team_for_tournament_rejects_13_char_shortname(app, client, tournament, team):
+def test_register_team_for_tournament_rejects_too_long_shortname(app, client, tournament, team):
     with app.app_context():
         t = db.session.merge(tournament)
         tm = db.session.merge(team)
@@ -59,13 +59,13 @@ def test_register_team_for_tournament_rejects_13_char_shortname(app, client, tou
 
     resp = client.post(
         f"/_api/{tournament_url}/register-team",
-        data={"pseudonym": "Pseudo", "shortname": "x" * 13},
+        data={"pseudonym": "Pseudo", "shortname": "x" * (constants.SHORTNAME_LEN + 1)},
     )
     assert resp.status_code == 400
     body = resp.get_json() or {}
     haystack = str(body).lower()
     assert "shortname" in haystack
-    assert "12" in haystack
+    assert str(constants.SHORTNAME_LEN) in haystack
 
 
 @pytest.mark.integration

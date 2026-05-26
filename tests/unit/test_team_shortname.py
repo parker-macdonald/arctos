@@ -5,28 +5,30 @@ from __future__ import annotations
 import pytest
 
 from app.exceptions import ValidationError
-from models import TeamRegistration
+from app.models import TeamRegistration, constants
 
 
 @pytest.mark.unit
-def test_team_registration_accepts_12_char_shortname(test_db, tournament, team):
-    """A 12-char shortname is accepted; the column round-trips."""
-    reg = TeamRegistration(event=tournament.url, team=team.id, pseudonym="Pseudo", shortname="x" * 12)
+def test_team_registration_accepts_max_len_shortname(test_db, tournament, team):
+    """A SHORTNAME_LEN shortname is accepted; the column round-trips."""
+    reg = TeamRegistration(
+        event=tournament.url, team=team.id, pseudonym="Pseudo", shortname="x" * constants.SHORTNAME_LEN
+    )
     from models import db
 
     db.session.add(reg)
     db.session.commit()
-    assert reg.shortname == "x" * 12
+    assert reg.shortname == "x" * constants.SHORTNAME_LEN
 
 
 @pytest.mark.unit
-def test_team_registration_rejects_13_char_shortname(test_db, team):
-    """Length validator from issue #28 rejects a 13-char shortname."""
+def test_team_registration_rejects_too_long_shortname(test_db, team):
+    """Length validator from issue #28 rejects a too-long shortname."""
     reg = TeamRegistration(team=team.id, pseudonym="Pseudo")
     with pytest.raises(ValidationError) as exc:
-        reg.shortname = "x" * 13
+        reg.shortname = "x" * (constants.SHORTNAME_LEN + 1)
     assert "shortname" in str(exc.value)
-    assert "12" in str(exc.value)
+    assert str(constants.SHORTNAME_LEN) in str(exc.value)
 
 
 @pytest.mark.unit
