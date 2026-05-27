@@ -123,7 +123,10 @@ pub fn SideCompEdit(url: String, comp_id: i32) -> Element {
                         spawn(async move {
                             match api::sidecomp_delete(comp_id).await {
                                 Ok(_) => {
-                                    navigator.push(Route::SideCompsList { url: url_inner });
+                                    navigator.push(Route::TournamentHomeWithTab {
+                                        url: url_inner,
+                                        tab: "sidecomps".to_string(),
+                                    });
                                 }
                                 Err(e) => error.set(Some(e)),
                             }

@@ -15,7 +15,7 @@ pub fn SideCompDetail(url: String, comp_id: i32) -> Element {
         div { class: "row",
             div { class: "col-12",
                 Link {
-                    to: Route::SideCompsList { url: url_for_back },
+                    to: Route::TournamentHomeWithTab { url: url_for_back, tab: "sidecomps".to_string() },
                     class: "btn btn-link",
                     "<- Back to side competitions"
                 }

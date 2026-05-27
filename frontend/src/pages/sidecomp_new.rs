@@ -20,7 +20,10 @@ pub fn SideCompNew(url: String) -> Element {
                 h1 { "Create side competition" }
                 div { class: "mb-3",
                     Link {
-                        to: Route::SideCompsList { url: url_for_back },
+                        to: Route::TournamentHomeWithTab {
+                            url: url_for_back.clone(),
+                            tab: "sidecomps".to_string(),
+                        },
                         class: "btn btn-link",
                         "<- Back"
                     }
@@ -38,7 +41,10 @@ pub fn SideCompNew(url: String) -> Element {
                         spawn(async move {
                             match api::sidecomp_create(&url_inner, &n, &t, d_opt.as_deref()).await {
                                 Ok(_) => {
-                                    navigator.push(Route::SideCompsList { url: url_inner });
+                                    navigator.push(Route::TournamentHomeWithTab {
+                                        url: url_inner,
+                                        tab: "sidecomps".to_string(),
+                                    });
                                 }
                                 Err(e) => {
                                     error.set(Some(e));

@@ -216,6 +216,20 @@ fn preview_clips_for_upload(
 
 #[component]
 pub fn TournamentHome(url: String) -> Element {
+    rsx! {
+        TournamentHomeContent { url, initial_tab: None::<String> }
+    }
+}
+
+#[component]
+pub fn TournamentHomeWithTab(url: String, tab: String) -> Element {
+    rsx! {
+        TournamentHomeContent { url, initial_tab: Some(tab) }
+    }
+}
+
+#[component]
+fn TournamentHomeContent(url: String, initial_tab: Option<String>) -> Element {
     let url_for_data = url.clone();
     let navigator = use_navigator();
     let mut refresh = use_signal(|| 0u32);
@@ -291,7 +305,7 @@ pub fn TournamentHome(url: String) -> Element {
         async move { api::sidecomps_list(&u).await }
     });
 
-    let mut info_tab = use_signal(|| "info".to_string());
+    let mut info_tab = use_signal(|| None::<String>);
 
     {
         let url_for_upload_planning = url.clone();
@@ -467,6 +481,13 @@ pub fn TournamentHome(url: String) -> Element {
 
             {
                 let viewer_is_to = is_current_user_to(me_res.read().as_ref(), &d.to_entries);
+                let active_info_tab = info_tab().unwrap_or_else(|| {
+                    if initial_tab.as_deref() == Some("sidecomps") {
+                        "sidecomps".to_string()
+                    } else {
+                        "info".to_string()
+                    }
+                });
                 rsx! {
             div { class: "row",
                 div { class: "col-md-8",
@@ -475,24 +496,24 @@ pub fn TournamentHome(url: String) -> Element {
                             ul { class: "nav nav-tabs card-header-tabs",
                                 li { class: "nav-item",
                                     a {
-                                        class: if info_tab() == "info" { "nav-link active" } else { "nav-link" },
+                                        class: if active_info_tab == "info" { "nav-link active" } else { "nav-link" },
                                         href: "#",
-                                        onclick: move |evt| { evt.prevent_default(); info_tab.set("info".to_string()); },
+                                        onclick: move |evt| { evt.prevent_default(); info_tab.set(Some("info".to_string())); },
                                         "Tournament Information"
                                     }
                                 }
                                 li { class: "nav-item",
                                     a {
-                                        class: if info_tab() == "sidecomps" { "nav-link active" } else { "nav-link" },
+                                        class: if active_info_tab == "sidecomps" { "nav-link active" } else { "nav-link" },
                                         href: "#",
-                                        onclick: move |evt| { evt.prevent_default(); info_tab.set("sidecomps".to_string()); },
+                                        onclick: move |evt| { evt.prevent_default(); info_tab.set(Some("sidecomps".to_string())); },
                                         "Side Competitions"
                                     }
                                 }
                             }
                         }
                         div { class: "card-body",
-                            if info_tab() == "info" {
+                            if active_info_tab == "info" {
                                 div { class: "row mb-3",
                                     div { class: "col-md-6",
                                         p { strong { "Start Date: " } "{format_date(&d.tournament.start_date)}" }
