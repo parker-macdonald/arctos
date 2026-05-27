@@ -10,6 +10,7 @@ from flask import (
     flash,
     jsonify,
     session,
+    current_app,
     url_for,
 )
 from flask_login import login_user, logout_user, login_required
