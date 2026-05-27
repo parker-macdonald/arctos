@@ -2,8 +2,10 @@
 
 mod api;
 mod components;
+mod display;
 mod pages;
 mod time_format;
+mod url_slug;
 
 #[cfg(target_arch = "wasm32")]
 mod record_idb;
@@ -68,6 +70,9 @@ enum Route {
     #[route("/leagues/:league_url/invitations")]
     LeagueInvitations { league_url: String },
 
+    #[route("/:url?:tab")]
+    TournamentHomeWithTab { url: String, tab: String },
+
     #[route("/:url")]
     TournamentHome { url: String },
 
@@ -88,6 +93,19 @@ enum Route {
 
     #[route("/:url/register")]
     TournamentRegister { url: String },
+
+    #[route("/:url/sidecomps/new")]
+    SideCompNew { url: String },
+
+    #[route("/:url/sidecomps/:comp_id")]
+    SideCompDetail { url: String, comp_id: i32 },
+
+    #[route("/:url/sidecomps/:comp_id/edit")]
+    SideCompEdit { url: String, comp_id: i32 },
+
+    #[route("/:url/sidecomps/:comp_id/register-player-as-to")]
+    SideCompRegisterAsTo { url: String, comp_id: i32 },
+
 
     #[route("/:url/manage")]
     Manage { url: String },

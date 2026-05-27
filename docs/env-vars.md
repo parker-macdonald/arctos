@@ -13,10 +13,6 @@ configure Arctos.
 `ARCTOS_PORT`
 : (default `5006`) port to run the backend on. 
 
-`EXTERNAL_BASE_URL`
-: url of the root, accessible from the internet. used for the oauth
-redirect url.
-
 `SQLALCHEMY_DATABASE_URI`
 : fairly self explanatory. URI to db.
 
@@ -49,6 +45,11 @@ go to google cloud console for these
 
 `GOOGLE_CLIENT_SECRET`
 : client secret.
+
+Google OAuth callback URLs are derived from the incoming request host. If the
+same server is reachable on multiple public domains, add each domain's
+`/_api/auth/google/callback` URL to the authorized redirect URIs in Google
+Cloud Console.
 
 
 ## S3 Bucket Config

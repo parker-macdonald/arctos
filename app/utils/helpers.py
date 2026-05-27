@@ -4,12 +4,10 @@ Anything that has a clearly named workflow belongs in a service; this
 module is the home for small, generally-applicable helpers that don't.
 """
 
-import hmac
-import hashlib
 import re
-from flask import current_app
 from flask_login import current_user
 from app.domain.enums import RegistrationStatus
+from app.services._common import current_user_type
 from models import Tournament, PlayerRegistration, TeamRegistration, Team
 
 
@@ -267,13 +265,13 @@ def check_tournament_access(tournament_url: str):
     if tournament.league_id:
         is_to = TO.query.filter_by(
             user_id=current_user.id,
-            user_type=current_user.__class__.__name__.lower(),
+            user_type=current_user_type(),
             league_id=tournament.league_id,
         ).first()
     if not is_to:
         is_to = TO.query.filter_by(
             user_id=current_user.id,
-            user_type=current_user.__class__.__name__.lower(),
+            user_type=current_user_type(),
             event=tournament_url,
         ).first()
 

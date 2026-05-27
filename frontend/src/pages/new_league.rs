@@ -1,4 +1,5 @@
 use crate::api;
+use crate::url_slug::{is_valid_url_slug, URL_SLUG_ALLOWED_HINT};
 use crate::Route;
 use dioxus::prelude::*;
 use wasm_bindgen::JsCast;
@@ -31,10 +32,14 @@ pub fn NewLeague() -> Element {
                             onsubmit: move |ev| {
                                 ev.prevent_default();
                                 error.set(None);
-                                let league_name = get_form_value("league_name");
-                                let league_url = get_form_value("league_url");
+                                let league_name = get_form_value("league_name").trim().to_string();
+                                let league_url = get_form_value("league_url").trim().to_string();
                                 if league_name.is_empty() || league_url.is_empty() {
                                     error.set(Some("League name and URL slug are required.".to_string()));
+                                    return;
+                                }
+                                if !is_valid_url_slug(&league_url) {
+                                    error.set(Some(URL_SLUG_ALLOWED_HINT.to_string()));
                                     return;
                                 }
                                 let nav = navigator.clone();
@@ -63,8 +68,16 @@ pub fn NewLeague() -> Element {
                             }
                             div { class: "mb-3",
                                 label { r#for: "league_url", class: "form-label", "League URL Slug" }
-                                input { r#type: "text", class: "form-control", id: "league_url", name: "league_url", required: true }
-                                div { class: "form-text", "Used in the URL, e.g. /leagues/norcal-2025" }
+                                input {
+                                    r#type: "text",
+                                    class: "form-control",
+                                    id: "league_url",
+                                    name: "league_url",
+                                    required: true,
+                                    pattern: r"[A-Za-z0-9\.\_\~\-]+",
+                                    title: URL_SLUG_ALLOWED_HINT,
+                                }
+                                div { class: "form-text", "Used in the URL, e.g. /leagues/norcal-2025. {URL_SLUG_ALLOWED_HINT}" }
                             }
                             div { class: "d-grid",
                                 button { r#type: "submit", class: "btn btn-primary", "Create League" }

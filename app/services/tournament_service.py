@@ -9,12 +9,12 @@ here.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from typing import Any, Dict, List
 
 from app.domain.enums import TeamRegistrationStatus
 from app.services.permission_service import PermissionService
 from app.utils.user_helpers import is_player, is_team
+from app.utils.datetime_helpers import now_utc_naive
 from app.error_values import Some
 
 
@@ -157,7 +157,7 @@ class TournamentService:
                             "waiver_status": waiver_status,
                         }
 
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        now = now_utc_naive()
         upcoming_tournaments: List[Any] = []
         past_tournaments: List[Any] = []
         for t in tournaments:

@@ -10,7 +10,7 @@ Workflow logic lives in ``app.services.match_service`` / ``match_actions_service
 just parse the request and convert the resulting ``Result`` to JSON.
 """
 
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, render_template, make_response
 from flask_login import login_required, current_user
 from datetime import datetime, timezone
 import json
@@ -29,9 +29,8 @@ from app.utils.dependencies import apply_match_dependencies
 from app.serializers.match_note_serializer import MatchNoteSerializer
 from app.utils.player_helpers import get_player_display_from_registration
 from app.utils.responses import json_error, json_success
-from app.utils.datetime_helpers import to_iso_z
-from app.error_values import Ok, Err
-from app.utils.result_helpers import json_from_result, public_error_message
+from app.utils.datetime_helpers import to_iso_z, now_utc_naive
+from app.utils.result_helpers import json_from_result
 from app.domain.enums import RegistrationStatus, MatchStatus, ScheduleType
 
 bp = Blueprint("matches", __name__, url_prefix="/_api")
@@ -40,8 +39,6 @@ bp = Blueprint("matches", __name__, url_prefix="/_api")
 @bp.route("/scoreboard")
 def scoreboard():
     """Scoreboard page for OBS overlay. Public endpoint."""
-    from flask import make_response
-
     tournament_url = request.args.get("tournament")
     field_name = request.args.get("field")
 
@@ -59,7 +56,7 @@ def scoreboard():
 
     def get_team_info(m):
         if not m:
-            return None, None, None, None
+            return None, None, None, None, None, None
         team1_obj = Team.query.get(m.team1) if m.team1 else None
         team2_obj = Team.query.get(m.team2) if m.team2 else None
 
@@ -81,11 +78,13 @@ def scoreboard():
         # Only include photos if there's an actual team object with a photo (not dynamic teams)
         team1_photo = team1_obj.profile_photo if (team1_obj and team1_obj.profile_photo and m.team1) else None
         team2_photo = team2_obj.profile_photo if (team2_obj and team2_obj.profile_photo and m.team2) else None
-        return team1_name, team2_name, team1_photo, team2_photo
+        team1_shortname = reg1.shortname if (reg1 and reg1.shortname) else None
+        team2_shortname = reg2.shortname if (reg2 and reg2.shortname) else None
+        return team1_name, team2_name, team1_photo, team2_photo, team1_shortname, team2_shortname
 
     # If there's an active match, show it
     if match:
-        team1_name, team2_name, team1_photo, team2_photo = get_team_info(match)
+        team1_name, team2_name, team1_photo, team2_photo, team1_shortname, team2_shortname = get_team_info(match)
 
         # Get points and calculate scores by set
         points = Point.query.filter_by(match=match.uuid).order_by(Point.stamp).all()
@@ -116,6 +115,8 @@ def scoreboard():
                 team2_name=team2_name,
                 team1_photo=team1_photo,
                 team2_photo=team2_photo,
+                team1_shortname=team1_shortname,
+                team2_shortname=team2_shortname,
                 scores_by_set=scores_by_set,
                 sets=sets,
                 stones_info=stones_info,
@@ -173,30 +174,48 @@ def scoreboard():
 
     # Get team info for previous and next matches
     if prev_match:
-        prev_team1_name, prev_team2_name, prev_team1_photo, prev_team2_photo = get_team_info(prev_match)
+        (
+            prev_team1_name,
+            prev_team2_name,
+            prev_team1_photo,
+            prev_team2_photo,
+            prev_team1_shortname,
+            prev_team2_shortname,
+        ) = get_team_info(prev_match)
         # Ensure we always have names (fallback if somehow None)
         prev_team1_name = prev_team1_name or "Team 1"
         prev_team2_name = prev_team2_name or "Team 2"
     else:
-        prev_team1_name, prev_team2_name, prev_team1_photo, prev_team2_photo = (
-            None,
-            None,
-            None,
-            None,
-        )
+        (
+            prev_team1_name,
+            prev_team2_name,
+            prev_team1_photo,
+            prev_team2_photo,
+            prev_team1_shortname,
+            prev_team2_shortname,
+        ) = (None, None, None, None, None, None)
 
     if next_match:
-        next_team1_name, next_team2_name, next_team1_photo, next_team2_photo = get_team_info(next_match)
+        (
+            next_team1_name,
+            next_team2_name,
+            next_team1_photo,
+            next_team2_photo,
+            next_team1_shortname,
+            next_team2_shortname,
+        ) = get_team_info(next_match)
         # Ensure we always have names (fallback if somehow None)
         next_team1_name = next_team1_name or "Team 1"
         next_team2_name = next_team2_name or "Team 2"
     else:
-        next_team1_name, next_team2_name, next_team1_photo, next_team2_photo = (
-            None,
-            None,
-            None,
-            None,
-        )
+        (
+            next_team1_name,
+            next_team2_name,
+            next_team1_photo,
+            next_team2_photo,
+            next_team1_shortname,
+            next_team2_shortname,
+        ) = (None, None, None, None, None, None)
 
     # Determine winner for previous match
     prev_winner = None
@@ -213,12 +232,16 @@ def scoreboard():
             prev_team2_name=prev_team2_name,
             prev_team1_photo=prev_team1_photo,
             prev_team2_photo=prev_team2_photo,
+            prev_team1_shortname=prev_team1_shortname,
+            prev_team2_shortname=prev_team2_shortname,
             prev_winner=prev_winner,
             next_match=next_match,
             next_team1_name=next_team1_name,
             next_team2_name=next_team2_name,
             next_team1_photo=next_team1_photo,
             next_team2_photo=next_team2_photo,
+            next_team1_shortname=next_team1_shortname,
+            next_team2_shortname=next_team2_shortname,
             tournament_url=tournament_url,
             field_name=field_name,
         )
@@ -244,7 +267,7 @@ def scoreboard_state():
 
     def get_team_info(m):
         if not m:
-            return None, None, None, None
+            return None, None, None, None, None, None
         team1_obj = Team.query.get(m.team1) if m.team1 else None
         team2_obj = Team.query.get(m.team2) if m.team2 else None
 
@@ -266,11 +289,13 @@ def scoreboard_state():
         # Only include photos if there's an actual team object with a photo (not dynamic teams)
         team1_photo = team1_obj.profile_photo if (team1_obj and team1_obj.profile_photo and m.team1) else None
         team2_photo = team2_obj.profile_photo if (team2_obj and team2_obj.profile_photo and m.team2) else None
-        return team1_name, team2_name, team1_photo, team2_photo
+        team1_shortname = reg1.shortname if (reg1 and reg1.shortname) else None
+        team2_shortname = reg2.shortname if (reg2 and reg2.shortname) else None
+        return team1_name, team2_name, team1_photo, team2_photo, team1_shortname, team2_shortname
 
     # If there's an active match, return match state
     if match:
-        team1_name, team2_name, team1_photo, team2_photo = get_team_info(match)
+        team1_name, team2_name, team1_photo, team2_photo, team1_shortname, team2_shortname = get_team_info(match)
 
         # Get points and calculate scores by set
         points = Point.query.filter_by(match=match.uuid).order_by(Point.stamp).all()
@@ -319,6 +344,8 @@ def scoreboard_state():
                 "team2_name": team2_name,
                 "team1_photo": team1_photo,
                 "team2_photo": team2_photo,
+                "team1_shortname": team1_shortname,
+                "team2_shortname": team2_shortname,
                 "scores_by_set": scores_by_set,
                 "sets": sets,
                 "stones_info": stones_info,
@@ -359,7 +386,14 @@ def scoreboard_state():
     # Get team info for previous and next matches
     prev_data = None
     if prev_match:
-        prev_team1_name, prev_team2_name, prev_team1_photo, prev_team2_photo = get_team_info(prev_match)
+        (
+            prev_team1_name,
+            prev_team2_name,
+            prev_team1_photo,
+            prev_team2_photo,
+            prev_team1_shortname,
+            prev_team2_shortname,
+        ) = get_team_info(prev_match)
         prev_team1_name = prev_team1_name or "Team 1"
         prev_team2_name = prev_team2_name or "Team 2"
         prev_data = {
@@ -367,12 +401,21 @@ def scoreboard_state():
             "team2_name": prev_team2_name,
             "team1_photo": prev_team1_photo,
             "team2_photo": prev_team2_photo,
+            "team1_shortname": prev_team1_shortname,
+            "team2_shortname": prev_team2_shortname,
             "winner": prev_match.match_winner,
         }
 
     next_data = None
     if next_match:
-        next_team1_name, next_team2_name, next_team1_photo, next_team2_photo = get_team_info(next_match)
+        (
+            next_team1_name,
+            next_team2_name,
+            next_team1_photo,
+            next_team2_photo,
+            next_team1_shortname,
+            next_team2_shortname,
+        ) = get_team_info(next_match)
         next_team1_name = next_team1_name or "Team 1"
         next_team2_name = next_team2_name or "Team 2"
         next_data = {
@@ -380,6 +423,8 @@ def scoreboard_state():
             "team2_name": next_team2_name,
             "team1_photo": next_team1_photo,
             "team2_photo": next_team2_photo,
+            "team1_shortname": next_team1_shortname,
+            "team2_shortname": next_team2_shortname,
         }
 
     return jsonify(
@@ -810,21 +855,21 @@ def get_selection_notes(tournament_url):
     player_ids_csv = request.args.get("player_ids", "")
 
     if not match_id or team_side not in ("team1", "team2"):
-        return json_error("match_id and team required")
+        return json_error("match_id and team required", status_code=400)
 
     tournament = Tournament.query.filter_by(url=tournament_url).first()
     if not tournament:
-        return json_error("Tournament not found")
+        return json_error("Tournament not found", status_code=404)
     from app.utils.helpers import match_event_urls_for_penalties
 
     event_urls = match_event_urls_for_penalties(tournament)
 
     match = Match.query.get(match_id)
     if not match or match.event not in event_urls:
-        return json_error("Match not found")
+        return json_error("Match not found", status_code=404)
 
     if not can_head_ref_match(tournament_url, current_user.id, match=match):
-        return json_error("bruh ur not a head ref")
+        return json_error("bruh ur not a head ref", status_code=403)
 
     team_id = match.team1 if team_side == "team1" else match.team2
     if not team_id:
@@ -929,14 +974,11 @@ def start_match_post(tournament_url):
         stones_per_set=request.form.get("stones_per_set"),
     )
 
-    match res:
-        case Ok(match_obj):
-            return (
-                jsonify({"success": True, "message": "Match started successfully!"}),
-                200,
-            )
-        case Err(err):
-            return jsonify({"success": False, "error": public_error_message(err)}), 400
+    return json_from_result(
+        res,
+        ok_to_payload=lambda _: {"message": "Match started successfully!"},
+        err_status_code=400,
+    )
 
 
 @bp.route("/<tournament_url>/run-match")
@@ -1146,11 +1188,11 @@ def finalize_match_post(tournament_url):
         return jsonify({"success": False, "error": "Please select a match winner"}), 400
 
     # Record completion time on the match using UTC
-    match.completed_time = datetime.now(timezone.utc).replace(tzinfo=None)
+    match.completed_time = now_utc_naive()
     match.finalized_by = current_user.id
     match.final_notes = request.form.get("final_notes", "")
     match.match_winner = match_winner
-    match.finalized_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    match.finalized_at = now_utc_naive()
 
     # Refresh camera stream start times when match ends (in case streams started late)
     if match.field:
@@ -1202,7 +1244,7 @@ def get_points(tournament_url):
     """Get points for a match."""
     match_id = request.args.get("match_id")
     if not match_id:
-        return json_error("Match ID required")
+        return json_error("Match ID required", status_code=400)
 
     from app.services.match_actions_service import MatchActionsService
 
@@ -1378,74 +1420,6 @@ def complete_match(tournament_url):
 
     res = MatchActionsService.complete_match(tournament_url, current_user.id, match_id=match_id)
     return json_from_result(res, ok_to_payload=lambda d: d)
-
-
-@bp.route("/stones")
-def stones_player():
-    """Stones audio player page with server time synchronization."""
-    import os
-    from flask import current_app
-    from flask_login import current_user
-
-    # Hardcoded list of usernames that can see all audio files
-    ALLOWED_USERS = os.environ.get("SILLY_USERS", "").split(":")  # Add usernames here
-
-    # Get the static folder path
-    static_folder = current_app.static_folder
-    stones_dir = os.path.join(static_folder, "stones")
-
-    # List all MP3 files in the stones directory
-    import re
-
-    mp3_files = []
-    if os.path.exists(stones_dir) and os.path.isdir(stones_dir):
-        for filename in os.listdir(stones_dir):
-            if filename.lower().endswith(".mp3"):
-                # Remove extension
-                name_without_ext = os.path.splitext(filename)[0]
-                # Remove numeric prefix (e.g., "1_", "2_", etc.) for display name
-                display_name = re.sub(r"^\d+_", "", name_without_ext)
-                # Extract numeric prefix for sorting (default to 0 if no prefix)
-                match = re.match(r"^(\d+)_", name_without_ext)
-                sort_order = int(match.group(1)) if match else 999999
-                # URL-encode the filename for use in URLs
-                from urllib.parse import quote
-
-                filename_encoded = quote(filename, safe="")
-
-                mp3_files.append(
-                    {
-                        "filename": filename,
-                        "filename_encoded": filename_encoded,
-                        "display_name": display_name,
-                        "sort_order": sort_order,
-                    }
-                )
-        # Sort by numeric prefix (sort_order), then by filename for consistent ordering
-        mp3_files.sort(key=lambda x: (x["sort_order"], x["filename"]))
-
-    # Filter files based on user permissions
-    # Only show "Classic" and "Snare" unless user is in the allowed list
-    user_can_see_all = current_user.is_authenticated and current_user.id in ALLOWED_USERS
-
-    if not user_can_see_all:
-        # Filter to only show "Classic" and "Snare" (case-insensitive)
-        mp3_files = [f for f in mp3_files if f["display_name"].lower() in ["classic", "snare"]]
-
-    return render_template("stones_player.html", mp3_files=mp3_files)
-
-
-@bp.route("/server-time")
-def server_time():
-    """Return current server time in unix timestamp format."""
-    import time
-
-    return jsonify(
-        {
-            "server_time": time.time(),
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        }
-    )
 
 
 @bp.route("/youtube-stream-start")

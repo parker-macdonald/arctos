@@ -1,4 +1,5 @@
 use crate::api;
+use crate::url_slug::{is_valid_url_slug, URL_SLUG_ALLOWED_HINT};
 use crate::Route;
 use dioxus::prelude::*;
 use wasm_bindgen::JsCast;
@@ -31,10 +32,14 @@ pub fn NewTournament() -> Element {
                             onsubmit: move |ev| {
                                 ev.prevent_default();
                                 error.set(None);
-                                let name = get_form_value("name");
-                                let url_slug = get_form_value("url");
+                                let name = get_form_value("name").trim().to_string();
+                                let url_slug = get_form_value("url").trim().to_string();
                                 if name.is_empty() || url_slug.is_empty() {
                                     error.set(Some("Name and URL slug are required.".to_string()));
+                                    return;
+                                }
+                                if !is_valid_url_slug(&url_slug) {
+                                    error.set(Some(URL_SLUG_ALLOWED_HINT.to_string()));
                                     return;
                                 }
                                 let nav = navigator.clone();
@@ -62,8 +67,16 @@ pub fn NewTournament() -> Element {
                             }
                             div { class: "mb-3",
                                 label { r#for: "url", class: "form-label", "URL Slug" }
-                                input { r#type: "text", class: "form-control", id: "url", name: "url", required: true }
-                                div { class: "form-text", "This will be used in the URL (e.g., /my-tournament)" }
+                                input {
+                                    r#type: "text",
+                                    class: "form-control",
+                                    id: "url",
+                                    name: "url",
+                                    required: true,
+                                    pattern: r"[A-Za-z0-9\.\_\~\-]+",
+                                    title: URL_SLUG_ALLOWED_HINT,
+                                }
+                                div { class: "form-text", "This will be used in the URL (e.g., /my-tournament). {URL_SLUG_ALLOWED_HINT}" }
                             }
                             div { class: "d-grid",
                                 button { r#type: "submit", class: "btn btn-primary", "Create Tournament" }

@@ -2,12 +2,15 @@
 Tournament site Flask application factory.
 """
 
+import logging
 from decimal import Decimal
 
 from flask import Flask
 from flask.json.provider import DefaultJSONProvider
 from flask_login import LoginManager
 import os
+
+logger = logging.getLogger(__name__)
 
 
 class ArctosJSONProvider(DefaultJSONProvider):
@@ -24,6 +27,7 @@ class ArctosJSONProvider(DefaultJSONProvider):
         if isinstance(o, Decimal):
             return float(o)
         return super().default(o)
+
 
 # Initialize extensions (will be initialized in create_app)
 db = None
@@ -72,6 +76,24 @@ def create_app(config: dict | None = None) -> Flask:
 
     app = Flask(__name__, static_folder="../static", template_folder="../templates")
     app.json = ArctosJSONProvider(app)
+
+    from app.utils.logging import get_or_configure_logger
+
+    _log_level = os.environ.get("ARCTOS_LOG_LEVEL", "INFO")
+    get_or_configure_logger(
+        "root",
+        logger=logging.getLogger(),
+        log_level=_log_level,
+        replace_handler=True,
+    )
+    get_or_configure_logger(
+        app.logger.name,
+        logger=app.logger,
+        log_level=_log_level,
+        replace_handler=True,
+        propagate=False,
+    )
+
     config = config or dict()
     # Default configuration
     app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev-key")
@@ -93,11 +115,6 @@ def create_app(config: dict | None = None) -> Flask:
     # Google OAuth configuration
     app.config["GOOGLE_CLIENT_ID"] = os.environ.get("GOOGLE_CLIENT_ID", "")
     app.config["GOOGLE_CLIENT_SECRET"] = os.environ.get("GOOGLE_CLIENT_SECRET", "")
-
-    # Public base URL for OAuth and redirects (e.g. https://example.com). When set, used for
-    # Google redirect_uri and post-login redirects so they work behind proxies and match
-    # the authorized redirect URI in Google Cloud Console. No trailing slash.
-    app.config["EXTERNAL_BASE_URL"] = os.environ.get("EXTERNAL_BASE_URL", "").rstrip("/")
 
     # S3 video storage: when S3_VIDEO_BUCKET is set, finalization uploads finished videos to S3.
     app.config["S3_VIDEO_BUCKET"] = os.environ.get("S3_VIDEO_BUCKET", "").strip() or None
@@ -190,7 +207,7 @@ def create_app(config: dict | None = None) -> Flask:
                         cur.close()
 
     except Exception:
-        pass
+        logger.exception("Failed to register SQLite pragma listener")
 
     # Initialize login manager
     login_manager.init_app(app)
@@ -222,6 +239,7 @@ def create_app(config: dict | None = None) -> Flask:
     from app.routes.matches import bp as matches_bp
     from app.routes.notes import bp as notes_bp
     from app.routes.registration import bp as registration_bp
+    from app.routes.sidecomps import bp as sidecomps_bp
     from app.routes._api import bp as _api_bp
 
     app.register_blueprint(_api_bp)
@@ -230,6 +248,7 @@ def create_app(config: dict | None = None) -> Flask:
     app.register_blueprint(matches_bp)
     app.register_blueprint(notes_bp)
     app.register_blueprint(registration_bp)
+    app.register_blueprint(sidecomps_bp)
 
     # Register template filters
     from app import filters
@@ -322,20 +341,26 @@ def create_app(config: dict | None = None) -> Flask:
             from app.utils.scheduling import recompute_all_match_times
 
             now = datetime.now(timezone.utc)
-            for t in Tournament.query.all():
-                if t.end_date is None:
+            # Materialise the (url, end_date) pairs up front so iteration is
+            # decoupled from the session: recompute_all_match_times commits in
+            # the global session, which expires every still-pending ORM row in
+            # the iterator and would otherwise raise DetachedInstanceError on
+            # the next access.
+            tournaments = [(t.url, t.end_date) for t in Tournament.query.all()]
+            db.session.remove()
+            for url, end_date in tournaments:
+                if end_date is None:
                     not_complete = True
                 else:
-                    end_utc = t.end_date.replace(tzinfo=timezone.utc) if t.end_date.tzinfo is None else t.end_date
+                    end_utc = end_date.replace(tzinfo=timezone.utc) if end_date.tzinfo is None else end_date
                     not_complete = end_utc >= now
                 if not_complete:
                     try:
-                        recompute_all_match_times(t.url)
+                        recompute_all_match_times(url)
                     except Exception:
-                        pass
-                    db.session.remove()
+                        logger.exception("recompute_all_match_times failed for tournament %s", url)
     except Exception:
-        pass
+        logger.exception("Tournament boot-time recompute pass failed")
 
     # On boot: resume any YouTube uploads that were left in-progress before a restart.
     # This is best-effort and only runs outside of tests.
@@ -365,8 +390,7 @@ def create_app(config: dict | None = None) -> Flask:
                                 daemon=True,
                             ).start()
     except Exception:
-        # Never block app startup due to background upload resume failures.
-        pass
+        logger.exception("YouTube upload resume failed")
 
     @app.errorhandler(413)
     def too_large(e):

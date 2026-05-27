@@ -1,2 +1,5 @@
+build-essential
 git
+libssl-dev
+pkg-config
 sqlite3

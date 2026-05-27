@@ -3,6 +3,20 @@ use crate::pages::layout::use_auth_invalidate;
 use crate::Route;
 use dioxus::prelude::*;
 
+fn next_url_from_query() -> Option<String> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let window = web_sys::window()?;
+        let search = window.location().search().ok()?;
+        let params = web_sys::UrlSearchParams::new_with_str(&search).ok()?;
+        params.get("next").filter(|s| s.starts_with('/'))
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        None
+    }
+}
+
 #[component]
 pub fn Login() -> Element {
     let mut username = use_signal(|| String::new());
@@ -32,11 +46,12 @@ pub fn Login() -> Element {
                                 err.set(None);
                                 let nav = navigator.clone();
                                 let mut auth_invalidate = auth_invalidate;
+                                let next = next_url_from_query();
                                 spawn(async move {
                                     match api::login(&u, &p).await {
                                         Ok(_) => {
                                             auth_invalidate.set(auth_invalidate() + 1);
-                                            let _ = nav.push("/");
+                                            let _ = nav.push(next.as_deref().unwrap_or("/"));
                                         }
                                         Err(e) => err.set(Some(e)),
                                     }

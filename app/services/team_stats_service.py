@@ -12,8 +12,10 @@ from app.domain.enums import ScheduleType
 from app.services.registration_resolver import team_registrations_for_tournament
 
 
-def _pseudonym_and_photo_maps(team_id: str, reg_by_team: dict, team_by_id: dict) -> tuple[str | None, str | None]:
-    """Resolve a team's display name and profile photo from preloaded maps.
+def _pseudonym_and_photo_maps(
+    team_id: str, reg_by_team: dict, team_by_id: dict
+) -> tuple[str | None, str | None, str | None]:
+    """Resolve a team's display name, profile photo, and shortname from preloaded maps.
 
     Args:
         team_id: The team's unique identifier.
@@ -23,21 +25,23 @@ def _pseudonym_and_photo_maps(team_id: str, reg_by_team: dict, team_by_id: dict)
             :class:`~app.models.user.Team`.
 
     Returns:
-        A ``(pseudonym, profile_photo)`` tuple.  *pseudonym* falls back to
-        the team name, then the team ID.  *profile_photo* is ``None`` when
-        the team record is not found.
+        A ``(pseudonym, profile_photo, shortname)`` tuple.  *pseudonym* falls
+        back to the team name, then the team ID.  *profile_photo* is ``None``
+        when the team record is not found.  *shortname* is the registration's
+        shortname when present, otherwise ``None``.
     """
     if not team_id:
-        return None, None
+        return None, None, None
     reg = reg_by_team.get(team_id)
     pseudonym = reg.pseudonym if reg and reg.pseudonym else None
+    shortname = reg.shortname if (reg and reg.shortname) else None
     team = team_by_id.get(team_id)
     profile_photo = team.profile_photo if team else None
     if not pseudonym and team:
         pseudonym = team.name
     if not pseudonym:
         pseudonym = team_id
-    return pseudonym, profile_photo
+    return pseudonym, profile_photo, shortname
 
 
 def compute_team_stats(matches: list, tournament, include_ribbon: bool = False) -> list[dict]:
@@ -56,8 +60,8 @@ def compute_team_stats(matches: list, tournament, include_ribbon: bool = False) 
 
     Returns:
         List of dicts, each with keys: ``id``, ``pseudonym``,
-        ``profile_photo``, ``matches_won``, ``matches_lost``,
-        ``points_won``, ``points_lost``.
+        ``shortname``, ``profile_photo``, ``matches_won``,
+        ``matches_lost``, ``points_won``, ``points_lost``.
     """
     from models import Point, Team
 
@@ -97,12 +101,13 @@ def compute_team_stats(matches: list, tournament, include_ribbon: bool = False) 
                 continue
             if tid not in team_stats:
                 if str(tid).startswith("tag::") or "::" in str(tid):
-                    pseudonym, profile_photo = tid, None
+                    pseudonym, profile_photo, shortname = tid, None, None
                 else:
-                    pseudonym, profile_photo = _pseudonym_and_photo_maps(tid, reg_by_team, team_by_id)
+                    pseudonym, profile_photo, shortname = _pseudonym_and_photo_maps(tid, reg_by_team, team_by_id)
                 team_stats[tid] = {
                     "id": tid,
                     "pseudonym": pseudonym or tid,
+                    "shortname": shortname,
                     "profile_photo": profile_photo,
                     "matches_won": 0,
                     "matches_lost": 0,

@@ -8,15 +8,18 @@ from tests.utils import login_as
 
 @pytest.mark.integration
 def test_tournament_manage_requires_to(app, client, tournament, player, test_db):
-    """Non-TO players are redirected away from the manage page."""
-    # Not a TO -> redirect
+    """Non-TO players are denied access to the manage page.
+
+    /_api routes are JSON-preferring, so the decorator returns 403 JSON
+    rather than an HTML redirect.
+    """
     with app.app_context():
         t = db.session.merge(tournament)
         p = db.session.merge(player)
         login_as(client, p)
 
     resp = client.get(f"/_api/{t.url}/export-schedule", follow_redirects=False)
-    assert resp.status_code in (301, 302, 303, 307, 308)
+    assert resp.status_code == 403
 
 
 @pytest.mark.integration

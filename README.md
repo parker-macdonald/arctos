@@ -117,7 +117,6 @@ make certs
 ```bash
 ARCTOS_CORS_DEV=1
 ARCTOS_API_BASE=http://127.0.0.1:8081
-EXTERNAL_BASE_URL=your_public_domain_or_ip
 YOUTUBE_API_KEY=your_youtube_api_key
 GOOGLE_CLIENT_SECRET=your_google_client_secret
 GOOGLE_CLIENT_ID=your_google_client_id
@@ -140,7 +139,7 @@ python -c "import os; print(os.urandom(12).hex())"
 > traffic and are thus hosting the frontend and backend on different
 > ports.
 
-4. Start the app:
+1. Start the app:
 
 ```bash
 make run
@@ -179,10 +178,10 @@ Install the Dioxus CLI:
 cargo install dioxus-cli
 ```
 
-then (for development) simply `cd frontend` and serve the app:
+then (for development) serve the app:
 
 ```bash
-dx serve
+make frontend            # equivalent to `cd frontend && dx serve`
 ```
 
 In production, you should run `dx bundle --release` and copy the
@@ -197,8 +196,8 @@ output files to somewhere that your reverse proxy can serve.
 | Format | `make format` |
 | Apply migrations | `make db-backup && make db-migrate` |
 | Generate a migration | `make db-revision MSG="snake_case_message"` |
-| Start dev backend | `make run` (or `python run_app.py` for Werkzeug) |
-| Start dev frontend | `cd frontend && dx serve` |
+| Start dev backend | `make dev` (HTTP, :5006) or `make run` (TLS, :8081) |
+| Start dev frontend | `make frontend` |
 
 ## Conventions
 

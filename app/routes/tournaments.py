@@ -10,7 +10,6 @@ request thread.
 from flask import (
     Blueprint,
     request,
-    flash,
     jsonify,
     current_app,
 )
@@ -36,6 +35,7 @@ from models import (
     League,
     db,
 )
+from app.services._common import current_user_type
 from app.utils.helpers import (
     resolve_team_name_to_id,
     resolve_tag_to_team,
@@ -46,7 +46,9 @@ from app.utils.scheduling import (
     recompute_all_match_times,
 )
 from app.utils.name_validation import match_name_char_error
+from app.models.validators import URL_SLUG_ALLOWED_HINT, is_valid_url_slug
 from app.utils.decorators import require_tournament_organizer
+from app.utils.datetime_helpers import now_utc_naive
 
 from os import path, listdir
 
@@ -72,6 +74,7 @@ from app.domain.enums import (
     SetType,
 )
 from app.services.registration_resolver import is_player_registered
+from app.services.permission_service import PermissionService
 
 # for finalizing recordings which calls ffmpeg
 # only one worker bc ffmpeg does its own parallelism
@@ -158,20 +161,6 @@ def update_match_previous_link(match: Match, prev_match_id: str, tournament_url:
             old_next_match.previous_match = None
 
 
-def is_not_TO(tournament_url, message="Only tournament organizers can access this page"):
-    """
-    Legacy helper retained for compatibility.
-
-    Prefer `@require_tournament_organizer()` going forward.
-    """
-    from app.services.permission_service import PermissionService
-
-    if not PermissionService.is_tournament_organizer(tournament_url, current_user):
-        flash(message, "error")
-        return True
-    return False
-
-
 @bp.route("/create-tournament", methods=["POST"])
 @login_required
 def create_tournament():
@@ -193,8 +182,21 @@ def create_tournament():
         JSON ``{"success": true, "url": "<slug>"}`` on success, or error
         with HTTP 400/403.
     """
-    name = request.form["name"]
-    url = request.form["url"]
+    name = request.form["name"].strip()
+    url = request.form["url"].strip()
+
+    if not name or not url:
+        return (
+            jsonify(
+                {
+                    "success": False,
+                    "error": f"Name and URL slug are required. {URL_SLUG_ALLOWED_HINT}",
+                }
+            ),
+            400,
+        )
+    if not is_valid_url_slug(url):
+        return jsonify({"success": False, "error": URL_SLUG_ALLOWED_HINT}), 400
 
     if Tournament.query.filter_by(url=url).first():
         return (
@@ -208,12 +210,7 @@ def create_tournament():
         league = League.query.get(raw_league_id)
         if not league:
             return jsonify({"success": False, "error": "League not found"}), 400
-        is_league_to = TO.query.filter_by(
-            user_id=current_user.id,
-            user_type=current_user.__class__.__name__.lower(),
-            league_id=raw_league_id,
-        ).first()
-        if not is_league_to:
+        if not PermissionService.is_league_organizer(raw_league_id, current_user):
             return (
                 jsonify(
                     {
@@ -227,7 +224,7 @@ def create_tournament():
 
     from models import RegistrableConfig
 
-    start_date = datetime.now(timezone.utc).replace(tzinfo=None)
+    start_date = now_utc_naive()
     tournament = Tournament(
         url=url,
         name=name,
@@ -249,7 +246,7 @@ def create_tournament():
 
     to_entry = TO(
         user_id=current_user.id,
-        user_type=current_user.__class__.__name__.lower(),
+        user_type=current_user_type(),
         event=url,
     )
     db.session.add(to_entry)
@@ -281,11 +278,13 @@ def create_league():
             jsonify(
                 {
                     "success": False,
-                    "error": "League name and URL slug are required.",
+                    "error": f"League name and URL slug are required. {URL_SLUG_ALLOWED_HINT}",
                 }
             ),
             400,
         )
+    if not is_valid_url_slug(league_url):
+        return jsonify({"success": False, "error": URL_SLUG_ALLOWED_HINT}), 400
 
     if League.query.filter_by(url=league_url).first():
         return jsonify({"success": False, "error": "League URL already exists"}), 400
@@ -308,7 +307,7 @@ def create_league():
 
     to_entry = TO(
         user_id=current_user.id,
-        user_type=current_user.__class__.__name__.lower(),
+        user_type=current_user_type(),
         event=None,
         league_id=league_url,
     )
@@ -328,19 +327,9 @@ def create_league():
 
 
 @bp.route("/<tournament_url>/recompute-schedule", methods=["POST"])
-@login_required
+@require_tournament_organizer("Only tournament organizers can access this page")
 def recompute_schedule(tournament_url):
     """Force full recompute of match times as if a match were just edited (TO only)."""
-    if is_not_TO(tournament_url):
-        return (
-            jsonify(
-                {
-                    "success": False,
-                    "error": "Only tournament organizers can access this page",
-                }
-            ),
-            403,
-        )
     try:
         recompute_all_match_times(tournament_url)
         return (
@@ -440,7 +429,7 @@ def camera_url_api():
             return jsonify({"error": "Tournament and field parameters required"}), 400
 
         # Check if user is a TO for this tournament
-        if is_not_TO(tournament_url):
+        if not PermissionService.is_tournament_organizer(tournament_url, current_user):
             return (
                 jsonify({"error": "Unauthorized: You must be a TO for this tournament"}),
                 403,
@@ -600,7 +589,7 @@ def record_request_preview():
     field_name = (data.get("field") or request.args.get("field") or "").strip()
     if not tournament_url or not field_name:
         return jsonify({"error": "tournament and field required"}), 400
-    if is_not_TO(tournament_url):
+    if not PermissionService.is_tournament_organizer(tournament_url, current_user):
         return jsonify({"error": "Only tournament organizers can request preview"}), 403
     field = Field.query.filter_by(event=tournament_url, name=field_name).first()
     if not field:
@@ -618,7 +607,7 @@ def record_release_preview():
     field_name = (data.get("field") or request.args.get("field") or "").strip()
     if not tournament_url or not field_name:
         return jsonify({"error": "tournament and field required"}), 400
-    if is_not_TO(tournament_url):
+    if not PermissionService.is_tournament_organizer(tournament_url, current_user):
         return jsonify({"error": "Only tournament organizers can release preview"}), 403
     preview_store.clear_preview_requested(tournament_url, field_name)
     return jsonify({"success": True})
@@ -703,7 +692,7 @@ def record_preview_metadata_get():
     camera_name = (request.args.get("camera_name") or "camera").strip() or "camera"
     if not tournament_url or not field_name:
         return jsonify({"error": "tournament and field required"}), 400
-    if is_not_TO(tournament_url):
+    if not PermissionService.is_tournament_organizer(tournament_url, current_user):
         return (
             jsonify({"error": "Only tournament organizers can get preview metadata"}),
             403,
@@ -722,7 +711,7 @@ def record_preview_cameras():
     field_name = request.args.get("field", "").strip()
     if not tournament_url or not field_name:
         return jsonify({"error": "tournament and field required"}), 400
-    if is_not_TO(tournament_url):
+    if not PermissionService.is_tournament_organizer(tournament_url, current_user):
         return (
             jsonify({"error": "Only tournament organizers can list preview cameras"}),
             403,
@@ -746,7 +735,7 @@ def record_preview_frame_get():
     camera_name = (request.args.get("camera_name") or "camera").strip() or "camera"
     if not tournament_url or not field_name:
         return jsonify({"error": "tournament and field required"}), 400
-    if is_not_TO(tournament_url):
+    if not PermissionService.is_tournament_organizer(tournament_url, current_user):
         return (
             jsonify({"error": "Only tournament organizers can get preview frame"}),
             403,
@@ -1162,7 +1151,7 @@ def user_upload_video_footage(tournament_url: str):
     video_file.save(saved_abs_path)
 
     uploader_user_id = str(current_user.id)
-    uploader_user_type = current_user.__class__.__name__.lower()
+    uploader_user_type = current_user_type()
 
     app_obj = current_app._get_current_object()  # type: ignore[attr-defined]
     logger = current_app.logger
@@ -1352,7 +1341,7 @@ def _require_registered_player_for_upload(tournament_url: str):
     tournament = Tournament.query.filter_by(url=tournament_url).first()
     if not tournament:
         return None, (jsonify({"error": "Tournament not found"}), 404)
-    if current_user.__class__.__name__.lower() != "player":
+    if current_user_type() != "player":
         return None, (
             jsonify({"error": "Only registered players can upload footage"}),
             403,
@@ -1607,7 +1596,7 @@ def user_upload_video_footage_chunk(tournament_url: str):
         "batch_camera_name": batch_camera_name,
         "incoming_dir_name": incoming_dir_name,
         "uploaded_by_user_id": str(current_user.id),
-        "uploaded_by_user_type": current_user.__class__.__name__.lower(),
+        "uploaded_by_user_type": current_user_type(),
     }
     with open(meta_path, "w") as f:
         json.dump(meta, f)
@@ -1720,7 +1709,7 @@ def user_upload_video_footage_complete(tournament_url: str):
         batch_camera_name = co or path.splitext(path.basename(filename))[0] or "upload"
 
     uploader_user_id = str(current_user.id)
-    uploader_user_type = current_user.__class__.__name__.lower()
+    uploader_user_type = current_user_type()
 
     app_obj = current_app._get_current_object()  # type: ignore[attr-defined]
     logger = current_app.logger
@@ -1859,20 +1848,9 @@ def user_upload_list_cameras(tournament_url: str):
 
 
 @bp.route("/<tournament_url>/update-settings", methods=["POST"])
-@login_required
+@require_tournament_organizer("Only tournament organizers can access this page")
 def update_tournament_settings(tournament_url):
     """Update tournament settings."""
-    if is_not_TO(tournament_url):
-        return (
-            jsonify(
-                {
-                    "success": False,
-                    "error": "Only tournament organizers can access this page",
-                }
-            ),
-            403,
-        )
-
     tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
 
     tournament.name = request.form["name"]
@@ -1926,20 +1904,9 @@ def update_tournament_settings(tournament_url):
 
 
 @bp.route("/<tournament_url>/add-match", methods=["POST"])
-@login_required
+@require_tournament_organizer("Only tournament organizers can access this page")
 def add_match(tournament_url):
     """Add a match to tournament."""
-    if is_not_TO(tournament_url):
-        return (
-            jsonify(
-                {
-                    "success": False,
-                    "error": "Only tournament organizers can access this page",
-                }
-            ),
-            403,
-        )
-
     # Check if BREAK or JOIN is selected from the Match Type dropdown (renamed from 'dynamic')
     match_type_value = request.form.get("dynamic", "")
 
@@ -2171,20 +2138,9 @@ def add_match(tournament_url):
 
 
 @bp.route("/<tournament_url>/add-field", methods=["POST"])
-@login_required
+@require_tournament_organizer("Only tournament organizers can access this page")
 def add_field(tournament_url):
     """Add a field to tournament."""
-    if is_not_TO(tournament_url):
-        return (
-            jsonify(
-                {
-                    "success": False,
-                    "error": "Only tournament organizers can access this page",
-                }
-            ),
-            403,
-        )
-
     tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
 
     # Get camera URLs from form (camera[] array)
@@ -2204,20 +2160,9 @@ def add_field(tournament_url):
 
 
 @bp.route("/<tournament_url>/update-field", methods=["POST"])
-@login_required
+@require_tournament_organizer("Only tournament organizers can access this page")
 def update_field(tournament_url):
     """Update field."""
-    if is_not_TO(tournament_url):
-        return (
-            jsonify(
-                {
-                    "success": False,
-                    "error": "Only tournament organizers can access this page",
-                }
-            ),
-            403,
-        )
-
     field_id = request.form.get("field_id")
     if not field_id:
         return jsonify({"success": False, "error": "Field ID is required"}), 400
@@ -2368,20 +2313,9 @@ def update_field(tournament_url):
 
 
 @bp.route("/<tournament_url>/delete-field", methods=["POST"])
-@login_required
+@require_tournament_organizer("Only tournament organizers can access this page")
 def delete_field(tournament_url):
     """Delete field."""
-    if is_not_TO(tournament_url):
-        return (
-            jsonify(
-                {
-                    "success": False,
-                    "error": "Only tournament organizers can access this page",
-                }
-            ),
-            403,
-        )
-
     field_id = request.form.get("field_id")
     if not field_id:
         return jsonify({"success": False, "error": "Field ID is required"}), 400
@@ -2393,20 +2327,9 @@ def delete_field(tournament_url):
 
 
 @bp.route("/<tournament_url>/add-tag", methods=["POST"])
-@login_required
+@require_tournament_organizer("Only tournament organizers can access this page")
 def add_tag(tournament_url):
     """Add a tag to tournament."""
-    if is_not_TO(tournament_url):
-        return (
-            jsonify(
-                {
-                    "success": False,
-                    "error": "Only tournament organizers can access this page",
-                }
-            ),
-            403,
-        )
-
     tag = Tag(event=tournament_url, name=request.form["tag_name"])
 
     db.session.add(tag)
@@ -2416,20 +2339,9 @@ def add_tag(tournament_url):
 
 
 @bp.route("/<tournament_url>/delete-tag", methods=["POST"])
-@login_required
+@require_tournament_organizer("Only tournament organizers can access this page")
 def delete_tag(tournament_url):
     """Delete tag."""
-    if is_not_TO(tournament_url):
-        return (
-            jsonify(
-                {
-                    "success": False,
-                    "error": "Only tournament organizers can access this page",
-                }
-            ),
-            403,
-        )
-
     tag_id = request.form.get("tag_id")
     if not tag_id:
         return jsonify({"success": False, "error": "Tag ID is required"}), 400
@@ -2441,20 +2353,9 @@ def delete_tag(tournament_url):
 
 
 @bp.route("/<tournament_url>/update-match", methods=["POST"])
-@login_required
+@require_tournament_organizer("Only tournament organizers can access this page")
 def update_match(tournament_url):
     """Update match."""
-    if is_not_TO(tournament_url):
-        return (
-            jsonify(
-                {
-                    "success": False,
-                    "error": "Only tournament organizers can access this page",
-                }
-            ),
-            403,
-        )
-
     match_id = request.form.get("match_id")
     if not match_id:
         return jsonify({"success": False, "error": "Match ID is required"}), 400
@@ -2742,20 +2643,9 @@ def update_match(tournament_url):
 
 
 @bp.route("/<tournament_url>/update-all-references", methods=["POST"])
-@login_required
+@require_tournament_organizer("Only tournament organizers can access this page")
 def update_all_references(tournament_url):
     """Update all match references (winner/loser) for troubleshooting."""
-    if is_not_TO(tournament_url):
-        return (
-            jsonify(
-                {
-                    "success": False,
-                    "error": "Only tournament organizers can access this page",
-                }
-            ),
-            403,
-        )
-
     from app.utils.dependencies import apply_match_dependencies
 
     # Get all completed matches (have a winner; skipped matches are excluded)
@@ -2778,20 +2668,9 @@ def update_all_references(tournament_url):
 
 
 @bp.route("/<tournament_url>/push-back-matches", methods=["POST"])
-@login_required
+@require_tournament_organizer("Only tournament organizers can access this page")
 def push_back_matches(tournament_url):
     """Push all non-started matches backwards by a specified amount of time (in minutes)."""
-    if is_not_TO(tournament_url):
-        return (
-            jsonify(
-                {
-                    "success": False,
-                    "error": "Only tournament organizers can access this page",
-                }
-            ),
-            403,
-        )
-
     try:
         minutes = int(request.form.get("minutes", 0))
     except (ValueError, TypeError):
@@ -2847,6 +2726,7 @@ def tournament_autocomplete(tournament_url):
                     "type": "team",
                     "value": reg.team,  # Use team ID instead of pseudonym
                     "label": pseudonym,  # Display pseudonym in label
+                    "shortname": reg.shortname,
                     "id": reg.team,
                 }
             )
@@ -3014,20 +2894,9 @@ def validate_dsl(tournament_url):
 
 
 @bp.route("/<tournament_url>/delete", methods=["POST"])
-@login_required
+@require_tournament_organizer("Only tournament organizers can access this page")
 def delete_tournament(tournament_url):
     """Delete a tournament and all related data."""
-    if is_not_TO(tournament_url):
-        return (
-            jsonify(
-                {
-                    "success": False,
-                    "error": "Only tournament organizers can access this page",
-                }
-            ),
-            403,
-        )
-
     tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
 
     # Verify confirmation URL slug
@@ -3052,18 +2921,22 @@ def delete_tournament(tournament_url):
         Field,
         Tag,
         SideComp,
+        SideCompRegistration,
         SideCompResult,
         PenaltyType,
     )
 
     # Delete in order to respect foreign key constraints.
-    # Order: side comp results -> side comps; points & match notes -> matches;
+    # Order: side comp results & registrations -> side comps; points & match notes -> matches;
     # then penalty types, head refs, registrations, TOs, fields, tags; finally tournament.
 
     side_comps = SideComp.query.filter_by(event=tournament_url).all()
     side_comp_ids = [sc.id for sc in side_comps]
     if side_comp_ids:
         SideCompResult.query.filter(SideCompResult.comp.in_(side_comp_ids)).delete(synchronize_session=False)
+        SideCompRegistration.query.filter(SideCompRegistration.comp.in_(side_comp_ids)).delete(
+            synchronize_session=False
+        )
 
     SideComp.query.filter_by(event=tournament_url).delete(synchronize_session=False)
 
@@ -3121,7 +2994,7 @@ def add_to(tournament_url):
             403,
         )
 
-    if is_not_TO(tournament_url):
+    if not PermissionService.is_tournament_organizer(tournament_url, current_user):
         return (
             jsonify(
                 {
@@ -3199,7 +3072,7 @@ def remove_to(tournament_url):
             403,
         )
 
-    if is_not_TO(tournament_url):
+    if not PermissionService.is_tournament_organizer(tournament_url, current_user):
         return (
             jsonify(
                 {
@@ -3222,7 +3095,7 @@ def remove_to(tournament_url):
         return jsonify({"success": False, "error": "Invalid TO entry"}), 400
 
     # Prevent removing yourself (optional - you might want to allow this)
-    if to_to_remove.user_id == current_user.id and to_to_remove.user_type == current_user.__class__.__name__.lower():
+    if to_to_remove.user_id == current_user.id and to_to_remove.user_type == current_user_type():
         return (
             jsonify({"success": False, "error": "You cannot remove yourself as a TO"}),
             400,

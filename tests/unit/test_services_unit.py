@@ -6,6 +6,7 @@ from app.domain.enums import MatchStatus
 from app.error_values import Err, Ok
 from app.exceptions import RegistrationClosedError, ValidationError
 from app.services.match_service import MatchService
+from app.services._common import Scope
 from app.services.registration_service import RegistrationService
 from models import Match, Tournament, db
 from datetime import datetime, timezone
@@ -28,7 +29,7 @@ def test_registration_service_register_team_closed_raises(test_db, team):
     db.session.commit()
 
     tm = db.session.merge(team)
-    res = RegistrationService.register_team("closed", tm.id, "Pseudonym")
+    res = RegistrationService.register_team(Scope.event("closed"), tm.id, "Pseudonym")
     match res:
         case Err(err):
             assert isinstance(err, RegistrationClosedError)

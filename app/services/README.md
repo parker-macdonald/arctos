@@ -10,6 +10,19 @@ docstring to see what it covers. `dual_write.py` is the canonical
 interface for the four normalised join tables - call its helpers
 instead of querying those tables directly.
 
+## `RegistrationService` methods
+
+The registration service provides the following key methods:
+
+- **`register_team(tournament_url, team_id, pseudonym)`** — Register a team to a
+  tournament. Returns `PENDING_TEAM_APPROVAL` or `CONFIRMED` depending on
+  league/tournament config.
+- **`register_player(tournament_url, player_id, team_id=None, ...)`** — Register a
+  player to a tournament (optionally under a team). Returns `PENDING_TEAM_APPROVAL`
+  or `CONFIRMED` depending on config.
+- **`register_player_as_to(tournament_url, *, actor_user_id, actor_user_type, player_id, team_id=None, ...)`** — Register a player on behalf of a TO. The actor must be a TO for the tournament. Always returns a `CONFIRMED`, fully-paid `PlayerRegistration` with `paid=True, amount_paid=0`. Existing `CANCELLED`/`REJECTED` registrations for the same (tournament, player) are reused; existing `CONFIRMED` rows return a duplicate-error.
+- **`register_team_as_to(tournament_url, *, actor_user_id, actor_user_type, team_id, pseudonym="")`** - Register a team on behalf of a TO. The actor must be a TO for the tournament. Returns a CONFIRMED, fully-paid `TeamRegistration` with `paid=True, amount_paid=0`. Honors `n_max_teams` (error message includes the count and limit). Existing `CANCELLED` rows for the same (tournament, team) are reused; existing `CONFIRMED` rows return a duplicate-error.
+
 ## Conventions
 
 ### Static-method namespace classes

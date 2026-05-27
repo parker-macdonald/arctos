@@ -59,10 +59,12 @@ pub fn LeagueRegister(league_url: String) -> Element {
                                                     error.set(Some("Team name is required.".to_string()));
                                                     return;
                                                 }
+                                                let shortname_raw = get_form_value("shortname");
+                                                let shortname = if shortname_raw.trim().is_empty() { None } else { Some(shortname_raw) };
                                                 let nav = navigator.clone();
                                                 let lu = league_url.clone();
                                                 spawn(async move {
-                                                    match api::league_register_team(&lu, &pseudonym).await {
+                                                    match api::league_register_team(&lu, &pseudonym, shortname.as_deref()).await {
                                                         Ok(res) if res.success => {
                                                             let path = format!("/leagues/{}?registered=1", lu);
                                                             let _ = nav.push(path);
@@ -77,6 +79,11 @@ pub fn LeagueRegister(league_url: String) -> Element {
                                             div { class: "mb-3",
                                                 label { r#for: "pseudonym", class: "form-label", "Team Name" }
                                                 input { r#type: "text", class: "form-control", id: "pseudonym", name: "pseudonym", required: true }
+                                            }
+                                            div { class: "mb-3",
+                                                label { r#for: "shortname", class: "form-label", "Short name (optional)" }
+                                                input { r#type: "text", class: "form-control", id: "shortname", name: "shortname", maxlength: "12", placeholder: "e.g. BCS" }
+                                                div { class: "form-text", "Used in schedules and brackets. Leave blank to auto-shorten." }
                                             }
                                             div { class: "d-grid",
                                                 button { r#type: "submit", class: "btn btn-primary", "Register Team" }

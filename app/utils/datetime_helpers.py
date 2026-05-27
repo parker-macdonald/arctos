@@ -94,3 +94,17 @@ def parse_datetime_local_to_utc(dt_string: str) -> datetime:
     # Convert to UTC and strip timezone info for storage
     utc_dt = local_dt.astimezone(timezone.utc)
     return utc_dt.replace(tzinfo=None)
+
+
+def now_utc_naive() -> datetime:
+    """Return the current time as a naive UTC datetime (``tzinfo=None``).
+
+    Use this everywhere the codebase currently writes the
+    ``datetime.now(timezone.utc).replace(tzinfo=None)`` incantation. The
+    DB stores naive UTC values; this helper is the single source of truth
+    for that conversion.
+
+    Returns:
+        Naive ``datetime`` representing the current UTC moment.
+    """
+    return datetime.now(timezone.utc).replace(tzinfo=None)

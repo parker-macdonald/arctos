@@ -216,6 +216,20 @@ fn preview_clips_for_upload(
 
 #[component]
 pub fn TournamentHome(url: String) -> Element {
+    rsx! {
+        TournamentHomeContent { url, initial_tab: None::<String> }
+    }
+}
+
+#[component]
+pub fn TournamentHomeWithTab(url: String, tab: String) -> Element {
+    rsx! {
+        TournamentHomeContent { url, initial_tab: Some(tab) }
+    }
+}
+
+#[component]
+fn TournamentHomeContent(url: String, initial_tab: Option<String>) -> Element {
     let url_for_data = url.clone();
     let navigator = use_navigator();
     let mut refresh = use_signal(|| 0u32);
@@ -284,6 +298,14 @@ pub fn TournamentHome(url: String) -> Element {
                 .map_err(|e| e.to_string())
         }
     });
+
+    let url_for_sidecomps = url.clone();
+    let sidecomps = use_resource(move || {
+        let u = url_for_sidecomps.clone();
+        async move { api::sidecomps_list(&u).await }
+    });
+
+    let mut info_tab = use_signal(|| None::<String>);
 
     {
         let url_for_upload_planning = url.clone();
@@ -457,67 +479,189 @@ pub fn TournamentHome(url: String) -> Element {
                 }
             }
 
+            {
+                let viewer_is_to = is_current_user_to(me_res.read().as_ref(), &d.to_entries);
+                let active_info_tab = info_tab().unwrap_or_else(|| {
+                    if initial_tab.as_deref() == Some("sidecomps") {
+                        "sidecomps".to_string()
+                    } else {
+                        "info".to_string()
+                    }
+                });
+                rsx! {
             div { class: "row",
                 div { class: "col-md-8",
                     div { class: "card",
-                        div { class: "card-header", h5 { class: "mb-0", "Tournament Information" } }
+                        div { class: "card-header",
+                            ul { class: "nav nav-tabs card-header-tabs",
+                                li { class: "nav-item",
+                                    a {
+                                        class: if active_info_tab == "info" { "nav-link active" } else { "nav-link" },
+                                        href: "#",
+                                        onclick: move |evt| { evt.prevent_default(); info_tab.set(Some("info".to_string())); },
+                                        "Tournament Information"
+                                    }
+                                }
+                                li { class: "nav-item",
+                                    a {
+                                        class: if active_info_tab == "sidecomps" { "nav-link active" } else { "nav-link" },
+                                        href: "#",
+                                        onclick: move |evt| { evt.prevent_default(); info_tab.set(Some("sidecomps".to_string())); },
+                                        "Side Competitions"
+                                    }
+                                }
+                            }
+                        }
                         div { class: "card-body",
-                            div { class: "row mb-3",
-                                div { class: "col-md-6",
-                                    p { strong { "Start Date: " } "{format_date(&d.tournament.start_date)}" }
-                                    p { strong { "End Date: " } "{d.tournament.end_date.as_ref().map(|e| format_date(e)).unwrap_or_else(|| \"TBA\".into())}" }
+                            if active_info_tab == "info" {
+                                div { class: "row mb-3",
+                                    div { class: "col-md-6",
+                                        p { strong { "Start Date: " } "{format_date(&d.tournament.start_date)}" }
+                                        p { strong { "End Date: " } "{d.tournament.end_date.as_ref().map(|e| format_date(e)).unwrap_or_else(|| \"TBA\".into())}" }
+                                    }
+                                    div { class: "col-md-6",
+                                        if let Some(max) = d.tournament.n_max_teams {
+                                            p { strong { "Max Teams: " } "{max}" }
+                                        }
+                                        if let Some(roster) = d.tournament.max_team_size_roster {
+                                            p { strong { "Max Team Size (Roster): " } "{roster}" }
+                                        }
+                                        if let Some(field) = d.tournament.max_team_size_field {
+                                            p { strong { "Max Team Size (Field): " } "{field}" }
+                                        }
+                                    }
                                 }
-                                div { class: "col-md-6",
-                                    if let Some(max) = d.tournament.n_max_teams {
-                                        p { strong { "Max Teams: " } "{max}" }
-                                    }
-                                    if let Some(roster) = d.tournament.max_team_size_roster {
-                                        p { strong { "Max Team Size (Roster): " } "{roster}" }
-                                    }
-                                    if let Some(field) = d.tournament.max_team_size_field {
-                                        p { strong { "Max Team Size (Field): " } "{field}" }
-                                    }
-                                }
-                            }
-                            if d.tournament.league.is_none() && {
-                                let ro = d.tournament.team_registration_open || d.tournament.player_registration_open;
-                                let tf = d.tournament.team_reg_fee.unwrap_or(0.0);
-                                let pf = d.tournament.player_reg_fee.unwrap_or(0.0);
-                                ro && (tf > 0.0 || pf > 0.0)
-                            } {
-                                div { class: "alert alert-info mb-3",
-                                    h6 { class: "mb-2", "Registration Fees" }
-                                    {
-                                        let tf = d.tournament.team_reg_fee.unwrap_or(0.0);
-                                        let pf = d.tournament.player_reg_fee.unwrap_or(0.0);
-                                        let tf_str = format!("${:.2}", tf);
-                                        let pf_str = format!("${:.2}", pf);
-                                        rsx! {
-                                            if tf > 0.0 {
-                                                p { class: "mb-1", strong { "Team Registration: " } "{tf_str}" }
-                                            }
-                                            if pf > 0.0 {
-                                                p { class: "mb-0", strong { "Player Registration: " } "{pf_str}" }
+                                if d.tournament.league.is_none() && {
+                                    let ro = d.tournament.team_registration_open || d.tournament.player_registration_open;
+                                    let tf = d.tournament.team_reg_fee.unwrap_or(0.0);
+                                    let pf = d.tournament.player_reg_fee.unwrap_or(0.0);
+                                    ro && (tf > 0.0 || pf > 0.0)
+                                } {
+                                    div { class: "alert alert-info mb-3",
+                                        h6 { class: "mb-2", "Registration Fees" }
+                                        {
+                                            let tf = d.tournament.team_reg_fee.unwrap_or(0.0);
+                                            let pf = d.tournament.player_reg_fee.unwrap_or(0.0);
+                                            let tf_str = format!("${:.2}", tf);
+                                            let pf_str = format!("${:.2}", pf);
+                                            rsx! {
+                                                if tf > 0.0 {
+                                                    p { class: "mb-1", strong { "Team Registration: " } "{tf_str}" }
+                                                }
+                                                if pf > 0.0 {
+                                                    p { class: "mb-0", strong { "Player Registration: " } "{pf_str}" }
+                                                }
                                             }
                                         }
                                     }
                                 }
-                            }
-                            if let Some(about) = &d.tournament.about {
-                                if !about.is_empty() {
-                                    hr {}
-                                    if let Some(Ok(html)) = about_html.value().read().as_ref() {
-                                        if html.is_empty() {
-                                            div { class: "markdown-content", style: "white-space: pre-wrap;", "{about}" }
+                                if let Some(about) = &d.tournament.about {
+                                    if !about.is_empty() {
+                                        hr {}
+                                        if let Some(Ok(html)) = about_html.value().read().as_ref() {
+                                            if html.is_empty() {
+                                                div { class: "markdown-content", style: "white-space: pre-wrap;", "{about}" }
+                                            } else {
+                                                div { dangerous_inner_html: "{html}" }
+                                            }
                                         } else {
-                                            div { dangerous_inner_html: "{html}" }
+                                            div { class: "markdown-content", style: "white-space: pre-wrap;", "{about}" }
                                         }
-                                    } else {
-                                        div { class: "markdown-content", style: "white-space: pre-wrap;", "{about}" }
                                     }
+                                } else {
+                                    p { class: "text-muted", "Tournament details coming soon!" }
                                 }
                             } else {
-                                p { class: "text-muted", "Tournament details coming soon!" }
+                                if viewer_is_to {
+                                    div { class: "mb-3 d-flex justify-content-end",
+                                        Link {
+                                            to: Route::SideCompNew { url: url.clone() },
+                                            class: "btn btn-sm btn-outline-success",
+                                            title: "Add side competition",
+                                            i { class: "fas fa-plus" }
+                                        }
+                                    }
+                                }
+                                match sidecomps.read().as_ref() {
+                                    Some(Ok(rows)) => {
+                                        if rows.is_empty() {
+                                            rsx! { p { class: "text-muted mb-0", "No side competitions for this tournament." } }
+                                        } else {
+                                            rsx! {
+                                                ul { class: "list-group",
+                                                    for row in rows.iter() {
+                                                        {
+                                                            let comp_id = row.id;
+                                                            let row_name = row.name.clone();
+                                                            let mut sidecomps_for_row = sidecomps;
+                                                            rsx! {
+                                                                li {
+                                                                    key: "{comp_id}",
+                                                                    class: "list-group-item d-flex justify-content-between align-items-center p-0",
+                                                                    Link {
+                                                                        to: Route::SideCompDetail { url: url.clone(), comp_id },
+                                                                        class: "text-decoration-none text-reset p-3 flex-grow-1",
+                                                                        div {
+                                                                            strong { "{row.name}" }
+                                                                            span { class: "badge bg-secondary ms-2", "{row.type_}" }
+                                                                            if row.registration_open {
+                                                                                span { class: "badge bg-success ms-2", "Open" }
+                                                                            } else {
+                                                                                span { class: "badge bg-secondary ms-2", "Closed" }
+                                                                            }
+                                                                            span { class: "text-muted ms-2", "({row.registrant_count} registered)" }
+                                                                        }
+                                                                    }
+                                                                    if viewer_is_to {
+                                                                        div { class: "d-flex gap-1 px-3",
+                                                                            Link {
+                                                                                to: Route::SideCompEdit { url: url.clone(), comp_id },
+                                                                                class: "btn btn-sm btn-outline-secondary",
+                                                                                title: "Edit",
+                                                                                i { class: "fas fa-pen" }
+                                                                            }
+                                                                            button {
+                                                                                class: "btn btn-sm btn-outline-danger",
+                                                                                title: "Delete",
+                                                                                onclick: move |_| {
+                                                                                    let confirmed = web_sys::window()
+                                                                                        .and_then(|w| w
+                                                                                            .confirm_with_message(&format!(
+                                                                                                "Delete '{}'? This cannot be undone.",
+                                                                                                row_name
+                                                                                            ))
+                                                                                            .ok())
+                                                                                        .unwrap_or(false);
+                                                                                    if !confirmed {
+                                                                                        return;
+                                                                                    }
+                                                                                    spawn(async move {
+                                                                                        match api::sidecomp_delete(comp_id).await {
+                                                                                            Ok(_) => {
+                                                                                                sidecomps_for_row.restart();
+                                                                                            }
+                                                                                            Err(e) => {
+                                                                                                web_sys::console::error_1(
+                                                                                                    &format!("sidecomp_delete failed: {}", e).into(),
+                                                                                                );
+                                                                                            }
+                                                                                        }
+                                                                                    });
+                                                                                },
+                                                                                i { class: "fas fa-trash" }
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    _ => rsx! {},
+                                }
                             }
                         }
                     }
@@ -554,6 +698,8 @@ pub fn TournamentHome(url: String) -> Element {
                             }
                         }
                     }
+                }
+            }
                 }
             }
 
@@ -669,6 +815,7 @@ pub fn TournamentHome(url: String) -> Element {
                     }
                 }
             }
+
 
             if show_edit_player_modal() {
                 if let Some(Ok(me)) = me_res.read().as_ref() {

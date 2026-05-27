@@ -94,6 +94,8 @@ pub struct TeamWithCount {
     pub team_id: String,
     pub team_name: String,
     pub pseudonym: Option<String>,
+    #[serde(default)]
+    pub shortname: Option<String>,
     pub player_count: u32,
     pub registered_at: Option<String>,
     pub profile_photo: Option<String>,
@@ -194,6 +196,8 @@ pub struct ManageTeamRegistrationData {
     pub id: u32,
     pub team: String,
     pub pseudonym: String,
+    #[serde(default)]
+    pub shortname: Option<String>,
     pub status: String,
     pub paid: bool,
     pub amount_paid: f64,
@@ -252,6 +256,8 @@ pub struct TournamentInvitationsResponse {
 pub struct InvitationTeamRegistration {
     pub id: u32,
     pub pseudonym: String,
+    #[serde(default)]
+    pub shortname: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -320,6 +326,8 @@ pub struct BracketTeamEntry {
 pub struct BracketTeamInfo {
     pub id: Option<String>,
     pub pseudonym: Option<String>,
+    #[serde(default)]
+    pub shortname: Option<String>,
     pub profile_photo: Option<String>,
     pub display_text: String,
 }
@@ -340,6 +348,8 @@ pub struct TeamOption {
     pub id: String,
     pub pseudonym: Option<String>,
     #[serde(default)]
+    pub shortname: Option<String>,
+    #[serde(default)]
     pub profile_photo: Option<String>,
 }
 
@@ -358,6 +368,8 @@ pub struct PointData {
 pub struct TeamResultRow {
     pub id: String,
     pub pseudonym: String,
+    #[serde(default)]
+    pub shortname: Option<String>,
     pub profile_photo: Option<String>,
     pub matches_won: u32,
     pub matches_lost: u32,
@@ -434,6 +446,10 @@ pub struct MatchDetailData {
     pub team2: Option<String>,
     pub team1_name: String,
     pub team2_name: String,
+    #[serde(default)]
+    pub team1_shortname: Option<String>,
+    #[serde(default)]
+    pub team2_shortname: Option<String>,
     #[serde(default)]
     pub team1_photo: Option<String>,
     #[serde(default)]
@@ -694,6 +710,10 @@ pub struct ConflictingMatchInfo {
     pub name: String,
     pub team1_name: String,
     pub team2_name: String,
+    #[serde(default)]
+    pub team1_shortname: Option<String>,
+    #[serde(default)]
+    pub team2_shortname: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -865,6 +885,8 @@ pub struct PlayerRegItem {
     pub event: String,
     pub team: Option<String>,
     pub team_pseudonym: Option<String>,
+    #[serde(default)]
+    pub team_shortname: Option<String>,
     pub status: String,
     pub jersey_name: Option<String>,
     pub jersey_number: Option<String>,
@@ -938,6 +960,8 @@ pub struct TeamProfileResponse {
 pub struct TeamRegItem {
     pub event: String,
     pub pseudonym: Option<String>,
+    #[serde(default)]
+    pub shortname: Option<String>,
     pub status: String,
     pub paid: bool,
     pub amount_paid: f64,
@@ -1159,6 +1183,8 @@ pub struct UpdatePlayerRegistrationRequest {
 pub struct TeamRegistrationData {
     pub id: u32,
     pub pseudonym: Option<String>,
+    #[serde(default)]
+    pub shortname: Option<String>,
     pub status: String,
 }
 
@@ -1170,6 +1196,8 @@ pub struct MyTeamRegistrationResponse {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct UpdateTeamRegistrationRequest {
     pub pseudonym: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shortname: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -1322,4 +1350,93 @@ pub struct RecordPointData {
     pub uuid: String,
     pub stamp: Option<String>,
     pub end_stamp: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RegisterPlayerAsToResponse {
+    pub success: bool,
+    pub message: Option<String>,
+    pub error: Option<String>,
+    pub player_id: Option<String>,
+    pub player_name: Option<String>,
+    pub team: Option<String>,
+    pub jersey_number: Option<String>,
+    pub jersey_name: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RegisterTeamAsToResponse {
+    pub success: bool,
+    pub message: Option<String>,
+    pub error: Option<String>,
+    pub team_id: Option<String>,
+    pub team_name: Option<String>,
+    pub pseudonym: Option<String>,
+    #[serde(default)]
+    pub shortname: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SideCompSummary {
+    pub id: i32,
+    pub name: String,
+    #[serde(rename = "type")]
+    pub type_: String,
+    pub registrant_count: i64,
+    #[serde(default)]
+    pub registration_open: bool,
+    pub created_at: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SideCompRegistrant {
+    pub player_id: String,
+    pub player_name: String,
+    #[serde(default)]
+    pub entry_number: i32,
+    pub registered_at: Option<String>,
+    pub registered_by_to: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SideCompDetail {
+    pub id: i32,
+    pub event: String,
+    pub name: String,
+    #[serde(rename = "type")]
+    pub type_: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub registration_open: bool,
+    pub created_at: Option<String>,
+    pub registrants: Vec<SideCompRegistrant>,
+    #[serde(default)]
+    pub viewer_is_to: bool,
+    #[serde(default)]
+    pub viewer_can_register: bool,
+    #[serde(default)]
+    pub viewer_is_registered_in_comp: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct EligiblePlayer {
+    pub player_id: String,
+    pub player_name: String,
+    pub team_id: Option<String>,
+    pub team_pseudonym: Option<String>,
+    #[serde(default)]
+    pub team_shortname: Option<String>,
+    pub jersey_name: Option<String>,
+    #[serde(default)]
+    pub sidecomp_registered: bool,
+    pub entry_number: Option<i32>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SideCompRegisterPlayerResponse {
+    pub player_id: String,
+    pub player_name: String,
+    pub entry_number: i32,
+    pub registered_at: Option<String>,
 }

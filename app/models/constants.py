@@ -51,6 +51,11 @@ TAG_NAME_LEN: Final[int] = 50
 """Tag name strings used in ASS (Arctos Schedule Script) expressions.
 Kept shorter than display names to stay practical as identifiers."""
 
+SHORTNAME_LEN: Final[int] = 8
+"""Optional short team display alias used in space-constrained UI
+(schedule cells, bracket lines, match cards). Stored on
+``TeamRegistration.shortname``."""
+
 # ---------------------------------------------------------------------------
 # Auth / external credentials
 # ---------------------------------------------------------------------------
