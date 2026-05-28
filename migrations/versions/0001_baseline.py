@@ -23,11 +23,11 @@ for the existing schema?
 
 After this baseline, the workflow is:
 
-1. ``make db-baseline`` (one-shot per database) stamps this revision.
+1. ``just db-baseline`` (one-shot per database) stamps this revision.
 2. Edit ``app/models/*`` to declare the new schema.
-3. ``make db-revision MSG="describe_change"`` autogenerates a migration.
+3. ``just db-revision "describe_change"`` autogenerates a migration.
 4. Review the generated file, write a real docstring describing *why* the
-   change is being made, then ``make db-migrate``.
+   change is being made, then ``just db-migrate``.
 
 Revision ID: 0001_baseline
 Revises:

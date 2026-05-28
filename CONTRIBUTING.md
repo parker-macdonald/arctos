@@ -24,14 +24,14 @@ works like this (assuming the staging system/dev server/dev branch
 stuff is all set up):
 0. a bug report or feature request issue is created
 1. a Project issue is created, tagging one or more bug/feature request
-   isses, describing a solution
+   issues, describing a solution
 2. a branch is created to work on the project.
     - branch names should follow the pattern `category/name`.
       categories are `feat` (feature), `bugfix`, or `refactor`.
     - branch off the latest `dev` (the staging branch)
 3. Implementation
     - Always write tests. See [`TESTING.md`](TESTING.md)
-    - run `make test` (or `uv run pytest tests/`) to make sure all
+    - run `just test` (or `uv run pytest tests/`) to make sure all
       tests pass before submitting
 4. PR to `dev` submitted
     - describes everything that changed and any potential high level
@@ -39,7 +39,7 @@ stuff is all set up):
     - describes any migration changes needed!!
     - make sure there are no merge conflicts before submitting. i dont
       care if you merge or rebase.
-    - all tests must pass before the PR is merged (`make test`)
+    - all tests must pass before the PR is merged (`just test`)
     - **important:** all code must be formatted with [ruff](https://docs.astral.sh/ruff/)
 5. maintainer approves PR and changes go live to dev server
 6. final testing on dev server to ensure everything works (mostly

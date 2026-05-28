@@ -90,7 +90,7 @@ function.
 ## Running
 
 ```bash
-make run                 # gunicorn, 5 workers, on 0.0.0.0:8081
+just run                 # gunicorn, 5 workers, on 0.0.0.0:8081
 python run_app.py        # Werkzeug dev server on 127.0.0.1:5006
 ```
 
