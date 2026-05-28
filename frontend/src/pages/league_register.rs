@@ -82,7 +82,7 @@ pub fn LeagueRegister(league_url: String) -> Element {
                                             }
                                             div { class: "mb-3",
                                                 label { r#for: "shortname", class: "form-label", "Short name (optional)" }
-                                                input { r#type: "text", class: "form-control", id: "shortname", name: "shortname", maxlength: "12", placeholder: "e.g. BCS" }
+                                                input { r#type: "text", class: "form-control", id: "shortname", name: "shortname", maxlength: "8", placeholder: "e.g. UWaoW" }
                                                 div { class: "form-text", "Used in schedules and brackets. Leave blank to auto-shorten." }
                                             }
                                             div { class: "d-grid",
