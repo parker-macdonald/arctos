@@ -4,7 +4,7 @@
 #
 # WHEN TO RUN
 #   Run this script BEFORE every Alembic migration that mutates the schema or
-#   data — that is, before every invocation of `make db-migrate` (or the raw
+#   data — that is, before every invocation of `just db-migrate` (or the raw
 #   `uv run alembic upgrade head`). Any migration that adds a constraint,
 #   alters a column type, drops a column, or rebuilds a table is potentially
 #   destructive; skipping a backup before one risks data loss with no

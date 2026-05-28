@@ -35,10 +35,10 @@ Behaviour:
 Pre-conditions:
 
 * Migration ``0002_phase1_additive`` is applied (the four destination
-  tables exist). Run ``make db-current`` to confirm.
+  tables exist). Run ``just db-current`` to confirm.
 * Migration ``0003_phase4_cleanup`` has **not** yet been applied (the
   legacy source columns must still exist).
-* A backup has been taken (``make db-backup pre-backfill``).
+* A backup has been taken (``just db-backup pre-backfill``).
 
 Post-conditions:
 
@@ -297,7 +297,7 @@ def backfill_match_players(targets: FkTargets, verbose: bool = False) -> Backfil
             except (json.JSONDecodeError, TypeError):
                 stats.skipped_invalid += 1
                 if verbose:
-                    print(f"  WARN match_players: match={match_uuid} side={side.value} has unparseable JSON")
+                    print(f"  WARN match_players: match={match_uuid} side={side.value} has unparsable JSON")
                 continue
             if not isinstance(player_ids, list):
                 stats.skipped_invalid += 1
@@ -344,7 +344,7 @@ def backfill_camera_timepoints(targets: FkTargets, verbose: bool = False) -> Bac
         except (json.JSONDecodeError, TypeError):
             stats.skipped_invalid += 1
             if verbose:
-                print(f"  WARN timepoints: camera={cam_uuid} has unparseable JSON")
+                print(f"  WARN timepoints: camera={cam_uuid} has unparsable JSON")
             continue
 
         if not isinstance(worlds, list) or not isinstance(videos, list):
@@ -458,7 +458,7 @@ def _check_preconditions() -> str | None:
         return (
             "destination tables missing: "
             + ", ".join(sorted(missing_tables))
-            + ". Run `make db-migrate` first to apply 0002_phase1_additive."
+            + ". Run `just db-migrate` first to apply 0002_phase1_additive."
         )
 
     missing_columns: list[str] = []
