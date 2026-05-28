@@ -28,9 +28,32 @@ Useful flags:
 
 ```bash
 uv run pytest tests/ -k "registration"   # filter by name
-uv run pytest tests/ --cov=app           # coverage report
 uv run pytest tests/ --tb=long           # full tracebacks
 ```
+
+## Coverage
+
+Run the suite with coverage:
+
+```bash
+uv run pytest tests/ --cov=app --cov-report=term-missing
+```
+
+Generate an HTML report (lands in `htmlcov/`, gitignored):
+
+```bash
+uv run pytest tests/ --cov=app --cov-report=html
+open htmlcov/index.html                  # or xdg-open on Linux
+```
+
+Coverage settings live under `[tool.coverage.*]` in `pyproject.toml`:
+
+- **Source** is `app/` (tests, scripts, and migrations are not measured).
+- **Branch coverage** is on, so untested `else` branches count as misses.
+- **`fail_under = 30`** is a soft floor that catches significant
+  regressions without blocking small fluctuations. Current actual
+  coverage is around 33% (with branch coverage on); raise the floor
+  when overall coverage grows.
 
 ## Structure
 
