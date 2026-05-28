@@ -2861,6 +2861,7 @@ def validate_dsl(tournament_url):
 
     try:
         parser = get_parser(tournament_url)
+        warnings = parser.static_check(expression)
         result = parser.parse(expression)
 
         # Serialize the full value for JSON response
@@ -2872,12 +2873,25 @@ def validate_dsl(tournament_url):
         # Only include simplified if it's different from the input
         simplified = simplified_str if simplified_str != expression else None
 
+        # Treat unresolvable team/match references as errors so the user notices typos.
+        if warnings:
+            return jsonify(
+                {
+                    "valid": False,
+                    "value": None,
+                    "simplified": None,
+                    "error": "; ".join(warnings),
+                    "warnings": warnings,
+                }
+            )
+
         return jsonify(
             {
                 "valid": True,
                 "value": serialized_value,
                 "simplified": simplified,
                 "error": None,
+                "warnings": [],
             }
         )
     except DSLValidationError as e:

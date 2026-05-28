@@ -58,7 +58,10 @@ data types:
 
 """
 
+import difflib
+
 from lark import Lark, Tree
+from lark.exceptions import LarkError, UnexpectedInput
 from sqlalchemy import or_, and_
 from app.models import Match as MatchDB, Point as PointDB, Team as TeamDB, Tag
 from app.domain.enums import WinnerSide
@@ -68,6 +71,85 @@ class DSLValidationError(Exception):
     """Raised when DSL expression validation fails."""
 
     pass
+
+
+# Bracket pairings that ASS supports.
+_BRACKET_PAIRS = {"(": ")", "[": "]", "{": "}"}
+_CLOSE_TO_OPEN = {v: k for k, v in _BRACKET_PAIRS.items()}
+
+
+def _format_position(text: str, pos: int) -> str:
+    """Render `(line N, col M)` for a 0-based byte offset into `text`."""
+    if pos < 0 or pos > len(text):
+        return ""
+    line = text.count("\n", 0, pos) + 1
+    last_nl = text.rfind("\n", 0, pos)
+    col = pos - last_nl  # 1-based when last_nl == -1 because pos - (-1) = pos + 1
+    return f"line {line}, col {col}"
+
+
+def _check_balanced_brackets(text: str) -> None:
+    """Lightweight bracket-balance check that points at the offending character.
+
+    ASS uses three nesting kinds — `()`, `[]`, `{}`. Square and curly
+    literals don't nest (they enclose names, not sub-expressions), but they
+    still need to be paired. We scan once and raise a `DSLValidationError`
+    with a position the caller can show in the UI.
+    """
+    stack: list[tuple[str, int]] = []
+    in_team_literal = False
+    in_match_literal = False
+    for i, c in enumerate(text):
+        if in_team_literal:
+            if c == "]":
+                in_team_literal = False
+                stack.pop()
+            continue
+        if in_match_literal:
+            if c == "}":
+                in_match_literal = False
+                stack.pop()
+            continue
+        if c == "[":
+            if stack and stack[-1][0] == "[":
+                raise DSLValidationError(
+                    f"Nested '[' at {_format_position(text, i)} — team literals can't contain '['."
+                )
+            stack.append(("[", i))
+            in_team_literal = True
+        elif c == "{":
+            if stack and stack[-1][0] == "{":
+                raise DSLValidationError(
+                    f"Nested '{{' at {_format_position(text, i)} — match literals can't contain '{{'."
+                )
+            stack.append(("{", i))
+            in_match_literal = True
+        elif c == "(":
+            stack.append(("(", i))
+        elif c in (")", "]", "}"):
+            expected_open = _CLOSE_TO_OPEN[c]
+            if not stack:
+                raise DSLValidationError(
+                    f"Unexpected '{c}' at {_format_position(text, i)} — no matching '{expected_open}' to close."
+                )
+            open_c, _open_pos = stack[-1]
+            if open_c != expected_open:
+                raise DSLValidationError(
+                    f"Mismatched bracket: '{c}' at {_format_position(text, i)} closes a '{open_c}' opened at {_format_position(text, _open_pos)}."
+                )
+            stack.pop()
+    if stack:
+        open_c, open_pos = stack[-1]
+        close_c = _BRACKET_PAIRS[open_c]
+        raise DSLValidationError(
+            f"Unclosed '{open_c}' at {_format_position(text, open_pos)} — expected matching '{close_c}'."
+        )
+
+
+def _suggest_function(name: str, candidates) -> str | None:
+    """Return the best fuzzy match for `name` in `candidates`, or None."""
+    matches = difflib.get_close_matches(name, list(candidates), n=1, cutoff=0.6)
+    return matches[0] if matches else None
 
 
 class Lambda:
@@ -561,8 +643,12 @@ class Simplifier:
             elif head == "is-skipped":
                 return self._evaluate_is_skipped(head, args)
             else:
-                # Unknown function name
-                raise DSLValidationError(f"No symbol named '{head}'")
+                # Unknown function name — try did-you-mean from the builtin set + bound env names.
+                known = set(self.BUILTINS) | set(self.env.keys())
+                suggestion = _suggest_function(head, known)
+                if suggestion:
+                    raise DSLValidationError(f"Unknown function '{head}'. Did you mean '{suggestion}'?")
+                raise DSLValidationError(f"Unknown function '{head}'.")
 
         # If head is not a string or lambda, it's an error
         raise DSLValidationError(f"Cannot call {type(head).__name__} as a function")
@@ -1110,6 +1196,68 @@ class Simplifier:
         return min_elem
 
 
+def _collect_literals(text: str):
+    """Pull out raw team and match literals for a quick reference-existence check.
+
+    Returns (team_literals, match_literals) — lists of (raw_inside, position) tuples,
+    skipping things that aren't directly resolvable (MatchName::winner, tag::Foo).
+    """
+    teams: list[tuple[str, int]] = []
+    matches: list[tuple[str, int]] = []
+    i = 0
+    n = len(text)
+    while i < n:
+        c = text[i]
+        if c == "[":
+            j = text.find("]", i + 1)
+            if j == -1:
+                break
+            inner = text[i + 1 : j].strip()
+            teams.append((inner, i))
+            i = j + 1
+            continue
+        if c == "{":
+            j = text.find("}", i + 1)
+            if j == -1:
+                break
+            inner = text[i + 1 : j].strip()
+            matches.append((inner, i))
+            i = j + 1
+            continue
+        i += 1
+    return teams, matches
+
+
+def _check_references(text: str, event: str) -> list[str]:
+    """Return a list of warnings about unresolvable team/match references.
+
+    Skips MatchName::winner / MatchName::loser / tag::Foo (those legitimately
+    resolve symbolically). Plain team ids and match names should map to existing
+    rows; if not, we tell the user.
+    """
+    warnings: list[str] = []
+    teams, matches = _collect_literals(text)
+    for inner, pos in teams:
+        if not inner or "::" in inner:
+            continue
+        if not TeamDB.query.filter_by(id=inner).first():
+            all_names = [t.id for t in TeamDB.query.all()]
+            suggestion = _suggest_function(inner, all_names)
+            hint = f" Did you mean '{suggestion}'?" if suggestion else ""
+            warnings.append(f"Unknown team '[{inner}]' at {_format_position(text, pos)}.{hint}")
+    known_match_names = None
+    for inner, pos in matches:
+        if not inner:
+            continue
+        if not MatchDB.query.filter_by(name=inner, event=event).first():
+            if known_match_names is None:
+                known_match_names = [m.name for m in MatchDB.query.filter_by(event=event).all()]
+            suggestion = _suggest_function(inner, known_match_names)
+            hint = f" Did you mean '{{{suggestion}}}'?" if suggestion else ""
+            warnings.append(f"Unknown match '{{{inner}}}' at {_format_position(text, pos)}.{hint}")
+    return warnings
+
+
 def get_parser(event: str, match_resolver=None):
     """
     Create a parser for the given event (tournament URL).
@@ -1127,15 +1275,46 @@ def get_parser(event: str, match_resolver=None):
         parse_match = match_resolver if match_resolver is not None else (lambda x: parse_match_literal(x, event))
 
         def parse(text):
-            tree = parser.parse(text)
+            # Cheap structural check first — gives clean position-aware errors before Lark tries.
+            _check_balanced_brackets(text)
+            try:
+                tree = parser.parse(text)
+            except UnexpectedInput as e:
+                # Convert Lark's verbose dump to a one-line message with position.
+                pos = getattr(e, "pos_in_stream", None)
+                line = getattr(e, "line", None)
+                col = getattr(e, "column", None)
+                if line is not None and col is not None:
+                    where = f"line {line}, col {col}"
+                elif pos is not None:
+                    where = _format_position(text, pos)
+                else:
+                    where = "an unknown position"
+                got = ""
+                tok = getattr(e, "token", None)
+                if tok is not None and getattr(tok, "value", None):
+                    got = f" near `{tok.value}`"
+                raise DSLValidationError(f"Parse error at {where}{got}.") from e
+            except LarkError as e:
+                raise DSLValidationError(f"Parse error: {e}") from e
             interpreter = Simplifier(
                 lambda x: parse_team_literal(x, event),
                 parse_match,
             )
             return interpreter.visit(tree)
 
-        class Parser:
-            def __init__(self, parse_func):
-                self.parse = parse_func
+        def static_check(text):
+            """Quick lint pass: balanced brackets and reference existence.
 
-        return Parser(parse)
+            Raises DSLValidationError on unbalanced brackets. Returns a list of
+            soft warnings (typo-likely team/match names) without raising.
+            """
+            _check_balanced_brackets(text)
+            return _check_references(text, event)
+
+        class Parser:
+            def __init__(self, parse_func, static_check_func):
+                self.parse = parse_func
+                self.static_check = static_check_func
+
+        return Parser(parse, static_check)

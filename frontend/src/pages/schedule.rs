@@ -11,6 +11,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 use super::TeamSelectionField;
+use crate::components::AssEntry;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::JsCast as _;
 
@@ -535,30 +536,6 @@ pub fn Schedule(url: String) -> Element {
 // ... EditMatchModal ...
 
 /// Matches on the given field, sorted by nominal_start_time descending (most recent first).
-/// DSL function names and signatures for skip-condition docs popup (from app/utils/parser.py).
-const DSL_FUNCTIONS: &[(&str, &str)] = &[
-    ("wins", "(wins TEAM) -> INT"),
-    ("losses", "(losses TEAM) -> INT"),
-    ("winner", "(winner MATCH) -> TEAM"),
-    ("loser", "(loser MATCH) -> TEAM"),
-    ("points-won", "(points-won TEAM MATCH) -> INT"),
-    ("points-lost", "(points-lost TEAM MATCH) -> INT"),
-    ("is-skipped", "(is-skipped MATCH) -> BOOL"),
-    ("+", "(+ INT INT) -> INT"),
-    ("-", "(- INT INT) -> INT"),
-    ("*", "(* INT INT) -> INT"),
-    ("/", "(/ INT INT) -> INT"),
-    (">", "(> INT INT) -> BOOL"),
-    ("<", "(< INT INT) -> BOOL"),
-    (">=", "(>= INT INT) -> BOOL"),
-    ("<=", "(<= INT INT) -> BOOL"),
-    ("==", "(== ANY ANY) -> BOOL"),
-    ("or", "(or BOOL BOOL) -> BOOL"),
-    ("and", "(and BOOL BOOL) -> BOOL"),
-    ("not", "(not BOOL) -> BOOL"),
-    ("if", "(if COND IF_TRUE IF_FALSE)"),
-];
-
 fn matches_on_field_sorted<'a>(
     matches: &'a [MatchSetupData],
     field_name: &str,
@@ -571,119 +548,6 @@ fn matches_on_field_sorted<'a>(
         .collect();
     v.sort_by(|a, b| b.nominal_start_time.as_deref().cmp(&a.nominal_start_time.as_deref()));
     v
-}
-
-/// Index in `new` (byte offset) where the single added character is, when new.len() == old.len() + 1.
-fn skip_condition_new_char_index(old: &str, new: &str) -> Option<usize> {
-    if new.len() != old.len() + 1 {
-        return None;
-    }
-    let mut new_chars = new.char_indices();
-    let mut old_chars = old.char_indices();
-    loop {
-        match (new_chars.next(), old_chars.next()) {
-            (Some((i, c_new)), Some((_, c_old))) => {
-                if c_new != c_old {
-                    return Some(i);
-                }
-            }
-            (Some((i, _)), None) => return Some(i),
-            (None, _) => return None,
-        }
-    }
-}
-
-/// Find matching close bracket from open_pos (byte index of open char). Returns byte index of close char.
-fn skip_condition_find_matching_close(s: &str, open_byte_pos: usize, open_c: char, close_c: char) -> Option<usize> {
-    let rest = s.get(open_byte_pos..)?;
-    let mut depth = 1u32;
-    for (i, c) in rest.char_indices() {
-        if c == open_c {
-            depth += 1;
-        } else if c == close_c {
-            depth = depth.saturating_sub(1);
-            if depth == 0 {
-                return Some(open_byte_pos + i);
-            }
-        }
-    }
-    None
-}
-
-/// Innermost unclosed bracket: (content_start_byte, content_end_byte). content_end_byte = position of close or s.len().
-#[allow(dead_code)]
-fn skip_condition_innermost_unclosed(s: &str, open_c: char, close_c: char) -> Option<(usize, usize)> {
-    let open_len = open_c.len_utf8();
-    let mut search_end = s.len();
-    loop {
-        let Some(open_pos) = s[..search_end].rfind(open_c) else {
-            break;
-        };
-        let close_pos = skip_condition_find_matching_close(s, open_pos, open_c, close_c);
-        match close_pos {
-            None => return Some((open_pos + open_len, s.len())),
-            Some(_end) => search_end = open_pos,
-        }
-    }
-    None
-}
-
-/// Cursor position in character index (e.g. from selection_start).
-fn skip_condition_cursor_byte(s: &str, cursor_char: usize) -> usize {
-    s.char_indices()
-        .nth(cursor_char)
-        .map(|(i, _)| i)
-        .unwrap_or(s.len())
-}
-
-/// Innermost bracket that contains the cursor. Uses largest content_start (most recent open before cursor).
-#[derive(Clone, Copy)]
-enum InnermostBracket {
-    Paren(usize, usize), // content_start_byte, content_end_byte
-    Square(usize, usize),
-    Curly(usize, usize),
-}
-
-fn skip_condition_innermost_around_cursor(s: &str, cursor_char: usize) -> Option<InnermostBracket> {
-    let cursor_byte = skip_condition_cursor_byte(s, cursor_char);
-    let mut best: Option<(usize, InnermostBracket)> = None; // (content_start, bracket)
-    if let Some(open_pos) = s[..cursor_byte].rfind('(') {
-        let close_pos = skip_condition_find_matching_close(s, open_pos, '(', ')');
-        let content_end = close_pos.unwrap_or(s.len());
-        if close_pos.is_none() || content_end >= cursor_byte {
-            let content_start = open_pos + 1;
-            if content_start <= cursor_byte {
-                if best.map_or(true, |(cs, _)| content_start > cs) {
-                    best = Some((content_start, InnermostBracket::Paren(content_start, content_end)));
-                }
-            }
-        }
-    }
-    if let Some(open_pos) = s[..cursor_byte].rfind('[') {
-        let close_pos = skip_condition_find_matching_close(s, open_pos, '[', ']');
-        let content_end = close_pos.unwrap_or(s.len());
-        if close_pos.is_none() || content_end >= cursor_byte {
-            let content_start = open_pos + 1;
-            if content_start <= cursor_byte {
-                if best.map_or(true, |(cs, _)| content_start > cs) {
-                    best = Some((content_start, InnermostBracket::Square(content_start, content_end)));
-                }
-            }
-        }
-    }
-    if let Some(open_pos) = s[..cursor_byte].rfind('{') {
-        let close_pos = skip_condition_find_matching_close(s, open_pos, '{', '}');
-        let content_end = close_pos.unwrap_or(s.len());
-        if close_pos.is_none() || content_end >= cursor_byte {
-            let content_start = open_pos + 1;
-            if content_start <= cursor_byte {
-                if best.map_or(true, |(cs, _)| content_start > cs) {
-                    best = Some((content_start, InnermostBracket::Curly(content_start, content_end)));
-                }
-            }
-        }
-    }
-    best.map(|(_, b)| b)
 }
 
 /// Skip condition help modal (same content as Flask #dslHelpModal).
@@ -797,14 +661,6 @@ fn CreateMatchModal(
     let mut stones_per_set = use_signal(|| 100u32);
     let ribbon = use_signal(|| false);
     let mut skip_condition = use_signal(|| "".to_string());
-    let mut skip_condition_error = use_signal(|| None::<String>);
-    let mut skip_condition_simplified = use_signal(|| None::<String>);
-    let mut skip_condition_cursor = use_signal(|| None::<usize>);
-    let mut skip_condition_cursor_pos = use_signal(|| None::<usize>);
-    let mut skip_docs_visible = use_signal(|| false);
-    let mut skip_bracket_ac_visible = use_signal(|| false);
-    let mut skip_bracket_ac_team = use_signal(|| true);
-    let mut skip_bracket_ac_index = use_signal(|| 0usize);
     let mut skip_condition_help_open = use_signal(|| false);
 
     let mut error = use_signal(|| None::<String>);
@@ -820,56 +676,6 @@ fn CreateMatchModal(
                         if let Ok(input) = el.dyn_into::<web_sys::HtmlInputElement>() {
                             let _ = input.focus();
                         }
-                    }
-                }
-            }
-        });
-    });
-
-    #[cfg(target_arch = "wasm32")]
-    use_effect(move || {
-        let pos = skip_condition_cursor();
-        if let Some(p) = pos {
-            skip_condition_cursor.set(None);
-            let id = "skip-condition-input-create".to_string();
-            spawn(async move {
-                gloo_timers::future::TimeoutFuture::new(0).await;
-                if let Some(window) = web_sys::window() {
-                    if let Some(doc) = window.document() {
-                        if let Ok(Some(el)) = doc.query_selector(&format!("#{}", id)) {
-                            if let Ok(input) = el.dyn_into::<web_sys::HtmlInputElement>() {
-                                let _ = input.set_selection_range(p as u32, p as u32);
-                                let _ = input.focus();
-                            }
-                        }
-                    }
-                }
-            });
-        }
-    });
-
-    let tournament_url_val = tournament_url.clone();
-    use_effect(move || {
-        let expr = skip_condition();
-        let _ = expr.clone();
-        if expr.trim().is_empty() {
-            return;
-        }
-        let expr_captured = expr.clone();
-        let url = tournament_url_val.clone();
-        #[cfg(target_arch = "wasm32")]
-        spawn(async move {
-            gloo_timers::future::TimeoutFuture::new(3000).await;
-            let current = skip_condition();
-            if current == expr_captured {
-                match api::validate_dsl(&url, &expr_captured).await {
-                    Ok(res) => {
-                        skip_condition_error.set(if res.valid { None } else { res.error.clone() });
-                        skip_condition_simplified.set(if res.valid { res.simplified } else { None });
-                    }
-                    Err(e) => {
-                        skip_condition_error.set(Some(e));
-                        skip_condition_simplified.set(None);
                     }
                 }
             }
@@ -954,16 +760,13 @@ fn CreateMatchModal(
                 match api::validate_dsl(&tournament_url, &skip_condition()).await {
                     Ok(res) => {
                         if !res.valid {
-                            skip_condition_error.set(res.error);
-                            skip_condition_simplified.set(None);
+                            error.set(Some(format!("Skip condition: {}", res.error.unwrap_or_else(|| "invalid".to_string()))));
                             saving.set(false);
                             return;
                         }
-                        skip_condition_simplified.set(res.simplified);
                     }
                     Err(e) => {
-                        skip_condition_error.set(Some(e));
-                        skip_condition_simplified.set(None);
+                        error.set(Some(format!("Skip condition: {}", e)));
                         saving.set(false);
                         return;
                     }
@@ -1028,12 +831,10 @@ fn CreateMatchModal(
             if (schedule_type() == "SAFE" || schedule_type() == "FAST") && !skip_condition().trim().is_empty() {
                 if let Ok(res) = api::validate_dsl(&tournament_url, &skip_condition()).await {
                     if !res.valid {
-                        skip_condition_error.set(res.error);
-                        skip_condition_simplified.set(None);
+                        error.set(Some(format!("Skip condition: {}", res.error.unwrap_or_else(|| "invalid".to_string()))));
                         saving.set(false);
                         return;
                     }
-                    skip_condition_simplified.set(res.simplified);
                 }
             }
             let refs_vec: Vec<String> = refs()
@@ -1105,192 +906,6 @@ fn CreateMatchModal(
             ev.stop_propagation();
             submit_create_rc2.borrow_mut()();
         }
-    };
-
-    let sc_val = skip_condition();
-    let cursor_char = skip_condition_cursor_pos();
-    let innermost = cursor_char.and_then(|c| skip_condition_innermost_around_cursor(&sc_val, c));
-    let cursor_byte = cursor_char.map(|c| skip_condition_cursor_byte(&sc_val, c)).unwrap_or(0);
-    let show_skip_docs = matches!(innermost, Some(InnermostBracket::Paren(_, _)));
-    let docs_prefix = match &innermost {
-        Some(InnermostBracket::Paren(cs, ce)) => {
-            sc_val[*cs..*ce].trim().split_whitespace().next().unwrap_or("").to_lowercase()
-        }
-        _ => String::new(),
-    };
-    let docs_filtered: Vec<_> = if show_skip_docs {
-        DSL_FUNCTIONS
-            .iter()
-            .filter(|(n, _)| n.to_lowercase().starts_with(docs_prefix.as_str()))
-            .take(12)
-            .collect()
-    } else {
-        vec![]
-    };
-    let (bracket_is_team, bracket_query) = match &innermost {
-        Some(InnermostBracket::Square(cs, ce)) => {
-            let end = (*ce).min(cursor_byte).max(*cs);
-            (true, sc_val[*cs..end].trim().to_lowercase())
-        }
-        Some(InnermostBracket::Curly(cs, ce)) => {
-            let end = (*ce).min(cursor_byte).max(*cs);
-            (false, sc_val[*cs..end].trim().to_lowercase())
-        }
-        _ => (true, String::new()),
-    };
-    let show_bracket_ac = matches!(innermost, Some(InnermostBracket::Square(_, _)) | Some(InnermostBracket::Curly(_, _)));
-    let bracket_ac_idx_raw = skip_bracket_ac_index();
-    // (insert_value, display_value, profile_photo for teams). Teams: insert id; matches: insert name.
-    // Team bracket also includes MatchName::winner and MatchName::loser.
-    let bracket_options: Vec<(String, String, Option<String>)> = if show_bracket_ac && bracket_is_team {
-        let team_opts: Vec<_> = data
-            .team_options
-            .iter()
-            .filter(|t| {
-                let disp = t.pseudonym.as_deref().unwrap_or(t.id.as_str());
-                disp.to_lowercase().contains(bracket_query.as_str())
-                    || t.id.to_lowercase().contains(bracket_query.as_str())
-            })
-            .map(|t| {
-                (
-                    t.id.clone(),
-                    t.pseudonym.clone().unwrap_or_else(|| t.id.clone()),
-                    t.profile_photo.clone(),
-                )
-            })
-            .take(15)
-            .collect();
-        let match_qual_opts: Vec<_> = data
-            .matches
-            .iter()
-            .flat_map(|m| {
-                let w = (format!("{}::winner", m.name), format!("{}::winner", m.name), None);
-                let l = (format!("{}::loser", m.name), format!("{}::loser", m.name), None);
-                [w, l]
-            })
-            .filter(|(s, _, _)| s.to_lowercase().contains(bracket_query.as_str()))
-            .take(15)
-            .collect();
-        let tag_opts: Vec<_> = data
-            .tags
-            .iter()
-            .filter(|t| t.name.to_lowercase().contains(bracket_query.as_str()))
-            .map(|t| (format!("tag::{}", t.name), t.name.clone(), None))
-            .take(15)
-            .collect();
-        team_opts
-            .into_iter()
-            .chain(match_qual_opts)
-            .chain(tag_opts)
-            .take(20)
-            .collect()
-    } else if show_bracket_ac {
-        data.matches
-            .iter()
-            .filter(|m| m.name.to_lowercase().contains(bracket_query.as_str()))
-            .map(|m| (m.name.clone(), m.name.clone(), None))
-            .take(15)
-            .collect()
-    } else {
-        vec![]
-    };
-    let bracket_ac_idx = bracket_ac_idx_raw.min(bracket_options.len().saturating_sub(1));
-    let docs_items: Vec<_> = if show_skip_docs && !docs_filtered.is_empty() {
-        docs_filtered
-            .iter()
-            .map(|(dn, ds)| {
-                let fname = dn.to_string();
-                rsx! {
-                    li {
-                        class: "py-1 px-2 rounded",
-                        onclick: move |_| {
-                            let v = skip_condition();
-                            if let Some(i) = v.rfind('(') {
-                                skip_condition.set(format!("{}{}", &v[..=i], fname));
-                            }
-                            skip_docs_visible.set(false);
-                        },
-                        span { class: "fw-medium text-primary", "{dn}" }
-                        span { class: "text-muted ms-1", " {ds}" }
-                    }
-                }
-            })
-            .collect()
-    } else {
-        vec![]
-    };
-    let base_url_create = api::base_url();
-    let bracket_option_items: Vec<_> = if show_bracket_ac && !bracket_options.is_empty() {
-        bracket_options
-            .iter()
-            .enumerate()
-            .map(|(idx, (insert_val, display_val, photo))| {
-                let opt_insert = insert_val.clone();
-                let opt_display = display_val.clone();
-                let opt_photo = photo.clone();
-                let is_team = bracket_is_team;
-                let is_cur = bracket_ac_idx == idx;
-                let li_class = if is_cur {
-                    "py-1 px-2 rounded bg-primary text-white"
-                } else {
-                    "py-1 px-2 rounded"
-                };
-                let avatar_node = if is_team {
-                    if opt_insert.ends_with("::winner") || opt_insert.ends_with("::loser") {
-                        rsx! {
-                            img { class: "icon-primary-svg me-1", src: "{base_url_create}/static/reference.svg", alt: "Reference", style: "width: 1.25em; height: 1.25em;" }
-                        }
-                    } else if opt_insert.starts_with("tag::") {
-                        rsx! {
-                            img { class: "icon-primary-svg me-1", src: "{base_url_create}/static/tag.svg", alt: "Tag", style: "width: 1.25em; height: 1.25em;" }
-                        }
-                    } else if let Some(photo) = &opt_photo {
-                        rsx! {
-                            img {
-                                src: "{base_url_create}/static/{photo}",
-                                alt: "{opt_display}",
-                                class: "team-token-avatar small me-1 rounded-circle",
-                                style: "width: 1.5em; height: 1.5em; object-fit: cover;"
-                            }
-                        }
-                    } else {
-                        rsx! {
-                            span { class: "team-token-avatar small me-1", "{opt_display.chars().next().unwrap_or('?')}" }
-                        }
-                    }
-                } else {
-                    rsx! { }
-                };
-                rsx! {
-                    li {
-                        class: "{li_class}",
-                        onclick: move |_| {
-                            let v = skip_condition();
-                            let cursor_char = skip_condition_cursor_pos().unwrap_or(0);
-                            let cursor_byte = skip_condition_cursor_byte(&v, cursor_char);
-                            let inn = skip_condition_innermost_around_cursor(&v, cursor_char);
-                            let Some(cs) = inn.and_then(|b| match b {
-                                InnermostBracket::Square(cs, _) | InnermostBracket::Curly(cs, _) => Some(cs),
-                                _ => None,
-                            }) else {
-                                skip_bracket_ac_visible.set(false);
-                                return;
-                            };
-                            let new_v = format!("{}{}{}", &v[..cs], opt_insert, &v[cursor_byte..]);
-                            skip_condition.set(new_v.clone());
-                            let cs_chars = v[..cs].chars().count();
-                            let new_cursor_char = cs_chars + opt_insert.chars().count();
-                            skip_condition_cursor.set(Some(new_cursor_char));
-                            skip_bracket_ac_visible.set(false);
-                        },
-                        {avatar_node}
-                        span { "{display_val}" }
-                    }
-                }
-            })
-            .collect()
-    } else {
-        vec![]
     };
 
     rsx! {
@@ -1455,7 +1070,7 @@ fn CreateMatchModal(
                                     }
                                 }
                                 if schedule_type() == "SAFE" || schedule_type() == "FAST" {
-                                    div { class: "mb-3 position-relative",
+                                    div { class: "mb-3",
                                         label { class: "form-label", "Skip condition" }
                                         div { class: "form-text mb-1",
                                             "Optional expression that evaluates to a boolean. If true, this match will be skipped. "
@@ -1469,209 +1084,15 @@ fn CreateMatchModal(
                                                 "(skip condition help)"
                                             }
                                         }
-                                        input {
-                                            id: "skip-condition-input-create",
-                                            class: "form-control font-monospace",
-                                            "type": "text",
-                                            placeholder: "e.g. (== 0 (losses [Team]))",
-                                            value: "{skip_condition}",
-                                            oninput: move |e| {
-                                                let new_val = e.value();
-                                                let old = skip_condition();
-                                                let (out, cursor_after_open) = if let Some(byte_i) = skip_condition_new_char_index(&old, &new_val) {
-                                                    let open_c = new_val[byte_i..].chars().next().unwrap_or('\0');
-                                                    let closing = match open_c {
-                                                        '(' => ")",
-                                                        '[' => {
-                                                            skip_bracket_ac_visible.set(true);
-                                                            skip_bracket_ac_team.set(true);
-                                                            skip_bracket_ac_index.set(0);
-                                                            "]"
-                                                        }
-                                                        '{' => {
-                                                            skip_bracket_ac_visible.set(true);
-                                                            skip_bracket_ac_team.set(false);
-                                                            skip_bracket_ac_index.set(0);
-                                                            "}"
-                                                        }
-                                                        _ => "",
-                                                    };
-                                                    if closing.is_empty() {
-                                                        (new_val, None)
-                                                    } else {
-                                                        let char_end = byte_i + new_val[byte_i..].chars().next().map(|c| c.len_utf8()).unwrap_or(1);
-                                                        let out_str = format!("{}{}{}", &new_val[..char_end], closing, &new_val[char_end..]);
-                                                        (out_str, Some(char_end))
-                                                    }
-                                                } else {
-                                                    (new_val, None)
-                                                };
-                                                skip_condition.set(out.clone());
-                                                if let Some(pos) = cursor_after_open {
-                                                    skip_condition_cursor.set(Some(pos));
-                                                }
-                                                skip_condition_error.set(None);
-                                                if out.contains('(') {
-                                                    skip_docs_visible.set(true);
-                                                }
-                                                let id = "skip-condition-input-create".to_string();
-                                                spawn(async move {
-                                                    gloo_timers::future::TimeoutFuture::new(0).await;
-                                                    #[cfg(target_arch = "wasm32")]
-                                                    if let Some(window) = web_sys::window() {
-                                                        if let Some(doc) = window.document() {
-                                                            if let Ok(Some(el)) = doc.query_selector(&format!("#{}", id)) {
-                                                                if let Ok(input) = el.dyn_into::<web_sys::HtmlInputElement>() {
-                                                                    if let Ok(Some(sel)) = input.selection_start() {
-                                                                        skip_condition_cursor_pos.set(Some(sel as usize));
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                });
-                                            },
-                                            onfocus: move |_| {
-                                                let id = "skip-condition-input-create".to_string();
-                                                spawn(async move {
-                                                    gloo_timers::future::TimeoutFuture::new(0).await;
-                                                    #[cfg(target_arch = "wasm32")]
-                                                    if let Some(window) = web_sys::window() {
-                                                        if let Some(doc) = window.document() {
-                                                            if let Ok(Some(el)) = doc.query_selector(&format!("#{}", id)) {
-                                                                if let Ok(input) = el.dyn_into::<web_sys::HtmlInputElement>() {
-                                                                    if let Ok(Some(sel)) = input.selection_start() {
-                                                                        skip_condition_cursor_pos.set(Some(sel as usize));
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                });
-                                            },
-                                            onkeydown: move |ev: Event<KeyboardData>| {
-                                                let key = ev.key().to_string();
-                                                let n = bracket_options.len();
-                                                if show_bracket_ac && n > 0 {
-                                                    if key == "ArrowDown" {
-                                                        ev.prevent_default();
-                                                        skip_bracket_ac_index.set((bracket_ac_idx + 1) % n);
-                                                        return;
-                                                    }
-                                                    if key == "ArrowUp" {
-                                                        ev.prevent_default();
-                                                        skip_bracket_ac_index.set((bracket_ac_idx + n - 1) % n);
-                                                        return;
-                                                    }
-                                                    if key == "Enter" {
-                                                        ev.prevent_default();
-                                                        if let Some((opt_insert, _, _)) = bracket_options.get(bracket_ac_idx) {
-                                                            let v = skip_condition();
-                                                            let cursor_char = skip_condition_cursor_pos().unwrap_or(0);
-                                                            let cursor_byte = skip_condition_cursor_byte(&v, cursor_char);
-                                                            let inn = skip_condition_innermost_around_cursor(&v, cursor_char);
-                                                            if let Some(cs) = inn.and_then(|b| match b {
-                                                                InnermostBracket::Square(cs, _) | InnermostBracket::Curly(cs, _) => Some(cs),
-                                                                _ => None,
-                                                            }) {
-                                                                let new_v = format!("{}{}{}", &v[..cs], opt_insert, &v[cursor_byte..]);
-                                                                skip_condition.set(new_v);
-                                                                let cs_chars = v[..cs].chars().count();
-                                                                let new_cursor_char = cs_chars + opt_insert.chars().count();
-                                                                skip_condition_cursor.set(Some(new_cursor_char));
-                                                                skip_bracket_ac_visible.set(false);
-                                                            }
-                                                        }
-                                                        return;
-                                                    }
-                                                }
-                                                if key == "Enter" && !ev.modifiers().contains(Modifiers::SHIFT) {
-                                                    ev.prevent_default();
-                                                }
-                                            },
-                                            onkeyup: move |_| {
-                                                let id = "skip-condition-input-create".to_string();
-                                                spawn(async move {
-                                                    gloo_timers::future::TimeoutFuture::new(0).await;
-                                                    #[cfg(target_arch = "wasm32")]
-                                                    if let Some(window) = web_sys::window() {
-                                                        if let Some(doc) = window.document() {
-                                                            if let Ok(Some(el)) = doc.query_selector(&format!("#{}", id)) {
-                                                                if let Ok(input) = el.dyn_into::<web_sys::HtmlInputElement>() {
-                                                                    if let Ok(Some(sel)) = input.selection_start() {
-                                                                        let sel_i = sel as usize;
-                                                                        skip_condition_cursor_pos.set(Some(sel_i));
-                                                                        let val = input.value();
-                                                                        let inside = skip_condition_innermost_around_cursor(&val, sel_i)
-                                                                            .map(|b| matches!(b, InnermostBracket::Square(_, _) | InnermostBracket::Curly(_, _)))
-                                                                            .unwrap_or(false);
-                                                                        if !inside {
-                                                                            skip_bracket_ac_visible.set(false);
-                                                                        }
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                });
-                                            },
-                                            onblur: move |_| {
-                                                skip_docs_visible.set(false);
-                                                skip_bracket_ac_visible.set(false);
-                                                let expr = skip_condition();
-                                                if expr.trim().is_empty() {
-                                                    skip_condition_error.set(None);
-                                                    return;
-                                                }
-                                                let url = tournament_url.clone();
-                                                spawn(async move {
-                                                    match api::validate_dsl(&url, &expr).await {
-                                                        Ok(res) => {
-                                                            skip_condition_error.set(if res.valid {
-                                                                None
-                                                            } else {
-                                                                res.error.clone()
-                                                            });
-                                                            skip_condition_simplified.set(if res.valid {
-                                                                res.simplified
-                                                            } else {
-                                                                None
-                                                            });
-                                                        }
-                                                        Err(e) => {
-                                                            skip_condition_error.set(Some(e));
-                                                            skip_condition_simplified.set(None);
-                                                        }
-                                                    }
-                                                });
-                                            },
-                                        }
-                                        if show_skip_docs && !docs_filtered.is_empty() {
-                                            div { class: "position-absolute start-0 mt-1 p-2 bg-light border rounded shadow-sm z-3",
-                                                style: "min-width: 280px; max-height: 240px; overflow-y: auto;",
-                                                ul { class: "list-unstyled mb-0 small",
-                                                    for item in docs_items.iter() {
-                                                        {item.clone()}
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        if show_bracket_ac && !bracket_option_items.is_empty() {
-                                            div { class: "position-absolute start-0 mt-1 p-2 bg-light border rounded shadow-sm z-3",
-                                                style: "min-width: 200px; max-height: 200px; overflow-y: auto;",
-                                                ul { class: "list-unstyled mb-0 small",
-                                                    for bracket_item in bracket_option_items.iter() {
-                                                        {bracket_item.clone()}
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        if let Some(err) = skip_condition_error() {
-                                            div { class: "form-text text-danger", "✗ {err}" }
-                                        } else if let Some(simp) = skip_condition_simplified() {
-                                            div { class: "form-text text-success", "✓ Valid (simplified: {simp})" }
-                                        } else if !skip_condition().trim().is_empty() {
-                                            div { class: "form-text text-success", "✓ Valid" }
+                                        AssEntry {
+                                            id_suffix: "create".to_string(),
+                                            value: skip_condition(),
+                                            on_change: move |v| skip_condition.set(v),
+                                            team_options: data.team_options.clone(),
+                                            tags: data.tags.clone(),
+                                            matches: data.matches.clone(),
+                                            tournament_url: tournament_url.clone(),
+                                            placeholder: "e.g. (== 0 (losses [Team]))".to_string(),
                                         }
                                     }
                                 }
@@ -3551,37 +2972,7 @@ fn EditMatchModal(
     let mut stones_per_set = use_signal(|| m.stones_per_set.unwrap_or(100));
     let ribbon = use_signal(|| m.ribbon);
     let mut skip_condition = use_signal(|| m.skip_condition.clone().unwrap_or_default());
-    let mut skip_condition_error = use_signal(|| None::<String>);
-    let mut skip_condition_simplified = use_signal(|| None::<String>);
-    let mut skip_condition_cursor = use_signal(|| None::<usize>);
-    let mut skip_condition_cursor_pos = use_signal(|| None::<usize>);
-    let mut skip_docs_visible = use_signal(|| false);
-    let mut skip_bracket_ac_visible = use_signal(|| false);
-    let mut skip_bracket_ac_team = use_signal(|| true);
-    let mut skip_bracket_ac_index = use_signal(|| 0usize);
     let mut skip_condition_help_open = use_signal(|| false);
-
-    #[cfg(target_arch = "wasm32")]
-    use_effect(move || {
-        let pos = skip_condition_cursor();
-        if let Some(p) = pos {
-            skip_condition_cursor.set(None);
-            let id = "skip-condition-input-edit".to_string();
-            spawn(async move {
-                gloo_timers::future::TimeoutFuture::new(0).await;
-                if let Some(window) = web_sys::window() {
-                    if let Some(doc) = window.document() {
-                        if let Ok(Some(el)) = doc.query_selector(&format!("#{}", id)) {
-                            if let Ok(input) = el.dyn_into::<web_sys::HtmlInputElement>() {
-                                let _ = input.set_selection_range(p as u32, p as u32);
-                                let _ = input.focus();
-                            }
-                        }
-                    }
-                }
-            });
-        }
-    });
 
     let mut error = use_signal(|| None::<String>);
     let mut saving = use_signal(|| false);
@@ -3646,16 +3037,13 @@ fn EditMatchModal(
                 match api::validate_dsl(&tournament_url, &skip_condition()).await {
                     Ok(res) => {
                         if !res.valid {
-                            skip_condition_error.set(res.error);
-                            skip_condition_simplified.set(None);
+                            error.set(Some(format!("Skip condition: {}", res.error.unwrap_or_else(|| "invalid".to_string()))));
                             saving.set(false);
                             return;
                         }
-                        skip_condition_simplified.set(res.simplified);
                     }
                     Err(e) => {
-                        skip_condition_error.set(Some(e));
-                        skip_condition_simplified.set(None);
+                        error.set(Some(format!("Skip condition: {}", e)));
                         saving.set(false);
                         return;
                     }
@@ -3726,220 +3114,6 @@ fn EditMatchModal(
             do_save_rc3.borrow_mut()();
         }
     };
-
-    let sc_val_edit = skip_condition();
-    let cursor_char_edit = skip_condition_cursor_pos();
-    let innermost_edit = cursor_char_edit.and_then(|c| skip_condition_innermost_around_cursor(&sc_val_edit, c));
-    let cursor_byte_edit = cursor_char_edit.map(|c| skip_condition_cursor_byte(&sc_val_edit, c)).unwrap_or(0);
-    let show_skip_docs_edit = matches!(innermost_edit, Some(InnermostBracket::Paren(_, _)));
-    let docs_prefix_edit = match &innermost_edit {
-        Some(InnermostBracket::Paren(cs, ce)) => {
-            sc_val_edit[*cs..*ce].trim().split_whitespace().next().unwrap_or("").to_lowercase()
-        }
-        _ => String::new(),
-    };
-    let docs_filtered_edit: Vec<_> = if show_skip_docs_edit {
-        DSL_FUNCTIONS
-            .iter()
-            .filter(|(n, _)| n.to_lowercase().starts_with(docs_prefix_edit.as_str()))
-            .take(12)
-            .collect()
-    } else {
-        vec![]
-    };
-    let (bracket_is_team_edit, bracket_query_edit) = match &innermost_edit {
-        Some(InnermostBracket::Square(cs, ce)) => {
-            let end = (*ce).min(cursor_byte_edit).max(*cs);
-            (true, sc_val_edit[*cs..end].trim().to_lowercase())
-        }
-        Some(InnermostBracket::Curly(cs, ce)) => {
-            let end = (*ce).min(cursor_byte_edit).max(*cs);
-            (false, sc_val_edit[*cs..end].trim().to_lowercase())
-        }
-        _ => (true, String::new()),
-    };
-    let show_bracket_ac_edit = matches!(innermost_edit, Some(InnermostBracket::Square(_, _)) | Some(InnermostBracket::Curly(_, _)));
-    let bracket_ac_idx_edit_raw = skip_bracket_ac_index();
-    let bracket_options_edit: Vec<(String, String, Option<String>)> = if show_bracket_ac_edit && bracket_is_team_edit {
-        let team_opts_edit: Vec<_> = data
-            .team_options
-            .iter()
-            .filter(|t| {
-                let disp = t.pseudonym.as_deref().unwrap_or(t.id.as_str());
-                disp.to_lowercase().contains(bracket_query_edit.as_str())
-                    || t.id.to_lowercase().contains(bracket_query_edit.as_str())
-            })
-            .map(|t| {
-                (
-                    t.id.clone(),
-                    t.pseudonym.clone().unwrap_or_else(|| t.id.clone()),
-                    t.profile_photo.clone(),
-                )
-            })
-            .take(15)
-            .collect();
-        let match_qual_opts_edit: Vec<_> = data
-            .matches
-            .iter()
-            .flat_map(|m| {
-                let w = (format!("{}::winner", m.name), format!("{}::winner", m.name), None);
-                let l = (format!("{}::loser", m.name), format!("{}::loser", m.name), None);
-                [w, l]
-            })
-            .filter(|(s, _, _)| s.to_lowercase().contains(bracket_query_edit.as_str()))
-            .take(15)
-            .collect();
-        let tag_opts_edit: Vec<_> = data
-            .tags
-            .iter()
-            .filter(|t| t.name.to_lowercase().contains(bracket_query_edit.as_str()))
-            .map(|t| (format!("tag::{}", t.name), t.name.clone(), None))
-            .take(15)
-            .collect();
-        team_opts_edit
-            .into_iter()
-            .chain(match_qual_opts_edit)
-            .chain(tag_opts_edit)
-            .take(20)
-            .collect()
-    } else if show_bracket_ac_edit {
-        data.matches
-            .iter()
-            .filter(|m| m.name.to_lowercase().contains(bracket_query_edit.as_str()))
-            .map(|m| (m.name.clone(), m.name.clone(), None))
-            .take(15)
-            .collect()
-    } else {
-        vec![]
-    };
-    let bracket_ac_idx_edit = bracket_ac_idx_edit_raw.min(bracket_options_edit.len().saturating_sub(1));
-    let docs_items_edit: Vec<_> = if show_skip_docs_edit && !docs_filtered_edit.is_empty() {
-        docs_filtered_edit
-            .iter()
-            .map(|(dn, ds)| {
-                let fname = dn.to_string();
-                rsx! {
-                    li {
-                        class: "py-1 px-2 rounded",
-                        onclick: move |_| {
-                            let v = skip_condition();
-                            if let Some(i) = v.rfind('(') {
-                                skip_condition.set(format!("{}{}", &v[..=i], fname));
-                            }
-                            skip_docs_visible.set(false);
-                        },
-                        span { class: "fw-medium text-primary", "{dn}" }
-                        span { class: "text-muted ms-1", " {ds}" }
-                    }
-                }
-            })
-            .collect()
-    } else {
-        vec![]
-    };
-    let base_url_edit = api::base_url();
-    let bracket_option_items_edit: Vec<_> = if show_bracket_ac_edit && !bracket_options_edit.is_empty() {
-        bracket_options_edit
-            .iter()
-            .enumerate()
-            .map(|(idx, (insert_val, display_val, photo))| {
-                let opt_insert = insert_val.clone();
-                let opt_display = display_val.clone();
-                let opt_photo = photo.clone();
-                let is_team = bracket_is_team_edit;
-                let is_cur = bracket_ac_idx_edit == idx;
-                let li_class = if is_cur {
-                    "py-1 px-2 rounded bg-primary text-white"
-                } else {
-                    "py-1 px-2 rounded"
-                };
-                let avatar_node_edit = if is_team {
-                    if opt_insert.ends_with("::winner") || opt_insert.ends_with("::loser") {
-                        rsx! {
-                            img { class: "icon-primary-svg me-1", src: "{base_url_edit}/static/reference.svg", alt: "Reference", style: "width: 1.25em; height: 1.25em;" }
-                        }
-                    } else if opt_insert.starts_with("tag::") {
-                        rsx! {
-                            img { class: "icon-primary-svg me-1", src: "{base_url_edit}/static/tag.svg", alt: "Tag", style: "width: 1.25em; height: 1.25em;" }
-                        }
-                    } else if let Some(photo) = &opt_photo {
-                        rsx! {
-                            img {
-                                src: "{base_url_edit}/static/{photo}",
-                                alt: "{opt_display}",
-                                class: "team-token-avatar small me-1 rounded-circle",
-                                style: "width: 1.5em; height: 1.5em; object-fit: cover;"
-                            }
-                        }
-                    } else {
-                        rsx! {
-                            span { class: "team-token-avatar small me-1", "{opt_display.chars().next().unwrap_or('?')}" }
-                        }
-                    }
-                } else {
-                    rsx! { }
-                };
-                rsx! {
-                    li {
-                        class: "{li_class}",
-                        onclick: move |_| {
-                            let v = skip_condition();
-                            let cursor_char = skip_condition_cursor_pos().unwrap_or(0);
-                            let cursor_byte = skip_condition_cursor_byte(&v, cursor_char);
-                            let inn = skip_condition_innermost_around_cursor(&v, cursor_char);
-                            let Some(cs) = inn.and_then(|b| match b {
-                                InnermostBracket::Square(cs, _) | InnermostBracket::Curly(cs, _) => Some(cs),
-                                _ => None,
-                            }) else {
-                                skip_bracket_ac_visible.set(false);
-                                return;
-                            };
-                            let new_v = format!("{}{}{}", &v[..cs], opt_insert, &v[cursor_byte..]);
-                            skip_condition.set(new_v.clone());
-                            let cs_chars = v[..cs].chars().count();
-                            let new_cursor_char = cs_chars + opt_insert.chars().count();
-                            skip_condition_cursor.set(Some(new_cursor_char));
-                            skip_bracket_ac_visible.set(false);
-                        },
-                        {avatar_node_edit}
-                        span { "{display_val}" }
-                    }
-                }
-            })
-            .collect()
-    } else {
-        vec![]
-    };
-
-    let tournament_url_val_edit = tournament_url.clone();
-    use_effect(move || {
-        let expr = skip_condition();
-        let _ = expr.clone();
-        if expr.trim().is_empty() {
-            return;
-        }
-        let expr_captured = expr.clone();
-        let url = tournament_url_val_edit.clone();
-        #[cfg(target_arch = "wasm32")]
-        spawn(async move {
-            gloo_timers::future::TimeoutFuture::new(3000).await;
-            let current = skip_condition();
-            if current == expr_captured {
-                match api::validate_dsl(&url, &expr_captured).await {
-                    Ok(res) => {
-                        skip_condition_error.set(if res.valid { None } else { res.error.clone() });
-                        skip_condition_simplified.set(if res.valid { res.simplified } else { None });
-                    }
-                    Err(e) => {
-                        skip_condition_error.set(Some(e));
-                        skip_condition_simplified.set(None);
-                    }
-                }
-            }
-        });
-        #[cfg(not(target_arch = "wasm32"))]
-        let _ = (expr_captured, url);
-    });
 
     rsx! {
         div {
@@ -4105,7 +3279,7 @@ fn EditMatchModal(
                                     }
                                 }
                                 if schedule_type() == "SAFE" || schedule_type() == "FAST" {
-                                    div { class: "mb-3 position-relative",
+                                    div { class: "mb-3",
                                         label { class: "form-label", "Skip condition" }
                                         div { class: "form-text mb-1",
                                             "Optional expression that evaluates to a boolean. If true, this match will be skipped. "
@@ -4119,209 +3293,15 @@ fn EditMatchModal(
                                                 "(skip condition help)"
                                             }
                                         }
-                                        input {
-                                            id: "skip-condition-input-edit",
-                                            class: "form-control font-monospace",
-                                            "type": "text",
-                                            placeholder: "e.g. (== 0 (losses [Team]))",
-                                            value: "{skip_condition}",
-                                            oninput: move |e| {
-                                                let new_val = e.value();
-                                                let old = skip_condition();
-                                                let (out, cursor_after_open) = if let Some(byte_i) = skip_condition_new_char_index(&old, &new_val) {
-                                                    let open_c = new_val[byte_i..].chars().next().unwrap_or('\0');
-                                                    let closing = match open_c {
-                                                        '(' => ")",
-                                                        '[' => {
-                                                            skip_bracket_ac_visible.set(true);
-                                                            skip_bracket_ac_team.set(true);
-                                                            skip_bracket_ac_index.set(0);
-                                                            "]"
-                                                        }
-                                                        '{' => {
-                                                            skip_bracket_ac_visible.set(true);
-                                                            skip_bracket_ac_team.set(false);
-                                                            skip_bracket_ac_index.set(0);
-                                                            "}"
-                                                        }
-                                                        _ => "",
-                                                    };
-                                                    if closing.is_empty() {
-                                                        (new_val, None)
-                                                    } else {
-                                                        let char_end = byte_i + new_val[byte_i..].chars().next().map(|c| c.len_utf8()).unwrap_or(1);
-                                                        let out_str = format!("{}{}{}", &new_val[..char_end], closing, &new_val[char_end..]);
-                                                        (out_str, Some(char_end))
-                                                    }
-                                                } else {
-                                                    (new_val, None)
-                                                };
-                                                skip_condition.set(out.clone());
-                                                if let Some(pos) = cursor_after_open {
-                                                    skip_condition_cursor.set(Some(pos));
-                                                }
-                                                skip_condition_error.set(None);
-                                                if out.contains('(') {
-                                                    skip_docs_visible.set(true);
-                                                }
-                                                let id = "skip-condition-input-edit".to_string();
-                                                spawn(async move {
-                                                    gloo_timers::future::TimeoutFuture::new(0).await;
-                                                    #[cfg(target_arch = "wasm32")]
-                                                    if let Some(window) = web_sys::window() {
-                                                        if let Some(doc) = window.document() {
-                                                            if let Ok(Some(el)) = doc.query_selector(&format!("#{}", id)) {
-                                                                if let Ok(input) = el.dyn_into::<web_sys::HtmlInputElement>() {
-                                                                    if let Ok(Some(sel)) = input.selection_start() {
-                                                                        skip_condition_cursor_pos.set(Some(sel as usize));
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                });
-                                            },
-                                            onfocus: move |_| {
-                                                let id = "skip-condition-input-edit".to_string();
-                                                spawn(async move {
-                                                    gloo_timers::future::TimeoutFuture::new(0).await;
-                                                    #[cfg(target_arch = "wasm32")]
-                                                    if let Some(window) = web_sys::window() {
-                                                        if let Some(doc) = window.document() {
-                                                            if let Ok(Some(el)) = doc.query_selector(&format!("#{}", id)) {
-                                                                if let Ok(input) = el.dyn_into::<web_sys::HtmlInputElement>() {
-                                                                    if let Ok(Some(sel)) = input.selection_start() {
-                                                                        skip_condition_cursor_pos.set(Some(sel as usize));
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                });
-                                            },
-                                            onkeydown: move |ev: Event<KeyboardData>| {
-                                                let key = ev.key().to_string();
-                                                let n_edit = bracket_options_edit.len();
-                                                if show_bracket_ac_edit && n_edit > 0 {
-                                                    if key == "ArrowDown" {
-                                                        ev.prevent_default();
-                                                        skip_bracket_ac_index.set((bracket_ac_idx_edit + 1) % n_edit);
-                                                        return;
-                                                    }
-                                                    if key == "ArrowUp" {
-                                                        ev.prevent_default();
-                                                        skip_bracket_ac_index.set((bracket_ac_idx_edit + n_edit - 1) % n_edit);
-                                                        return;
-                                                    }
-                                                    if key == "Enter" {
-                                                        ev.prevent_default();
-                                                        if let Some((opt_insert, _, _)) = bracket_options_edit.get(bracket_ac_idx_edit) {
-                                                            let v = skip_condition();
-                                                            let cursor_char = skip_condition_cursor_pos().unwrap_or(0);
-                                                            let cursor_byte = skip_condition_cursor_byte(&v, cursor_char);
-                                                            let inn = skip_condition_innermost_around_cursor(&v, cursor_char);
-                                                            if let Some(cs) = inn.and_then(|b| match b {
-                                                                InnermostBracket::Square(cs, _) | InnermostBracket::Curly(cs, _) => Some(cs),
-                                                                _ => None,
-                                                            }) {
-                                                                let new_v = format!("{}{}{}", &v[..cs], opt_insert, &v[cursor_byte..]);
-                                                                skip_condition.set(new_v);
-                                                                let cs_chars = v[..cs].chars().count();
-                                                                let new_cursor_char = cs_chars + opt_insert.chars().count();
-                                                                skip_condition_cursor.set(Some(new_cursor_char));
-                                                                skip_bracket_ac_visible.set(false);
-                                                            }
-                                                        }
-                                                        return;
-                                                    }
-                                                }
-                                                if key == "Enter" && !ev.modifiers().contains(Modifiers::SHIFT) {
-                                                    ev.prevent_default();
-                                                }
-                                            },
-                                            onkeyup: move |_| {
-                                                let id = "skip-condition-input-edit".to_string();
-                                                spawn(async move {
-                                                    gloo_timers::future::TimeoutFuture::new(0).await;
-                                                    #[cfg(target_arch = "wasm32")]
-                                                    if let Some(window) = web_sys::window() {
-                                                        if let Some(doc) = window.document() {
-                                                            if let Ok(Some(el)) = doc.query_selector(&format!("#{}", id)) {
-                                                                if let Ok(input) = el.dyn_into::<web_sys::HtmlInputElement>() {
-                                                                    if let Ok(Some(sel)) = input.selection_start() {
-                                                                        let sel_i = sel as usize;
-                                                                        skip_condition_cursor_pos.set(Some(sel_i));
-                                                                        let val = input.value();
-                                                                        let inside = skip_condition_innermost_around_cursor(&val, sel_i)
-                                                                            .map(|b| matches!(b, InnermostBracket::Square(_, _) | InnermostBracket::Curly(_, _)))
-                                                                            .unwrap_or(false);
-                                                                        if !inside {
-                                                                            skip_bracket_ac_visible.set(false);
-                                                                        }
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                });
-                                            },
-                                            onblur: move |_| {
-                                                skip_docs_visible.set(false);
-                                                skip_bracket_ac_visible.set(false);
-                                                let expr = skip_condition();
-                                                if expr.trim().is_empty() {
-                                                    skip_condition_error.set(None);
-                                                    return;
-                                                }
-                                                let url = tournament_url.clone();
-                                                spawn(async move {
-                                                    match api::validate_dsl(&url, &expr).await {
-                                                        Ok(res) => {
-                                                            skip_condition_error.set(if res.valid {
-                                                                None
-                                                            } else {
-                                                                res.error
-                                                            });
-                                                            skip_condition_simplified.set(if res.valid {
-                                                                res.simplified
-                                                            } else {
-                                                                None
-                                                            });
-                                                        }
-                                                        Err(e) => {
-                                                            skip_condition_error.set(Some(e));
-                                                            skip_condition_simplified.set(None);
-                                                        }
-                                                    }
-                                                });
-                                            },
-                                        }
-                                        if show_skip_docs_edit && !docs_filtered_edit.is_empty() {
-                                            div { class: "position-absolute start-0 mt-1 p-2 bg-light border rounded shadow-sm z-3",
-                                                style: "min-width: 280px; max-height: 240px; overflow-y: auto;",
-                                                ul { class: "list-unstyled mb-0 small",
-                                                    for item in docs_items_edit.iter() {
-                                                        {item.clone()}
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        if show_bracket_ac_edit && !bracket_options_edit.is_empty() {
-                                            div { class: "position-absolute start-0 mt-1 p-2 bg-light border rounded shadow-sm z-3",
-                                                style: "min-width: 200px; max-height: 240px; overflow-y: auto;",
-                                                ul { class: "list-unstyled mb-0 small",
-                                                    for item in bracket_option_items_edit.iter() {
-                                                        {item.clone()}
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        if let Some(err) = skip_condition_error() {
-                                            div { class: "form-text text-danger", "✗ {err}" }
-                                        } else if let Some(simp) = skip_condition_simplified() {
-                                            div { class: "form-text text-success", "✓ Valid (simplified: {simp})" }
-                                        } else if !skip_condition().trim().is_empty() {
-                                            div { class: "form-text text-success", "✓ Valid" }
+                                        AssEntry {
+                                            id_suffix: "edit".to_string(),
+                                            value: skip_condition(),
+                                            on_change: move |v| skip_condition.set(v),
+                                            team_options: data.team_options.clone(),
+                                            tags: data.tags.clone(),
+                                            matches: data.matches.clone(),
+                                            tournament_url: tournament_url.clone(),
+                                            placeholder: "e.g. (== 0 (losses [Team]))".to_string(),
                                         }
                                     }
                                 }

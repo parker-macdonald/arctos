@@ -577,7 +577,7 @@ class TestErrorHandling:
         with app.app_context():
             parser = get_parser(tournament.url)
 
-            with pytest.raises(DSLValidationError, match="No symbol named"):
+            with pytest.raises(DSLValidationError, match="Unknown function"):
                 parser.parse("(undefined_function 1 2)")
 
     @pytest.mark.unit
