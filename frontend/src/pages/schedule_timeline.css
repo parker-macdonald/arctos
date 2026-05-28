@@ -487,6 +487,104 @@
     padding: 0.05rem 0.25rem;
 }
 
+/* ASS (Arctos Schedule Script) entry component */
+.ass-entry {
+    /* container holds input + dropdown + preview + status */
+}
+
+.ass-entry-input {
+    /* monospaced input from form-control font-monospace */
+}
+
+.ass-entry-ac {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    z-index: 1050;
+    min-width: 280px;
+    max-width: 480px;
+    max-height: 280px;
+    overflow-y: auto;
+    margin-top: 2px;
+    padding: 0.25rem 0;
+    background: white;
+    border: 1px solid #dee2e6;
+    border-radius: 4px;
+    box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15);
+    list-style: none;
+}
+
+.ass-entry-ac-item {
+    padding: 0.3rem 0.6rem;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+}
+
+.ass-entry-ac-item-active {
+    background: #0d6efd;
+    color: white;
+}
+
+.ass-entry-ac-item-active .text-muted,
+.ass-entry-ac-item-active .ass-entry-ac-fn-desc {
+    color: rgba(255, 255, 255, 0.85) !important;
+}
+
+.ass-entry-ac-fn-name {
+    font-weight: 600;
+    font-family: var(--bs-font-monospace, monospace);
+}
+
+.ass-entry-ac-fn-sig {
+    font-family: var(--bs-font-monospace, monospace);
+    font-size: 0.85em;
+}
+
+.ass-entry-ac-fn-desc {
+    font-size: 0.8em;
+    line-height: 1.3;
+}
+
+.ass-entry-preview {
+    margin-top: 0.3rem;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+    align-items: center;
+    padding: 0.25rem 0.4rem;
+    background: #f8f9fa;
+    border-radius: 4px;
+    border: 1px dashed #ced4da;
+}
+
+.ass-entry-preview-text {
+    font-family: var(--bs-font-monospace, monospace);
+    color: #495057;
+    white-space: pre;
+}
+
+.ass-entry-preview-bracket {
+    font-family: var(--bs-font-monospace, monospace);
+    font-weight: 600;
+}
+
+.team-token-chip-match {
+    background: #fff3cd;
+    border-color: #ffe69c;
+}
+
+.ass-entry-preview-unknown {
+    background: #f8d7da;
+    border-color: #f5c2c7;
+}
+
+.ass-entry-error {
+    white-space: pre-wrap;
+    font-family: var(--bs-font-monospace, monospace);
+}
+
 /* Schedule table view: keep cells as table-cell so Team 1 / Team 2 / Refs columns layout correctly */
 .schedule-table-view table {
     table-layout: auto;

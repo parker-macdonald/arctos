@@ -822,8 +822,7 @@ def validate_dsl(tournament_url):
     """Validate and simplify a DSL expression.
     Returns JSON with: valid (bool), value (the full interpreted value), simplified (str representation), error (str or None)
     """
-    # Kept inline: app.utils.parser exports `Team` and `Match` names that
-    # would shadow `models.Team`/`models.Match` if hoisted to module top.
+    from flask import jsonify
     from app.utils.parser import (
         get_parser,
         DSLValidationError,
@@ -895,6 +894,7 @@ def validate_dsl(tournament_url):
 
     try:
         parser = get_parser(tournament_url)
+        warnings = parser.static_check(expression)
         result = parser.parse(expression)
 
         # Serialize the full value for JSON response
@@ -906,12 +906,25 @@ def validate_dsl(tournament_url):
         # Only include simplified if it's different from the input
         simplified = simplified_str if simplified_str != expression else None
 
+        # Treat unresolvable team/match references as errors so the user notices typos.
+        if warnings:
+            return jsonify(
+                {
+                    "valid": False,
+                    "value": None,
+                    "simplified": None,
+                    "error": "; ".join(warnings),
+                    "warnings": warnings,
+                }
+            )
+
         return jsonify(
             {
                 "valid": True,
                 "value": serialized_value,
                 "simplified": simplified,
                 "error": None,
+                "warnings": [],
             }
         )
     except DSLValidationError as e:
@@ -925,6 +938,7 @@ def validate_dsl(tournament_url):
                 "error": f"Parse error: {str(e)}",
             }
         )
+
 
 
 @bp.route("/tournaments/<tournament_url>/start-match", methods=["GET"])
