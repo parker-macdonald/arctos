@@ -11,9 +11,18 @@ just test          # everything
 just unit          # unit tests only (-m unit)
 just integration   # integration tests only (-m integration)
 
-just test -k registration   # by name (any pytest args after `just test`)
-just coverage               # coverage report
+just test -k "registration flow"       # by name (passes extra args through)
+just coverage                          # coverage report via just
+just coverage -k "registration flow"   # filtered coverage run
+just coverage-check                    # CI-style coverage threshold
+
+uv run pytest tests/ -k "registration"                          # by name, without just
+uv run pytest tests/ --cov=app --cov-report=term-missing        # thresholded coverage, without just
+uv run pytest tests/ --cov=app --cov-report=html                # HTML report -> htmlcov/
 ```
+
+See [`TESTING.md`](../TESTING.md#coverage) for the coverage threshold
+and what's configured under `[tool.coverage.*]` in `pyproject.toml`.
 
 ## Layout
 

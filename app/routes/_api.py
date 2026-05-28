@@ -683,6 +683,7 @@ def league_detail(league_url):
                 "team_id": team_reg.team,
                 "team_name": team.name if team else team_reg.team,
                 "pseudonym": team_reg.pseudonym,
+                "shortname": team_reg.shortname,
                 "player_count": counts_by_team[team_reg.team],
                 "registered_at": _dt_iso(getattr(team_reg, "registered_at", None)),
                 "profile_photo": team.profile_photo if team else None,
@@ -866,7 +867,13 @@ def league_results_team_matches(league_url, team_id):
 @bp.route("/leagues/<league_url>/register-team", methods=["POST"])
 @login_required
 def league_register_team(league_url):
-    """Register a team for a league."""
+    """Register a team for a league.
+
+    Form Data:
+        pseudonym (str): Team display name for this league.
+        shortname (str, optional): Short alias (<= 12 chars) used in
+            space-constrained UI. Blank/missing stores ``NULL``.
+    """
     from app.services.registration_service import RegistrationService
     from app.utils.result_helpers import json_from_result
 
@@ -876,7 +883,10 @@ def league_register_team(league_url):
     if err:
         return jsonify({"error": "Not found" if err == 404 else "Forbidden"}), err
     res = RegistrationService.register_team(
-        Scope.league(league.url), current_user.id, request.form.get("pseudonym", "")
+        Scope.league(league.url),
+        current_user.id,
+        request.form.get("pseudonym", ""),
+        shortname=request.form.get("shortname", "") or None,
     )
     return json_from_result(
         res,
@@ -1299,7 +1309,11 @@ def get_my_player_registration_league(league_url):
     if reg.team:
         team_reg = team_registration_for_tournament(ctx, reg.team)
         if team_reg:
-            current_team = {"id": reg.team, "pseudonym": team_reg.pseudonym}
+            current_team = {
+                "id": reg.team,
+                "pseudonym": team_reg.pseudonym,
+                "shortname": team_reg.shortname,
+            }
 
     rc = league.registrable_config
     w = _player_reg_waiver_api(reg, rc)
@@ -1411,6 +1425,7 @@ def get_my_team_registration_league(league_url):
             "registration": {
                 "id": reg.id,
                 "pseudonym": reg.pseudonym,
+                "shortname": reg.shortname,
                 "status": (reg.status.value if hasattr(reg.status, "value") else str(reg.status)),
             }
         }
@@ -1456,6 +1471,13 @@ def update_my_team_registration_league(league_url):
         if not pseudonym:
             return jsonify({"error": "Team name is required"}), 400
         reg.pseudonym = pseudonym
+
+    if "shortname" in data:
+        raw = data.get("shortname")
+        if raw is None or (isinstance(raw, str) and not raw.strip()):
+            reg.shortname = None
+        else:
+            reg.shortname = raw.strip()
 
     db.session.commit()
     return jsonify({"success": True})
@@ -1598,6 +1620,7 @@ def _serialize_manage(scope, search_query: str, search_type: str, cfg) -> dict:
                     "id": tr["registration"].id,
                     "team": tr["registration"].team,
                     "pseudonym": tr["registration"].pseudonym,
+                    "shortname": tr["registration"].shortname,
                     "status": (
                         tr["registration"].status.value
                         if hasattr(tr["registration"].status, "value")
@@ -1691,6 +1714,7 @@ def league_invitations_api(league_url):
             "team_registration": {
                 "id": team_registration.id,
                 "pseudonym": team_registration.pseudonym,
+                "shortname": team_registration.shortname,
             },
             "current_team_size": current_team_size,
             "invitations": [
@@ -1986,6 +2010,7 @@ def tournament_detail(tournament_url):
                 "team_id": team_reg.team,
                 "team_name": team.name if team else team_reg.team,
                 "pseudonym": team_reg.pseudonym,
+                "shortname": team_reg.shortname,
                 "player_count": counts_by_team.get(team_reg.team, 0),
                 "registered_at": _dt_iso(getattr(team_reg, "registered_at", None)),
                 "profile_photo": team.profile_photo if team else None,
@@ -2135,6 +2160,7 @@ def tournament_invitations_api(tournament_url):
             "team_registration": {
                 "id": team_registration.id,
                 "pseudonym": team_registration.pseudonym,
+                "shortname": team_registration.shortname,
             },
             "current_team_size": current_team_size,
             "invitations": [
@@ -2379,6 +2405,7 @@ def tournament_bracket_api(tournament_url):
                             team_info = {
                                 "id": tag.team,
                                 "pseudonym": team_reg.pseudonym,
+                                "shortname": team_reg.shortname,
                                 "profile_photo": team.profile_photo if team else None,
                                 "display_text": team_reg.pseudonym,
                             }
@@ -2411,6 +2438,7 @@ def tournament_bracket_api(tournament_url):
                             team_info = {
                                 "id": team_id,
                                 "pseudonym": team_reg.pseudonym,
+                                "shortname": team_reg.shortname,
                                 "profile_photo": team.profile_photo if team else None,
                                 "display_text": team_reg.pseudonym,
                             }
@@ -2432,6 +2460,7 @@ def tournament_bracket_api(tournament_url):
                     team_info = {
                         "id": team_ref,
                         "pseudonym": team_reg.pseudonym,
+                        "shortname": team_reg.shortname,
                         "profile_photo": team.profile_photo if team else None,
                         "display_text": team_reg.pseudonym,
                     }
@@ -2448,6 +2477,7 @@ def tournament_bracket_api(tournament_url):
                             team_info = {
                                 "id": tag.team,
                                 "pseudonym": team_reg.pseudonym,
+                                "shortname": team_reg.shortname,
                                 "profile_photo": team.profile_photo if team else None,
                                 "display_text": team_reg.pseudonym,
                             }
@@ -2780,6 +2810,7 @@ def tournament_schedule(tournament_url):
                 {
                     "id": tr.team,
                     "pseudonym": tr.pseudonym,
+                    "shortname": tr.shortname,
                     "profile_photo": team.profile_photo if team else None,
                 }
             )
@@ -2790,7 +2821,7 @@ def tournament_schedule(tournament_url):
                 continue
             if "::winner" in initial or "::loser" in initial or " winner" in initial or " loser" in initial:
                 continue
-            team_options.append({"id": initial, "pseudonym": initial, "profile_photo": None})
+            team_options.append({"id": initial, "pseudonym": initial, "shortname": None, "profile_photo": None})
             seen.add(initial)
     match_list = []
     for m in matches:
@@ -2822,11 +2853,15 @@ def tournament_schedule(tournament_url):
 
 
 def _team_pseudonym_and_photo(tournament, team_id):
-    """Return (pseudonym, profile_photo) for a team in an event."""
+    """Return (pseudonym, profile_photo, shortname) for a team in a tournament context.
+
+    Returns ``(None, None, None)`` if ``team_id`` is falsy.
+    ``shortname`` is ``None`` if the team has no registration or no shortname.
+    """
     from app.services.registration_resolver import team_registration_for_tournament
 
     if not team_id:
-        return None, None
+        return None, None, None
     reg = team_registration_for_tournament(tournament, team_id)
     pseudonym = reg.pseudonym if reg and reg.pseudonym else None
     team = Team.query.get(team_id)
@@ -2835,7 +2870,8 @@ def _team_pseudonym_and_photo(tournament, team_id):
         pseudonym = team.name
     if not pseudonym:
         pseudonym = team_id
-    return pseudonym, profile_photo
+    shortname = reg.shortname if (reg and reg.shortname) else None
+    return pseudonym, profile_photo, shortname
 
 
 @bp.route("/tournaments/<tournament_url>/results", methods=["GET"])
@@ -3003,6 +3039,7 @@ def tournament_schedule_setup(tournament_url):
                 {
                     "id": tr.team,
                     "pseudonym": tr.pseudonym,
+                    "shortname": tr.shortname,
                     "profile_photo": team.profile_photo if team else None,
                 }
             )
@@ -3086,8 +3123,8 @@ def tournament_match_detail(tournament_url):
     points = Point.query.filter_by(match=match.uuid).order_by(Point.stamp).all()
     team1_name = _team_name_for_match(tournament, match, "team1")
     team2_name = _team_name_for_match(tournament, match, "team2")
-    _, team1_photo = _team_pseudonym_and_photo(tournament, match.team1)
-    _, team2_photo = _team_pseudonym_and_photo(tournament, match.team2)
+    _, team1_photo, team1_shortname = _team_pseudonym_and_photo(tournament, match.team1)
+    _, team2_photo, team2_shortname = _team_pseudonym_and_photo(tournament, match.team2)
     points_data = [
         {
             "uuid": p.uuid,
@@ -3222,11 +3259,17 @@ def tournament_match_detail(tournament_url):
     conflicting_match = None
     other_match = get_conflicting_match_on_field(tournament_url, match)
     if other_match:
+        from app.services.registration_resolver import team_registration_for_tournament
+
+        reg1 = team_registration_for_tournament(tournament, other_match.team1) if other_match.team1 else None
+        reg2 = team_registration_for_tournament(tournament, other_match.team2) if other_match.team2 else None
         conflicting_match = {
             "uuid": other_match.uuid,
             "name": getattr(other_match, "name", other_match.uuid),
             "team1_name": _team_name_for_match(tournament, other_match, "team1"),
             "team2_name": _team_name_for_match(tournament, other_match, "team2"),
+            "team1_shortname": reg1.shortname if reg1 else None,
+            "team2_shortname": reg2.shortname if reg2 else None,
         }
 
     # Get match-level notes (point_id is None) - only for head refs
@@ -3442,6 +3485,8 @@ def tournament_match_detail(tournament_url):
                 "team2_name": team2_name,
                 "team1_photo": team1_photo,
                 "team2_photo": team2_photo,
+                "team1_shortname": team1_shortname,
+                "team2_shortname": team2_shortname,
                 "team1_initial": match.team1_initial,
                 "team2_initial": match.team2_initial,
                 "status": (match.status.value if hasattr(match.status, "value") else str(match.status)),
@@ -3697,6 +3742,7 @@ def player_profile(player_id):
             team_keys_needed.add(("league", r.league_id, r.team))
 
     team_pseudonym_by_key = {}
+    team_shortname_by_key = {}
     event_team_pairs = [(e, t) for kind, e, t in team_keys_needed if kind == "event"]
     league_team_pairs = [(lg, t) for kind, lg, t in team_keys_needed if kind == "league"]
     if event_team_pairs:
@@ -3707,6 +3753,7 @@ def player_profile(player_id):
             TeamRegistration.team.in_(ev_team_ids),
         ).all():
             team_pseudonym_by_key[("event", tr.event, tr.team)] = tr.pseudonym
+            team_shortname_by_key[("event", tr.event, tr.team)] = tr.shortname
     if league_team_pairs:
         lg_ids = {lg for lg, t in league_team_pairs}
         lg_team_ids = {t for lg, t in league_team_pairs}
@@ -3715,6 +3762,7 @@ def player_profile(player_id):
             TeamRegistration.team.in_(lg_team_ids),
         ).all():
             team_pseudonym_by_key[("league", tr.league_id, tr.team)] = tr.pseudonym
+            team_shortname_by_key[("league", tr.league_id, tr.team)] = tr.shortname
 
     def _team_pseudonym(r):
         if not r.team:
@@ -3723,6 +3771,15 @@ def player_profile(player_id):
             return team_pseudonym_by_key.get(("event", r.event, r.team))
         if r.league_id:
             return team_pseudonym_by_key.get(("league", r.league_id, r.team))
+        return None
+
+    def _team_shortname_lookup(r):
+        if not r.team:
+            return None
+        if r.event:
+            return team_shortname_by_key.get(("event", r.event, r.team))
+        if r.league_id:
+            return team_shortname_by_key.get(("league", r.league_id, r.team))
         return None
 
     registration_rows = []
@@ -3742,6 +3799,7 @@ def player_profile(player_id):
                 "event": r.event or (f"league:{r.league_id}" if r.league_id else ""),
                 "team": r.team,
                 "team_pseudonym": _team_pseudonym(r),
+                "team_shortname": _team_shortname_lookup(r),
                 "status": (r.status.value if hasattr(r.status, "value") else str(r.status)),
                 "jersey_name": r.jersey_name,
                 "jersey_number": r.jersey_number,
@@ -4123,6 +4181,7 @@ def team_profile(team_id):
                 {
                     "event": r.event or (f"league:{r.league_id}" if r.league_id else ""),
                     "pseudonym": r.pseudonym,
+                    "shortname": r.shortname,
                     "status": (r.status.value if hasattr(r.status, "value") else str(r.status)),
                     "paid": bool(r.paid),
                     "amount_paid": r.amount_paid,
@@ -5420,7 +5479,11 @@ def get_my_player_registration(tournament_url):
     if reg.team:
         team_reg = team_registration_for_tournament(tournament, reg.team)
         if team_reg:
-            current_team = {"id": reg.team, "pseudonym": team_reg.pseudonym}
+            current_team = {
+                "id": reg.team,
+                "pseudonym": team_reg.pseudonym,
+                "shortname": team_reg.shortname,
+            }
 
     cfg = get_registrable_config(tournament)
     w = _player_reg_waiver_api(reg, cfg)
@@ -5517,6 +5580,7 @@ def get_my_team_registration(tournament_url):
             "registration": {
                 "id": reg.id,
                 "pseudonym": reg.pseudonym,
+                "shortname": reg.shortname,
                 "status": (reg.status.value if hasattr(reg.status, "value") else str(reg.status)),
             }
         }
@@ -5555,6 +5619,13 @@ def update_my_team_registration(tournament_url):
         if not pseudonym:
             return jsonify({"error": "Team name is required"}), 400
         reg.pseudonym = pseudonym
+
+    if "shortname" in data:
+        raw = data.get("shortname")
+        if raw is None or (isinstance(raw, str) and not raw.strip()):
+            reg.shortname = None
+        else:
+            reg.shortname = raw.strip()
 
     db.session.commit()
     return jsonify({"success": True})

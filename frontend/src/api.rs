@@ -684,8 +684,15 @@ pub async fn register_player(
 pub async fn register_team(
     tournament_url: &str,
     pseudonym: &str,
+    shortname: Option<&str>,
 ) -> Result<StatusResponse, String> {
-    let params = vec![("pseudonym".into(), pseudonym.to_string())];
+    let mut params: Vec<(String, String)> = vec![("pseudonym".into(), pseudonym.to_string())];
+    if let Some(s) = shortname {
+        let trimmed = s.trim();
+        if !trimmed.is_empty() {
+            params.push(("shortname".into(), trimmed.to_string()));
+        }
+    }
     let url = format!("{}/_api/{}/register-team", base(), tournament_url);
     post_form_status(&url, &params).await
 }
@@ -730,12 +737,19 @@ pub async fn register_team_as_to(
     tournament_url: &str,
     team_id: &str,
     pseudonym: &str,
+    shortname: Option<&str>,
 ) -> Result<crate::types::RegisterTeamAsToResponse, String> {
     let c = client();
-    let body = serde_json::json!({
+    let mut body = serde_json::json!({
         "team_id": team_id,
         "pseudonym": pseudonym,
     });
+    if let Some(s) = shortname {
+        let trimmed = s.trim();
+        if !trimmed.is_empty() {
+            body["shortname"] = serde_json::Value::String(trimmed.to_string());
+        }
+    }
     let r = with_credentials(
         c.post(format!("{}/_api/{}/register-team-as-to", base(), tournament_url))
             .json(&body),
@@ -861,8 +875,15 @@ pub async fn league_results_team_matches(
 pub async fn league_register_team(
     league_url: &str,
     pseudonym: &str,
+    shortname: Option<&str>,
 ) -> Result<StatusResponse, String> {
-    let params: Vec<(String, String)> = vec![("pseudonym".into(), pseudonym.to_string())];
+    let mut params: Vec<(String, String)> = vec![("pseudonym".into(), pseudonym.to_string())];
+    if let Some(s) = shortname {
+        let trimmed = s.trim();
+        if !trimmed.is_empty() {
+            params.push(("shortname".into(), trimmed.to_string()));
+        }
+    }
     let url = format!("{}/_api/leagues/{}/register-team", base(), league_url);
     post_form_status(&url, &params).await
 }
@@ -3615,7 +3636,10 @@ pub async fn sidecomp_deregister(comp_id: i32) -> Result<Value, String> {
     response_json(r).await
 }
 
-pub async fn sidecomp_to_register_player_as_to(comp_id: i32, player_id: &str) -> Result<Value, String> {
+pub async fn sidecomp_to_register_player_as_to(
+    comp_id: i32,
+    player_id: &str,
+) -> Result<SideCompRegisterPlayerResponse, String> {
     let c = client();
     let body = serde_json::json!({"player_id": player_id});
     let r = with_credentials(

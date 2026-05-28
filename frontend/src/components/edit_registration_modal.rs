@@ -250,7 +250,9 @@ fn EditPlayerRegistrationContent(
             let (reg_res, teams_res) = match &ctx {
                 EditRegistrationContext::League { league_url } => (
                     api::get_my_player_registration_league(league_url).await,
-                    api::league_detail(league_url).await.map(|d| d.teams_with_counts),
+                    api::league_detail(league_url)
+                        .await
+                        .map(|d| d.teams_with_counts),
                 ),
                 EditRegistrationContext::Tournament { tournament_url } => (
                     api::get_my_player_registration(tournament_url).await,
@@ -274,14 +276,12 @@ fn EditPlayerRegistrationContent(
                         .set(res.waiver_legal_name_signature.unwrap_or_default());
 
                     if let Some(ref ct) = res.current_team {
-                        current_team_name.set(ct.pseudonym.clone().unwrap_or_else(|| ct.id.clone()));
+                        current_team_name
+                            .set(ct.pseudonym.clone().unwrap_or_else(|| ct.id.clone()));
                     }
                     let mut t_list = vec![];
                     for t in teams_list {
-                        t_list.push((
-                            t.team_id.clone(),
-                            t.pseudonym.unwrap_or(t.team_name),
-                        ));
+                        t_list.push((t.team_id.clone(), t.pseudonym.unwrap_or(t.team_name)));
                     }
                     teams.set(t_list);
                     let selected_team = res
@@ -444,6 +444,7 @@ fn EditTeamRegistrationContent(
     on_success: EventHandler<()>,
 ) -> Element {
     let mut pseudonym = use_signal(|| "".to_string());
+    let mut shortname = use_signal(|| "".to_string());
     let mut error = use_signal(|| None::<String>);
     let mut loading = use_signal(|| true);
 
@@ -461,7 +462,10 @@ fn EditTeamRegistrationContent(
                 }
             };
             match res {
-                Ok(r) => pseudonym.set(r.registration.pseudonym.unwrap_or_default()),
+                Ok(r) => {
+                    pseudonym.set(r.registration.pseudonym.unwrap_or_default());
+                    shortname.set(r.registration.shortname.clone().unwrap_or_default());
+                }
                 Err(e) => error.set(Some(e)),
             }
             loading.set(false);
@@ -476,8 +480,10 @@ fn EditTeamRegistrationContent(
         async move {
             loading.set(true);
             error.set(None);
+            let trimmed_short = shortname().trim().to_string();
             let req = UpdateTeamRegistrationRequest {
                 pseudonym: Some(pseudonym()),
+                shortname: Some(trimmed_short),
             };
             let res = match &ctx {
                 EditRegistrationContext::League { league_url } => {
@@ -523,6 +529,18 @@ fn EditTeamRegistrationContent(
                         oninput: move |e| pseudonym.set(e.value()),
                         required: true
                     }
+                }
+                div { class: "mb-3",
+                    label { class: "form-label", "Short name (optional)" }
+                    input {
+                        class: "form-control",
+                        "type": "text",
+                        id: "shortname",
+                        maxlength: "8",
+                        value: "{shortname}",
+                        oninput: move |e| shortname.set(e.value()),
+                    }
+                    div { class: "form-text", "Used in schedules and brackets. Leave blank to auto-shorten." }
                 }
             }
         }

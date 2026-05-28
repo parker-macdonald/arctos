@@ -50,18 +50,11 @@ def _detail_payload(sc, registrants):
     viewer_can_register = False
     viewer_is_registered_in_comp = False
     if current_user.is_authenticated:
-        from app.domain.enums import RegistrationStatus
-        from models import PlayerRegistration
-
         viewer_is_to = PermissionService.is_tournament_organizer(sc.event, current_user)
         if is_player(current_user):
             viewer_is_registered_in_comp = any(reg.player == current_user.id for reg, _ in registrants)
             if not viewer_is_registered_in_comp and sc.registration_open:
-                event_reg = PlayerRegistration.query.filter_by(
-                    event=sc.event,
-                    player=current_user.id,
-                    status=RegistrationStatus.CONFIRMED,
-                ).first()
+                event_reg = SideCompService._confirmed_player_registration_for_tournament(sc.event, current_user.id)
                 viewer_can_register = event_reg is not None
 
     return {
@@ -247,7 +240,7 @@ def deregister_player_as_to(comp_id: int):
 @bp.route("/sidecomps/<int:comp_id>/eligible-players", methods=["GET"])
 @login_required
 def eligible_players(comp_id: int):
-    """TO-only: list players registered for the event but not yet in this side comp."""
+    """TO-only: list event-registered players with side competition status."""
     from app.domain.enums import RegistrationStatus
     from app.services.registration_resolver import (
         player_registrations_for_tournament,
@@ -270,20 +263,21 @@ def eligible_players(comp_id: int):
 
     tournament = Tournament.query.get(sc.event)
 
-    already_in = {r.player for r in SideCompRegistration.query.filter_by(comp=comp_id).all()}
+    sidecomp_regs = {r.player: r for r in SideCompRegistration.query.filter_by(comp=comp_id).all()}
 
     event_regs = player_registrations_for_tournament(tournament, statuses=[RegistrationStatus.CONFIRMED])
 
-    eligible = [er for er in event_regs if er.player not in already_in]
-    player_ids = [er.player for er in eligible]
-    team_ids = {er.team for er in eligible if er.team}
+    player_ids = [er.player for er in event_regs]
+    team_ids = {er.team for er in event_regs if er.team}
 
     players_by_id = {p.id: p for p in Player.query.filter(Player.id.in_(player_ids)).all()} if player_ids else {}
-    team_pseudonyms = (
-        {tr.team: tr.pseudonym for tr in team_registrations_for_tournament(tournament) if tr.team in team_ids}
-        if team_ids
-        else {}
-    )
+    team_pseudonyms = {}
+    team_shortnames = {}
+    if team_ids:
+        for tr in team_registrations_for_tournament(tournament):
+            if tr.team in team_ids:
+                team_pseudonyms[tr.team] = tr.pseudonym
+                team_shortnames[tr.team] = tr.shortname
 
     out = [
         {
@@ -291,8 +285,11 @@ def eligible_players(comp_id: int):
             "player_name": players_by_id[er.player].name if er.player in players_by_id else er.player,
             "team_id": er.team,
             "team_pseudonym": team_pseudonyms.get(er.team) if er.team else None,
+            "team_shortname": team_shortnames.get(er.team) if er.team else None,
             "jersey_name": er.jersey_name,
+            "sidecomp_registered": er.player in sidecomp_regs,
+            "entry_number": sidecomp_regs[er.player].entry_number if er.player in sidecomp_regs else None,
         }
-        for er in eligible
+        for er in event_regs
     ]
     return jsonify(out)

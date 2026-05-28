@@ -1,5 +1,10 @@
 # Arctos
 
+[![Tests](https://github.com/reid23/arctos/actions/workflows/test.yml/badge.svg)](https://github.com/reid23/arctos/actions/workflows/test.yml)
+[![Coverage floor](https://img.shields.io/badge/coverage%20floor-30%25-yellow)](TESTING.md#coverage)
+[![Python](https://img.shields.io/badge/python-3.12%2B-blue)](pyproject.toml)
+[![License: GPL v3](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE)
+
 Centralized online results and event management for Jugger.
 
 Or, *what the fog site always wanted to be*
@@ -117,7 +122,6 @@ just certs
 ```bash
 ARCTOS_CORS_DEV=1
 ARCTOS_API_BASE=http://127.0.0.1:8081
-EXTERNAL_BASE_URL=your_public_domain_or_ip
 YOUTUBE_API_KEY=your_youtube_api_key
 GOOGLE_CLIENT_SECRET=your_google_client_secret
 GOOGLE_CLIENT_ID=your_google_client_id
@@ -140,7 +144,7 @@ python -c "import os; print(os.urandom(12).hex())"
 > traffic and are thus hosting the frontend and backend on different
 > ports.
 
-4. Start the app:
+1. Start the app:
 
 ```bash
 just run
@@ -199,6 +203,11 @@ output files to somewhere that your reverse proxy can serve.
 | Generate a migration | `just db-revision "snake_case_message"` |
 | Start dev backend | `just dev` (HTTP, :5006) or `just run` (TLS, :8081) |
 | Start dev frontend | `just frontend` |
+
+Coverage is configured under `[tool.coverage.*]` in `pyproject.toml`
+with a soft `fail_under = 30` floor; current actual is around 33% with
+branch coverage on. See [`TESTING.md`](TESTING.md#coverage) for the
+HTML report path and how the threshold is meant to move.
 
 ## Conventions
 

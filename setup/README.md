@@ -18,11 +18,10 @@ Other recipes:
 
 | Recipe | What it does |
 |--------|--------------|
-| `just all` | Full setup chain: `setup` + `install` + `setup-frontend` |
 | `just setup-macos` / `just setup-ubuntu` | Force a specific OS path |
 | `just setup-python` | Just the Python toolchain step |
 | `just install` | Skip system deps; only `uv sync` + pre-commit hooks |
-| `just setup-frontend` | `cargo install dioxus-cli` (frontend deps) |
+| `just setup-frontend` | Install Dioxus CLI (`dx`) if it is missing |
 
 ## Supported platforms
 

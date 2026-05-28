@@ -1,5 +1,4 @@
-# Arctos task runner. Run `just` (or `just --list`) to see available recipes.
-# Mirrors the existing Makefile; both are supported during the migration.
+# Arctos task runner. Run `just` or `just --list` to see available recipes.
 
 # ── Tunables ──────────────────────────────────────────────────────────────────
 # Override at the CLI, e.g. `just workers=10 bind=0.0.0.0:9000 run`.
@@ -17,9 +16,6 @@ default:
     @just --list
 
 # ── Setup ─────────────────────────────────────────────────────────────────────
-
-# Full setup chain: system deps, python deps, frontend tools.
-all: setup install setup-frontend
 
 # Auto-detect OS and run the matching system setup.
 setup:
@@ -51,9 +47,16 @@ install:
     @uv sync
     @uv run pre-commit install
 
-# Install the Dioxus CLI required to build/serve the frontend.
+# Install the Dioxus CLI required to build/serve the frontend if missing.
 setup-frontend:
-    @cargo install dioxus-cli
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! command -v dx >/dev/null 2>&1; then
+      cargo install dioxus-cli
+      echo "Installed Dioxus CLI (dx)"
+    else
+      echo "Dioxus CLI (dx) is already installed"
+    fi
 
 # ── Lint & Format ─────────────────────────────────────────────────────────────
 
@@ -72,24 +75,29 @@ format:
 # ── Test ──────────────────────────────────────────────────────────────────────
 
 # Run all tests. Pass extra pytest args after the recipe name: `just test -k foo`.
+[positional-arguments]
 test *ARGS:
-    @uv run pytest tests/ {{ARGS}}
+    @uv run pytest tests/ "$@"
 
 # Run unit tests only.
+[positional-arguments]
 unit *ARGS:
-    @uv run pytest tests/ -m unit {{ARGS}}
+    @uv run pytest tests/ -m unit "$@"
 
 # Run integration tests only.
+[positional-arguments]
 integration *ARGS:
-    @uv run pytest tests/ -m integration {{ARGS}}
+    @uv run pytest tests/ -m integration "$@"
 
-# Quick pre-push check: unit tests only.
-test-fast:
-    @uv run pytest tests/ -m unit
+# Run a coverage report. Pass extra pytest args after the recipe name.
+[positional-arguments]
+coverage *ARGS:
+    @uv run pytest tests/ --cov=app --cov-report=term-missing --cov-fail-under=0 "$@"
 
-# Run the full suite with coverage.
-coverage:
-    @uv run pytest tests/ --cov=app --cov-report=term-missing
+# Run coverage with the configured fail-under threshold.
+[positional-arguments]
+coverage-check *ARGS:
+    @uv run pytest tests/ --cov=app --cov-report=term-missing "$@"
 
 # ── Run ───────────────────────────────────────────────────────────────────────
 

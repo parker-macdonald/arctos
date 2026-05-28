@@ -2,6 +2,7 @@
 
 mod api;
 mod components;
+mod display;
 mod pages;
 mod time_format;
 mod url_slug;
@@ -69,6 +70,9 @@ enum Route {
     #[route("/leagues/:league_url/invitations")]
     LeagueInvitations { league_url: String },
 
+    #[route("/:url?:tab")]
+    TournamentHomeWithTab { url: String, tab: String },
+
     #[route("/:url")]
     TournamentHome { url: String },
 
@@ -89,9 +93,6 @@ enum Route {
 
     #[route("/:url/register")]
     TournamentRegister { url: String },
-
-    #[route("/:url/sidecomps")]
-    SideCompsList { url: String },
 
     #[route("/:url/sidecomps/new")]
     SideCompNew { url: String },

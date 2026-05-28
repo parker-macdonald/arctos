@@ -3,8 +3,6 @@ Authentication routes: logout, check-username, Google OAuth (login + callback on
 Login and register are handled by the SPA and _api.
 """
 
-import os
-
 from flask import (
     Blueprint,
     request,
@@ -28,25 +26,16 @@ oauth = OAuth()
 _SPA_BASE = "/"
 
 
-def _frontend_base() -> str | None:
-    """Return the configured external frontend base URL without a trailing slash.
+def _frontend_path(path: str = "") -> str:
+    """Return a same-host frontend path, preserving any deployment subpath."""
 
-    Reads ``EXTERNAL_BASE_URL`` from the Flask application config.
-
-    Returns:
-        The stripped base URL, or ``None`` if not configured.
-    """
-    base = current_app.config.get("EXTERNAL_BASE_URL", "").strip()
-    if base:
-        return base.rstrip("/")
-    return None
+    base = request.script_root.rstrip("/") or _SPA_BASE.rstrip("/")
+    suffix = f"/{path.lstrip('/')}" if path else ""
+    return f"{base}{suffix}" or _SPA_BASE
 
 
 def _redirect_to_frontend(path: str = ""):
     """Build a Flask redirect response targeting the frontend SPA.
-
-    When ``EXTERNAL_BASE_URL`` is configured the redirect points there;
-    otherwise it falls back to the SPA base path (``/``).
 
     Args:
         path: Frontend path to append, should begin with ``/``
@@ -55,27 +44,20 @@ def _redirect_to_frontend(path: str = ""):
     Returns:
         A Flask :func:`~flask.redirect` response.
     """
-    base = _frontend_base()
-    if base:
-        return redirect(f"{base}{path}" if path.startswith("/") else f"{base}/{path}")
-    return redirect(_SPA_BASE + path.lstrip("/") if path else _SPA_BASE)
+    return redirect(_frontend_path(path))
 
 
 def _google_callback_uri() -> str:
     """Return the Google OAuth callback URI registered in Google Cloud Console.
 
-    Prefers an externally configured base URL so that the URI matches
-    exactly what was registered; falls back to Flask's ``url_for``
-    generation.
+    The callback host/scheme is derived from the current request so the same
+    server can answer on multiple public domains, provided each callback URI
+    is authorized in Google Cloud Console.
 
     Returns:
         Absolute callback URL string.
     """
-    base = _frontend_base()
-    if base:
-        script = os.environ.get("SCRIPT_NAME", "").rstrip("/")
-        return f"{base}{script}/_api/auth/google/callback"
-    return url_for("auth.google_callback", _external=True)
+    return f"{request.url_root.rstrip('/')}{url_for('auth.google_callback')}"
 
 
 @bp.route("/check-username", methods=["GET"])

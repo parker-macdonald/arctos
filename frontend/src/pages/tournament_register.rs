@@ -182,7 +182,9 @@ pub fn TournamentRegister(url: String) -> Element {
                                             let u = url.clone();
                                             spawn(async move {
                                                 let pseudonym = get_form_value("pseudonym");
-                                                    match api::register_team(&u, &pseudonym).await {
+                                                let shortname_raw = get_form_value("shortname");
+                                                let shortname = if shortname_raw.trim().is_empty() { None } else { Some(shortname_raw) };
+                                                    match api::register_team(&u, &pseudonym, shortname.as_deref()).await {
                                                     Ok(res) if res.success => {
                                                         navigator.push(Route::TournamentHome { url: u });
                                                     }
@@ -199,6 +201,11 @@ pub fn TournamentRegister(url: String) -> Element {
                                             label { r#for: "pseudonym", class: "form-label", "Team Name for This Tournament" }
                                             input { r#type: "text", class: "form-control", id: "pseudonym", name: "pseudonym", required: true }
                                             div { class: "form-text", "This is how your team will be referred to in this tournament" }
+                                        }
+                                        div { class: "mb-3",
+                                            label { r#for: "shortname", class: "form-label", "Short name (optional)" }
+                                            input { r#type: "text", class: "form-control", id: "shortname", name: "shortname", maxlength: "8", placeholder: "e.g. UWaoW" }
+                                            div { class: "form-text", "Used in schedules and brackets. Leave blank to auto-shorten." }
                                         }
                                         if let Some(fee) = d.tournament.team_reg_fee {
                                             if fee > 0.0 {

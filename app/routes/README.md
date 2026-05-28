@@ -100,3 +100,9 @@ In production, nginx serves the SPA same-origin and CORS isn't needed.
 6. Write integration tests in [`tests/`](../../tests/README.md). The
    `client` fixture + `login_as(client, user)` from `tests/utils.py`
    covers most cases.
+7. If your change adds, removes, or changes any URL or HTTP method,
+   regenerate `tests/fixtures/url_surface.txt` (instructions in the
+   docstring of `tests/test_url_surface.py`) and commit it in the
+   same PR. The fixture is a deliberate gate against accidental URL
+   drift, introduced for the in-flight `_api.py` refactor; it will be
+   removed once that refactor is complete.

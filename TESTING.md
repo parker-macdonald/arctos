@@ -27,10 +27,51 @@ uv run pytest tests/ -m integration
 Useful flags:
 
 ```bash
-uv run pytest tests/ -k "registration"   # filter by name
-uv run pytest tests/ --cov=app           # coverage report
-uv run pytest tests/ --tb=long           # full tracebacks
+just test -k "registration"   # filter by name
+just test --tb=long           # full tracebacks
 ```
+
+## Coverage
+
+Run the suite with coverage:
+
+```bash
+just coverage
+just coverage -k "registration"   # filtered coverage run
+```
+
+`just coverage` disables the project-wide coverage floor so filtered
+runs can report useful local numbers without failing because they only
+exercise part of the app.
+
+Run the CI-style coverage gate:
+
+```bash
+just coverage-check
+```
+
+Without `just`:
+
+```bash
+uv run pytest tests/ --cov=app --cov-report=term-missing --cov-fail-under=0
+uv run pytest tests/ --cov=app --cov-report=term-missing --cov-fail-under=0 -k "registration"
+```
+
+Generate an HTML report (lands in `htmlcov/`, gitignored):
+
+```bash
+just coverage --cov-report=html
+open htmlcov/index.html                  # or xdg-open on Linux
+```
+
+Coverage settings live under `[tool.coverage.*]` in `pyproject.toml`:
+
+- **Source** is `app/` (tests, scripts, and migrations are not measured).
+- **Branch coverage** is on, so untested `else` branches count as misses.
+- **`fail_under = 30`** is a soft floor that catches significant
+  regressions without blocking small fluctuations. CI enforces it with
+  `just coverage-check`. Current actual coverage is around 33% (with
+  branch coverage on); raise the floor when overall coverage grows.
 
 ## Structure
 

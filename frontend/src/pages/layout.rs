@@ -17,7 +17,7 @@ fn page_title_for_route(route: &Route) -> String {
         Route::RegisterTeam { .. } => "Register as Team".into(),
         Route::GoogleChooseAccountType { .. } => "Choose Account Type".into(),
         Route::GoogleCompleteProfile { .. } => "Complete Profile".into(),
-        Route::TournamentHome { url } => format!("{url}"),
+        Route::TournamentHome { url } | Route::TournamentHomeWithTab { url, .. } => format!("{url}"),
         Route::Schedule { url } => format!("{url} Schedule"),
         Route::Results { url } => format!("{url} Results"),
         Route::Bracket { url } => format!("{url} Bracket"),
@@ -62,7 +62,6 @@ fn page_title_for_route(route: &Route) -> String {
         Route::License { .. } => "License".into(),
         Route::ArctosScheduleScript { .. } => "Arctos Schedule Script".into(),
         Route::DataAccessibilityGuide { .. } => "Data Accessibility Guide".into(),
-        Route::SideCompsList { url } => format!("{url} Side Competitions"),
         Route::SideCompNew { url } => format!("{url} New Side Competition"),
         Route::SideCompDetail { url, .. } => format!("{url} Side Competition"),
         Route::SideCompEdit { url, .. } => format!("{url} Edit Side Competition"),
@@ -283,7 +282,7 @@ pub fn Layout() -> Element {
                     " - "
                     Link { to: Route::Terms {}, "Terms" }
                 }
-                p { style: "font-size: 0.8em;", "Arctos is an independent project and does not belong to nor represent CAJA in any way." }
+                p { style: "font-size: 0.8em;", "Arctos is an independent project and does not belong to nor represent CAJA or the US NJA in any way." }
             }
         }
     }

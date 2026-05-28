@@ -1,4 +1,5 @@
 use crate::api;
+use crate::display::short_or_truncate;
 use crate::Route;
 use dioxus::prelude::*;
 
@@ -60,6 +61,10 @@ pub fn Bracket(url: String) -> Element {
                                                 style_parts.push("line-height: 1.2".to_string());
                                                 let style_str = style_parts.join("; ");
                                                 let match_ref = team_entry.match_name.clone().unwrap_or_default();
+                                                let bracket_label = short_or_truncate(
+                                                    team_info.pseudonym.as_deref().unwrap_or(&team_info.display_text),
+                                                    team_info.shortname.as_deref(),
+                                                );
                                                 rsx! {
                                                     div { class: "bracket-team-overlay", style: "{style_str}",
                                                         if team_entry.is_tag {
@@ -67,9 +72,9 @@ pub fn Bracket(url: String) -> Element {
                                                         } else if let Some(team_id) = &team_info.id {
                                                             Link { to: Route::TeamProfilePage { id: team_id.clone() }, class: "text-decoration-none text-dark d-inline-flex align-items-center",
                                                                 if let Some(photo) = &team_info.profile_photo {
-                                                                    img { src: "{backend}/static/{photo}", alt: "{team_info.pseudonym.as_deref().unwrap_or(&team_info.display_text)}", class: "rounded-circle me-1", style: "width: {team_entry.size}px; height: {team_entry.size}px; object-fit: cover;" }
+                                                                    img { src: "{backend}/static/{photo}", alt: "{bracket_label}", class: "rounded-circle me-1", style: "width: {team_entry.size}px; height: {team_entry.size}px; object-fit: cover;" }
                                                                 }
-                                                                span { "{team_info.pseudonym.as_deref().unwrap_or(&team_info.display_text)}" }
+                                                                span { "{bracket_label}" }
                                                             }
                                                         } else if team_entry.is_reference {
                                                             a { href: "/{url}/match?name={match_ref}", class: "text-decoration-none text-dark",
