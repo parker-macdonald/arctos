@@ -2867,11 +2867,11 @@ def validate_dsl(tournament_url):
         # Serialize the full value for JSON response
         serialized_value = serialize_value(result)
 
-        # Create string representation
-        simplified_str = value_to_string(result)
-
-        # Only include simplified if it's different from the input
-        simplified = simplified_str if simplified_str != expression else None
+        # Create string representation. We always send it back so the frontend can render
+        # the simplified form (with chips). Suppressing on equality hid useful previews
+        # for expressions whose literal text already happens to be in canonical form
+        # (e.g. anything containing an unset [tag::Foo] that stays symbolic).
+        simplified = value_to_string(result)
 
         # Treat unresolvable team/match references as errors so the user notices typos.
         if warnings:
