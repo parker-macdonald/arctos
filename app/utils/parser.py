@@ -232,13 +232,18 @@ def parse_team_literal(literal: str, event: str):
             return Match(match_obj, event).loser()
         elif match_name == "tag":
             tag = Tag.query.filter_by(name=qualifier, event=event).first()
-            if not tag or not tag.team:
-                # Return symbolic team if tag doesn't exist or isn't set
+            if not tag:
+                known = [t.name for t in Tag.query.filter_by(event=event).all()]
+                suggestion = _suggest_function(qualifier, known)
+                hint = f" Did you mean 'tag::{suggestion}'?" if suggestion else ""
+                raise DSLValidationError(f"Tag '{qualifier}' does not exist.{hint}")
+            if not tag.team:
+                # Tag exists but its team isn't assigned yet — stay symbolic.
                 return SymbolicTeam(literal, event)
             team_obj = TeamDB.query.filter_by(id=tag.team).first()
             if team_obj:
                 return Team(team_obj, event)
-            # Team not found, return symbolic
+            # Tag's team id refers to a deleted team — stay symbolic.
             return SymbolicTeam(literal, event)
         else:
             raise DSLValidationError(f"Invalid team literal: {literal}")
@@ -1229,23 +1234,52 @@ def _collect_literals(text: str):
 
 
 def _check_references(text: str, event: str) -> list[str]:
-    """Return a list of warnings about unresolvable team/match references.
+    """Return a list of warnings about unresolvable team/match/tag references.
 
-    Skips MatchName::winner / MatchName::loser / tag::Foo (those legitimately
-    resolve symbolically). Plain team ids and match names should map to existing
-    rows; if not, we tell the user.
+    A `[name]` literal must resolve to:
+      - a team id, or
+      - a `tag::TagName` for a Tag that exists in this event, or
+      - `MatchName::winner` / `MatchName::loser` for a match that exists.
+    A `{name}` literal must name a match in this event.
+    Anything that doesn't match these rules gets a warning; symbolic references
+    that legitimately can't be resolved yet (e.g. an unset tag's team) are not
+    warned about here, only typoed names are.
     """
     warnings: list[str] = []
     teams, matches = _collect_literals(text)
+    known_match_names: list[str] | None = None
+    known_tag_names: list[str] | None = None
     for inner, pos in teams:
-        if not inner or "::" in inner:
+        if not inner:
+            continue
+        if "::" in inner:
+            head, _, tail = inner.partition("::")
+            if head == "tag":
+                if not Tag.query.filter_by(name=tail, event=event).first():
+                    if known_tag_names is None:
+                        known_tag_names = [t.name for t in Tag.query.filter_by(event=event).all()]
+                    suggestion = _suggest_function(tail, known_tag_names)
+                    hint = f" Did you mean 'tag::{suggestion}'?" if suggestion else ""
+                    warnings.append(f"Unknown tag '[tag::{tail}]' at {_format_position(text, pos)}.{hint}")
+                continue
+            if tail in ("winner", "loser"):
+                if not MatchDB.query.filter_by(name=head, event=event).first():
+                    if known_match_names is None:
+                        known_match_names = [m.name for m in MatchDB.query.filter_by(event=event).all()]
+                    suggestion = _suggest_function(head, known_match_names)
+                    hint = f" Did you mean '{suggestion}::{tail}'?" if suggestion else ""
+                    warnings.append(f"Unknown match '[{head}::{tail}]' at {_format_position(text, pos)}.{hint}")
+                continue
+            warnings.append(
+                f"Invalid team literal '[{inner}]' at {_format_position(text, pos)} — "
+                "expected a team id, tag::TagName, or MatchName::winner/loser."
+            )
             continue
         if not TeamDB.query.filter_by(id=inner).first():
             all_names = [t.id for t in TeamDB.query.all()]
             suggestion = _suggest_function(inner, all_names)
             hint = f" Did you mean '{suggestion}'?" if suggestion else ""
             warnings.append(f"Unknown team '[{inner}]' at {_format_position(text, pos)}.{hint}")
-    known_match_names = None
     for inner, pos in matches:
         if not inner:
             continue

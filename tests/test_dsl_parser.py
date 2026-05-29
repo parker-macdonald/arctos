@@ -538,13 +538,22 @@ class TestSymbolicExpressions:
     @pytest.mark.unit
     def test_preserved_expression_with_unresolved_team(self, app, tournament_with_data):
         with app.app_context():
-            parser = get_parser(tournament_with_data["tournament_url"])
+            tournament_url = tournament_with_data["tournament_url"]
+            # Create a tag without a team — its team is unknown, so the expression should preserve.
+            db.session.add(Tag(event=tournament_url, name="UnsetTagPreserve", team=None))
+            db.session.commit()
 
-            # Tag that doesn't exist or isn't set should preserve expression
-            result = parser.parse("(== 0 (losses [tag::NonExistent]))")
-            # Should be a preserved expression (list)
+            parser = get_parser(tournament_url)
+            result = parser.parse("(== 0 (losses [tag::UnsetTagPreserve]))")
             assert isinstance(result, list)
             assert result[0] == "=="
+
+    @pytest.mark.unit
+    def test_unknown_tag_errors(self, app, tournament_with_data):
+        with app.app_context():
+            parser = get_parser(tournament_with_data["tournament_url"])
+            with pytest.raises(DSLValidationError, match="Tag .* does not exist"):
+                parser.parse("[tag::NonExistent]")
 
     @pytest.mark.unit
     def test_preserved_expression_with_unresolved_match(self, app, tournament_with_data):
@@ -560,13 +569,16 @@ class TestSymbolicExpressions:
     @pytest.mark.unit
     def test_preserved_expression_nested(self, app, tournament_with_data):
         with app.app_context():
-            parser = get_parser(tournament_with_data["tournament_url"])
+            tournament_url = tournament_with_data["tournament_url"]
+            # The tag exists but has no team — preserve, don't error.
+            db.session.add(Tag(event=tournament_url, name="UnsetTagNested", team=None))
+            db.session.commit()
 
-            # Complex expression with unresolved values should preserve
-            result = parser.parse("(== 0 (losses [tag::UnsetTag]))")
+            parser = get_parser(tournament_url)
+            result = parser.parse("(== 0 (losses [tag::UnsetTagNested]))")
             assert isinstance(result, list)
-            # The inner expression should also be preserved
-            assert isinstance(result[2], list)  # (losses [tag::UnsetTag])
+            # The inner expression should also be preserved.
+            assert isinstance(result[2], list)
 
 
 class TestErrorHandling:

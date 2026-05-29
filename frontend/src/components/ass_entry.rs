@@ -143,13 +143,61 @@ pub fn innermost_around_cursor(s: &str, cursor_char: usize) -> Option<InnermostB
 
 /// Tokenize the expression for the preview row. Each token is a chunk of text the user wrote,
 /// classified as a literal kind so we can render chips for [..] and {..}.
+///
+/// As a special case, the patterns `(winner {NAME})` and `(loser {NAME})` collapse into a
+/// single `WinnerCall`/`LoserCall` token — they're conceptually a single team-reference,
+/// just spelled differently from `[NAME::winner]` / `[NAME::loser]`.
 #[derive(Clone, Debug)]
 enum PreviewToken {
     Text(String),
-    Team(String),    // raw inside [..]
-    Match(String),   // raw inside {..}
+    Team(String),
+    Match(String),
+    WinnerCall(String),
+    LoserCall(String),
     OpenBracket(char),
     CloseBracket(char),
+}
+
+/// If `s[i..]` starts with `( <ws>* (winner|loser) <ws>+ {NAME} <ws>* )`, return
+/// `(winner_or_loser, name, end_byte)` so we can collapse it into a single chip.
+fn match_winner_loser_call(s: &str, i: usize) -> Option<(bool, String, usize)> {
+    let bytes = s.as_bytes();
+    if bytes.get(i).copied() != Some(b'(') {
+        return None;
+    }
+    let mut j = i + 1;
+    while j < bytes.len() && bytes[j].is_ascii_whitespace() {
+        j += 1;
+    }
+    let is_winner = if s[j..].starts_with("winner") {
+        j += "winner".len();
+        true
+    } else if s[j..].starts_with("loser") {
+        j += "loser".len();
+        false
+    } else {
+        return None;
+    };
+    if !bytes.get(j).map_or(false, |c| c.is_ascii_whitespace()) {
+        return None;
+    }
+    while j < bytes.len() && bytes[j].is_ascii_whitespace() {
+        j += 1;
+    }
+    if bytes.get(j).copied() != Some(b'{') {
+        return None;
+    }
+    let after_open = j + 1;
+    let close_rel = s[after_open..].find('}')?;
+    let name = s[after_open..after_open + close_rel].trim().to_string();
+    let mut k = after_open + close_rel + 1;
+    while k < bytes.len() && bytes[k].is_ascii_whitespace() {
+        k += 1;
+    }
+    if bytes.get(k).copied() != Some(b')') {
+        return None;
+    }
+    Some((is_winner, name, k + 1))
 }
 
 fn tokenize_preview(s: &str) -> Vec<PreviewToken> {
@@ -157,17 +205,32 @@ fn tokenize_preview(s: &str) -> Vec<PreviewToken> {
     let bytes = s.as_bytes();
     let mut i = 0;
     let mut text_buf = String::new();
+    let flush_text = |buf: &mut String, out: &mut Vec<PreviewToken>| {
+        if !buf.is_empty() {
+            out.push(PreviewToken::Text(std::mem::take(buf)));
+        }
+    };
     while i < bytes.len() {
         let c = bytes[i] as char;
+        if c == '(' {
+            if let Some((is_winner, name, end)) = match_winner_loser_call(s, i) {
+                flush_text(&mut text_buf, &mut out);
+                if is_winner {
+                    out.push(PreviewToken::WinnerCall(name));
+                } else {
+                    out.push(PreviewToken::LoserCall(name));
+                }
+                i = end;
+                continue;
+            }
+        }
         if c == '[' || c == '{' {
             let close_c = if c == '[' { ']' } else { '}' };
             // Find first close in same kind without trying to support nesting (literals don't nest).
             let after = i + 1;
             if let Some(rel) = s[after..].find(close_c) {
                 let inner = &s[after..after + rel];
-                if !text_buf.is_empty() {
-                    out.push(PreviewToken::Text(std::mem::take(&mut text_buf)));
-                }
+                flush_text(&mut text_buf, &mut out);
                 if c == '[' {
                     out.push(PreviewToken::Team(inner.to_string()));
                 } else {
@@ -177,18 +240,14 @@ fn tokenize_preview(s: &str) -> Vec<PreviewToken> {
                 continue;
             } else {
                 // Unclosed: render as open bracket then continue rendering remaining text
-                if !text_buf.is_empty() {
-                    out.push(PreviewToken::Text(std::mem::take(&mut text_buf)));
-                }
+                flush_text(&mut text_buf, &mut out);
                 out.push(PreviewToken::OpenBracket(c));
                 i += 1;
                 continue;
             }
         }
         if c == ']' || c == '}' {
-            if !text_buf.is_empty() {
-                out.push(PreviewToken::Text(std::mem::take(&mut text_buf)));
-            }
+            flush_text(&mut text_buf, &mut out);
             out.push(PreviewToken::CloseBracket(c));
             i += 1;
             continue;
@@ -280,6 +339,289 @@ enum TeamRefKind {
     Loser(String),
 }
 
+/// Compact display name for a team — prefer `shortname` when present, then `pseudonym`, then id.
+fn team_short_label(t: &TeamOption) -> String {
+    t.shortname
+        .clone()
+        .or_else(|| t.pseudonym.clone())
+        .unwrap_or_else(|| t.id.clone())
+}
+
+/// One ASS atom (the kind of thing that can stand in for a team in a match): a team id,
+/// `tag::TagName`, or `MatchName::winner` / `MatchName::loser`. Used to render compact
+/// inline references in the match autocomplete.
+#[derive(Clone, Debug)]
+enum AssAtom {
+    Team(String),       // team id
+    Tag(String),        // tag name (without the "tag::" prefix)
+    Winner(String),     // match name
+    Loser(String),      // match name
+}
+
+fn parse_ass_atom(raw: &str) -> AssAtom {
+    let s = raw.trim();
+    if let Some(rest) = s.strip_suffix("::winner") {
+        return AssAtom::Winner(rest.trim().to_string());
+    }
+    if let Some(rest) = s.strip_suffix("::loser") {
+        return AssAtom::Loser(rest.trim().to_string());
+    }
+    if s.len() >= 5 && s[..5].eq_ignore_ascii_case("tag::") {
+        return AssAtom::Tag(s[5..].trim().to_string());
+    }
+    AssAtom::Team(s.to_string())
+}
+
+/// Render an ASS atom as a compact inline pill: avatar + shortname for teams, an
+/// icon + label for tags / winner / loser. Used in the match autocomplete to show
+/// who's playing and reffing without taking much space.
+fn render_atom_compact(
+    raw: &str,
+    base_url: &str,
+    team_options: &[TeamOption],
+    tags: &[TagSetupData],
+) -> Element {
+    let atom = parse_ass_atom(raw);
+    match atom {
+        AssAtom::Team(id) => {
+            if let Some(t) = team_options.iter().find(|t| t.id.eq_ignore_ascii_case(&id)) {
+                let label = team_short_label(t);
+                if let Some(p) = t.profile_photo.clone() {
+                    rsx! {
+                        span { class: "ass-atom",
+                            img {
+                                src: "{base_url}/static/{p}",
+                                alt: "",
+                                class: "ass-atom-avatar rounded-circle",
+                            }
+                            span { class: "ass-atom-label", "{label}" }
+                        }
+                    }
+                } else {
+                    let initial = label.chars().next().unwrap_or('?').to_string();
+                    rsx! {
+                        span { class: "ass-atom",
+                            span { class: "ass-atom-avatar ass-atom-avatar-text", "{initial}" }
+                            span { class: "ass-atom-label", "{label}" }
+                        }
+                    }
+                }
+            } else {
+                rsx! {
+                    span { class: "ass-atom ass-atom-unknown",
+                        span { class: "ass-atom-avatar ass-atom-avatar-text", "?" }
+                        span { class: "ass-atom-label", "{id}" }
+                    }
+                }
+            }
+        }
+        AssAtom::Tag(name) => {
+            let known = tags.iter().any(|t| t.name.eq_ignore_ascii_case(&name));
+            let cls = if known { "ass-atom" } else { "ass-atom ass-atom-unknown" };
+            rsx! {
+                span { class: "{cls}",
+                    img { class: "ass-atom-icon icon-primary-svg", src: "{base_url}/static/tag.svg", alt: "" }
+                    span { class: "ass-atom-label", "{name}" }
+                }
+            }
+        }
+        AssAtom::Winner(name) => rsx! {
+            span { class: "ass-atom",
+                img { class: "ass-atom-icon icon-primary-svg", src: "{base_url}/static/reference.svg", alt: "" }
+                span { class: "ass-atom-label", "{name}" }
+                span { class: "ass-atom-badge winner-badge", "W" }
+            }
+        },
+        AssAtom::Loser(name) => rsx! {
+            span { class: "ass-atom",
+                img { class: "ass-atom-icon icon-primary-svg", src: "{base_url}/static/reference.svg", alt: "" }
+                span { class: "ass-atom-label", "{name}" }
+                span { class: "ass-atom-badge loser-badge", "L" }
+            }
+        },
+    }
+}
+
+/// Split a comma-separated list of ASS atoms ("team1, tag::Foo, Match1::winner") into trimmed pieces.
+fn split_atoms(raw: &str) -> Vec<String> {
+    raw.split(',').map(str::trim).filter(|s| !s.is_empty()).map(str::to_string).collect()
+}
+
+/// Render an ASS expression string as a row of chips: literals (`[..]`/`{..}`) and the
+/// `(winner ...)` / `(loser ...)` patterns become labeled chips with resolution arrows;
+/// everything else passes through as plain text.
+fn render_expression_chips(
+    s: &str,
+    team_options: &[TeamOption],
+    tags: &[TagSetupData],
+    matches: &[MatchSetupData],
+    base_url: &str,
+    key_prefix: &str,
+) -> Vec<Element> {
+    tokenize_preview(s)
+        .into_iter()
+        .enumerate()
+        .map(|(i, tok)| match tok {
+            PreviewToken::Text(s) => {
+                let key = format!("{key_prefix}-{i}");
+                rsx! { span { key: "{key}", class: "ass-entry-preview-text", "{s}" } }
+            }
+            PreviewToken::OpenBracket(c) | PreviewToken::CloseBracket(c) => {
+                let key = format!("{key_prefix}-{i}");
+                let txt = c.to_string();
+                rsx! { span { key: "{key}", class: "ass-entry-preview-bracket text-warning", "{txt}" } }
+            }
+            PreviewToken::Team(inner) => {
+                let key = format!("{key_prefix}-{i}");
+                let (kind, resolved) = resolve_team_literal(&inner, team_options, tags, matches);
+                let (chip_class, label, icon) = match &kind {
+                    TeamRefKind::Team(name) => ("team-token-chip team-token-chip-team", name.clone(), None),
+                    TeamRefKind::Tag(name) => (
+                        "team-token-chip team-token-chip-tag",
+                        name.clone(),
+                        Some(("tag.svg", "Tag")),
+                    ),
+                    TeamRefKind::Winner(name) => (
+                        "team-token-chip team-token-chip-winner",
+                        format!("{} winner", name),
+                        Some(("reference.svg", "Reference")),
+                    ),
+                    TeamRefKind::Loser(name) => (
+                        "team-token-chip team-token-chip-loser",
+                        format!("{} loser", name),
+                        Some(("reference.svg", "Reference")),
+                    ),
+                };
+                let avatar = match (&kind, &resolved) {
+                    (TeamRefKind::Team(_), Some(r)) => {
+                        if let Some(p) = r.profile_photo.clone() {
+                            rsx! { img {
+                                src: "{base_url}/static/{p}",
+                                alt: "",
+                                class: "team-token-avatar rounded-circle",
+                                style: "width: 1.4em; height: 1.4em; object-fit: cover;"
+                            } }
+                        } else {
+                            rsx! { span { class: "team-token-avatar", "{r.display.chars().next().unwrap_or('?')}" } }
+                        }
+                    }
+                    (TeamRefKind::Team(name), None) => {
+                        rsx! { span { class: "team-token-avatar", "{name.chars().next().unwrap_or('?')}" } }
+                    }
+                    _ => {
+                        if let Some((icon_name, alt)) = icon {
+                            rsx! { img { class: "team-token-icon icon-primary-svg", src: "{base_url}/static/{icon_name}", alt: "{alt}" } }
+                        } else {
+                            rsx! {}
+                        }
+                    }
+                };
+                let resolved_arrow = match (&kind, resolved.clone()) {
+                    (TeamRefKind::Team(_), _) => rsx! {},
+                    (_, Some(r)) => {
+                        let disp = r.display.clone();
+                        let photo = r.profile_photo.clone();
+                        rsx! {
+                            span { class: "team-token-resolved text-muted ms-1",
+                                " → "
+                                if let Some(p) = photo {
+                                    img {
+                                        src: "{base_url}/static/{p}",
+                                        alt: "",
+                                        class: "team-token-avatar small rounded-circle ms-1",
+                                        style: "width: 1em; height: 1em; object-fit: cover; vertical-align: middle;"
+                                    }
+                                } else {
+                                    span { class: "team-token-avatar small ms-1", style: "display: inline-flex; width: 1em; height: 1em; align-items: center; justify-content: center; font-size: 0.85em;", "{disp.chars().next().unwrap_or('?')}" }
+                                }
+                                span { "{disp}" }
+                            }
+                        }
+                    }
+                    _ => rsx! {},
+                };
+                rsx! {
+                    span { key: "{key}", class: "{chip_class}",
+                        {avatar}
+                        span { class: "team-token-label", "{label}" }
+                        {resolved_arrow}
+                    }
+                }
+            }
+            PreviewToken::Match(inner) => {
+                let key = format!("{key_prefix}-{i}");
+                let name = inner.trim().to_string();
+                let known = matches.iter().any(|m| m.name.eq_ignore_ascii_case(&name));
+                let extra_class = if known { "" } else { " ass-entry-preview-unknown" };
+                rsx! {
+                    span { key: "{key}", class: "team-token-chip team-token-chip-match{extra_class}",
+                        img { class: "team-token-icon icon-primary-svg", src: "{base_url}/static/reference.svg", alt: "Match" }
+                        span { class: "team-token-label", "{name}" }
+                    }
+                }
+            }
+            ref tok @ (PreviewToken::WinnerCall(_) | PreviewToken::LoserCall(_)) => {
+                let key = format!("{key_prefix}-{i}");
+                let (name, is_winner) = match tok {
+                    PreviewToken::WinnerCall(n) => (n.clone(), true),
+                    PreviewToken::LoserCall(n) => (n.clone(), false),
+                    _ => unreachable!(),
+                };
+                let chip_class = if is_winner {
+                    "team-token-chip team-token-chip-winner"
+                } else {
+                    "team-token-chip team-token-chip-loser"
+                };
+                let label = if is_winner {
+                    format!("{} winner", name)
+                } else {
+                    format!("{} loser", name)
+                };
+                let resolved = matches
+                    .iter()
+                    .find(|m| m.name.eq_ignore_ascii_case(&name) && m.status.eq_ignore_ascii_case("COMPLETED"))
+                    .and_then(|m| {
+                        let side = m.match_winner.as_deref()?;
+                        let id = if is_winner {
+                            if side.eq_ignore_ascii_case("TEAM1") { m.team1.clone() } else if side.eq_ignore_ascii_case("TEAM2") { m.team2.clone() } else { None }
+                        } else if side.eq_ignore_ascii_case("TEAM1") { m.team2.clone() } else if side.eq_ignore_ascii_case("TEAM2") { m.team1.clone() } else { None }?;
+                        Some(id)
+                    })
+                    .and_then(|tid| team_options.iter().find(|t| t.id == tid).cloned());
+                let resolved_arrow = if let Some(t) = resolved {
+                    let team_label = team_short_label(&t);
+                    let photo = t.profile_photo.clone();
+                    rsx! {
+                        span { class: "team-token-resolved text-muted ms-1",
+                            " → "
+                            if let Some(p) = photo {
+                                img {
+                                    src: "{base_url}/static/{p}",
+                                    alt: "",
+                                    class: "team-token-avatar small rounded-circle ms-1",
+                                    style: "width: 1em; height: 1em; object-fit: cover; vertical-align: middle;"
+                                }
+                            } else {
+                                span { class: "team-token-avatar small ms-1", style: "display: inline-flex; width: 1em; height: 1em; align-items: center; justify-content: center; font-size: 0.85em;", "{team_label.chars().next().unwrap_or('?')}" }
+                            }
+                            span { "{team_label}" }
+                        }
+                    }
+                } else {
+                    rsx! {}
+                };
+                rsx! {
+                    span { key: "{key}", class: "{chip_class}",
+                        img { class: "team-token-icon icon-primary-svg", src: "{base_url}/static/reference.svg", alt: "Reference" }
+                        span { class: "team-token-label", "{label}" }
+                        {resolved_arrow}
+                    }
+                }
+            }
+        })
+        .collect()
+}
+
 #[derive(Clone, Debug)]
 enum AcOption {
     Function {
@@ -295,6 +637,7 @@ enum AcOption {
     Tag {
         insert: String,
         display: String,
+        resolved_team: Option<String>,
     },
     MatchRef {
         insert: String,
@@ -304,6 +647,10 @@ enum AcOption {
     Match {
         insert: String,
         display: String,
+        field: Option<String>,
+        team1: Option<String>,
+        team2: Option<String>,
+        refs: Vec<String>,
     },
 }
 
@@ -328,55 +675,57 @@ fn collect_team_options(
     matches: &[MatchSetupData],
 ) -> Vec<AcOption> {
     let q = query.to_lowercase();
-    let mut out: Vec<AcOption> = Vec::new();
-    for t in team_options.iter() {
-        let id_lower = t.id.to_lowercase();
-        let pseudo_lower = t.pseudonym.as_deref().unwrap_or("").to_lowercase();
-        if q.is_empty() || id_lower.contains(&q) || pseudo_lower.contains(&q) {
-            let display = t
+    // Build each kind separately, then interleave with per-kind caps so tags/matches always
+    // get a fair slice when there's no query (otherwise a long team list can starve them).
+    let team_opts: Vec<AcOption> = team_options
+        .iter()
+        .filter(|t| {
+            q.is_empty()
+                || t.id.to_lowercase().contains(&q)
+                || t.pseudonym.as_deref().unwrap_or("").to_lowercase().contains(&q)
+        })
+        .map(|t| AcOption::Team {
+            insert: t.id.clone(),
+            display: t
                 .pseudonym
                 .clone()
                 .map(|p| format!("{p} ({})", t.id))
-                .unwrap_or_else(|| t.id.clone());
-            out.push(AcOption::Team {
-                insert: t.id.clone(),
-                display,
-                photo: t.profile_photo.clone(),
-            });
-        }
-        if out.len() >= 20 {
-            break;
-        }
-    }
+                .unwrap_or_else(|| t.id.clone()),
+            photo: t.profile_photo.clone(),
+        })
+        .collect();
+    let tag_opts: Vec<AcOption> = tags
+        .iter()
+        .filter(|tag| q.is_empty() || tag.name.to_lowercase().contains(&q))
+        .map(|tag| AcOption::Tag {
+            insert: format!("tag::{}", tag.name),
+            display: tag.name.clone(),
+            resolved_team: tag.team.clone(),
+        })
+        .collect();
+    let mut match_ref_opts: Vec<AcOption> = Vec::new();
     for m in matches.iter() {
         if q.is_empty() || m.name.to_lowercase().contains(&q) {
-            out.push(AcOption::MatchRef {
+            match_ref_opts.push(AcOption::MatchRef {
                 insert: format!("{}::winner", m.name),
                 display: format!("{} winner", m.name),
                 is_winner: true,
             });
-            out.push(AcOption::MatchRef {
+            match_ref_opts.push(AcOption::MatchRef {
                 insert: format!("{}::loser", m.name),
                 display: format!("{} loser", m.name),
                 is_winner: false,
             });
         }
-        if out.len() >= 30 {
-            break;
-        }
     }
-    for tag in tags.iter() {
-        if q.is_empty() || tag.name.to_lowercase().contains(&q) {
-            out.push(AcOption::Tag {
-                insert: format!("tag::{}", tag.name),
-                display: tag.name.clone(),
-            });
-        }
-        if out.len() >= 35 {
-            break;
-        }
-    }
-    out.into_iter().take(25).collect()
+    // Caps: when the query is empty, give each kind a fair slice. With a query, prefer the
+    // best matches but keep tag/match-ref space available.
+    let (team_cap, tag_cap, match_cap) = if q.is_empty() { (12, 8, 10) } else { (15, 8, 10) };
+    let mut out: Vec<AcOption> = Vec::new();
+    out.extend(team_opts.into_iter().take(team_cap));
+    out.extend(tag_opts.into_iter().take(tag_cap));
+    out.extend(match_ref_opts.into_iter().take(match_cap));
+    out.into_iter().take(30).collect()
 }
 
 fn collect_match_options(query: &str, matches: &[MatchSetupData]) -> Vec<AcOption> {
@@ -388,6 +737,15 @@ fn collect_match_options(query: &str, matches: &[MatchSetupData]) -> Vec<AcOptio
         .map(|m| AcOption::Match {
             insert: m.name.clone(),
             display: m.name.clone(),
+            field: m.field.clone(),
+            team1: m.team1_initial.clone().or_else(|| m.team1.clone()),
+            team2: m.team2_initial.clone().or_else(|| m.team2.clone()),
+            refs: m
+                .refs_initial
+                .as_deref()
+                .or(m.refs.as_deref())
+                .map(split_atoms)
+                .unwrap_or_default(),
         })
         .collect()
 }
@@ -417,7 +775,9 @@ pub fn AssEntry(
     let mut ac_index = use_signal(|| 0usize);
     let mut ac_open = use_signal(|| false);
     let mut error_msg = use_signal(|| None::<String>);
-    let mut simplified_msg = use_signal(|| None::<String>);
+    // Tagged with the input string the simplification was computed for, so we can hide it
+    // when the user has typed something that no longer matches.
+    let mut simplified_msg = use_signal(|| None::<(String, String)>);
 
     // After auto-close insertions, we need to reposition the cursor on the next tick.
     #[cfg(target_arch = "wasm32")]
@@ -441,6 +801,36 @@ pub fn AssEntry(
                     }
                 });
             }
+        });
+    }
+
+    // Debounced re-validation: when the value settles for ~500ms, ask the server for a
+    // fresh simplification. Without this, the simplified row only refreshes on blur,
+    // which is rare while the user is actively editing.
+    #[cfg(target_arch = "wasm32")]
+    {
+        let v_for_effect = value_rc.as_ref().clone();
+        let url_for_effect = tournament_url.clone();
+        use_effect(move || {
+            let v = v_for_effect.clone();
+            let url = url_for_effect.clone();
+            if v.trim().is_empty() || url.is_empty() {
+                return;
+            }
+            spawn(async move {
+                gloo_timers::future::TimeoutFuture::new(500).await;
+                let validated_for = v.clone();
+                if let Ok(res) = api::validate_dsl(&url, &v).await {
+                    if res.valid {
+                        error_msg.set(None);
+                        if let Some(simp) = res.simplified {
+                            simplified_msg.set(Some((validated_for, simp)));
+                        }
+                    } else {
+                        error_msg.set(res.error);
+                    }
+                }
+            });
         });
     }
 
@@ -508,7 +898,9 @@ pub fn AssEntry(
         ac_open.set(true);
         ac_index.set(0);
         error_msg.set(None);
-        simplified_msg.set(None);
+        // Don't wipe simplified_msg here. It's tagged with the input it was computed for, so
+        // the rsx guard hides it automatically once the input no longer matches; that's
+        // gentler than the row blinking out on every keystroke.
         if let Some(byte_after_open) = after_open {
             // ASCII brackets only — byte position equals char position.
             pending_cursor.set(Some(byte_after_open));
@@ -663,11 +1055,12 @@ pub fn AssEntry(
             return;
         }
         spawn(async move {
+            let validated_for = expr.clone();
             match api::validate_dsl(&url, &expr).await {
                 Ok(res) => {
                     if res.valid {
                         error_msg.set(None);
-                        simplified_msg.set(res.simplified);
+                        simplified_msg.set(res.simplified.map(|s| (validated_for, s)));
                     } else {
                         error_msg.set(res.error);
                         simplified_msg.set(None);
@@ -780,11 +1173,36 @@ pub fn AssEntry(
                         }
                     }
                 }
-                AcOption::Tag { display, .. } => {
+                AcOption::Tag { display, resolved_team, .. } => {
                     let d = display.clone();
+                    let resolved_node = resolved_team
+                        .as_ref()
+                        .and_then(|tid| team_options_for_render.iter().find(|t| &t.id == tid))
+                        .map(|t| {
+                            let label = team_short_label(t);
+                            let photo = t.profile_photo.clone();
+                            rsx! {
+                                span { class: "ass-entry-ac-resolved text-muted ms-2",
+                                    " → "
+                                    if let Some(p) = photo {
+                                        img {
+                                            src: "{base_url}/static/{p}",
+                                            alt: "",
+                                            class: "ass-atom-avatar rounded-circle",
+                                        }
+                                    } else {
+                                        span { class: "ass-atom-avatar ass-atom-avatar-text", "{label.chars().next().unwrap_or('?')}" }
+                                    }
+                                    span { "{label}" }
+                                }
+                            }
+                        });
                     rsx! {
-                        img { class: "icon-primary-svg me-1", src: "{base_url}/static/tag.svg", alt: "Tag", style: "width: 1.25em; height: 1.25em;" }
-                        span { "{d}" }
+                        span { class: "ass-entry-ac-row",
+                            img { class: "icon-primary-svg me-1", src: "{base_url}/static/tag.svg", alt: "Tag", style: "width: 1.25em; height: 1.25em;" }
+                            span { "{d}" }
+                            if let Some(r) = resolved_node { {r} }
+                        }
                     }
                 }
                 AcOption::MatchRef { display, is_winner, .. } => {
@@ -796,11 +1214,43 @@ pub fn AssEntry(
                         span { class: "team-token-badge ms-1 {badge}-badge small", "{badge}" }
                     }
                 }
-                AcOption::Match { display, .. } => {
+                AcOption::Match { display, field, team1, team2, refs, .. } => {
                     let d = display.clone();
+                    let field_str = field.clone().unwrap_or_default();
+                    let teams_for_atom = team_options_for_render.clone();
+                    let tags_for_atom = tags_for_render.clone();
+                    let team1_node = team1.as_deref().map(|raw| render_atom_compact(raw, &base_url, teams_for_atom.as_ref(), tags_for_atom.as_ref()));
+                    let teams_for_atom2 = team_options_for_render.clone();
+                    let tags_for_atom2 = tags_for_render.clone();
+                    let team2_node = team2.as_deref().map(|raw| render_atom_compact(raw, &base_url, teams_for_atom2.as_ref(), tags_for_atom2.as_ref()));
+                    let teams_for_refs = team_options_for_render.clone();
+                    let tags_for_refs = tags_for_render.clone();
+                    let refs_clone = refs.clone();
+                    let ref_nodes: Vec<_> = refs_clone
+                        .iter()
+                        .map(|raw| render_atom_compact(raw, &base_url, teams_for_refs.as_ref(), tags_for_refs.as_ref()))
+                        .collect();
                     rsx! {
-                        img { class: "icon-primary-svg me-1", src: "{base_url}/static/reference.svg", alt: "Match", style: "width: 1.25em; height: 1.25em;" }
-                        span { "{d}" }
+                        div { class: "ass-entry-ac-match-head",
+                            img { class: "icon-primary-svg me-1", src: "{base_url}/static/reference.svg", alt: "Match", style: "width: 1.25em; height: 1.25em;" }
+                            span { class: "ass-entry-ac-match-name", "{d}" }
+                            if !field_str.is_empty() {
+                                span { class: "ass-entry-ac-match-field text-muted ms-2", "on {field_str}" }
+                            }
+                        }
+                        div { class: "ass-entry-ac-match-meta small text-muted",
+                            if let Some(t) = team1_node { {t} }
+                            span { class: "ass-entry-ac-vs mx-1", "vs" }
+                            if let Some(t) = team2_node { {t} }
+                            if !ref_nodes.is_empty() {
+                                span { class: "ass-entry-ac-refs ms-2",
+                                    span { class: "me-1", "refs:" }
+                                    for ref_n in ref_nodes.iter() {
+                                        {ref_n.clone()}
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             };
@@ -817,120 +1267,34 @@ pub fn AssEntry(
         })
         .collect();
 
-    let preview_chips: Vec<_> = preview_tokens
-        .iter()
-        .enumerate()
-        .map(|(i, tok)| {
-            match tok {
-                PreviewToken::Text(s) => {
-                    let s = s.clone();
-                    rsx! { span { key: "{i}", class: "ass-entry-preview-text", "{s}" } }
-                }
-                PreviewToken::OpenBracket(c) => {
-                    let s = c.to_string();
-                    rsx! { span { key: "{i}", class: "ass-entry-preview-bracket text-warning", "{s}" } }
-                }
-                PreviewToken::CloseBracket(c) => {
-                    let s = c.to_string();
-                    rsx! { span { key: "{i}", class: "ass-entry-preview-bracket text-warning", "{s}" } }
-                }
-                PreviewToken::Team(inner) => {
-                    let (kind, resolved) = resolve_team_literal(
-                        inner,
-                        team_options_for_render.as_ref(),
-                        tags_for_render.as_ref(),
-                        matches_for_render.as_ref(),
-                    );
-                    let (chip_class, label, icon) = match &kind {
-                        TeamRefKind::Team(name) => ("team-token-chip team-token-chip-team", name.clone(), None),
-                        TeamRefKind::Tag(name) => (
-                            "team-token-chip team-token-chip-tag",
-                            name.clone(),
-                            Some(("tag.svg", "Tag")),
-                        ),
-                        TeamRefKind::Winner(name) => (
-                            "team-token-chip team-token-chip-winner",
-                            format!("{} winner", name),
-                            Some(("reference.svg", "Reference")),
-                        ),
-                        TeamRefKind::Loser(name) => (
-                            "team-token-chip team-token-chip-loser",
-                            format!("{} loser", name),
-                            Some(("reference.svg", "Reference")),
-                        ),
-                    };
-                    let avatar = match (&kind, &resolved) {
-                        (TeamRefKind::Team(_), Some(r)) => {
-                            if let Some(p) = r.profile_photo.clone() {
-                                rsx! { img {
-                                    src: "{base_url}/static/{p}",
-                                    alt: "",
-                                    class: "team-token-avatar rounded-circle",
-                                    style: "width: 1.4em; height: 1.4em; object-fit: cover;"
-                                } }
-                            } else {
-                                rsx! { span { class: "team-token-avatar", "{r.display.chars().next().unwrap_or('?')}" } }
-                            }
-                        }
-                        (TeamRefKind::Team(name), None) => {
-                            rsx! { span { class: "team-token-avatar", "{name.chars().next().unwrap_or('?')}" } }
-                        }
-                        _ => {
-                            if let Some((icon_name, alt)) = icon {
-                                rsx! { img { class: "team-token-icon icon-primary-svg", src: "{base_url}/static/{icon_name}", alt: "{alt}" } }
-                            } else {
-                                rsx! { }
-                            }
-                        }
-                    };
-                    let resolved_arrow = if let Some(r) = resolved.clone() {
-                        if !matches!(kind, TeamRefKind::Team(_)) {
-                            let disp = r.display.clone();
-                            let photo = r.profile_photo.clone();
-                            rsx! {
-                                span { class: "team-token-resolved text-muted ms-1",
-                                    " → "
-                                    if let Some(p) = photo {
-                                        img {
-                                            src: "{base_url}/static/{p}",
-                                            alt: "",
-                                            class: "team-token-avatar small rounded-circle ms-1",
-                                            style: "width: 1em; height: 1em; object-fit: cover; vertical-align: middle;"
-                                        }
-                                    } else {
-                                        span { class: "team-token-avatar small ms-1", style: "display: inline-flex; width: 1em; height: 1em; align-items: center; justify-content: center; font-size: 0.85em;", "{disp.chars().next().unwrap_or('?')}" }
-                                    }
-                                    span { "{disp}" }
-                                }
-                            }
-                        } else {
-                            rsx! { }
-                        }
-                    } else {
-                        rsx! { }
-                    };
-                    rsx! {
-                        span { key: "{i}", class: "{chip_class}",
-                            {avatar}
-                            span { class: "team-token-label", "{label}" }
-                            {resolved_arrow}
-                        }
-                    }
-                }
-                PreviewToken::Match(inner) => {
-                    let name = inner.trim().to_string();
-                    let known = matches_for_render.iter().any(|m| m.name.eq_ignore_ascii_case(&name));
-                    let extra_class = if known { "" } else { " ass-entry-preview-unknown" };
-                    rsx! {
-                        span { key: "{i}", class: "team-token-chip team-token-chip-match{extra_class}",
-                            img { class: "team-token-icon icon-primary-svg", src: "{base_url}/static/reference.svg", alt: "Match" }
-                            span { class: "team-token-label", "{name}" }
-                        }
-                    }
-                }
-            }
-        })
-        .collect();
+    let preview_chips = render_expression_chips(
+        &v,
+        team_options_for_render.as_ref(),
+        tags_for_render.as_ref(),
+        matches_for_render.as_ref(),
+        &base_url,
+        "input",
+    );
+    // Show the simplified row only when the cached simplification was computed for the
+    // exact value currently in the input — keeps stale results from confusing the user.
+    let simplified_value: Option<String> = simplified_msg().and_then(|(input_at, simp)| {
+        if input_at.trim() == v.trim() {
+            Some(simp)
+        } else {
+            None
+        }
+    });
+    let simplified_chips = simplified_value.as_deref().map(|simp| {
+        render_expression_chips(
+            simp,
+            team_options_for_render.as_ref(),
+            tags_for_render.as_ref(),
+            matches_for_render.as_ref(),
+            &base_url,
+            "simp",
+        )
+    });
+    let _ = preview_tokens;
 
     rsx! {
         div { class: "ass-entry position-relative",
@@ -960,10 +1324,18 @@ pub fn AssEntry(
                     }
                 }
             }
+            if let Some(chips) = simplified_chips.as_ref() {
+                div { class: "ass-entry-simplified small",
+                    span { class: "ass-entry-simplified-label text-muted me-1", "simplified:" }
+                    for chip in chips.iter() {
+                        {chip.clone()}
+                    }
+                }
+            }
             if let Some(err) = error_msg() {
                 div { class: "form-text text-danger ass-entry-error", "✗ {err}" }
-            } else if let Some(simp) = simplified_msg() {
-                div { class: "form-text text-success", "✓ Valid (simplified: {simp})" }
+            } else if simplified_value.is_some() {
+                div { class: "form-text text-success", "✓ Valid" }
             } else if !value.trim().is_empty() {
                 div { class: "form-text text-success", "✓" }
             }
