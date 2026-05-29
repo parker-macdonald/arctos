@@ -12,15 +12,30 @@ endpoints. The dict shape is part of the API contract:
     }
 
 When the current user is not authenticated, returns ``None``.
-
-This module is currently a facade re-exporting the implementation from
-``app.routes._api``. The auth-refactor PR replaces the re-export with
-the real implementation; consumers can import the public name now and
-never have to change once the refactor lands.
 """
 
 from __future__ import annotations
 
-from app.routes._api import _user_json as user_json
+from flask_login import current_user
 
-__all__ = ["user_json"]
+from app.services._common import current_user_type
+
+
+def user_json() -> dict | None:
+    """Serialise the current user to a minimal JSON-safe dictionary.
+
+    Returns:
+        A dict with keys ``id``, ``name``, ``type`` (``"player"`` or
+        ``"team"``), and ``has_password``; or ``None`` when no user is
+        authenticated.
+    """
+    if not current_user.is_authenticated:
+        return None
+    t = current_user_type()
+    has_password = bool(getattr(current_user, "pw_hash", None))
+    return {
+        "id": current_user.id,
+        "name": current_user.name,
+        "type": t,
+        "has_password": has_password,
+    }
