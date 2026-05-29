@@ -3,6 +3,11 @@ set -euo pipefail
 
 directory=$(dirname "${BASH_SOURCE[0]}")
 
+# Preview the apt package list before invoking sudo so the contributor
+# sees what's about to be installed.
+echo "About to install these apt packages:"
+sed 's/^/  - /' "${directory}/apt-packages.txt"
+echo
 xargs sudo apt-get install -y < "${directory}/apt-packages.txt"
 echo "Installed apt packages"
 
@@ -19,9 +24,12 @@ if ! command -v just &> /dev/null; then
     echo "Installed just"
 fi
 
+# Install Rust via rustup if cargo isn't already on PATH. Dioxus CLI
+# depends on cargo; without this step the install fails on a fresh box.
 if ! command -v cargo >/dev/null 2>&1; then
-    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
-    echo "Installed rustup + stable Rust toolchain"
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+        | sh -s -- -y --default-toolchain stable --profile minimal
+    echo "Installed Rust toolchain"
 fi
 
 # Ensure cargo is on PATH for the rest of this script even when rustup was

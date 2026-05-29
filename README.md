@@ -90,12 +90,15 @@ Top-level files:
 - `pyproject.toml` - dependencies and tool config (ruff, mypy, pytest).
 - `alembic.ini` - Alembic config; the env file lives in
   `migrations/env.py`.
-- `init_db.py`, `reset_password.py`, `generate_permission_key.py` -
-  small CLI utilities.
+- `init_db.py`, `reset_password.py` - small CLI utilities (legacy;
+  prefer the factory-based flow for new code).
 
 ## Running the app
 
 ### Backend
+
+> Supported platforms: macOS on Apple Silicon and Ubuntu/Debian on
+> x86_64. Windows isn't supported directly; use WSL.
 
 1. Install [uv](https://docs.astral.sh/uv/).
 2. Set up your SSL certs. If you're using nginx you can do this there

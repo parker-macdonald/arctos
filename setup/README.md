@@ -9,10 +9,11 @@ Application Python deps are not handled here; those live in
 
 `just setup` dispatches to `setup-macos.sh` or `setup-ubuntu.sh` based
 on your OS; both scripts install platform packages (from `Brewfile` or
-`apt-packages.txt`), install `uv` and `just`, and then chain into
-`setup-python.sh`, which pins CPython 3.12, runs `uv sync --group
-dev`, and installs the pre-commit hook. See each script's header
-comments for the exact steps.
+`apt-packages.txt`), install `uv`, `just`, the Rust toolchain, and the
+Dioxus CLI (`dx`), then chain into `setup-python.sh`. That last script
+asks `uv` to install CPython 3.12 (uv picks the right artifact for the
+host), runs `uv sync --group dev`, and installs the pre-commit hook.
+See each script's header comments for the exact steps.
 
 Other recipes:
 
@@ -53,5 +54,10 @@ If a dependency is OS-agnostic and Python-only, add it to
 - **Pre-commit hook install fails:** make sure you ran `just install`
   inside a git checkout (the script runs `pre-commit install`, which
   requires a `.git` directory).
-- **Wrong Python version:** the script pins `cpython-3.12.13`. If `uv`
-  fetches a different patch version, update `setup-python.sh`.
+- **Wrong Python version:** `setup-python.sh` asks `uv` for `3.12`. To
+  pin a specific patch version, edit `.python-version` at the repo
+  root (uv reads it on every invocation).
+- **`cargo` not found after install:** on Ubuntu, the rustup installer
+  writes to `~/.cargo/bin`. The setup script sources `~/.cargo/env`
+  before running the rest, but a separate shell won't see it until you
+  reopen the terminal (or run `. ~/.cargo/env` yourself).
