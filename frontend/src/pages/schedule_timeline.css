@@ -500,26 +500,36 @@
     position: absolute;
     top: 100%;
     left: 0;
-    z-index: 1050;
-    min-width: 280px;
-    max-width: 480px;
+    /* Width follows the input — the textarea above sets the column width.
+       Allow growing wider when there's room (e.g. for long match descriptors). */
+    width: 100%;
+    min-width: 0;
+    max-width: min(520px, 95vw);
     max-height: 280px;
     overflow-y: auto;
     margin-top: 2px;
-    padding: 0.25rem 0;
+    padding: 0.15rem 0;
     background: white;
     border: 1px solid #dee2e6;
     border-radius: 4px;
     box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15);
     list-style: none;
+    font-size: 0.85em;
 }
 
 .ass-entry-ac-item {
-    padding: 0.3rem 0.6rem;
+    padding: 0.2rem 0.4rem;
     cursor: pointer;
     display: flex;
     flex-direction: column;
     gap: 0;
+    min-width: 0;
+    overflow: hidden;
+}
+
+.ass-entry-ac-item > span,
+.ass-entry-ac-item > div {
+    min-width: 0;
 }
 
 .ass-entry-ac-item-active {
@@ -540,11 +550,17 @@
 .ass-entry-ac-fn-sig {
     font-family: var(--bs-font-monospace, monospace);
     font-size: 0.85em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .ass-entry-ac-fn-desc {
     font-size: 0.8em;
-    line-height: 1.3;
+    line-height: 1.25;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .ass-entry-preview {
@@ -570,6 +586,13 @@
     font-weight: 600;
 }
 
+/* Forces the next chip onto a new flex row — drop-in replacement for `\n` in the input. */
+.ass-entry-preview-break {
+    flex-basis: 100%;
+    width: 100%;
+    height: 0;
+}
+
 .team-token-chip-match {
     background: #fff3cd;
     border-color: #ffe69c;
@@ -583,6 +606,13 @@
 .ass-entry-error {
     white-space: pre-wrap;
     font-family: var(--bs-font-monospace, monospace);
+}
+
+.ass-entry-input {
+    resize: none;
+    min-height: calc(1.5em + 0.75rem + 2px);
+    overflow-y: hidden;
+    line-height: 1.5;
 }
 
 .ass-entry-simplified {
@@ -605,14 +635,18 @@
 .ass-atom {
     display: inline-flex;
     align-items: center;
-    gap: 0.2rem;
-    padding: 0.05rem 0.3rem;
+    gap: 0.15rem;
+    padding: 0 0.2rem;
     border-radius: 3px;
     background: rgba(13, 110, 253, 0.07);
     border: 1px solid rgba(13, 110, 253, 0.18);
-    font-size: 0.85em;
-    line-height: 1.2;
-    margin-right: 0.15rem;
+    font-size: 0.78em;
+    line-height: 1.3;
+    margin-right: 0.1rem;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .ass-atom-unknown {
@@ -677,10 +711,18 @@
     display: flex;
     align-items: center;
     gap: 0.25rem;
+    flex-wrap: wrap;
+    min-width: 0;
 }
 
 .ass-entry-ac-match-name {
     font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.ass-entry-ac-match-field {
+    font-size: 0.85em;
 }
 
 .ass-entry-ac-match-meta {
@@ -688,11 +730,13 @@
     flex-wrap: wrap;
     align-items: center;
     gap: 0.15rem;
-    margin-top: 0.15rem;
+    margin-top: 0.1rem;
+    min-width: 0;
 }
 
 .ass-entry-ac-vs {
     font-style: italic;
+    font-size: 0.8em;
 }
 
 .ass-entry-ac-refs {
@@ -700,13 +744,18 @@
     flex-wrap: wrap;
     align-items: center;
     gap: 0.15rem;
+    min-width: 0;
 }
 
 .ass-entry-ac-resolved {
     display: inline-flex;
     align-items: center;
-    gap: 0.2rem;
-    font-size: 0.85em;
+    gap: 0.15rem;
+    font-size: 0.8em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
 }
 
 /* Schedule table view: keep cells as table-cell so Team 1 / Team 2 / Refs columns layout correctly */
