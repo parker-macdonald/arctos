@@ -1,20 +1,25 @@
-"""Helpers for the player/team profile-photo upload endpoints.
-
-- ``profile_photo_upload_dir()`` - absolute disk directory where profile
-  photos are stored.
-- ``safe_profile_photo_filename(prefix, entity_id)`` - canonical
-  per-entity filename, deterministic so a fresh upload always
-  overwrites the previous photo.
-
-This module is currently a facade re-exporting the implementations from
-``app.routes._api``. The players/teams-refactor PR replaces the
-re-exports with the real implementations; consumers can import the
-public names now and never have to change once the refactor lands.
-"""
+"""Helpers for the player/team profile-photo upload endpoints."""
 
 from __future__ import annotations
 
-from app.routes._api import _profile_photo_upload_dir as profile_photo_upload_dir
-from app.routes._api import _safe_profile_photo_filename as safe_profile_photo_filename
+import os
 
-__all__ = ["profile_photo_upload_dir", "safe_profile_photo_filename"]
+from flask import current_app
+
+
+def profile_photo_upload_dir() -> str:
+    """Return the absolute directory where profile photos are stored on disk."""
+    return os.path.join(current_app.root_path, "..", "static", "uploads", "profiles")
+
+
+def safe_profile_photo_filename(prefix: str, entity_id: str) -> str:
+    """Sanitize *entity_id* for safe use in a filename and return the canonical
+    profile-photo filename for the given prefix (``"player"`` or ``"team"``).
+
+    Replaces every character that is not alphanumeric or underscore with an
+    underscore, then appends ``.jpg``. The resulting filename is predictable
+    and deterministic per entity, so a fresh upload always overwrites the
+    previous photo.
+    """
+    safe = "".join(c if c.isalnum() or c == "_" else "_" for c in entity_id)
+    return f"{prefix}_{safe}.jpg"
