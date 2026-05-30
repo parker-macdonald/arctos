@@ -54,6 +54,19 @@ const DSL_FUNCTIONS: &[(&str, &str, &str)] = &[
     ("lambda", "(lambda (args) body)", "Define a function"),
 ];
 
+/// Set a textarea's height to fit its content: clear `height`, then read `scrollHeight`
+/// and write it back. Caps at a max so a runaway expression doesn't take over the form.
+#[cfg(target_arch = "wasm32")]
+fn autosize_textarea(el: &web_sys::HtmlTextAreaElement) {
+    let style = el.style();
+    let _ = style.set_property("height", "auto");
+    let h = el.scroll_height();
+    let max = 400;
+    let h = h.max(0).min(max);
+    let _ = style.set_property("height", &format!("{h}px"));
+    let _ = style.set_property("overflow-y", if el.scroll_height() > max { "auto" } else { "hidden" });
+}
+
 /// Find matching close bracket from open_pos (byte index of open char). Returns byte index of close char.
 fn find_matching_close(s: &str, open_byte_pos: usize, open_c: char, close_c: char) -> Option<usize> {
     let after_open = open_byte_pos + open_c.len_utf8();
@@ -156,6 +169,9 @@ enum PreviewToken {
     LoserCall(String),
     OpenBracket(char),
     CloseBracket(char),
+    /// A literal newline in the input — rendered as a flex-row break so subsequent
+    /// chips wrap to a new line, mirroring the textarea layout.
+    Newline,
 }
 
 /// If `s[i..]` starts with `( <ws>* (winner|loser) <ws>+ {NAME} <ws>* )`, return
@@ -205,9 +221,23 @@ fn tokenize_preview(s: &str) -> Vec<PreviewToken> {
     let bytes = s.as_bytes();
     let mut i = 0;
     let mut text_buf = String::new();
+    // Split accumulated text at `\n` so each newline becomes its own token. Empty
+    // segments between consecutive newlines are still pushed as empty Text so the
+    // resulting layout has the right number of row breaks.
     let flush_text = |buf: &mut String, out: &mut Vec<PreviewToken>| {
-        if !buf.is_empty() {
-            out.push(PreviewToken::Text(std::mem::take(buf)));
+        if buf.is_empty() {
+            return;
+        }
+        let taken = std::mem::take(buf);
+        let mut first = true;
+        for line in taken.split('\n') {
+            if !first {
+                out.push(PreviewToken::Newline);
+            }
+            first = false;
+            if !line.is_empty() {
+                out.push(PreviewToken::Text(line.to_string()));
+            }
         }
     };
     while i < bytes.len() {
@@ -255,9 +285,7 @@ fn tokenize_preview(s: &str) -> Vec<PreviewToken> {
         text_buf.push(c);
         i += 1;
     }
-    if !text_buf.is_empty() {
-        out.push(PreviewToken::Text(text_buf));
-    }
+    flush_text(&mut text_buf, &mut out);
     out
 }
 
@@ -465,6 +493,11 @@ fn render_expression_chips(
             PreviewToken::Text(s) => {
                 let key = format!("{key_prefix}-{i}");
                 rsx! { span { key: "{key}", class: "ass-entry-preview-text", "{s}" } }
+            }
+            PreviewToken::Newline => {
+                let key = format!("{key_prefix}-{i}");
+                // Empty flex item that takes the full row, forcing subsequent siblings to wrap.
+                rsx! { span { key: "{key}", class: "ass-entry-preview-break" } }
             }
             PreviewToken::OpenBracket(c) | PreviewToken::CloseBracket(c) => {
                 let key = format!("{key_prefix}-{i}");
@@ -778,6 +811,28 @@ pub fn AssEntry(
     // Tagged with the input string the simplification was computed for, so we can hide it
     // when the user has typed something that no longer matches.
     let mut simplified_msg = use_signal(|| None::<(String, String)>);
+    // Bumped on every keystroke so debounced async tasks can detect they're stale.
+    let mut validate_gen = use_signal(|| 0u64);
+
+    // Initial autosize so a pre-filled value (edit modal) shows at the right height.
+    #[cfg(target_arch = "wasm32")]
+    {
+        let id_init = input_id.clone();
+        use_hook(move || {
+            spawn(async move {
+                gloo_timers::future::TimeoutFuture::new(0).await;
+                if let Some(window) = web_sys::window() {
+                    if let Some(doc) = window.document() {
+                        if let Ok(Some(el)) = doc.query_selector(&format!("#{}", id_init)) {
+                            if let Ok(ta) = el.dyn_into::<web_sys::HtmlTextAreaElement>() {
+                                autosize_textarea(&ta);
+                            }
+                        }
+                    }
+                }
+            });
+        });
+    }
 
     // After auto-close insertions, we need to reposition the cursor on the next tick.
     #[cfg(target_arch = "wasm32")]
@@ -792,45 +847,16 @@ pub fn AssEntry(
                     if let Some(window) = web_sys::window() {
                         if let Some(doc) = window.document() {
                             if let Ok(Some(el)) = doc.query_selector(&format!("#{}", id)) {
-                                if let Ok(input) = el.dyn_into::<web_sys::HtmlInputElement>() {
+                                if let Ok(input) = el.dyn_into::<web_sys::HtmlTextAreaElement>() {
                                     let _ = input.set_selection_range(p as u32, p as u32);
                                     let _ = input.focus();
+                                    autosize_textarea(&input);
                                 }
                             }
                         }
                     }
                 });
             }
-        });
-    }
-
-    // Debounced re-validation: when the value settles for ~500ms, ask the server for a
-    // fresh simplification. Without this, the simplified row only refreshes on blur,
-    // which is rare while the user is actively editing.
-    #[cfg(target_arch = "wasm32")]
-    {
-        let v_for_effect = value_rc.as_ref().clone();
-        let url_for_effect = tournament_url.clone();
-        use_effect(move || {
-            let v = v_for_effect.clone();
-            let url = url_for_effect.clone();
-            if v.trim().is_empty() || url.is_empty() {
-                return;
-            }
-            spawn(async move {
-                gloo_timers::future::TimeoutFuture::new(500).await;
-                let validated_for = v.clone();
-                if let Ok(res) = api::validate_dsl(&url, &v).await {
-                    if res.valid {
-                        error_msg.set(None);
-                        if let Some(simp) = res.simplified {
-                            simplified_msg.set(Some((validated_for, simp)));
-                        }
-                    } else {
-                        error_msg.set(res.error);
-                    }
-                }
-            });
         });
     }
 
@@ -871,6 +897,8 @@ pub fn AssEntry(
     let v_for_oninput = v.clone();
     let value_rc_input = value_rc.clone();
     let on_change_input = on_change.clone();
+    let url_for_input = tournament_url.clone();
+    let id_for_oninput = input_id.clone();
     let oninput_handler = move |e: Event<FormData>| {
         let new_val = e.value();
         let old = value_rc_input.as_ref().clone();
@@ -894,16 +922,66 @@ pub fn AssEntry(
         } else {
             (new_val, None)
         };
-        on_change_input.call(out);
+        on_change_input.call(out.clone());
         ac_open.set(true);
         ac_index.set(0);
         error_msg.set(None);
+
+        // Resize the textarea to fit its content on the next tick (after the DOM applies the new value).
+        #[cfg(target_arch = "wasm32")]
+        {
+            let id_resize = id_for_oninput.clone();
+            spawn(async move {
+                gloo_timers::future::TimeoutFuture::new(0).await;
+                if let Some(window) = web_sys::window() {
+                    if let Some(doc) = window.document() {
+                        if let Ok(Some(el)) = doc.query_selector(&format!("#{}", id_resize)) {
+                            if let Ok(ta) = el.dyn_into::<web_sys::HtmlTextAreaElement>() {
+                                autosize_textarea(&ta);
+                            }
+                        }
+                    }
+                }
+            });
+        }
         // Don't wipe simplified_msg here. It's tagged with the input it was computed for, so
         // the rsx guard hides it automatically once the input no longer matches; that's
         // gentler than the row blinking out on every keystroke.
         if let Some(byte_after_open) = after_open {
             // ASCII brackets only — byte position equals char position.
             pending_cursor.set(Some(byte_after_open));
+        }
+
+        // Debounced re-validation: bump the generation counter, wait 500ms, only validate
+        // if no further keystroke happened in that window. Also requires the value to
+        // still match what we captured — defends against late-arriving prior responses.
+        let gen = validate_gen() + 1;
+        validate_gen.set(gen);
+        let url = url_for_input.clone();
+        let validated_for = out;
+        if !validated_for.trim().is_empty() && !url.is_empty() {
+            #[cfg(target_arch = "wasm32")]
+            spawn(async move {
+                gloo_timers::future::TimeoutFuture::new(500).await;
+                if validate_gen() != gen {
+                    return;
+                }
+                if let Ok(res) = api::validate_dsl(&url, &validated_for).await {
+                    if validate_gen() != gen {
+                        return;
+                    }
+                    if res.valid {
+                        error_msg.set(None);
+                        if let Some(simp) = res.simplified {
+                            simplified_msg.set(Some((validated_for, simp)));
+                        }
+                    } else {
+                        error_msg.set(res.error);
+                    }
+                }
+            });
+            #[cfg(not(target_arch = "wasm32"))]
+            let _ = (url, validated_for, gen);
         }
     };
 
@@ -984,9 +1062,11 @@ pub fn AssEntry(
                 return;
             }
         }
-        // Block raw Enter so it doesn't submit the form (Shift+Enter still bubbles up).
+        // Plain Enter inserts a newline. Stop propagation so the parent form's
+        // Enter-handler (which prevents default to block submission) doesn't squash it.
+        // Shift+Enter still bubbles up so the modal's Save shortcut keeps working.
         if key == "Enter" && !ev.modifiers().contains(Modifiers::SHIFT) {
-            ev.prevent_default();
+            ev.stop_propagation();
         }
         let _ = id_for_keydown.clone();
     };
@@ -1001,7 +1081,7 @@ pub fn AssEntry(
                 if let Some(window) = web_sys::window() {
                     if let Some(doc) = window.document() {
                         if let Ok(Some(el)) = doc.query_selector(&format!("#{}", id)) {
-                            if let Ok(input) = el.dyn_into::<web_sys::HtmlInputElement>() {
+                            if let Ok(input) = el.dyn_into::<web_sys::HtmlTextAreaElement>() {
                                 if let Ok(Some(sel)) = input.selection_start() {
                                     cursor_pos.set(Some(sel as usize));
                                 }
@@ -1026,7 +1106,7 @@ pub fn AssEntry(
                 if let Some(window) = web_sys::window() {
                     if let Some(doc) = window.document() {
                         if let Ok(Some(el)) = doc.query_selector(&format!("#{}", id)) {
-                            if let Ok(input) = el.dyn_into::<web_sys::HtmlInputElement>() {
+                            if let Ok(input) = el.dyn_into::<web_sys::HtmlTextAreaElement>() {
                                 if let Ok(Some(sel)) = input.selection_start() {
                                     cursor_pos.set(Some(sel as usize));
                                 }
@@ -1298,10 +1378,10 @@ pub fn AssEntry(
 
     rsx! {
         div { class: "ass-entry position-relative",
-            input {
+            textarea {
                 id: "{input_id}",
                 class: "form-control font-monospace ass-entry-input",
-                "type": "text",
+                rows: "1",
                 placeholder: "{placeholder}",
                 value: "{value}",
                 oninput: oninput_handler,
