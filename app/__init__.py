@@ -242,6 +242,7 @@ def create_app(config: dict | None = None) -> Flask:
     from app.routes.sidecomps import bp as sidecomps_bp
     from app.routes._api import bp as _api_bp
     from app.routes.content import bp as content_bp
+    from app.routes.leagues import bp as leagues_bp
     from app.routes.penalty_types import bp as penalty_types_bp
     from app.routes.players import bp as players_bp
     from app.routes.teams import bp as teams_bp
@@ -254,6 +255,7 @@ def create_app(config: dict | None = None) -> Flask:
     app.register_blueprint(registration_bp)
     app.register_blueprint(sidecomps_bp)
     app.register_blueprint(content_bp)
+    app.register_blueprint(leagues_bp)
     app.register_blueprint(penalty_types_bp)
     app.register_blueprint(players_bp)
     app.register_blueprint(teams_bp)

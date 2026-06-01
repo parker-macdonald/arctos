@@ -34,7 +34,8 @@ from flask import Blueprint, current_app, jsonify, request
 from flask_login import current_user, login_required
 
 from app.filters import render_markdown
-from app.routes._api import _check_to, _require_league
+from app.routes._api import _check_to
+from app.serializers.league_serializer import require_league
 from app.services.permission_service import PermissionService
 from app.utils.helpers import get_registrable_config
 from models import Tournament, db
@@ -225,7 +226,7 @@ def tournament_upload_waiver(tournament_url):
 @login_required
 def league_upload_waiver_api(league_url):
     """Store waiver PDF on the league registrable config (league TO only)."""
-    league, err = _require_league(league_url)
+    league, err = require_league(league_url)
     if err:
         return jsonify({"error": "Not found" if err == 404 else "Forbidden"}), err
     if not PermissionService.is_league_organizer(league_url, current_user):
