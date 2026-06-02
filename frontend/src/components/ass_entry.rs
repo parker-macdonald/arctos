@@ -20,12 +20,28 @@ use wasm_bindgen::JsCast as _;
 /// (name, signature, short description)
 const DSL_FUNCTIONS: &[(&str, &str, &str)] = &[
     ("wins", "(wins TEAM) -> INT", "Wins for a team this event"),
-    ("losses", "(losses TEAM) -> INT", "Losses for a team this event"),
+    (
+        "losses",
+        "(losses TEAM) -> INT",
+        "Losses for a team this event",
+    ),
     ("winner", "(winner MATCH) -> TEAM", "Winner of a match"),
     ("loser", "(loser MATCH) -> TEAM", "Loser of a match"),
-    ("points-won", "(points-won TEAM MATCH?) -> INT", "Points won (optionally in MATCH)"),
-    ("points-lost", "(points-lost TEAM MATCH?) -> INT", "Points lost (optionally in MATCH)"),
-    ("is-skipped", "(is-skipped MATCH) -> BOOL", "True if match was skipped"),
+    (
+        "points-won",
+        "(points-won TEAM MATCH?) -> INT",
+        "Points won (optionally in MATCH)",
+    ),
+    (
+        "points-lost",
+        "(points-lost TEAM MATCH?) -> INT",
+        "Points lost (optionally in MATCH)",
+    ),
+    (
+        "is-skipped",
+        "(is-skipped MATCH) -> BOOL",
+        "True if match was skipped",
+    ),
     ("if", "(if COND IF_TRUE IF_FALSE)", "Conditional"),
     ("and", "(and BOOL BOOL) -> BOOL", "Logical and"),
     ("or", "(or BOOL BOOL) -> BOOL", "Logical or"),
@@ -44,15 +60,101 @@ const DSL_FUNCTIONS: &[(&str, &str, &str)] = &[
     ("cdr", "(cdr LIST)", "All but the first element"),
     ("get", "(get INDEX LIST)", "Element at INDEX, or NIL"),
     ("len", "(len LIST) -> INT", "Length of a list"),
-    ("or-default", "(or-default VAL DEFAULT)", "VAL if not NIL else DEFAULT"),
-    ("map", "(map LIST FUNC) -> LIST", "Apply FUNC to each element"),
+    (
+        "or-default",
+        "(or-default VAL DEFAULT)",
+        "VAL if not NIL else DEFAULT",
+    ),
+    (
+        "map",
+        "(map LIST FUNC) -> LIST",
+        "Apply FUNC to each element",
+    ),
     ("reduce", "(reduce LIST FUNC)", "Combine elements with FUNC"),
     ("max", "(max LIST)", "Maximum of a list"),
     ("min", "(min LIST)", "Minimum of a list"),
-    ("max-by", "(max-by LIST FUNC)", "Element with max FUNC value"),
-    ("min-by", "(min-by LIST FUNC)", "Element with min FUNC value"),
+    (
+        "max-by",
+        "(max-by LIST FUNC)",
+        "Element with max FUNC value",
+    ),
+    (
+        "min-by",
+        "(min-by LIST FUNC)",
+        "Element with min FUNC value",
+    ),
     ("lambda", "(lambda (args) body)", "Define a function"),
 ];
+
+/// Format a "type mismatch" message for the validity row.
+fn type_mismatch_message(expected: &[String], got: &[String]) -> String {
+    let exp_label = expected.join(" or ");
+    if got.is_empty() || got.iter().any(|t| t == "UNKNOWN") {
+        format!("Expected {exp_label}, but the type couldn't be determined.")
+    } else {
+        let got_label = got.join(" | ");
+        format!("Expected {exp_label}, got {got_label}.")
+    }
+}
+
+/// Returns Ok(()) when `got` is a non-empty subset of `expected` (with no UNKNOWN);
+/// otherwise Err with a human-readable explanation. `expected` empty means no constraint.
+fn check_expected_type(expected: Option<&[String]>, got: &[String]) -> Result<(), String> {
+    let Some(exp) = expected else {
+        return Ok(());
+    };
+    if exp.is_empty() {
+        return Ok(());
+    }
+    if got.is_empty() || got.iter().any(|t| t == "UNKNOWN") {
+        return Err(type_mismatch_message(exp, got));
+    }
+    if got.iter().all(|t| exp.iter().any(|e| e == t)) {
+        Ok(())
+    } else {
+        Err(type_mismatch_message(exp, got))
+    }
+}
+
+/// Apply a successful validate-dsl response to the ass-entry signals: surface error / simplified
+/// chips, run the expected-type check, and report the final verdict via `on_validity_change`.
+fn apply_validation_response(
+    res: ValidateDslResponse,
+    validated_for: String,
+    expected: Option<&[String]>,
+    mut error_msg: Signal<Option<String>>,
+    mut simplified_msg: Signal<Option<(String, String)>>,
+    on_validity_change: Option<EventHandler<Option<Result<(), String>>>>,
+) {
+    if !res.valid {
+        let err = res
+            .error
+            .unwrap_or_else(|| "invalid expression".to_string());
+        error_msg.set(Some(err.clone()));
+        simplified_msg.set(None);
+        if let Some(h) = on_validity_change {
+            h.call(Some(Err(err)));
+        }
+        return;
+    }
+    if let Some(simp) = res.simplified.clone() {
+        simplified_msg.set(Some((validated_for, simp)));
+    }
+    match check_expected_type(expected, &res.result_type) {
+        Ok(()) => {
+            error_msg.set(None);
+            if let Some(h) = on_validity_change {
+                h.call(Some(Ok(())));
+            }
+        }
+        Err(msg) => {
+            error_msg.set(Some(msg.clone()));
+            if let Some(h) = on_validity_change {
+                h.call(Some(Err(msg)));
+            }
+        }
+    }
+}
 
 /// Set a textarea's height to fit its content: clear `height`, then read `scrollHeight`
 /// and write it back. Caps at a max so a runaway expression doesn't take over the form.
@@ -64,11 +166,23 @@ fn autosize_textarea(el: &web_sys::HtmlTextAreaElement) {
     let max = 400;
     let h = h.max(0).min(max);
     let _ = style.set_property("height", &format!("{h}px"));
-    let _ = style.set_property("overflow-y", if el.scroll_height() > max { "auto" } else { "hidden" });
+    let _ = style.set_property(
+        "overflow-y",
+        if el.scroll_height() > max {
+            "auto"
+        } else {
+            "hidden"
+        },
+    );
 }
 
 /// Find matching close bracket from open_pos (byte index of open char). Returns byte index of close char.
-fn find_matching_close(s: &str, open_byte_pos: usize, open_c: char, close_c: char) -> Option<usize> {
+fn find_matching_close(
+    s: &str,
+    open_byte_pos: usize,
+    open_c: char,
+    close_c: char,
+) -> Option<usize> {
     let after_open = open_byte_pos + open_c.len_utf8();
     let rest = s.get(after_open..)?;
     let mut depth = 1u32;
@@ -87,7 +201,10 @@ fn find_matching_close(s: &str, open_byte_pos: usize, open_c: char, close_c: cha
 
 /// Convert a cursor position in characters to byte offset.
 fn cursor_byte(s: &str, cursor_char: usize) -> usize {
-    s.char_indices().nth(cursor_char).map(|(i, _)| i).unwrap_or(s.len())
+    s.char_indices()
+        .nth(cursor_char)
+        .map(|(i, _)| i)
+        .unwrap_or(s.len())
 }
 
 /// Index in `new` (byte offset) of the inserted character when `new.len() == old.len() + 1`.
@@ -125,7 +242,11 @@ pub fn innermost_around_cursor(s: &str, cursor_char: usize) -> Option<InnermostB
     let cb = cursor_byte(s, cursor_char);
     let mut best: Option<(usize, InnermostBracket)> = None;
 
-    let consider = |open_c: char, close_c: char, best: &mut Option<(usize, InnermostBracket)>, s: &str, cb: usize| {
+    let consider = |open_c: char,
+                    close_c: char,
+                    best: &mut Option<(usize, InnermostBracket)>,
+                    s: &str,
+                    cb: usize| {
         let Some(open_pos) = s[..cb].rfind(open_c) else {
             return;
         };
@@ -308,7 +429,9 @@ fn resolve_team_literal(
         let name = rest.trim();
         let resolved = matches
             .iter()
-            .find(|m| m.name.eq_ignore_ascii_case(name) && m.status.eq_ignore_ascii_case("COMPLETED"))
+            .find(|m| {
+                m.name.eq_ignore_ascii_case(name) && m.status.eq_ignore_ascii_case("COMPLETED")
+            })
             .and_then(|m| match m.match_winner.as_deref() {
                 Some(s) if s.eq_ignore_ascii_case("TEAM1") => m.team1.clone(),
                 Some(s) if s.eq_ignore_ascii_case("TEAM2") => m.team2.clone(),
@@ -317,7 +440,11 @@ fn resolve_team_literal(
             .and_then(|tid| team_options.iter().find(|t| t.id == tid))
             .map(|t| TeamRefResolved {
                 profile_photo: t.profile_photo.clone(),
-                display: t.pseudonym.clone().map(|p| format!("{p} ({})", t.id)).unwrap_or_else(|| t.id.clone()),
+                display: t
+                    .pseudonym
+                    .clone()
+                    .map(|p| format!("{p} ({})", t.id))
+                    .unwrap_or_else(|| t.id.clone()),
             });
         return (TeamRefKind::Winner(name.to_string()), resolved);
     }
@@ -325,7 +452,9 @@ fn resolve_team_literal(
         let name = rest.trim();
         let resolved = matches
             .iter()
-            .find(|m| m.name.eq_ignore_ascii_case(name) && m.status.eq_ignore_ascii_case("COMPLETED"))
+            .find(|m| {
+                m.name.eq_ignore_ascii_case(name) && m.status.eq_ignore_ascii_case("COMPLETED")
+            })
             .and_then(|m| match m.match_winner.as_deref() {
                 Some(s) if s.eq_ignore_ascii_case("TEAM1") => m.team2.clone(),
                 Some(s) if s.eq_ignore_ascii_case("TEAM2") => m.team1.clone(),
@@ -334,7 +463,11 @@ fn resolve_team_literal(
             .and_then(|tid| team_options.iter().find(|t| t.id == tid))
             .map(|t| TeamRefResolved {
                 profile_photo: t.profile_photo.clone(),
-                display: t.pseudonym.clone().map(|p| format!("{p} ({})", t.id)).unwrap_or_else(|| t.id.clone()),
+                display: t
+                    .pseudonym
+                    .clone()
+                    .map(|p| format!("{p} ({})", t.id))
+                    .unwrap_or_else(|| t.id.clone()),
             });
         return (TeamRefKind::Loser(name.to_string()), resolved);
     }
@@ -347,14 +480,24 @@ fn resolve_team_literal(
             .and_then(|tid| team_options.iter().find(|t| t.id == tid).cloned())
             .map(|t| TeamRefResolved {
                 profile_photo: t.profile_photo.clone(),
-                display: t.pseudonym.clone().map(|p| format!("{p} ({})", t.id)).unwrap_or_else(|| t.id.clone()),
+                display: t
+                    .pseudonym
+                    .clone()
+                    .map(|p| format!("{p} ({})", t.id))
+                    .unwrap_or_else(|| t.id.clone()),
             });
         return (TeamRefKind::Tag(name.to_string()), resolved);
     }
-    let team = team_options.iter().find(|t| t.id.eq_ignore_ascii_case(trimmed));
+    let team = team_options
+        .iter()
+        .find(|t| t.id.eq_ignore_ascii_case(trimmed));
     let resolved = team.map(|t| TeamRefResolved {
         profile_photo: t.profile_photo.clone(),
-        display: t.pseudonym.clone().map(|p| format!("{p} ({})", t.id)).unwrap_or_else(|| t.id.clone()),
+        display: t
+            .pseudonym
+            .clone()
+            .map(|p| format!("{p} ({})", t.id))
+            .unwrap_or_else(|| t.id.clone()),
     });
     (TeamRefKind::Team(trimmed.to_string()), resolved)
 }
@@ -380,10 +523,10 @@ fn team_short_label(t: &TeamOption) -> String {
 /// inline references in the match autocomplete.
 #[derive(Clone, Debug)]
 enum AssAtom {
-    Team(String),       // team id
-    Tag(String),        // tag name (without the "tag::" prefix)
-    Winner(String),     // match name
-    Loser(String),      // match name
+    Team(String),   // team id
+    Tag(String),    // tag name (without the "tag::" prefix)
+    Winner(String), // match name
+    Loser(String),  // match name
 }
 
 fn parse_ass_atom(raw: &str) -> AssAtom {
@@ -445,7 +588,11 @@ fn render_atom_compact(
         }
         AssAtom::Tag(name) => {
             let known = tags.iter().any(|t| t.name.eq_ignore_ascii_case(&name));
-            let cls = if known { "ass-atom" } else { "ass-atom ass-atom-unknown" };
+            let cls = if known {
+                "ass-atom"
+            } else {
+                "ass-atom ass-atom-unknown"
+            };
             rsx! {
                 span { class: "{cls}",
                     img { class: "ass-atom-icon icon-primary-svg", src: "{base_url}/static/tag.svg", alt: "" }
@@ -472,7 +619,11 @@ fn render_atom_compact(
 
 /// Split a comma-separated list of ASS atoms ("team1, tag::Foo, Match1::winner") into trimmed pieces.
 fn split_atoms(raw: &str) -> Vec<String> {
-    raw.split(',').map(str::trim).filter(|s| !s.is_empty()).map(str::to_string).collect()
+    raw.split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect()
 }
 
 /// Render an ASS expression string as a row of chips: literals (`[..]`/`{..}`) and the
@@ -715,7 +866,11 @@ fn collect_team_options(
         .filter(|t| {
             q.is_empty()
                 || t.id.to_lowercase().contains(&q)
-                || t.pseudonym.as_deref().unwrap_or("").to_lowercase().contains(&q)
+                || t.pseudonym
+                    .as_deref()
+                    .unwrap_or("")
+                    .to_lowercase()
+                    .contains(&q)
         })
         .map(|t| AcOption::Team {
             insert: t.id.clone(),
@@ -753,7 +908,11 @@ fn collect_team_options(
     }
     // Caps: when the query is empty, give each kind a fair slice. With a query, prefer the
     // best matches but keep tag/match-ref space available.
-    let (team_cap, tag_cap, match_cap) = if q.is_empty() { (12, 8, 10) } else { (15, 8, 10) };
+    let (team_cap, tag_cap, match_cap) = if q.is_empty() {
+        (12, 8, 10)
+    } else {
+        (15, 8, 10)
+    };
     let mut out: Vec<AcOption> = Vec::new();
     out.extend(team_opts.into_iter().take(team_cap));
     out.extend(tag_opts.into_iter().take(tag_cap));
@@ -795,6 +954,18 @@ pub fn AssEntry(
     /// For server-side validate-dsl on blur. Pass empty to skip server validation.
     tournament_url: String,
     #[props(default = String::from("e.g. (== 0 (losses [Team]))"))] placeholder: String,
+    /// If set, the expression is valid only when its result type is a subset of this list.
+    /// Type names match the backend: "INT" | "BOOL" | "NIL" | "TEAM" | "MATCH" | "LIST" | "FUNC".
+    /// "UNKNOWN" is always treated as a mismatch (we can't prove it's the right type).
+    /// Leave None to skip type checking.
+    #[props(optional)]
+    expected_type: Option<Vec<String>>,
+    /// Reports the latest validation status to the parent. `Some(Ok(()))` means the
+    /// expression validated and matched `expected_type`; `Some(Err(msg))` means it
+    /// failed (parse error, server error, or type mismatch); `None` means no result
+    /// yet (empty input or in-flight). Useful for blocking form submission.
+    #[props(optional)]
+    on_validity_change: Option<EventHandler<Option<Result<(), String>>>>,
 ) -> Element {
     let input_id = format!("ass-entry-{}", id_suffix);
 
@@ -876,7 +1047,12 @@ pub fn AssEntry(
             Some(InnermostBracket::Square(cs, ce)) => {
                 let end = (*ce).min(cursor_b).max(*cs);
                 let q = v[*cs..end].trim();
-                collect_team_options(q, team_options_rc.as_ref(), tags_rc.as_ref(), matches_rc.as_ref())
+                collect_team_options(
+                    q,
+                    team_options_rc.as_ref(),
+                    tags_rc.as_ref(),
+                    matches_rc.as_ref(),
+                )
             }
             Some(InnermostBracket::Curly(cs, ce)) => {
                 let end = (*ce).min(cursor_b).max(*cs);
@@ -899,6 +1075,7 @@ pub fn AssEntry(
     let on_change_input = on_change.clone();
     let url_for_input = tournament_url.clone();
     let id_for_oninput = input_id.clone();
+    let expected_type_input = expected_type.clone();
     let oninput_handler = move |e: Event<FormData>| {
         let new_val = e.value();
         let old = value_rc_input.as_ref().clone();
@@ -914,7 +1091,12 @@ pub fn AssEntry(
             };
             if let Some(close_c) = closing {
                 let char_end = byte_i + open_c.len_utf8();
-                let out_str = format!("{}{}{}", &new_val[..char_end], close_c, &new_val[char_end..]);
+                let out_str = format!(
+                    "{}{}{}",
+                    &new_val[..char_end],
+                    close_c,
+                    &new_val[char_end..]
+                );
                 (out_str, Some(char_end))
             } else {
                 (new_val, None)
@@ -958,6 +1140,7 @@ pub fn AssEntry(
         let gen = validate_gen() + 1;
         validate_gen.set(gen);
         let url = url_for_input.clone();
+        let expected = expected_type_input.clone();
         let validated_for = out;
         if !validated_for.trim().is_empty() && !url.is_empty() {
             #[cfg(target_arch = "wasm32")]
@@ -970,18 +1153,18 @@ pub fn AssEntry(
                     if validate_gen() != gen {
                         return;
                     }
-                    if res.valid {
-                        error_msg.set(None);
-                        if let Some(simp) = res.simplified {
-                            simplified_msg.set(Some((validated_for, simp)));
-                        }
-                    } else {
-                        error_msg.set(res.error);
-                    }
+                    apply_validation_response(
+                        res,
+                        validated_for,
+                        expected.as_deref(),
+                        error_msg,
+                        simplified_msg,
+                        on_validity_change,
+                    );
                 }
             });
             #[cfg(not(target_arch = "wasm32"))]
-            let _ = (url, validated_for, gen);
+            let _ = (url, validated_for, gen, expected);
         }
     };
 
@@ -1011,7 +1194,10 @@ pub fn AssEntry(
                     let cur_b = cursor_byte(&v_now, cur_char);
                     let inn_now = innermost_around_cursor(&v_now, cur_char);
                     match (opt, inn_now) {
-                        (AcOption::Function { name, .. }, Some(InnermostBracket::Paren(cs, ce))) => {
+                        (
+                            AcOption::Function { name, .. },
+                            Some(InnermostBracket::Paren(cs, ce)),
+                        ) => {
                             // Replace the prefix word inside the parens with the function name.
                             let end = ce.min(cur_b).max(cs);
                             let prefix_end = v_now[cs..end]
@@ -1122,13 +1308,18 @@ pub fn AssEntry(
 
     let url_for_blur = tournament_url.clone();
     let value_rc_blur = value_rc.clone();
+    let expected_type_blur = expected_type.clone();
     let onblur_handler = move |_| {
         ac_open.set(false);
         let expr = value_rc_blur.as_ref().clone();
         let url = url_for_blur.clone();
+        let expected = expected_type_blur.clone();
         if expr.trim().is_empty() {
             error_msg.set(None);
             simplified_msg.set(None);
+            if let Some(h) = on_validity_change {
+                h.call(None);
+            }
             return;
         }
         if url.is_empty() {
@@ -1138,17 +1329,21 @@ pub fn AssEntry(
             let validated_for = expr.clone();
             match api::validate_dsl(&url, &expr).await {
                 Ok(res) => {
-                    if res.valid {
-                        error_msg.set(None);
-                        simplified_msg.set(res.simplified.map(|s| (validated_for, s)));
-                    } else {
-                        error_msg.set(res.error);
-                        simplified_msg.set(None);
-                    }
+                    apply_validation_response(
+                        res,
+                        validated_for,
+                        expected.as_deref(),
+                        error_msg,
+                        simplified_msg,
+                        on_validity_change,
+                    );
                 }
                 Err(e) => {
-                    error_msg.set(Some(e));
+                    error_msg.set(Some(e.clone()));
                     simplified_msg.set(None);
+                    if let Some(h) = on_validity_change {
+                        h.call(Some(Err(e)));
+                    }
                 }
             }
         });

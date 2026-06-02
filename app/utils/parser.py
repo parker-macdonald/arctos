@@ -152,6 +152,127 @@ def _suggest_function(name: str, candidates) -> str | None:
     return matches[0] if matches else None
 
 
+# Return-type tables for the parser's built-in functions. A return type is a `frozenset`
+# of type-name strings; functions whose return type is fully determined by argument types
+# (e.g. `if`, `or-default`) are not in these tables — they're handled in `_infer_types`.
+_RETURN_TYPE_FIXED: dict[str, frozenset[str]] = {
+    "wins": frozenset({"INT"}),
+    "losses": frozenset({"INT"}),
+    "points-won": frozenset({"INT"}),
+    "points-lost": frozenset({"INT"}),
+    "+": frozenset({"INT"}),
+    "-": frozenset({"INT"}),
+    "*": frozenset({"INT"}),
+    "/": frozenset({"INT"}),
+    "len": frozenset({"INT"}),
+    "==": frozenset({"BOOL"}),
+    ">": frozenset({"BOOL"}),
+    "<": frozenset({"BOOL"}),
+    ">=": frozenset({"BOOL"}),
+    "<=": frozenset({"BOOL"}),
+    "or": frozenset({"BOOL"}),
+    "and": frozenset({"BOOL"}),
+    "not": frozenset({"BOOL"}),
+    "is-skipped": frozenset({"BOOL"}),
+    "winner": frozenset({"TEAM"}),
+    "loser": frozenset({"TEAM"}),
+    "cons": frozenset({"LIST"}),
+    "cdr": frozenset({"LIST"}),
+    "map": frozenset({"LIST"}),
+    "lambda": frozenset({"FUNC"}),
+}
+
+
+def _infer_list_element_types(lst) -> frozenset[str]:
+    """Infer the union of element types in a list-valued expression.
+
+    Handles both already-evaluated data lists (e.g. `[True, False, True]` from
+    a fully-concrete `cons`) and preserved `cons` expressions (`["cons", ...]`).
+    Returns `{"UNKNOWN"}` for anything else (e.g. a `map` preserved expression),
+    since the per-element type isn't visible without evaluating.
+    """
+    if isinstance(lst, list):
+        if lst and isinstance(lst[0], str):
+            if lst[0] == "cons":
+                elements = lst[1:]
+            else:
+                return frozenset({"UNKNOWN"})
+        else:
+            elements = lst
+        if not elements:
+            return frozenset({"UNKNOWN"})
+        types: frozenset[str] = frozenset()
+        for elem in elements:
+            types |= _infer_types(elem)
+        return types
+    return frozenset({"UNKNOWN"})
+
+
+def _infer_types(value) -> frozenset[str]:
+    """Infer the set of possible types of an interpreted DSL value.
+
+    Concrete values map directly. Preserved expressions (lists starting with a
+    function name) dispatch on the head: most functions have a fixed return type;
+    the few whose result type depends on their args (`if`, `or-default`, `get`,
+    `car`, `reduce`, `max`/`min`/`max-by`/`min-by`) recurse into their branches
+    and union the possibilities.
+
+    Returns `frozenset({"UNKNOWN"})` when nothing better can be said — callers
+    should treat that as "don't enforce a type constraint".
+    """
+    # Order matters: bool is a subclass of int, so check bool first.
+    if isinstance(value, bool):
+        return frozenset({"BOOL"})
+    if isinstance(value, int):
+        return frozenset({"INT"})
+    if value is None:
+        return frozenset({"NIL"})
+    if isinstance(value, (Team, SymbolicTeam)):
+        return frozenset({"TEAM"})
+    if isinstance(value, (Match, SymbolicMatch)):
+        return frozenset({"MATCH"})
+    if isinstance(value, Lambda):
+        return frozenset({"FUNC"})
+    if isinstance(value, list):
+        # Distinguish a preserved expression (head is a function-name string) from a
+        # plain data list. `cons` produces a data list of varied content.
+        if value and isinstance(value[0], str):
+            head = value[0]
+            args = value[1:]
+            if head in _RETURN_TYPE_FIXED:
+                return _RETURN_TYPE_FIXED[head]
+            if head == "if":
+                # (if cond then else) — type is union of the two branches.
+                if len(args) >= 3:
+                    return _infer_types(args[1]) | _infer_types(args[2])
+                return frozenset({"UNKNOWN"})
+            if head == "or-default":
+                # (or-default val default) — val if non-nil, else default; union them
+                # but exclude NIL from the val side since or-default falls through.
+                if len(args) >= 2:
+                    val_types = _infer_types(args[0]) - {"NIL"}
+                    return val_types | _infer_types(args[1])
+                return frozenset({"UNKNOWN"})
+            if head == "get":
+                # (get index list) — union of element types in the list, plus NIL for out-of-bounds.
+                if len(args) >= 2:
+                    return _infer_list_element_types(args[1]) | {"NIL"}
+                return frozenset({"UNKNOWN", "NIL"})
+            if head == "car":
+                # First element of a list — element types of the underlying list if we can see them.
+                if len(args) >= 1:
+                    return _infer_list_element_types(args[0])
+                return frozenset({"UNKNOWN"})
+            if head == "reduce":
+                return frozenset({"UNKNOWN"})
+            if head in ("max", "min", "max-by", "min-by"):
+                return frozenset({"UNKNOWN"})
+            return frozenset({"UNKNOWN"})
+        # Plain data list (cons output, or similar).
+        return frozenset({"LIST"})
+    return frozenset({"UNKNOWN"})
+
+
 class Lambda:
     """Represents a lambda function closure."""
 
@@ -840,7 +961,7 @@ class Simplifier:
     def _evaluate_logical_op(self, op, args):
         """Evaluate logical operations."""
         if op == "not":
-            self.validate_arg_count(op, args, 1)
+            self._validate_arg_count(op, args, 1)
             (a,) = args
             if isinstance(a, (SymbolicTeam, SymbolicMatch, list)):
                 return [op, a]

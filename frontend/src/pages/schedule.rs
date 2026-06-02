@@ -662,6 +662,7 @@ fn CreateMatchModal(
     let ribbon = use_signal(|| false);
     let mut skip_condition = use_signal(|| "".to_string());
     let mut skip_condition_help_open = use_signal(|| false);
+    let mut skip_condition_validity = use_signal(|| None::<Result<(), String>>);
 
     let mut error = use_signal(|| None::<String>);
     let mut saving = use_signal(|| false);
@@ -757,10 +758,21 @@ fn CreateMatchModal(
             saving.set(true);
             error.set(None);
             if (schedule_type() == "SAFE" || schedule_type() == "FAST") && !skip_condition().trim().is_empty() {
+                if let Some(Err(msg)) = skip_condition_validity() {
+                    error.set(Some(format!("Skip condition: {msg}")));
+                    saving.set(false);
+                    return;
+                }
                 match api::validate_dsl(&tournament_url, &skip_condition()).await {
                     Ok(res) => {
                         if !res.valid {
                             error.set(Some(format!("Skip condition: {}", res.error.unwrap_or_else(|| "invalid".to_string()))));
+                            saving.set(false);
+                            return;
+                        }
+                        if !res.result_type.iter().any(|t| t == "BOOL") {
+                            let got = if res.result_type.is_empty() { "unknown".to_string() } else { res.result_type.join(" | ") };
+                            error.set(Some(format!("Skip condition must evaluate to BOOL, got {got}.")));
                             saving.set(false);
                             return;
                         }
@@ -829,9 +841,20 @@ fn CreateMatchModal(
             saving.set(true);
             error.set(None);
             if (schedule_type() == "SAFE" || schedule_type() == "FAST") && !skip_condition().trim().is_empty() {
+                if let Some(Err(msg)) = skip_condition_validity() {
+                    error.set(Some(format!("Skip condition: {msg}")));
+                    saving.set(false);
+                    return;
+                }
                 if let Ok(res) = api::validate_dsl(&tournament_url, &skip_condition()).await {
                     if !res.valid {
                         error.set(Some(format!("Skip condition: {}", res.error.unwrap_or_else(|| "invalid".to_string()))));
+                        saving.set(false);
+                        return;
+                    }
+                    if !res.result_type.iter().any(|t| t == "BOOL") {
+                        let got = if res.result_type.is_empty() { "unknown".to_string() } else { res.result_type.join(" | ") };
+                        error.set(Some(format!("Skip condition must evaluate to BOOL, got {got}.")));
                         saving.set(false);
                         return;
                     }
@@ -1093,6 +1116,8 @@ fn CreateMatchModal(
                                             matches: data.matches.clone(),
                                             tournament_url: tournament_url.clone(),
                                             placeholder: "e.g. (== 0 (losses [Team]))".to_string(),
+                                            expected_type: vec!["BOOL".to_string()],
+                                            on_validity_change: move |v: Option<Result<(), String>>| skip_condition_validity.set(v),
                                         }
                                     }
                                 }
@@ -2973,6 +2998,7 @@ fn EditMatchModal(
     let ribbon = use_signal(|| m.ribbon);
     let mut skip_condition = use_signal(|| m.skip_condition.clone().unwrap_or_default());
     let mut skip_condition_help_open = use_signal(|| false);
+    let mut skip_condition_validity = use_signal(|| None::<Result<(), String>>);
 
     let mut error = use_signal(|| None::<String>);
     let mut saving = use_signal(|| false);
@@ -3034,10 +3060,21 @@ fn EditMatchModal(
         error.set(None);
         spawn(async move {
             if (schedule_type() == "SAFE" || schedule_type() == "FAST") && !skip_condition().trim().is_empty() {
+                if let Some(Err(msg)) = skip_condition_validity() {
+                    error.set(Some(format!("Skip condition: {msg}")));
+                    saving.set(false);
+                    return;
+                }
                 match api::validate_dsl(&tournament_url, &skip_condition()).await {
                     Ok(res) => {
                         if !res.valid {
                             error.set(Some(format!("Skip condition: {}", res.error.unwrap_or_else(|| "invalid".to_string()))));
+                            saving.set(false);
+                            return;
+                        }
+                        if !res.result_type.iter().any(|t| t == "BOOL") {
+                            let got = if res.result_type.is_empty() { "unknown".to_string() } else { res.result_type.join(" | ") };
+                            error.set(Some(format!("Skip condition must evaluate to BOOL, got {got}.")));
                             saving.set(false);
                             return;
                         }
@@ -3302,6 +3339,8 @@ fn EditMatchModal(
                                             matches: data.matches.clone(),
                                             tournament_url: tournament_url.clone(),
                                             placeholder: "e.g. (== 0 (losses [Team]))".to_string(),
+                                            expected_type: vec!["BOOL".to_string()],
+                                            on_validity_change: move |v: Option<Result<(), String>>| skip_condition_validity.set(v),
                                         }
                                     }
                                 }

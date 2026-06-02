@@ -831,6 +831,7 @@ def validate_dsl(tournament_url):
         SymbolicTeam,
         SymbolicMatch,
         Lambda,
+        _infer_types,
     )
 
     def serialize_value(value):
@@ -925,6 +926,7 @@ def validate_dsl(tournament_url):
                 "simplified": simplified,
                 "error": None,
                 "warnings": [],
+                "result_type": sorted(_infer_types(result))
             }
         )
     except DSLValidationError as e:

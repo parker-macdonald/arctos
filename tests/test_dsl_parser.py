@@ -6,7 +6,7 @@ team/match operations, lambdas, and list operations.
 
 import pytest
 
-from app.utils.parser import get_parser, DSLValidationError
+from app.utils.parser import get_parser, DSLValidationError, _infer_types
 from app.domain.enums import MatchStatus, WinnerSide
 from models import Match, Team, Point, Tag, db
 
@@ -777,3 +777,110 @@ class TestEdgeCases:
             assert parser.parse(f"(== (winner {{{match1_name}}}) [team1])") is True
             # Different team must be False
             assert parser.parse(f"(== [{match1_name}::winner] [team2])") is False
+
+
+class TestInferTypes:
+    """Type inference for the validate-dsl response.
+
+    Concrete values map directly; preserved expressions look up their head
+    function's declared return type and recurse where it depends on args
+    (`if`, `or-default`).
+    """
+
+    @pytest.mark.unit
+    def test_concrete_atoms(self, app, tournament_with_data):
+        with app.app_context():
+            parser = get_parser(tournament_with_data["tournament_url"])
+            assert _infer_types(parser.parse("true")) == frozenset({"BOOL"})
+            assert _infer_types(parser.parse("false")) == frozenset({"BOOL"})
+            assert _infer_types(parser.parse("42")) == frozenset({"INT"})
+            assert _infer_types(parser.parse("nil")) == frozenset({"NIL"})
+            assert _infer_types(parser.parse("[team1]")) == frozenset({"TEAM"})
+
+    @pytest.mark.unit
+    def test_arithmetic_returns_int(self, app, tournament_with_data):
+        with app.app_context():
+            parser = get_parser(tournament_with_data["tournament_url"])
+            assert _infer_types(parser.parse("(+ 1 2)")) == frozenset({"INT"})
+
+    @pytest.mark.unit
+    def test_comparison_and_logic_return_bool(self, app, tournament):
+        with app.app_context():
+            parser = get_parser(tournament.url)
+            assert _infer_types(parser.parse("(> 3 2)")) == frozenset({"BOOL"})
+            assert _infer_types(parser.parse("(and true false)")) == frozenset({"BOOL"})
+            assert _infer_types(parser.parse("(not true)")) == frozenset({"BOOL"})
+
+    @pytest.mark.unit
+    def test_winner_loser_return_team(self, app, tournament_with_data):
+        with app.app_context():
+            parser = get_parser(tournament_with_data["tournament_url"])
+            match3_name = tournament_with_data["match3_name"]
+            # match3 hasn't started, so winner stays preserved.
+            assert _infer_types(parser.parse(f"(winner {{{match3_name}}})")) == frozenset({"TEAM"})
+
+    @pytest.mark.unit
+    def test_preserved_unresolved_team(self, app, tournament_with_data):
+        """Expressions over a SymbolicTeam stay as preserved-list expressions whose
+        head's return type still pins down the resulting type."""
+        with app.app_context():
+            tournament_url = tournament_with_data["tournament_url"]
+            db.session.add(Tag(event=tournament_url, name="UnsetTagInfer", team=None))
+            db.session.commit()
+            parser = get_parser(tournament_url)
+            assert _infer_types(parser.parse("(losses [tag::UnsetTagInfer])")) == frozenset({"INT"})
+            assert _infer_types(parser.parse("(== 0 (losses [tag::UnsetTagInfer]))")) == frozenset({"BOOL"})
+
+    @pytest.mark.unit
+    def test_if_unions_branches(self, app, tournament_with_data):
+        with app.app_context():
+            tournament_url = tournament_with_data["tournament_url"]
+            db.session.add(Tag(event=tournament_url, name="UnsetTagIf", team=None))
+            db.session.commit()
+            parser = get_parser(tournament_url)
+            # condition is symbolic so the if stays preserved; both branches return INT.
+            assert _infer_types(parser.parse("(if (== 0 (losses [tag::UnsetTagIf])) 1 2)")) == frozenset({"INT"})
+            # mixed branches → union.
+            assert _infer_types(parser.parse("(if (== 0 (losses [tag::UnsetTagIf])) true 0)")) == frozenset(
+                {"BOOL", "INT"}
+            )
+
+    @pytest.mark.unit
+    def test_or_default_unions_non_nil(self, app, tournament_with_data):
+        """(or-default val default) — type is val's possible types minus NIL, plus default's types."""
+        with app.app_context():
+            parser = get_parser(tournament_with_data["tournament_url"])
+            assert _infer_types(parser.parse("(or-default nil 5)")) == frozenset({"INT"})
+            assert _infer_types(parser.parse("(or-default 5 7)")) == frozenset({"INT"})
+
+    @pytest.mark.unit
+    def test_lambda_returns_func(self, app, tournament):
+        with app.app_context():
+            parser = get_parser(tournament.url)
+            assert _infer_types(parser.parse("(lambda (x) (+ x 1))")) == frozenset({"FUNC"})
+
+    @pytest.mark.unit
+    def test_cons_returns_list(self, app, tournament):
+        with app.app_context():
+            parser = get_parser(tournament.url)
+            assert _infer_types(parser.parse("(cons 1 2 3)")) == frozenset({"LIST"})
+
+    @pytest.mark.unit
+    def test_get_infers_element_types_from_cons(self, app, tournament_with_data):
+        """(get index (cons ...)) — when get stays preserved (symbolic index), the
+        cons element types are still recoverable so or-default can drop the NIL."""
+        with app.app_context():
+            tournament_url = tournament_with_data["tournament_url"]
+            db.session.add(Tag(event=tournament_url, name="UnsetTagGet", team=None))
+            db.session.commit()
+            parser = get_parser(tournament_url)
+            # The original failing example from the bug report — `(wins [tag::UnsetTagGet])`
+            # is symbolic so `get` stays preserved; element-type inference makes or-default
+            # collapse to {BOOL} instead of {BOOL, UNKNOWN}.
+            assert _infer_types(
+                parser.parse("(or-default (get (wins [tag::UnsetTagGet]) (cons true false true)) false)")
+            ) == frozenset({"BOOL"})
+            # Without or-default, the preserved get exposes element-types ∪ NIL.
+            assert _infer_types(parser.parse("(get (wins [tag::UnsetTagGet]) (cons true false 1))")) == frozenset(
+                {"BOOL", "INT", "NIL"}
+            )
