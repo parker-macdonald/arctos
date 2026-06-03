@@ -9,48 +9,86 @@ from flask import (
     jsonify,
     send_file,
 )
+from flask_login import login_required, current_user
+from sqlalchemy.orm.attributes import flag_modified
 
 from datetime import datetime, timedelta, timezone
 import io
+import json
 
 from models import (
     Tournament,
     Match,
+    MatchNote,
+    Field,
     Tag,
+    Point,
+    Injury,
+    Player,
     db,
 )
 from app.error_values import Ok, Err
 from app.services.dual_write import (
     clear_match_referees,
+    get_match_referee_rows,
+    get_match_refs_csv,
     get_match_refs_initial_csv,
     set_match_referees_from_csv,
 )
+from app.services.match_service import MatchService
+from app.services.match_start_eligibility import (
+    get_can_start_and_reasons,
+    get_conflicting_match_on_field,
+)
 from app.services.schedule_import_export_service import ScheduleImportExportService
+from app.utils.dependencies import apply_match_dependencies
 from app.utils.helpers import (
+    can_head_ref_match,
     resolve_team_name_to_id,
     resolve_tag_to_team,
+)
+from app.utils.match_ref_resolution import (
+    resolve_refs_slots,
+    resolve_team_slot,
 )
 from app.utils.scheduling import (
     compute_dynamic_match_nominal_start_time,
     validate_match_input,
     recompute_all_match_times,
 )
+from app.utils.datetime_helpers import now_utc_naive, parse_datetime_local_to_utc
 from app.utils.name_validation import match_name_char_error
 from app.utils.decorators import require_tournament_organizer
-from app.utils.datetime_helpers import parse_datetime_local_to_utc
-from app.utils.dependencies import apply_match_dependencies
 from app.utils.responses import json_error
 from app.utils.result_helpers import json_from_result, public_error_message
+from app.utils.user_helpers import is_player
 
 
 from app.domain.enums import (
     MatchStatus,
+    RegistrationStatus,
     ScheduleType,
     SetType,
+    WinnerSide,
 )
-from app.services.registration_resolver import team_registrations_for_tournament
+from app.serializers.match_note_serializer import MatchNoteSerializer
+from app.serializers.tournament_serializer import (
+    team_name_for_match,
+    tournament_to_dict,
+)
+from app.services.registration_resolver import (
+    player_registrations_for_tournament,
+    team_registrations_for_tournament,
+)
+from app.services.permission_service import PermissionService
 
-from . import bp
+from . import bp, update_match_previous_link
+
+
+def _check_to(tournament_url):
+    if not current_user.is_authenticated:
+        return False
+    return PermissionService.is_tournament_organizer(tournament_url, current_user)
 
 
 @bp.route("/<tournament_url>/recompute-schedule", methods=["POST"])
@@ -887,3 +925,500 @@ def validate_dsl(tournament_url):
                 "error": f"Parse error: {str(e)}",
             }
         )
+
+
+@bp.route("/tournaments/<tournament_url>/start-match", methods=["GET"])
+@login_required
+def start_match_data_api(tournament_url):
+    match_id = request.args.get("match_id")
+    if not match_id:
+        return jsonify({"error": "Match ID required"}), 400
+
+    match = Match.query.get(match_id)
+    if not match or match.event != tournament_url:
+        return jsonify({"error": "Match not found"}), 404
+
+    can_start, block_reasons, _ = get_can_start_and_reasons(tournament_url, match, current_user)
+    if not can_start:
+        error_msg = block_reasons[0] if block_reasons else "Cannot start this match."
+        return jsonify({"error": error_msg, "reasons": block_reasons}), 400
+
+    tournament = Tournament.query.get(tournament_url)
+
+    all_prs = player_registrations_for_tournament(tournament, statuses=[RegistrationStatus.CONFIRMED])
+    team1_prs = [pr for pr in all_prs if pr.team == match.team1]
+    team2_prs = [pr for pr in all_prs if pr.team == match.team2]
+    all_prs_list = all_prs
+
+    team1_players = [(pr, Player.query.get(pr.player)) for pr in team1_prs]
+    team2_players = [(pr, Player.query.get(pr.player)) for pr in team2_prs]
+    all_players = [(pr, Player.query.get(pr.player)) for pr in all_prs_list]
+    team1_players = [(pr, p) for pr, p in team1_players if p]
+    team2_players = [(pr, p) for pr, p in team2_players if p]
+    all_players = [(pr, p) for pr, p in all_players if p]
+
+    injuries_map = {}
+    try:
+        all_player_ids = set(
+            [pr.player for pr, _ in all_players]
+            + [pr.player for pr, _ in team1_players]
+            + [pr.player for pr, _ in team2_players]
+        )
+        if all_player_ids:
+            active_injuries = Injury.query.filter(
+                Injury.player.in_(list(all_player_ids)), Injury.active.is_(True)
+            ).all()
+            for inj in active_injuries:
+                injuries_map.setdefault(inj.player, []).append(inj.message)
+    except Exception:
+        injuries_map = {}
+
+    def _player_item(pr, player):
+        return {
+            "id": player.id,
+            "name": player.name,
+            "jersey_name": pr.jersey_name,
+            "jersey_number": pr.jersey_number,
+            "team": pr.team,
+            "paid": bool(pr.paid),
+            "injuries": injuries_map.get(player.id, []),
+        }
+
+    return jsonify(
+        {
+            "tournament": tournament_to_dict(tournament),
+            "match_info": {
+                "uuid": match.uuid,
+                "name": match.name,
+                "field": match.field,
+                "set_type": match.set_type.value if match.set_type else None,
+                "refs": get_match_refs_csv(match) or None,
+                "team1_name": team_name_for_match(tournament, match, "team1"),
+                "team2_name": team_name_for_match(tournament, match, "team2"),
+            },
+            "team1_players": [_player_item(pr, p) for pr, p in team1_players],
+            "team2_players": [_player_item(pr, p) for pr, p in team2_players],
+            "all_players": [_player_item(pr, p) for pr, p in all_players],
+        }
+    )
+
+
+@bp.route("/tournaments/<tournament_url>/start-match", methods=["POST"])
+@login_required
+def start_match_post_api(tournament_url):
+    data = request.get_json() or {}
+    match_id = data.get("match_id")
+    if not match_id:
+        return jsonify({"error": "Match ID required"}), 400
+
+    from app.utils.result_helpers import json_from_result
+
+    team1_players = ",".join(data.get("team1_players") or [])
+    team2_players = ",".join(data.get("team2_players") or [])
+    match_notes = data.get("match_notes") or ""
+    stones_per_set = data.get("stones_per_set")
+
+    res = MatchService.start_match(
+        tournament_url,
+        match_id,
+        current_user,
+        team1_players_csv=team1_players,
+        team2_players_csv=team2_players,
+        match_notes=match_notes,
+        stones_per_set=stones_per_set,
+    )
+    return json_from_result(
+        res,
+        ok_to_payload=lambda v: {"match_id": v.uuid},
+        err_status_code=400,
+    )
+
+
+@bp.route("/tournaments/<tournament_url>/finalize-match", methods=["GET"])
+@login_required
+def finalize_match_data_api(tournament_url):
+    match_id = request.args.get("match_id")
+    if not match_id:
+        return jsonify({"error": "Match ID required"}), 400
+
+    match = Match.query.get(match_id)
+    if not match or match.event != tournament_url:
+        return jsonify({"error": "Match not found"}), 404
+
+    if not can_head_ref_match(tournament_url, current_user.id, match=match):
+        return jsonify({"error": "Forbidden"}), 403
+
+    tournament = Tournament.query.get(tournament_url)
+    points = Point.query.filter_by(match=match.uuid).order_by(Point.stamp).all()
+
+    point_notes_map = {}
+    stones_elapsed_map = {}
+
+    def compute_stones_elapsed(start_dt, end_dt):
+        try:
+            if not start_dt or not end_dt:
+                return 0
+            start_epoch = start_dt.timestamp()
+            end_epoch = end_dt.timestamp()
+            start_count = int(start_epoch // 1.5)
+            end_count = int(end_epoch // 1.5)
+            val = end_count - start_count
+            return val if val >= 0 else 0
+        except Exception:
+            return 0
+
+    if points:
+        point_ids = [p.uuid for p in points if getattr(p, "uuid", None)]
+        for p in points:
+            stones_elapsed_map[p.uuid] = compute_stones_elapsed(
+                getattr(p, "stamp", None), getattr(p, "end_stamp", None)
+            )
+        if point_ids:
+            notes = (
+                MatchNote.query.filter_by(match=match.uuid)
+                .filter(MatchNote.point_id.in_(point_ids))
+                .order_by(MatchNote.created_at.asc())
+                .all()
+            )
+            for n in notes:
+                payload = MatchNoteSerializer.to_dict(n, tournament_url, match=match)
+                point_notes_map.setdefault(n.point_id, []).append(
+                    {
+                        "text": payload.get("text"),
+                        "target": payload.get("target"),
+                        "player_id": payload.get("player_id"),
+                        "player_name": payload.get("player_name"),
+                        "player_display": payload.get("player_display"),
+                        "team_id": payload.get("team_id"),
+                        "created_at": payload.get("created_at"),
+                    }
+                )
+
+    team1_score = sum(1 for p in points if p.winner == "TEAM1" and not p.rerolled)
+    team2_score = sum(1 for p in points if p.winner == "TEAM2" and not p.rerolled)
+
+    return jsonify(
+        {
+            "tournament": tournament_to_dict(tournament),
+            "match_info": {
+                "uuid": match.uuid,
+                "name": match.name,
+                "team1_name": team_name_for_match(tournament, match, "team1"),
+                "team2_name": team_name_for_match(tournament, match, "team2"),
+            },
+            "points": [
+                {
+                    "uuid": p.uuid,
+                    "set_number": p.set_number,
+                    "winner": p.winner,
+                    "rerolled": p.rerolled,
+                }
+                for p in points
+            ],
+            "point_notes_map": point_notes_map,
+            "stones_elapsed_map": stones_elapsed_map,
+            "team1_score": team1_score,
+            "team2_score": team2_score,
+        }
+    )
+
+
+@bp.route("/tournaments/<tournament_url>/finalize-match", methods=["POST"])
+@login_required
+def finalize_match_post_api(tournament_url):
+    data = request.get_json() or {}
+    match_id = data.get("match_id")
+    if not match_id:
+        return jsonify({"error": "Match ID required"}), 400
+
+    match = Match.query.get(match_id)
+    if not match or match.event != tournament_url:
+        return jsonify({"error": "Match not found"}), 404
+
+    if not can_head_ref_match(tournament_url, current_user.id, match=match):
+        return jsonify({"error": "Forbidden"}), 403
+
+    match.status = MatchStatus.COMPLETED
+    match_winner = data.get("match_winner")
+    if not match_winner:
+        return jsonify({"error": "Match winner required"}), 400
+
+    match.completed_time = now_utc_naive()
+    match.finalized_by = current_user.id
+    match.final_notes = data.get("final_notes") or ""
+    match.match_winner = match_winner
+    match.finalized_at = now_utc_naive()
+
+    if match.field:
+        field_obj = Field.query.filter_by(event=tournament_url, name=match.field).first()
+        if field_obj and field_obj.camera:
+            from app.utils.camera_helpers import get_all_camera_stream_starts
+
+            stream_starts = get_all_camera_stream_starts(field_obj)
+            if stream_starts:
+                existing_starts = {}
+                if match.camera_stream_starts:
+                    try:
+                        existing_starts = json.loads(match.camera_stream_starts)
+                    except json.JSONDecodeError:
+                        pass
+                existing_starts.update(stream_starts)
+                match.camera_stream_starts = json.dumps(existing_starts)
+
+    team1_signature = data.get("team1_signature")
+    team2_signature = data.get("team2_signature")
+    if team1_signature:
+        match.team1_signature = team1_signature
+    if team2_signature:
+        match.team2_signature = team2_signature
+    db.session.commit()
+
+    try:
+        apply_match_dependencies(tournament_url, match)
+    except Exception as e:
+        print(f"Dependency update error for match {match.name}: {e}")
+
+    try:
+        from app.utils.scheduling import recompute_all_match_times
+
+        recompute_all_match_times(tournament_url)
+        db.session.commit()
+    except Exception as e:
+        print(f"Error recomputing match times: {e}")
+
+    return jsonify({"ok": True})
+
+
+@bp.route(
+    "/tournaments/<tournament_url>/matches/<match_id>/force-start",
+    methods=["POST"],
+)
+@login_required
+def force_start_match_api(tournament_url, match_id):
+    """Force-start a match: resolve teams/refs, handle conflicting match, convert to static."""
+
+    match = Match.query.filter_by(uuid=match_id, event=tournament_url).first_or_404()
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "Invalid JSON"}), 400
+
+    # Auth: require head ref
+    if not current_user.is_authenticated:
+        return jsonify({"error": "Must be logged in"}), 401
+    if not is_player(current_user):
+        return jsonify({"error": "Only player accounts can force start matches"}), 403
+    if not can_head_ref_match(tournament_url, current_user.id, match=match):
+        return jsonify({"error": "You are not allowed to head ref this match"}), 403
+
+    team1_input = str(data.get("team1") or "").strip()
+    team2_input = str(data.get("team2") or "").strip()
+    refs_list = data.get("refs") or []
+    if not isinstance(refs_list, list):
+        refs_list = []
+    conflicting_action = (data.get("conflicting_match_action") or "").strip()
+    conflicting_winner = (data.get("conflicting_match_winner") or "").strip()
+
+    # 1. Handle conflicting match (if any)
+    other_match = get_conflicting_match_on_field(tournament_url, match)
+    if other_match:
+        if not conflicting_action:
+            return (
+                jsonify({"error": "Another match is in progress on this field. Choose SKIP or COMPLETE."}),
+                400,
+            )
+        if conflicting_action == "COMPLETE" and conflicting_winner not in (
+            "TEAM1",
+            "TEAM2",
+        ):
+            return (
+                jsonify({"error": "When marking as COMPLETE, choose TEAM1 or TEAM2 as winner."}),
+                400,
+            )
+
+        now = now_utc_naive()
+        # Close unfinished points on the conflicting match
+        for pt in Point.query.filter_by(match=other_match.uuid).all():
+            if pt.end_stamp is None:
+                pt.end_stamp = now
+        if conflicting_action == "SKIP":
+            other_match.status = MatchStatus.SKIPPED
+            other_match.match_winner = None
+        else:
+            other_match.status = MatchStatus.COMPLETED
+            other_match.match_winner = WinnerSide.TEAM1 if conflicting_winner == "TEAM1" else WinnerSide.TEAM2
+        other_match.finalized_at = now
+
+    # 2. Update target match
+    t1_id, t1_initial = resolve_team_slot(team1_input, tournament_url)
+    t2_id, t2_initial = resolve_team_slot(team2_input, tournament_url)
+    if not t1_id or not t2_id:
+        return jsonify({"error": "Team 1 and Team 2 are required"}), 400
+
+    match.team1 = t1_id
+    match.team1_initial = t1_initial or team1_input
+    match.team2 = t2_id
+    match.team2_initial = t2_initial or team2_input
+
+    # Refs: preserve slot count (registration, explicit id, tag)
+    r_csv, i_csv = resolve_refs_slots(refs_list, tournament_url)
+    set_match_referees_from_csv(match, r_csv, i_csv)
+
+    # Convert to static
+    match.schedule_type = ScheduleType.STATIC
+    match.nominal_start_time = now_utc_naive()
+    match.status = MatchStatus.READY_TO_START
+
+    # Unlink previous/next
+    if match.previous_match:
+        old_prev = Match.query.filter_by(uuid=match.previous_match, event=tournament_url).first()
+        if old_prev and old_prev.next_match == match.uuid:
+            old_prev.next_match = match.next_match
+            if match.next_match:
+                old_next = Match.query.filter_by(uuid=match.next_match, event=tournament_url).first()
+                if old_next:
+                    old_next.previous_match = old_prev.uuid
+        elif match.next_match:
+            old_next = Match.query.filter_by(uuid=match.next_match, event=tournament_url).first()
+            if old_next:
+                old_next.previous_match = None
+    match.previous_match = None
+    match.next_match = None
+    flag_modified(match, "previous_match")
+    flag_modified(match, "next_match")
+
+    db.session.flush()
+    db.session.commit()
+    recompute_all_match_times(tournament_url)
+
+    return jsonify({"success": True})
+
+
+@bp.route("/tournaments/<tournament_url>/recompute-schedule", methods=["POST"])
+@login_required
+def recompute_schedule_api(tournament_url):
+    if not _check_to(tournament_url):
+        return jsonify({"error": "Forbidden"}), 403
+
+    recompute_all_match_times(tournament_url)
+    return jsonify({"success": True})
+
+
+@bp.route("/tournaments/<tournament_url>/update-all-references", methods=["POST"])
+@login_required
+def update_all_references_api(tournament_url):
+    if not _check_to(tournament_url):
+        return jsonify({"error": "Forbidden"}), 403
+
+    completed = (
+        Match.query.filter_by(event=tournament_url)
+        .filter(Match.status.in_([MatchStatus.COMPLETED, MatchStatus.SKIPPED]))
+        .all()
+    )
+    for m in completed:
+        apply_match_dependencies(tournament_url, m)
+
+    return jsonify({"success": True})
+
+
+@bp.route("/tournaments/<tournament_url>/push-back-matches", methods=["POST"])
+@login_required
+def push_back_matches_api(tournament_url):
+    if not _check_to(tournament_url):
+        return jsonify({"error": "Forbidden"}), 403
+
+    data = request.get_json()
+    minutes = int(data.get("minutes", 0))
+    if not minutes:
+        return jsonify({"success": True})
+
+    matches = (
+        Match.query.filter_by(event=tournament_url)
+        .filter(Match.status.in_([MatchStatus.NOT_STARTED, MatchStatus.TIME_FINALIZED]))
+        .all()
+    )
+    from datetime import timedelta
+
+    for m in matches:
+        if m.schedule_type == ScheduleType.STATIC and m.nominal_start_time:
+            m.nominal_start_time += timedelta(minutes=minutes)
+
+    db.session.commit()
+    recompute_all_match_times(tournament_url)
+    return jsonify({"success": True})
+
+
+@bp.route("/tournaments/<tournament_url>/update-tags", methods=["POST"])
+@login_required
+def update_tags_api(tournament_url):
+    if not _check_to(tournament_url):
+        return jsonify({"error": "Forbidden"}), 403
+
+    data = request.get_json()
+    tag_id = data.get("tag_id")
+    team_id = data.get("team_id")
+
+    if not tag_id:
+        return jsonify({"error": "Tag required"}), 400
+
+    tag = Tag.query.filter_by(id=tag_id, event=tournament_url).first_or_404()
+    tag.team = team_id if team_id else None
+    db.session.commit()
+
+    # Update matches
+    matches = Match.query.filter_by(event=tournament_url).all()
+    tag_ref = f"tag::{tag.name}"
+
+    for m in matches:
+        if m.status in (
+            MatchStatus.COMPLETED,
+            MatchStatus.SKIPPED,
+            MatchStatus.IN_PROGRESS,
+        ):
+            continue
+        if m.team1_initial == tag_ref:
+            m.team1 = team_id
+        if m.team2_initial == tag_ref:
+            m.team2 = team_id
+
+        for row in get_match_referee_rows(m):
+            if (row.initial or "").strip() == tag_ref:
+                row.team_id = team_id
+
+    db.session.commit()
+    recompute_all_match_times(tournament_url)
+    return jsonify({"success": True})
+
+
+@bp.route("/tournaments/<tournament_url>/export-schedule", methods=["GET"])
+@login_required
+def export_schedule_api(tournament_url):
+    if not _check_to(tournament_url):
+        return jsonify({"error": "Forbidden"}), 403
+
+    from app.services.schedule_import_export_service import ScheduleImportExportService
+    from app.utils.result_helpers import json_from_result
+
+    res = ScheduleImportExportService.export_schedule(tournament_url)
+    return json_from_result(res, ok_to_payload=lambda v: {"toml": v})
+
+
+@bp.route("/tournaments/<tournament_url>/import-schedule", methods=["POST"])
+@login_required
+def import_schedule_api(tournament_url):
+    if not _check_to(tournament_url):
+        return jsonify({"error": "Forbidden"}), 403
+
+    data = request.get_json()
+    toml_content = data.get("toml")
+    if not toml_content:
+        return jsonify({"error": "TOML content required"}), 400
+
+    from app.services.schedule_import_export_service import ScheduleImportExportService
+    from app.utils.result_helpers import json_from_result
+
+    def _ok_payload(_):
+        recompute_all_match_times(tournament_url)
+        return {}
+
+    res = ScheduleImportExportService.import_schedule(tournament_url, toml_content)
+    return json_from_result(res, ok_to_payload=_ok_payload)
