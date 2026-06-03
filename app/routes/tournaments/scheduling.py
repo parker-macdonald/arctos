@@ -831,15 +831,18 @@ def validate_dsl(tournament_url):
         SymbolicTeam,
         SymbolicMatch,
         Lambda,
+        Nil,
+        _format_dsl_value,
         _infer_types,
     )
 
     def serialize_value(value):
         """Convert the interpreted value to a JSON-serializable format."""
-        if isinstance(value, (int, bool, type(None))):
+        if isinstance(value, Nil):
+            return None
+        if isinstance(value, (int, bool)):
             return value
         elif isinstance(value, list):
-            # Recursively serialize list elements
             return [serialize_value(item) for item in value]
         elif isinstance(value, Team):
             # Return team ID
@@ -860,33 +863,6 @@ def validate_dsl(tournament_url):
             # Fallback to string representation
             return str(value)
 
-    def value_to_string(value):
-        """Convert the interpreted value to a readable string representation."""
-        if isinstance(value, (int, bool, type(None))):
-            return str(value)
-        elif isinstance(value, list):
-            # Format as Lisp-like expression
-            if len(value) > 0 and isinstance(value[0], str):
-                # Preserved expression - format as s-expression
-                return "(" + " ".join(value_to_string(item) for item in value) + ")"
-            else:
-                # Data list
-                return "[" + ", ".join(value_to_string(item) for item in value) + "]"
-        elif isinstance(value, Team):
-            return f"[{value.obj.id}]"
-        elif isinstance(value, Match):
-            return f"{{{value.obj.name}}}"
-        elif isinstance(value, SymbolicTeam):
-            return f"[{value.literal}]"
-        elif isinstance(value, SymbolicMatch):
-            return f"{{{value.literal}}}"
-        elif isinstance(value, Lambda):
-            # Lambda objects shouldn't appear in final results, but handle gracefully
-            params_str = " ".join(value.params) if value.params else ""
-            return f"(lambda ({params_str}) ...)"
-        else:
-            return str(value)
-
     data = request.get_json()
     expression = data.get("expression", "").strip()
 
@@ -905,7 +881,7 @@ def validate_dsl(tournament_url):
         # the simplified form (with chips). Suppressing on equality hid useful previews
         # for expressions whose literal text already happens to be in canonical form
         # (e.g. anything containing an unset [tag::Foo] that stays symbolic).
-        simplified = value_to_string(result)
+        simplified = _format_dsl_value(result)
 
         # Treat unresolvable team/match references as errors so the user notices typos.
         if warnings:

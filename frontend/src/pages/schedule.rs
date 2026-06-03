@@ -606,7 +606,7 @@ fn SkipConditionHelpModal(on_close: EventHandler<()>) -> Element {
                         ul {
                             li { code { "(if CONDITION IF_TRUE IF_FALSE)" } " - If condition is true, return IF_TRUE, otherwise return IF_FALSE" }
                             li { code { "(lambda (*args) (output))" } " - Define a lambda function" }
-                            li { code { "(cons *_)" } " - Create a list from the arguments" }
+                            li { code { "(quote EXPR)" } " or " code { "'EXPR" } " - Literal expression, unevaluated (use " code { "'(1 2 3)" } " to build a list)" }
                             li { code { "(car LIST)" } " - Get the first element of a list" }
                             li { code { "(cdr LIST)" } " - Get the rest of a list" }
                             li { code { "(get INDEX LIST)" } " - Get the element at index" }

@@ -6,7 +6,7 @@ team/match operations, lambdas, and list operations.
 
 import pytest
 
-from app.utils.parser import get_parser, DSLValidationError, _infer_types
+from app.utils.parser import get_parser, DSLValidationError, Nil, _infer_types
 from app.domain.enums import MatchStatus, WinnerSide
 from models import Match, Team, Point, Tag, db
 
@@ -153,7 +153,7 @@ class TestBasicOperations:
         with app.app_context():
             parser = get_parser(tournament.url)
 
-            assert parser.parse("nil") is None
+            assert parser.parse("nil") == Nil()
 
 
 class TestConditionalExpressions:
@@ -295,26 +295,26 @@ class TestListOperations:
     """Test list manipulation operations."""
 
     @pytest.mark.unit
-    def test_cons(self, app, tournament):
+    def test_quote(self, app, tournament):
         with app.app_context():
             parser = get_parser(tournament.url)
 
-            result = parser.parse("(cons 1 2 3)")
-            assert result == [1, 2, 3]
+            assert parser.parse("'(1 2 3)") == [1, 2, 3]
+            assert parser.parse("(quote (1 2 3))") == [1, 2, 3]
 
     @pytest.mark.unit
     def test_car(self, app, tournament):
         with app.app_context():
             parser = get_parser(tournament.url)
 
-            assert parser.parse("(car (cons 1 2 3))") == 1
+            assert parser.parse("(car '(1 2 3))") == 1
 
     @pytest.mark.unit
     def test_cdr(self, app, tournament):
         with app.app_context():
             parser = get_parser(tournament.url)
 
-            result = parser.parse("(cdr (cons 1 2 3))")
+            result = parser.parse("(cdr '(1 2 3))")
             assert result == [2, 3]
 
     @pytest.mark.unit
@@ -322,19 +322,19 @@ class TestListOperations:
         with app.app_context():
             parser = get_parser(tournament.url)
 
-            assert parser.parse("(get 0 (cons 10 20 30))") == 10
-            assert parser.parse("(get 1 (cons 10 20 30))") == 20
-            assert parser.parse("(get 2 (cons 10 20 30))") == 30
+            assert parser.parse("(get 0 '(10 20 30))") == 10
+            assert parser.parse("(get 1 '(10 20 30))") == 20
+            assert parser.parse("(get 2 '(10 20 30))") == 30
             # Out of bounds returns nil
-            assert parser.parse("(get 5 (cons 10 20 30))") is None
+            assert parser.parse("(get 5 '(10 20 30))") == Nil()
 
     @pytest.mark.unit
     def test_len(self, app, tournament):
         with app.app_context():
             parser = get_parser(tournament.url)
 
-            assert parser.parse("(len (cons 1 2 3))") == 3
-            assert parser.parse("(len (cons))") == 0
+            assert parser.parse("(len '(1 2 3))") == 3
+            assert parser.parse("(len '())") == 0
 
     @pytest.mark.unit
     def test_or_default(self, app, tournament):
@@ -349,14 +349,14 @@ class TestListOperations:
         with app.app_context():
             parser = get_parser(tournament.url)
 
-            assert parser.parse("(max (cons 1 5 3 2))") == 5
+            assert parser.parse("(max '(1 5 3 2))") == 5
 
     @pytest.mark.unit
     def test_min(self, app, tournament):
         with app.app_context():
             parser = get_parser(tournament.url)
 
-            assert parser.parse("(min (cons 5 1 3 2))") == 1
+            assert parser.parse("(min '(5 1 3 2))") == 1
 
 
 class TestLambdaFunctions:
@@ -395,7 +395,7 @@ class TestLambdaFunctions:
             parser = get_parser(tournament.url)
 
             # Map add 1 to each element
-            result = parser.parse("(map (cons 1 2 3) (lambda (x) (+ x 1)))")
+            result = parser.parse("(map '(1 2 3) (lambda (x) (+ x 1)))")
             assert result == [2, 3, 4]
 
     @pytest.mark.unit
@@ -404,7 +404,7 @@ class TestLambdaFunctions:
             parser = get_parser(tournament.url)
 
             # Sum a list
-            result = parser.parse("(reduce (cons 1 2 3 4) (lambda (acc x) (+ acc x)))")
+            result = parser.parse("(reduce '(1 2 3 4) (lambda (acc x) (+ acc x)))")
             assert result == 10
 
     @pytest.mark.unit
@@ -413,7 +413,7 @@ class TestLambdaFunctions:
             parser = get_parser(tournament.url)
 
             # Find element with maximum value when doubled
-            result = parser.parse("(max-by (cons 1 3 2) (lambda (x) (* x 2)))")
+            result = parser.parse("(max-by '(1 3 2) (lambda (x) (* x 2)))")
             assert result == 3  # 3*2=6 is the max
 
     @pytest.mark.unit
@@ -422,7 +422,7 @@ class TestLambdaFunctions:
             parser = get_parser(tournament.url)
 
             # Find element with minimum value when doubled
-            result = parser.parse("(min-by (cons 3 1 2) (lambda (x) (* x 2)))")
+            result = parser.parse("(min-by '(3 1 2) (lambda (x) (* x 2)))")
             assert result == 1  # 1*2=2 is the min
 
 
@@ -607,7 +607,7 @@ class TestErrorHandling:
 
             # This should preserve the expression if it contains unresolved identifiers
             # But if we try to add a boolean to an int, it should error
-            with pytest.raises(DSLValidationError, match="must be an INT"):
+            with pytest.raises(DSLValidationError, match="must be INT"):
                 parser.parse("(+ true 5)")
 
     @pytest.mark.unit
@@ -616,10 +616,10 @@ class TestErrorHandling:
             parser = get_parser(tournament.url)
 
             with pytest.raises(DSLValidationError, match="empty list"):
-                parser.parse("(car (cons))")
+                parser.parse("(car '())")
 
             with pytest.raises(DSLValidationError, match="empty list"):
-                parser.parse("(cdr (cons))")
+                parser.parse("(cdr '())")
 
     @pytest.mark.unit
     def test_lambda_wrong_arg_count(self, app, tournament):
@@ -709,7 +709,7 @@ class TestLambdaAdvanced:
             parser = get_parser(tournament.url)
 
             # Double each element
-            result = parser.parse("(map (cons 1 2 3) (lambda (x) (* x 2)))")
+            result = parser.parse("(map '(1 2 3) (lambda (x) (* x 2)))")
             assert result == [2, 4, 6]
 
     @pytest.mark.unit
@@ -720,7 +720,7 @@ class TestLambdaAdvanced:
             # Find elements greater than 2 (using map and filtering concept)
             # Note: We don't have filter, but we can use map with conditional
             # This is a simplified example
-            result = parser.parse("(map (cons 1 2 3 4) (lambda (x) (if (> x 2) x 0)))")
+            result = parser.parse("(map '(1 2 3 4) (lambda (x) (if (> x 2) x 0)))")
             assert result == [0, 0, 3, 4]
 
 
@@ -742,7 +742,7 @@ class TestEdgeCases:
             parser = get_parser(tournament.url)
 
             # Single element (not a function call, just a list)
-            result = parser.parse("(cons 42)")
+            result = parser.parse("'(42)")
             assert result == [42]
 
     @pytest.mark.unit
@@ -860,15 +860,15 @@ class TestInferTypes:
             assert _infer_types(parser.parse("(lambda (x) (+ x 1))")) == frozenset({"FUNC"})
 
     @pytest.mark.unit
-    def test_cons_returns_list(self, app, tournament):
+    def test_quote_returns_list(self, app, tournament):
         with app.app_context():
             parser = get_parser(tournament.url)
-            assert _infer_types(parser.parse("(cons 1 2 3)")) == frozenset({"LIST"})
+            assert _infer_types(parser.parse("'(1 2 3)")) == frozenset({"LIST"})
 
     @pytest.mark.unit
-    def test_get_infers_element_types_from_cons(self, app, tournament_with_data):
-        """(get index (cons ...)) — when get stays preserved (symbolic index), the
-        cons element types are still recoverable so or-default can drop the NIL."""
+    def test_get_infers_element_types_from_quoted_list(self, app, tournament_with_data):
+        """(get index '(...)) — when get stays preserved (symbolic index), the
+        quoted-list element types are still recoverable so or-default can drop the NIL."""
         with app.app_context():
             tournament_url = tournament_with_data["tournament_url"]
             db.session.add(Tag(event=tournament_url, name="UnsetTagGet", team=None))
@@ -878,9 +878,9 @@ class TestInferTypes:
             # is symbolic so `get` stays preserved; element-type inference makes or-default
             # collapse to {BOOL} instead of {BOOL, UNKNOWN}.
             assert _infer_types(
-                parser.parse("(or-default (get (wins [tag::UnsetTagGet]) (cons true false true)) false)")
+                parser.parse("(or-default (get (wins [tag::UnsetTagGet]) '(true false true)) false)")
             ) == frozenset({"BOOL"})
             # Without or-default, the preserved get exposes element-types ∪ NIL.
-            assert _infer_types(parser.parse("(get (wins [tag::UnsetTagGet]) (cons true false 1))")) == frozenset(
+            assert _infer_types(parser.parse("(get (wins [tag::UnsetTagGet]) '(true false 1))")) == frozenset(
                 {"BOOL", "INT", "NIL"}
             )

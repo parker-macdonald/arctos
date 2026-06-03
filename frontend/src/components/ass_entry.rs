@@ -55,7 +55,7 @@ const DSL_FUNCTIONS: &[(&str, &str, &str)] = &[
     ("-", "(- INT INT) -> INT", "Subtraction"),
     ("*", "(* INT INT) -> INT", "Multiplication"),
     ("/", "(/ INT INT) -> INT", "Integer division"),
-    ("cons", "(cons *_) -> LIST", "Build a list from arguments"),
+    ("quote", "(quote EXPR) / 'EXPR", "Literal expression, unevaluated"),
     ("car", "(car LIST)", "First element"),
     ("cdr", "(cdr LIST)", "All but the first element"),
     ("get", "(get INDEX LIST)", "Element at INDEX, or NIL"),
