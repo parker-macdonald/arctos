@@ -28,6 +28,18 @@ def wants_json(request) -> bool:
     return request.is_json or is_api_path or prefers_json
 
 
+def check_tournament_organizer(tournament_url: str) -> bool:
+    """Return whether the logged-in user is a TO for *tournament_url*.
+
+    A boolean companion to :func:`require_tournament_organizer` for routes
+    that need an inline check rather than a gate decorator. Returns ``False``
+    for anonymous users.
+    """
+    if not current_user.is_authenticated:
+        return False
+    return PermissionService.is_tournament_organizer(tournament_url, current_user)
+
+
 def _require_organizer(
     *,
     param_name: str,

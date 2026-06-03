@@ -12,6 +12,8 @@ Two pure-function builders used by registration routes:
 from __future__ import annotations
 
 from app.domain.enums import RegistrationStatus
+from app.serializers.tournament_serializer import tournament_to_dict
+from app.utils.datetime_helpers import dt_iso
 from models import League, Player, Team, Tournament
 
 
@@ -62,10 +64,6 @@ def serialize_manage(scope, search_query: str, search_type: str, cfg) -> dict:
     Returns:
         The manage payload dict ready to be jsonified.
     """
-    # tournament_to_dict and dt_iso live in _api.py, which imports this
-    # module - so import them lazily here to avoid a circular import.
-    from app.routes._api import _tournament_to_dict, _dt_iso
-
     from app.services.registration_resolver import (
         team_registrations_for_scope,
         player_registrations_for_scope,
@@ -136,7 +134,7 @@ def serialize_manage(scope, search_query: str, search_type: str, cfg) -> dict:
         }
     else:
         tournament = Tournament.query.filter_by(url=scope.event_url).first()
-        tournament_dict = _tournament_to_dict(tournament)
+        tournament_dict = tournament_to_dict(tournament)
 
     player_rows = []
     for pr in players_with_registrations:
@@ -156,8 +154,8 @@ def serialize_manage(scope, search_query: str, search_type: str, cfg) -> dict:
                     ),
                     "paid": bool(pr["registration"].paid),
                     "amount_paid": pr["registration"].amount_paid or 0.0,
-                    "registered_at": _dt_iso(pr["registration"].registered_at),
-                    "paid_at": _dt_iso(pr["registration"].paid_at),
+                    "registered_at": dt_iso(pr["registration"].registered_at),
+                    "paid_at": dt_iso(pr["registration"].paid_at),
                     "waiver_required": w["waiver_required"],
                     "waiver_status": w["waiver_status"],
                     "waiver_legal_name_signature": w["waiver_legal_name_signature"],
@@ -195,8 +193,8 @@ def serialize_manage(scope, search_query: str, search_type: str, cfg) -> dict:
                     ),
                     "paid": bool(tr["registration"].paid),
                     "amount_paid": tr["registration"].amount_paid or 0.0,
-                    "registered_at": _dt_iso(tr["registration"].registered_at),
-                    "paid_at": _dt_iso(tr["registration"].paid_at),
+                    "registered_at": dt_iso(tr["registration"].registered_at),
+                    "paid_at": dt_iso(tr["registration"].paid_at),
                 },
                 "team": {
                     "id": tr["team"].id,

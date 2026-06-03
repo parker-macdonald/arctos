@@ -6,8 +6,7 @@ blueprints by topic, but they all share the same URL prefix:
 
 Each file in this directory is a blueprint; its module-level docstring
 states the topic it covers. New endpoints should go into the most
-specific blueprint that fits; fall back to `_api.py` only if nothing
-else is appropriate.
+specific blueprint that fits; if none does, add a new one.
 
 ## What is a blueprint?
 
@@ -100,12 +99,6 @@ In production, nginx serves the SPA same-origin and CORS isn't needed.
 6. Write integration tests in [`tests/`](../../tests/README.md). The
    `client` fixture + `login_as(client, user)` from `tests/utils.py`
    covers most cases.
-7. If your change adds, removes, or changes any URL or HTTP method,
-   regenerate `tests/fixtures/url_surface.txt` (instructions in the
-   docstring of `tests/test_url_surface.py`) and commit it in the
-   same PR. The fixture is a deliberate gate against accidental URL
-   drift, introduced for the in-flight `_api.py` refactor; it will be
-   removed once that refactor is complete.
 
 ## When to promote a blueprint to a package
 
@@ -133,8 +126,8 @@ throughout) can stay a single file.
 4. Create submodule files. Each starts with `from . import bp` (no new
    blueprint - they extend the existing one) and contains the routes
    for one sub-topic.
-5. Run the URL surface snapshot test (`tests/test_url_surface.py`);
-   confirm `app.url_map` is unchanged.
+5. Run the test suite and confirm `app.url_map` is unchanged - the move
+   should be a no-op for the URL surface.
 6. No external caller updates needed - `from app.routes.<topic> import bp`
    keeps working because `__init__.py` exposes it.
 

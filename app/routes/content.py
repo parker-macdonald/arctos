@@ -34,7 +34,7 @@ from flask import Blueprint, current_app, jsonify, request
 from flask_login import current_user, login_required
 
 from app.filters import render_markdown
-from app.routes._api import _check_to
+from app.utils.decorators import check_tournament_organizer
 from app.serializers.league_serializer import require_league
 from app.services.permission_service import PermissionService
 from app.utils.helpers import get_registrable_config
@@ -181,7 +181,7 @@ def render_markdown_api():
 @login_required
 def tournament_upload_waiver(tournament_url):
     """Store waiver PDF for this event's registrable config (TO only)."""
-    if not _check_to(tournament_url):
+    if not check_tournament_organizer(tournament_url):
         return jsonify({"error": "Forbidden"}), 403
 
     tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
