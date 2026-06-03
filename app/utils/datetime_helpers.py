@@ -118,11 +118,9 @@ def dt_iso(dt) -> str | None:
     :func:`to_iso_z` (which wraps in :class:`~app.error_values.Option` and
     forces a UTC ``Z`` suffix); both helpers exist because callers want
     different semantics and migrating between them would be a behavior change.
-
-    This is currently a thin re-export of the existing ``_dt_iso`` in
-    ``app.routes._api``; once that monolith is dismantled this becomes the
-    real implementation.
     """
-    from app.routes._api import _dt_iso
-
-    return _dt_iso(dt)
+    if dt is None:
+        return None
+    if hasattr(dt, "isoformat"):
+        return dt.isoformat()
+    return str(dt)

@@ -16,7 +16,7 @@ from __future__ import annotations
 from flask import Blueprint, jsonify, request
 from flask_login import current_user, login_required
 
-from app.routes._api import _check_to
+from app.utils.decorators import check_tournament_organizer
 from app.serializers.league_serializer import require_league
 from app.services.permission_service import PermissionService
 from app.utils.helpers import (
@@ -156,7 +156,7 @@ def get_penalty_types(tournament_url):
 def create_penalty_type(tournament_url):
     """Create a new penalty type (league or event scope)."""
     tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
-    if not _check_to(tournament_url):
+    if not check_tournament_organizer(tournament_url):
         return jsonify({"error": "Forbidden"}), 403
 
     data = request.get_json()
@@ -204,7 +204,7 @@ def create_penalty_type(tournament_url):
 def update_penalty_type(tournament_url, pt_id):
     """Update a penalty type."""
     tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
-    if not _check_to(tournament_url):
+    if not check_tournament_organizer(tournament_url):
         return jsonify({"error": "Forbidden"}), 403
 
     if tournament.league_id:
@@ -234,7 +234,7 @@ def update_penalty_type(tournament_url, pt_id):
 def delete_penalty_type(tournament_url, pt_id):
     """Delete a penalty type."""
     tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
-    if not _check_to(tournament_url):
+    if not check_tournament_organizer(tournament_url):
         return jsonify({"error": "Forbidden"}), 403
 
     if tournament.league_id:
@@ -260,7 +260,7 @@ def get_player_penalty_history(tournament_url, player_id):
     point_id: the point row from which the user opened the penalties modal; notes
     for that point get is_current_point=True so the UI can show delete only for them.
     """
-    if not _check_to(tournament_url):
+    if not check_tournament_organizer(tournament_url):
         return jsonify({"error": "Forbidden"}), 403
     tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()
     event_urls = match_event_urls_for_penalties(tournament)
