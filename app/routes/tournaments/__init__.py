@@ -111,4 +111,11 @@ def update_match_previous_link(match: Match, prev_match_id: str, tournament_url:
 # Register submodule handlers by importing them.
 # This MUST be at the bottom so that bp and executor are already defined
 # when submodules import them via `from . import bp`.
-from app.routes.tournaments import management, scheduling, recordings  # noqa: E402, F401
+from app.routes.tournaments import (  # noqa: E402, F401
+    brackets,
+    management,
+    matches_admin,
+    read,
+    recordings,
+    scheduling,
+)
