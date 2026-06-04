@@ -207,23 +207,83 @@ fn cursor_byte(s: &str, cursor_char: usize) -> usize {
         .unwrap_or(s.len())
 }
 
-/// Index in `new` (byte offset) of the inserted character when `new.len() == old.len() + 1`.
-fn new_char_index(old: &str, new: &str) -> Option<usize> {
-    if new.len() != old.len() + 1 {
+/// Diff `old` and `new` as one contiguous edit: `(byte_pos, replaced_old, inserted_new)`.
+///
+/// Computes the longest common prefix and suffix (snapped to char boundaries) and
+/// reports the differing middle. Handles plain insertions, deletions, and selection
+/// replacements uniformly — the cases that broke the old `new_char_index` length check.
+fn detect_change(old: &str, new: &str) -> Option<(usize, String, String)> {
+    let old_bytes = old.as_bytes();
+    let new_bytes = new.as_bytes();
+
+    let max_prefix = old_bytes.len().min(new_bytes.len());
+    let mut prefix = 0;
+    while prefix < max_prefix && old_bytes[prefix] == new_bytes[prefix] {
+        prefix += 1;
+    }
+    while prefix > 0 && (!old.is_char_boundary(prefix) || !new.is_char_boundary(prefix)) {
+        prefix -= 1;
+    }
+
+    let max_suffix = (old_bytes.len() - prefix).min(new_bytes.len() - prefix);
+    let mut suffix = 0;
+    while suffix < max_suffix
+        && old_bytes[old_bytes.len() - 1 - suffix] == new_bytes[new_bytes.len() - 1 - suffix]
+    {
+        suffix += 1;
+    }
+    while suffix > 0
+        && (!old.is_char_boundary(old_bytes.len() - suffix)
+            || !new.is_char_boundary(new_bytes.len() - suffix))
+    {
+        suffix -= 1;
+    }
+
+    let replaced = old[prefix..old_bytes.len() - suffix].to_string();
+    let inserted = new[prefix..new_bytes.len() - suffix].to_string();
+    if replaced.is_empty() && inserted.is_empty() {
         return None;
     }
-    let mut new_chars = new.char_indices();
-    let mut old_chars = old.char_indices();
-    loop {
-        match (new_chars.next(), old_chars.next()) {
-            (Some((i, c_new)), Some((_, c_old))) => {
-                if c_new != c_old {
-                    return Some(i);
-                }
-            }
-            (Some((i, _)), None) => return Some(i),
-            (None, _) => return None,
-        }
+    Some((prefix, replaced, inserted))
+}
+
+/// Read the textarea's current value and selection synchronously from the DOM.
+/// Returns (value, selection_start, selection_end) in UTF-16 code units (which equal
+/// chars and bytes for the ASCII text we expect in this DSL).
+#[cfg(target_arch = "wasm32")]
+fn read_textarea_state(id: &str) -> Option<(String, usize, usize)> {
+    let window = web_sys::window()?;
+    let doc = window.document()?;
+    let el = doc.query_selector(&format!("#{}", id)).ok()??;
+    let ta: web_sys::HtmlTextAreaElement = el.dyn_into().ok()?;
+    let value = ta.value();
+    let start = ta.selection_start().ok().flatten()? as usize;
+    let end = ta.selection_end().ok().flatten()? as usize;
+    Some((value, start, end))
+}
+
+/// Byte offset of the Nth char in `s`, clamped to `s.len()`.
+fn nth_char_byte(s: &str, n: usize) -> usize {
+    s.char_indices().nth(n).map(|(i, _)| i).unwrap_or(s.len())
+}
+
+/// Closing bracket paired with `c`, if any.
+fn matching_close(c: char) -> Option<char> {
+    match c {
+        '(' => Some(')'),
+        '[' => Some(']'),
+        '{' => Some('}'),
+        _ => None,
+    }
+}
+
+/// Opening bracket paired with `c`, if any.
+fn matching_open(c: char) -> Option<char> {
+    match c {
+        ')' => Some('('),
+        ']' => Some('['),
+        '}' => Some('{'),
+        _ => None,
     }
 }
 
@@ -1080,29 +1140,67 @@ pub fn AssEntry(
         let new_val = e.value();
         let old = value_rc_input.as_ref().clone();
         let _ = v_for_oninput;
-        // Auto-close brackets on single-char insert.
-        let (out, after_open) = if let Some(byte_i) = new_char_index(&old, &new_val) {
-            let open_c = new_val[byte_i..].chars().next().unwrap_or('\0');
-            let closing = match open_c {
-                '(' => Some(')'),
-                '[' => Some(']'),
-                '{' => Some('}'),
-                _ => None,
-            };
-            if let Some(close_c) = closing {
-                let char_end = byte_i + open_c.len_utf8();
-                let out_str = format!(
-                    "{}{}{}",
-                    &new_val[..char_end],
-                    close_c,
-                    &new_val[char_end..]
+        // The longest-common-prefix diff is structurally ambiguous when the inserted
+        // character matches the char already at that position (e.g. typing `(` right
+        // before another `(`). Read the live cursor to anchor the actual insertion site.
+        #[cfg(target_arch = "wasm32")]
+        let cursor_after_input: Option<usize> =
+            read_textarea_state(&id_for_oninput).map(|(_, s, _)| s);
+        #[cfg(not(target_arch = "wasm32"))]
+        let cursor_after_input: Option<usize> = None;
+
+        let (out, after_open) = match detect_change(&old, &new_val) {
+            Some((diff_byte_i, replaced, inserted))
+                if inserted.chars().count() == 1
+                    && matching_close(inserted.chars().next().unwrap()).is_some() =>
+            {
+                let open_c = inserted.chars().next().unwrap();
+                let close_c = matching_close(open_c).unwrap();
+                // Real insertion site = cursor after typing − inserted length. Falls
+                // back to the diff position if we can't read the cursor.
+                let actual_open_byte = match cursor_after_input {
+                    Some(cur) => {
+                        let insert_char = cur.saturating_sub(inserted.chars().count());
+                        nth_char_byte(&new_val, insert_char)
+                    }
+                    None => diff_byte_i,
+                };
+                let after_open_byte = actual_open_byte + open_c.len_utf8();
+                // Standard editor heuristic: don't auto-close before a word char or
+                // another opening bracket — those are cases where the user is
+                // grouping/prefixing existing content rather than starting a new pair.
+                let next_char = new_val[after_open_byte..].chars().next();
+                let blocks_close = matches!(
+                    next_char,
+                    Some(c) if c.is_alphanumeric() || c == '_' || matches!(c, '(' | '[' | '{')
                 );
-                (out_str, Some(char_end))
-            } else {
-                (new_val, None)
+
+                if replaced.is_empty() && blocks_close {
+                    (new_val, None)
+                } else if replaced.is_empty() {
+                    // Plain auto-close: insert close right after the open. Cursor goes between them.
+                    let out_str = format!(
+                        "{}{}{}",
+                        &new_val[..after_open_byte],
+                        close_c,
+                        &new_val[after_open_byte..]
+                    );
+                    (out_str, Some(after_open_byte))
+                } else {
+                    // Wrap the just-replaced selection: re-insert it between the brackets.
+                    // Cursor lands right before the close, at the end of the wrapped content.
+                    // Suppression doesn't apply — the user explicitly selected text to wrap.
+                    let out_str = format!(
+                        "{}{}{}{}",
+                        &new_val[..after_open_byte],
+                        replaced,
+                        close_c,
+                        &new_val[after_open_byte..]
+                    );
+                    (out_str, Some(after_open_byte + replaced.len()))
+                }
             }
-        } else {
-            (new_val, None)
+            _ => (new_val, None),
         };
         on_change_input.call(out.clone());
         ac_open.set(true);
@@ -1248,6 +1346,57 @@ pub fn AssEntry(
                 return;
             }
         }
+
+        // Standard editor auto-bracket behaviors driven off the live textarea state.
+        // Reading from the DOM here (rather than the prop / cursor signal) is the only
+        // way to get the cursor position synchronously before the keypress is applied.
+        #[cfg(target_arch = "wasm32")]
+        {
+            // Skip-over: typing a closing bracket when it's already the next character
+            // advances the cursor instead of inserting a duplicate.
+            if let Some(close_c) = key.chars().next().filter(|c| matching_open(*c).is_some()) {
+                if key.chars().count() == 1 {
+                    if let Some((value, sel_start, sel_end)) = read_textarea_state(&id_for_keydown) {
+                        if sel_start == sel_end {
+                            let byte_pos = nth_char_byte(&value, sel_start);
+                            if value[byte_pos..].chars().next() == Some(close_c) {
+                                ev.prevent_default();
+                                pending_cursor.set(Some(sel_start + 1));
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+            // Pair-delete: backspace between an empty auto-inserted pair removes both.
+            if key == "Backspace" && !ev.modifiers().contains(Modifiers::SHIFT) {
+                if let Some((value, sel_start, sel_end)) = read_textarea_state(&id_for_keydown) {
+                    if sel_start == sel_end && sel_start > 0 {
+                        let cur_byte = nth_char_byte(&value, sel_start);
+                        let prev_byte = nth_char_byte(&value, sel_start - 1);
+                        let prev_char = value[prev_byte..cur_byte].chars().next();
+                        let next_char = value[cur_byte..].chars().next();
+                        let pair = match (prev_char, next_char) {
+                            (Some(p), Some(n)) => matching_close(p) == Some(n),
+                            _ => false,
+                        };
+                        if pair {
+                            ev.prevent_default();
+                            let next_len = next_char.map(|c| c.len_utf8()).unwrap_or(0);
+                            let new_v = format!(
+                                "{}{}",
+                                &value[..prev_byte],
+                                &value[cur_byte + next_len..]
+                            );
+                            on_change_kd.call(new_v);
+                            pending_cursor.set(Some(sel_start - 1));
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+
         // Plain Enter inserts a newline. Stop propagation so the parent form's
         // Enter-handler (which prevents default to block submission) doesn't squash it.
         // Shift+Enter still bubbles up so the modal's Save shortcut keeps working.
