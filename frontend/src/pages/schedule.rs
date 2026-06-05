@@ -1,7 +1,9 @@
+use super::TeamSelectionField;
+use crate::Route;
 use crate::api;
+use crate::components::AssEntry;
 use crate::display::short_or_truncate;
 use crate::types::*;
-use crate::Route;
 use dioxus::html::ModifiersInteraction;
 use dioxus::prelude::*;
 #[cfg(target_arch = "wasm32")]
@@ -10,8 +12,6 @@ use serde::Serialize;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
-use super::TeamSelectionField;
-use crate::components::AssEntry;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::JsCast as _;
 
@@ -44,7 +44,12 @@ fn local_datetime_to_utc_iso(local_str: &str) -> Option<String> {
     let offset_secs = schedule_tz_offset_minutes() * 60;
     let offset = FixedOffset::east_opt(offset_secs as i32)?;
     let local = offset.from_local_datetime(&ndt).single()?;
-    Some(local.with_timezone(&Utc).format("%Y-%m-%dT%H:%M:%SZ").to_string())
+    Some(
+        local
+            .with_timezone(&Utc)
+            .format("%Y-%m-%dT%H:%M:%SZ")
+            .to_string(),
+    )
 }
 
 /// Convert a UTC-ish ISO datetime string from the API into a `datetime-local` value (local time, no timezone).
@@ -77,7 +82,9 @@ fn utc_iso_to_local_datetime_input(iso: &str) -> Option<String> {
 
 /// Effective start time for timeline/date nav: confirmed when set, else nominal.
 fn effective_start_str(m: &MatchSetupData) -> Option<&str> {
-    m.confirmed_start_time.as_deref().or(m.nominal_start_time.as_deref())
+    m.confirmed_start_time
+        .as_deref()
+        .or(m.nominal_start_time.as_deref())
 }
 
 /// Format ISO timestamp in user's local time, without seconds (e.g. "14:30" or "2025-02-16 14:30").
@@ -107,9 +114,9 @@ pub fn Schedule(url: String) -> Element {
     let mut edit_mode = use_signal(|| false);
     let mut selected_field = use_signal(|| "all".to_string());
     let mut highlight_team = use_signal(|| "".to_string());
-    
+
     let mut is_to = use_signal(|| false);
-    
+
     let mut active_modal = use_signal(|| "none".to_string());
     let mut selected_match_id = use_signal(|| "".to_string());
     let mut key_nav = use_signal(|| None::<String>);
@@ -261,7 +268,9 @@ pub fn Schedule(url: String) -> Element {
                                                 &parts.into(),
                                                 &blob_opts,
                                             ).expect("Blob");
-                                            let url = web_sys::Url::create_object_url_with_blob(&blob).expect("object URL");
+                                            let url =
+                                                web_sys::Url::create_object_url_with_blob(&blob)
+                                                    .expect("object URL");
                                             let filename = format!(
                                                 "{}_schedule_{}.toml",
                                                 u,
@@ -270,7 +279,9 @@ pub fn Schedule(url: String) -> Element {
                                             if let Ok(a) = doc.create_element("a") {
                                                 let _ = a.set_attribute("href", &url);
                                                 let _ = a.set_attribute("download", &filename);
-                                                if let Some(anchor) = a.dyn_ref::<web_sys::HtmlAnchorElement>() {
+                                                if let Some(anchor) =
+                                                    a.dyn_ref::<web_sys::HtmlAnchorElement>()
+                                                {
                                                     anchor.click();
                                                 }
                                             }
@@ -303,7 +314,7 @@ pub fn Schedule(url: String) -> Element {
                 }
             };
 
-             rsx! {
+            rsx! {
                 style { {SCHEDULE_PAGE_CSS} }
                 div {
                     class: "container-fluid mt-3 position-relative schedule-keyboard-focus",
@@ -452,9 +463,9 @@ pub fn Schedule(url: String) -> Element {
                             on_key_nav_consumed: move |_| key_nav.set(None),
                         }
                     } else {
-                        TableView { 
-                            data: data.clone(), 
-                            selected_field: selected_field(), 
+                        TableView {
+                            data: data.clone(),
+                            selected_field: selected_field(),
                             highlight_team: highlight_team(),
                             edit_mode: edit_mode(),
                             tournament_url: url.clone(),
@@ -464,12 +475,12 @@ pub fn Schedule(url: String) -> Element {
                             }
                         }
                     }
-                    
+
                     // Modals (key forces remount so Edit modal gets fresh state from match)
                     if active_modal() == "match_edit" {
                         div { key: "{selected_match_id()}",
-                            EditMatchModal { 
-                                tournament_url: url.clone(), 
+                            EditMatchModal {
+                                tournament_url: url.clone(),
                                 match_id: selected_match_id(),
                                 data: data.clone(),
                                 on_close: move |_| active_modal.set("none".to_string()),
@@ -521,11 +532,11 @@ pub fn Schedule(url: String) -> Element {
             }
         }
         None => {
-             // Check if it was an error or loading
-             match val.read().as_ref() {
+            // Check if it was an error or loading
+            match val.read().as_ref() {
                 Some(Err(e)) => rsx! { div { class: "alert alert-danger", "Error: {e}" } },
-                _ => rsx! { div { class: "text-center mt-5", "Loading..." } }
-             }
+                _ => rsx! { div { class: "text-center mt-5", "Loading..." } },
+            }
         }
     }
 }
@@ -546,11 +557,15 @@ fn matches_on_field_sorted<'a>(
         .filter(|m| m.field.as_deref() == Some(field_name))
         .filter(|m| exclude_uuid.map_or(true, |id| m.uuid != id))
         .collect();
-    v.sort_by(|a, b| b.nominal_start_time.as_deref().cmp(&a.nominal_start_time.as_deref()));
+    v.sort_by(|a, b| {
+        b.nominal_start_time
+            .as_deref()
+            .cmp(&a.nominal_start_time.as_deref())
+    });
     v
 }
 
-/// Skip condition help modal (same content as Flask #dslHelpModal).
+/// Skip condition help modal
 #[component]
 fn SkipConditionHelpModal(on_close: EventHandler<()>) -> Element {
     rsx! {
@@ -567,56 +582,14 @@ fn SkipConditionHelpModal(on_close: EventHandler<()>) -> Element {
                         button { class: "btn-close", "type": "button", onclick: move |_| on_close.call(()) }
                     }
                     div { class: "modal-body",
-                        p { "The skip condition uses a Lisp-like language to express boolean conditions. If it evaluates to true, the match will be skipped." }
-
-                        h6 { class: "mt-3", "Basic Values" }
-                        ul {
-                            li { code { "true" } " - True" }
-                            li { code { "false" } " - False" }
-                            li { code { "nil" } " - Nil" }
-                            li { code { "[TeamName]" } " - Team name (username, " code { "tag::TagName" } ", or " code { "MatchName::winner" } "/" code { "MatchName::loser" } ")" }
-                            li { code { "{{MatchName}}" } " - Match name" }
-                        }
-
-                        h6 { class: "mt-3", "Basic Operations" }
-                        ul {
-                            li { code { "(== A B)" } " - Equality comparison" }
-                            li { code { "(> A B)" } ", " code { "(< A B)" } ", " code { "(>= A B)" } ", " code { "(<= A B)" } " - Numeric comparisons" }
-                            li { code { "(and A B)" } ", " code { "(or A B)" } ", " code { "(not A)" } " - Logical operations" }
-                        }
-
-                        h6 { class: "mt-3", "Team Operations" }
-                        ul {
-                            li { code { "(wins [TeamName])" } " - Number of wins for a team" }
-                            li { code { "(losses [TeamName])" } " - Number of losses for a team" }
-                            li { code { "(points-won [TeamName])" } " - Total points won by a team" }
-                            li { code { "(points-lost [TeamName])" } " - Total points lost by a team" }
-                            li { code { "(points-won [TeamName] {{MatchName}})" } " - Points won in a specific match" }
-                            li { code { "(points-lost [TeamName] {{MatchName}})" } " - Points lost in a specific match" }
-                            li { code { "(is-skipped {{MatchName}})" } " - True if match status is SKIPPED, false if IN_PROGRESS or COMPLETED" }
-                        }
-
-                        h6 { class: "mt-3", "Match Operations" }
-                        ul {
-                            li { code { "(winner {{MatchName}})" } " - Winner team of a match (returns team or NIL)" }
-                            li { code { "(loser {{MatchName}})" } " - Loser team of a match (returns team or NIL)" }
-                        }
-
-                        h6 { class: "mt-3", "Other Operations" }
-                        ul {
-                            li { code { "(if CONDITION IF_TRUE IF_FALSE)" } " - If condition is true, return IF_TRUE, otherwise return IF_FALSE" }
-                            li { code { "(lambda (*args) (output))" } " - Define a lambda function" }
-                            li { code { "(quote EXPR)" } " or " code { "'EXPR" } " - Literal expression, unevaluated (use " code { "'(1 2 3)" } " to build a list)" }
-                            li { code { "(car LIST)" } " - Get the first element of a list" }
-                            li { code { "(cdr LIST)" } " - Get the rest of a list" }
-                            li { code { "(get INDEX LIST)" } " - Get the element at index" }
-                            li { code { "(or-default VAL DEFAULT)" } " - Returns VAL if VAL is not NIL else DEFAULT" }
-                            li { code { "(len LIST)" } " - Length of a list" }
-                            li { code { "(map LIST FUNC)" } " - Apply a function to each element of a list" }
-                            li { code { "(reduce LIST FUNC)" } " - Reduce a list to a single value" }
-                            li { code { "(max LIST)" } ", " code { "(min LIST)" } " - Max/min value in a list" }
-                            li { code { "(max_by LIST FUNC)" } ", " code { "(min_by LIST FUNC)" } " - Max/min by a function" }
-                        }
+                          p {
+                  "The skip condition uses "
+                  Link {
+                  to: Route::ArctosScheduleScript {},
+                  "Arctos Schedule Script"
+                  }
+                  " to express boolean conditions. If it evaluates to true, the match will be skipped. This evaluation happens when this match's last dependency becomes finished or skipped. If this match is not skipped, the skip condition will be re-evaluated every time a match starts or finishes until it is started or the skip condition evaluates to true and it gets skipped."
+              }
 
                         h6 { class: "mt-3", "Examples" }
                         ul {
@@ -722,28 +695,40 @@ fn CreateMatchModal(
     };
 
     let data_create_validate = data.clone();
-    let validate_create_rc: Rc<RefCell<Box<dyn FnMut() -> bool>>> = Rc::new(RefCell::new(Box::new(move || {
-        let st = schedule_type();
-        if st == "BREAK" || st == "JOIN" || st == "FAST" || st == "SAFE" {
-            let prev_id = previous_match_id().trim().to_string();
-            if prev_id.is_empty() {
-                error.set(Some("Previous match is required for Break, Join, Fast, and Safe matches.".to_string()));
-                return false;
-            }
-            let current_field = field();
-            if current_field.is_empty() {
-                error.set(Some("Field is required when using a previous match.".to_string()));
-                return false;
-            }
-            if let Some(prev_m) = data_create_validate.matches.iter().find(|x| x.uuid == prev_id) {
-                if prev_m.field.as_deref() != Some(current_field.as_str()) {
-                    error.set(Some("Previous match must be on the same field.".to_string()));
+    let validate_create_rc: Rc<RefCell<Box<dyn FnMut() -> bool>>> =
+        Rc::new(RefCell::new(Box::new(move || {
+            let st = schedule_type();
+            if st == "BREAK" || st == "JOIN" || st == "FAST" || st == "SAFE" {
+                let prev_id = previous_match_id().trim().to_string();
+                if prev_id.is_empty() {
+                    error.set(Some(
+                        "Previous match is required for Break, Join, Fast, and Safe matches."
+                            .to_string(),
+                    ));
                     return false;
                 }
+                let current_field = field();
+                if current_field.is_empty() {
+                    error.set(Some(
+                        "Field is required when using a previous match.".to_string(),
+                    ));
+                    return false;
+                }
+                if let Some(prev_m) = data_create_validate
+                    .matches
+                    .iter()
+                    .find(|x| x.uuid == prev_id)
+                {
+                    if prev_m.field.as_deref() != Some(current_field.as_str()) {
+                        error.set(Some(
+                            "Previous match must be on the same field.".to_string(),
+                        ));
+                        return false;
+                    }
+                }
             }
-        }
-        true
-    })));
+            true
+        })));
     let validate_create_rc2 = validate_create_rc.clone();
 
     let tournament_url_submit = tournament_url.clone();
@@ -757,7 +742,9 @@ fn CreateMatchModal(
         spawn(async move {
             saving.set(true);
             error.set(None);
-            if (schedule_type() == "SAFE" || schedule_type() == "FAST") && !skip_condition().trim().is_empty() {
+            if (schedule_type() == "SAFE" || schedule_type() == "FAST")
+                && !skip_condition().trim().is_empty()
+            {
                 if let Some(Err(msg)) = skip_condition_validity() {
                     error.set(Some(format!("Skip condition: {msg}")));
                     saving.set(false);
@@ -766,13 +753,22 @@ fn CreateMatchModal(
                 match api::validate_dsl(&tournament_url, &skip_condition()).await {
                     Ok(res) => {
                         if !res.valid {
-                            error.set(Some(format!("Skip condition: {}", res.error.unwrap_or_else(|| "invalid".to_string()))));
+                            error.set(Some(format!(
+                                "Skip condition: {}",
+                                res.error.unwrap_or_else(|| "invalid".to_string())
+                            )));
                             saving.set(false);
                             return;
                         }
                         if !res.result_type.iter().any(|t| t == "BOOL") {
-                            let got = if res.result_type.is_empty() { "unknown".to_string() } else { res.result_type.join(" | ") };
-                            error.set(Some(format!("Skip condition must evaluate to BOOL, got {got}.")));
+                            let got = if res.result_type.is_empty() {
+                                "unknown".to_string()
+                            } else {
+                                res.result_type.join(" | ")
+                            };
+                            error.set(Some(format!(
+                                "Skip condition must evaluate to BOOL, got {got}."
+                            )));
                             saving.set(false);
                             return;
                         }
@@ -796,7 +792,11 @@ fn CreateMatchModal(
             };
             let req = CreateMatchRequest {
                 name: name(),
-                field: if field().is_empty() { None } else { Some(field()) },
+                field: if field().is_empty() {
+                    None
+                } else {
+                    Some(field())
+                },
                 schedule_type: Some(schedule_type()),
                 length: len,
                 start_time: if start_time().is_empty() {
@@ -810,8 +810,16 @@ fn CreateMatchModal(
                     Some(previous_match_id())
                 },
                 refs: Some(refs_vec),
-                team1: if team1().is_empty() { None } else { Some(team1()) },
-                team2: if team2().is_empty() { None } else { Some(team2()) },
+                team1: if team1().is_empty() {
+                    None
+                } else {
+                    Some(team1())
+                },
+                team2: if team2().is_empty() {
+                    None
+                } else {
+                    Some(team2())
+                },
                 set_type: Some(set_type()),
                 nsets: Some(nsets()),
                 stones_per_set: Some(stones_per_set()),
@@ -831,81 +839,105 @@ fn CreateMatchModal(
         });
     };
     let tournament_url_keydown = tournament_url.clone();
-    let submit_create_rc: Rc<RefCell<Box<dyn FnMut()>>> = Rc::new(RefCell::new(Box::new(move || {
-        if !validate_create_rc2.borrow_mut()() {
-            return;
-        }
-        let tournament_url = tournament_url_keydown.clone();
-        let on_save = on_save.clone();
-        spawn(async move {
-            saving.set(true);
-            error.set(None);
-            if (schedule_type() == "SAFE" || schedule_type() == "FAST") && !skip_condition().trim().is_empty() {
-                if let Some(Err(msg)) = skip_condition_validity() {
-                    error.set(Some(format!("Skip condition: {msg}")));
-                    saving.set(false);
-                    return;
-                }
-                if let Ok(res) = api::validate_dsl(&tournament_url, &skip_condition()).await {
-                    if !res.valid {
-                        error.set(Some(format!("Skip condition: {}", res.error.unwrap_or_else(|| "invalid".to_string()))));
+    let submit_create_rc: Rc<RefCell<Box<dyn FnMut()>>> =
+        Rc::new(RefCell::new(Box::new(move || {
+            if !validate_create_rc2.borrow_mut()() {
+                return;
+            }
+            let tournament_url = tournament_url_keydown.clone();
+            let on_save = on_save.clone();
+            spawn(async move {
+                saving.set(true);
+                error.set(None);
+                if (schedule_type() == "SAFE" || schedule_type() == "FAST")
+                    && !skip_condition().trim().is_empty()
+                {
+                    if let Some(Err(msg)) = skip_condition_validity() {
+                        error.set(Some(format!("Skip condition: {msg}")));
                         saving.set(false);
                         return;
                     }
-                    if !res.result_type.iter().any(|t| t == "BOOL") {
-                        let got = if res.result_type.is_empty() { "unknown".to_string() } else { res.result_type.join(" | ") };
-                        error.set(Some(format!("Skip condition must evaluate to BOOL, got {got}.")));
-                        saving.set(false);
-                        return;
+                    if let Ok(res) = api::validate_dsl(&tournament_url, &skip_condition()).await {
+                        if !res.valid {
+                            error.set(Some(format!(
+                                "Skip condition: {}",
+                                res.error.unwrap_or_else(|| "invalid".to_string())
+                            )));
+                            saving.set(false);
+                            return;
+                        }
+                        if !res.result_type.iter().any(|t| t == "BOOL") {
+                            let got = if res.result_type.is_empty() {
+                                "unknown".to_string()
+                            } else {
+                                res.result_type.join(" | ")
+                            };
+                            error.set(Some(format!(
+                                "Skip condition must evaluate to BOOL, got {got}."
+                            )));
+                            saving.set(false);
+                            return;
+                        }
                     }
                 }
-            }
-            let refs_vec: Vec<String> = refs()
-                .split(',')
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .collect();
-            let len = if schedule_type() == "JOIN" {
-                Some(0u32)
-            } else {
-                Some(length())
-            };
-            let req = CreateMatchRequest {
-                name: name(),
-                field: if field().is_empty() { None } else { Some(field()) },
-                schedule_type: Some(schedule_type()),
-                length: len,
-                start_time: if start_time().is_empty() {
-                    None
+                let refs_vec: Vec<String> = refs()
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect();
+                let len = if schedule_type() == "JOIN" {
+                    Some(0u32)
                 } else {
-                    local_datetime_to_utc_iso(&start_time()).or_else(|| Some(start_time()))
-                },
-                previous_match_id: if previous_match_id().is_empty() {
-                    None
-                } else {
-                    Some(previous_match_id())
-                },
-                refs: Some(refs_vec),
-                team1: if team1().is_empty() { None } else { Some(team1()) },
-                team2: if team2().is_empty() { None } else { Some(team2()) },
-                set_type: Some(set_type()),
-                nsets: Some(nsets()),
-                stones_per_set: Some(stones_per_set()),
-                ribbon: Some(ribbon()),
-                skip_condition: Some(skip_condition()),
-            };
-            match api::create_match(&tournament_url, &req).await {
-                Ok(_) => {
-                    saving.set(false);
-                    on_save.call(());
+                    Some(length())
+                };
+                let req = CreateMatchRequest {
+                    name: name(),
+                    field: if field().is_empty() {
+                        None
+                    } else {
+                        Some(field())
+                    },
+                    schedule_type: Some(schedule_type()),
+                    length: len,
+                    start_time: if start_time().is_empty() {
+                        None
+                    } else {
+                        local_datetime_to_utc_iso(&start_time()).or_else(|| Some(start_time()))
+                    },
+                    previous_match_id: if previous_match_id().is_empty() {
+                        None
+                    } else {
+                        Some(previous_match_id())
+                    },
+                    refs: Some(refs_vec),
+                    team1: if team1().is_empty() {
+                        None
+                    } else {
+                        Some(team1())
+                    },
+                    team2: if team2().is_empty() {
+                        None
+                    } else {
+                        Some(team2())
+                    },
+                    set_type: Some(set_type()),
+                    nsets: Some(nsets()),
+                    stones_per_set: Some(stones_per_set()),
+                    ribbon: Some(ribbon()),
+                    skip_condition: Some(skip_condition()),
+                };
+                match api::create_match(&tournament_url, &req).await {
+                    Ok(_) => {
+                        saving.set(false);
+                        on_save.call(());
+                    }
+                    Err(e) => {
+                        error.set(Some(e));
+                        saving.set(false);
+                    }
                 }
-                Err(e) => {
-                    error.set(Some(e));
-                    saving.set(false);
-                }
-            }
-        });
-    })));
+            });
+        })));
     let submit_create_rc2 = submit_create_rc.clone();
     let form_keydown = move |ev: Event<KeyboardData>| {
         let key = ev.key().to_string();
@@ -1159,7 +1191,8 @@ fn FieldsModal(
     let mut recording_modal_error = use_signal(|| None::<String>);
     let mut preview_modal_field = use_signal(|| None::<u32>);
     let mut preview_modal_field_name = use_signal(|| None::<String>);
-    let mut preview_modal_closed = use_signal(|| None::<std::sync::Arc<std::sync::atomic::AtomicBool>>);
+    let mut preview_modal_closed =
+        use_signal(|| None::<std::sync::Arc<std::sync::atomic::AtomicBool>>);
     let mut preview_cameras = use_signal(|| vec![] as Vec<String>);
     let mut preview_selected_camera = use_signal(|| String::new());
     let preview_cache_bust = use_signal(|| "0".to_string());
@@ -1195,19 +1228,19 @@ fn FieldsModal(
             let u2 = u.clone();
             let field_name2 = field_name.clone();
             spawn(async move {
-            use std::sync::atomic::Ordering;
-            while !closed.load(Ordering::SeqCst) {
-                if let Ok(list) = api::list_preview_cameras(&u, &field_name).await {
-                    cameras_sig.set(list);
-                }
-                for _ in 0..3 {
-                    if closed.load(Ordering::SeqCst) {
-                        return;
+                use std::sync::atomic::Ordering;
+                while !closed.load(Ordering::SeqCst) {
+                    if let Ok(list) = api::list_preview_cameras(&u, &field_name).await {
+                        cameras_sig.set(list);
                     }
-                    gloo_timers::future::TimeoutFuture::new(1000).await;
+                    for _ in 0..3 {
+                        if closed.load(Ordering::SeqCst) {
+                            return;
+                        }
+                        gloo_timers::future::TimeoutFuture::new(1000).await;
+                    }
                 }
-            }
-        });
+            });
             // Fetch preview frame with credentials and set img via object URL (Safari compatibility).
             let mut image_url_sig = preview_image_object_url_eff.clone();
             let cam_sig = preview_selected_camera_eff.clone();
@@ -1219,7 +1252,9 @@ fn FieldsModal(
                     let camera = cam_sig();
                     if !camera.is_empty() {
                         let cache_bust = format!("{}", js_sys::Date::now());
-                        match api::fetch_preview_frame(&u2, &field_name2, &camera, &cache_bust).await {
+                        match api::fetch_preview_frame(&u2, &field_name2, &camera, &cache_bust)
+                            .await
+                        {
                             Ok(Some(bytes)) => {
                                 let arr = js_sys::Uint8Array::from(&bytes[..]);
                                 let blob = web_sys::Blob::new_with_u8_array_sequence_and_options(
@@ -1238,7 +1273,9 @@ fn FieldsModal(
                             Err(_) => {}
                         }
                         #[cfg(target_arch = "wasm32")]
-                        if let Ok(Some(meta)) = api::fetch_preview_metadata(&u2, &field_name2, &camera).await {
+                        if let Ok(Some(meta)) =
+                            api::fetch_preview_metadata(&u2, &field_name2, &camera).await
+                        {
                             meta_sig.set(Some(meta));
                         }
                     }
@@ -1936,18 +1973,30 @@ fn TableView(
 ) -> Element {
     let tz_offset = schedule_tz_offset_minutes();
     // ... existing filter logic ...
-    let matches: Vec<&MatchSetupData> = data.matches.iter().filter(|m| {
-        if m.status == "SKIPPED" { return false; }
-        if selected_field != "all" {
-             if let Some(f_name) = &m.field {
-                 let field_id = data.fields.iter().find(|f| &f.name == f_name).map(|f| f.id.to_string());
-                 if field_id.as_deref() != Some(selected_field.as_str()) { return false; }
-             } else {
-                 return false;
-             }
-        }
-        true
-    }).collect();
+    let matches: Vec<&MatchSetupData> = data
+        .matches
+        .iter()
+        .filter(|m| {
+            if m.status == "SKIPPED" {
+                return false;
+            }
+            if selected_field != "all" {
+                if let Some(f_name) = &m.field {
+                    let field_id = data
+                        .fields
+                        .iter()
+                        .find(|f| &f.name == f_name)
+                        .map(|f| f.id.to_string());
+                    if field_id.as_deref() != Some(selected_field.as_str()) {
+                        return false;
+                    }
+                } else {
+                    return false;
+                }
+            }
+            true
+        })
+        .collect();
 
     let base_url = api::base_url();
     rsx! {
@@ -2183,7 +2232,6 @@ struct JoinGroup {
     field_matches: Vec<(u32, String)>,
 }
 
-
 #[component]
 fn ScheduleTimeline(
     data: ScheduleSetupResponse,
@@ -2195,8 +2243,8 @@ fn ScheduleTimeline(
     key_nav: Signal<Option<String>>,
     on_key_nav_consumed: EventHandler<()>,
 ) -> Element {
-    use chrono::Timelike;
     use chrono::NaiveDateTime;
+    use chrono::Timelike;
     let navigator = use_navigator();
 
     // Get browser timezone offset in minutes (local = utc + offset). Only used on wasm.
@@ -2237,7 +2285,9 @@ fn ScheduleTimeline(
 
     // All match dates in local time (unique, sorted) for prev/next navigation
     let dates_with_matches: Vec<chrono::NaiveDate> = {
-        let mut dates: Vec<chrono::NaiveDate> = data.matches.iter()
+        let mut dates: Vec<chrono::NaiveDate> = data
+            .matches
+            .iter()
             .filter(|m| m.status != "SKIPPED")
             .filter_map(|m| effective_start_str(m))
             .filter_map(|s| parse_schedule_time_to_local(s, tz_offset_minutes))
@@ -2249,7 +2299,8 @@ fn ScheduleTimeline(
     };
 
     // Today in local time
-    let today_local = (chrono::Utc::now() + chrono::Duration::minutes(tz_offset_minutes)).date_naive();
+    let today_local =
+        (chrono::Utc::now() + chrono::Duration::minutes(tz_offset_minutes)).date_naive();
 
     // Default visible date: today if it has matches, else first day with matches
     let mut visible_date_signal = use_signal(|| {
@@ -2276,7 +2327,11 @@ fn ScheduleTimeline(
                     }
                 }
                 "prev" => {
-                    if let Some(idx) = dates.iter().position(|&d| d == current).and_then(|i| i.checked_sub(1)) {
+                    if let Some(idx) = dates
+                        .iter()
+                        .position(|&d| d == current)
+                        .and_then(|i| i.checked_sub(1))
+                    {
                         if let Some(&prev_date) = dates.get(idx) {
                             visible_date_signal.set(prev_date);
                         }
@@ -2299,7 +2354,8 @@ fn ScheduleTimeline(
     let visible_fields: Vec<&FieldSetupData> = if selected_field == "all" {
         data.fields.iter().collect()
     } else {
-        data.fields.iter()
+        data.fields
+            .iter()
             .filter(|f| f.id.to_string() == selected_field)
             .collect()
     };
@@ -2314,13 +2370,15 @@ fn ScheduleTimeline(
     const FIRST_HOUR: u32 = 0;
     const LAST_HOUR: u32 = 24;
     let slots_per_day = ((LAST_HOUR - FIRST_HOUR) * 60 / SLOT_MINUTES as u32) as usize;
-    
+
     // Get current visible date value (reactive - will update when signal changes)
     let current_visible_date = visible_date_signal();
 
     // Build timeline events (non-join matches)
     // Use confirmed_start_time/completed_time when set; else nominal_start_time and start + nominal_length
-    let mut timeline_events: Vec<TimelineEvent> = data.matches.iter()
+    let mut timeline_events: Vec<TimelineEvent> = data
+        .matches
+        .iter()
         .filter(|m| m.status != "SKIPPED")
         .filter(|m| m.schedule_type.as_deref() != Some("JOIN"))
         .filter_map(|m| {
@@ -2336,53 +2394,94 @@ fn ScheduleTimeline(
             };
             let field_name = m.field.as_ref()?;
             let field = data.fields.iter().find(|f| &f.name == field_name)?;
-            
+
             // Check if field is visible
             if selected_field != "all" && field.id.to_string() != selected_field {
                 return None;
             }
-            
+
             // Don't filter by date here - we'll filter when rendering based on current_visible_date
             // This allows date navigation to work properly
-            
+
             // Display pseudonyms (from registration): prefer team_options pseudonym when team ID is set.
             // We keep both a "raw" (full pseudonym) and a "label" (shortname/truncated) form:
             // - label is what gets rendered in the timeline (limited horizontal space).
             // - raw is what the highlight filter substring-matches against, so a user typing
             //   the full team name still matches teams whose label was abbreviated.
-            let opt1 = m.team1.as_ref().and_then(|id| data.team_options.iter().find(|o| &o.id == id));
-            let t1_raw = opt1.and_then(|o| o.pseudonym.as_deref()).map(String::from)
+            let opt1 = m
+                .team1
+                .as_ref()
+                .and_then(|id| data.team_options.iter().find(|o| &o.id == id));
+            let t1_raw = opt1
+                .and_then(|o| o.pseudonym.as_deref())
+                .map(String::from)
                 .unwrap_or_else(|| m.team1_initial.as_deref().unwrap_or("").to_string());
-            let t1 = opt1.map(|o| short_or_truncate(o.pseudonym.as_deref().unwrap_or(o.id.as_str()), o.shortname.as_deref()))
+            let t1 = opt1
+                .map(|o| {
+                    short_or_truncate(
+                        o.pseudonym.as_deref().unwrap_or(o.id.as_str()),
+                        o.shortname.as_deref(),
+                    )
+                })
                 .unwrap_or_else(|| m.team1_initial.as_deref().unwrap_or("").to_string());
-            let opt2 = m.team2.as_ref().and_then(|id| data.team_options.iter().find(|o| &o.id == id));
-            let t2_raw = opt2.and_then(|o| o.pseudonym.as_deref()).map(String::from)
+            let opt2 = m
+                .team2
+                .as_ref()
+                .and_then(|id| data.team_options.iter().find(|o| &o.id == id));
+            let t2_raw = opt2
+                .and_then(|o| o.pseudonym.as_deref())
+                .map(String::from)
                 .unwrap_or_else(|| m.team2_initial.as_deref().unwrap_or("").to_string());
-            let t2 = opt2.map(|o| short_or_truncate(o.pseudonym.as_deref().unwrap_or(o.id.as_str()), o.shortname.as_deref()))
+            let t2 = opt2
+                .map(|o| {
+                    short_or_truncate(
+                        o.pseudonym.as_deref().unwrap_or(o.id.as_str()),
+                        o.shortname.as_deref(),
+                    )
+                })
                 .unwrap_or_else(|| m.team2_initial.as_deref().unwrap_or("").to_string());
 
             // Team profile photos
             let team1_photo = opt1.and_then(|o| o.profile_photo.clone());
             let team2_photo = opt2.and_then(|o| o.profile_photo.clone());
             // Refs as list of (display_name, profile_photo). Keep a raw form for filter matching.
-            let refs_tokens: Vec<&str> = m.refs.as_deref().or(m.refs_initial.as_deref()).unwrap_or("")
+            let refs_tokens: Vec<&str> = m
+                .refs
+                .as_deref()
+                .or(m.refs_initial.as_deref())
+                .unwrap_or("")
                 .split(',')
                 .map(|s| s.trim())
                 .filter(|s| !s.is_empty())
                 .collect();
-            let refs_list: Vec<(String, Option<String>)> = refs_tokens.iter()
+            let refs_list: Vec<(String, Option<String>)> = refs_tokens
+                .iter()
                 .map(|token| {
                     let opt = data.team_options.iter().find(|o| &o.id == token);
-                    let display = opt.map(|o| short_or_truncate(o.pseudonym.as_deref().unwrap_or(o.id.as_str()), o.shortname.as_deref())).unwrap_or_else(|| token.to_string());
+                    let display = opt
+                        .map(|o| {
+                            short_or_truncate(
+                                o.pseudonym.as_deref().unwrap_or(o.id.as_str()),
+                                o.shortname.as_deref(),
+                            )
+                        })
+                        .unwrap_or_else(|| token.to_string());
                     let photo = opt.and_then(|o| o.profile_photo.clone());
                     (display, photo)
                 })
                 .collect();
-            let refs_display = refs_list.iter().map(|(d, _)| d.as_str()).collect::<Vec<_>>().join(", ");
-            let refs_display_raw = refs_tokens.iter()
+            let refs_display = refs_list
+                .iter()
+                .map(|(d, _)| d.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            let refs_display_raw = refs_tokens
+                .iter()
                 .map(|token| {
                     let opt = data.team_options.iter().find(|o| &o.id == token);
-                    opt.and_then(|o| o.pseudonym.as_deref()).map(String::from).unwrap_or_else(|| token.to_string())
+                    opt.and_then(|o| o.pseudonym.as_deref())
+                        .map(String::from)
+                        .unwrap_or_else(|| token.to_string())
                 })
                 .collect::<Vec<_>>()
                 .join(", ");
@@ -2396,11 +2495,12 @@ fn ScheduleTimeline(
                 (false, false)
             } else {
                 let ht = highlight_team.to_lowercase();
-                let playing = t1_raw.to_lowercase().contains(&ht) || t2_raw.to_lowercase().contains(&ht);
+                let playing =
+                    t1_raw.to_lowercase().contains(&ht) || t2_raw.to_lowercase().contains(&ht);
                 let reffing = !playing && refs_display_raw.to_lowercase().contains(&ht);
                 (playing, reffing)
             };
-            
+
             Some(TimelineEvent {
                 id: m.uuid.clone(),
                 name: m.name.clone(),
@@ -2467,7 +2567,8 @@ fn ScheduleTimeline(
 
     // Compute lanes using exact time overlap (not slot-based), so only actually overlapping events share width
     for field in &visible_fields {
-        let field_event_indices: Vec<usize> = timeline_events.iter()
+        let field_event_indices: Vec<usize> = timeline_events
+            .iter()
             .enumerate()
             .filter(|(_, e)| {
                 e.field_id == field.id
@@ -2488,7 +2589,8 @@ fn ScheduleTimeline(
         // Assign lane: first lane L such that no already-placed event that overlaps this one (in time) uses L
         for (k, &idx) in sorted_indices.iter().enumerate() {
             let event = &timeline_events[idx];
-            let occupied_lanes: std::collections::HashSet<usize> = sorted_indices[..k].iter()
+            let occupied_lanes: std::collections::HashSet<usize> = sorted_indices[..k]
+                .iter()
                 .filter(|&&i| events_overlap(event, &timeline_events[i]))
                 .map(|&i| timeline_events[i].lane_index)
                 .collect();
@@ -2502,7 +2604,8 @@ fn ScheduleTimeline(
         // num_lanes per event = 1 + max lane among all events that overlap this one (in time)
         for &idx in &field_event_indices {
             let event = &timeline_events[idx];
-            let max_lane = field_event_indices.iter()
+            let max_lane = field_event_indices
+                .iter()
                 .filter(|&&i| events_overlap(event, &timeline_events[i]))
                 .map(|&i| timeline_events[i].lane_index)
                 .max()
@@ -2515,46 +2618,58 @@ fn ScheduleTimeline(
     let join_groups: Vec<JoinGroup> = {
         use std::collections::HashMap;
         let mut groups: HashMap<String, Vec<&MatchSetupData>> = HashMap::new();
-        
+
         for m in &data.matches {
             if m.status == "SKIPPED" {
                 continue;
             }
             if m.schedule_type.as_deref() == Some("JOIN") {
-                groups.entry(m.name.clone()).or_insert_with(Vec::new).push(m);
+                groups
+                    .entry(m.name.clone())
+                    .or_insert_with(Vec::new)
+                    .push(m);
             }
         }
-        
-        groups.into_iter().filter_map(|(name, matches)| {
-            if matches.is_empty() {
-                return None;
-            }
-            
-            // Get time from first match (effective start in local time)
-            let time_str = effective_start_str(matches[0])?;
-            let time_dt = parse_schedule_time_to_local(time_str, tz_offset_minutes)?;
-            
-            // Build per-field join matches (field_id -> match_uuid)
-            let field_matches: Vec<(u32, String)> = matches
-                .iter()
-                .filter_map(|m| {
-                    let field_name = m.field.as_ref()?;
-                    let field_id = data.fields.iter().find(|f| &f.name == field_name).map(|f| f.id)?;
-                    Some((field_id, m.uuid.clone()))
-                })
-                .filter(|(field_id, _)| selected_field == "all" || field_id.to_string() == selected_field)
-                .collect();
 
-            if field_matches.is_empty() {
-                return None;
-            }
-            
-            Some(JoinGroup {
-                name: name.clone(),
-                time: time_dt,
-                field_matches,
+        groups
+            .into_iter()
+            .filter_map(|(name, matches)| {
+                if matches.is_empty() {
+                    return None;
+                }
+
+                // Get time from first match (effective start in local time)
+                let time_str = effective_start_str(matches[0])?;
+                let time_dt = parse_schedule_time_to_local(time_str, tz_offset_minutes)?;
+
+                // Build per-field join matches (field_id -> match_uuid)
+                let field_matches: Vec<(u32, String)> = matches
+                    .iter()
+                    .filter_map(|m| {
+                        let field_name = m.field.as_ref()?;
+                        let field_id = data
+                            .fields
+                            .iter()
+                            .find(|f| &f.name == field_name)
+                            .map(|f| f.id)?;
+                        Some((field_id, m.uuid.clone()))
+                    })
+                    .filter(|(field_id, _)| {
+                        selected_field == "all" || field_id.to_string() == selected_field
+                    })
+                    .collect();
+
+                if field_matches.is_empty() {
+                    return None;
+                }
+
+                Some(JoinGroup {
+                    name: name.clone(),
+                    time: time_dt,
+                    field_matches,
+                })
             })
-        }).collect()
+            .collect()
     };
 
     // Pre-compute slot time strings
@@ -2566,7 +2681,7 @@ fn ScheduleTimeline(
             format!("{:02}:{:02}", hour, minute)
         })
         .collect();
-    
+
     // Pre-compute join line data with slots and exact top offset within slot (to-the-minute)
     #[allow(dead_code)]
     struct JoinLineData {
@@ -2581,7 +2696,8 @@ fn ScheduleTimeline(
         field_items: Vec<(usize, String)>,
     }
 
-    let join_lines_data: Vec<JoinLineData> = join_groups.iter()
+    let join_lines_data: Vec<JoinLineData> = join_groups
+        .iter()
         .filter_map(|join| {
             let date = join.time.date();
             if date != current_visible_date {
@@ -2630,7 +2746,8 @@ fn ScheduleTimeline(
 
     // Target row for auto-scroll: first match of the day, or current time if viewing today
     let first_match_slot = {
-        let event_slots = timeline_events.iter()
+        let event_slots = timeline_events
+            .iter()
             .filter(|e| e.start_time.date() == current_visible_date)
             .map(|e| {
                 let h = e.start_time.hour();
@@ -2684,7 +2801,7 @@ fn ScheduleTimeline(
 
     const TIME_COL_WIDTH_PX: u32 = 80;
     let base_url = api::base_url();
-    
+
     rsx! {
         div { class: "schedule-timeline-wrapper", id: "schedule-timeline-wrapper",
             div { class: "schedule-timeline-nav",
@@ -2786,7 +2903,7 @@ fn ScheduleTimeline(
                                                 event_slot == slot
                                             })
                                             .collect();
-                                        
+
                                         // Pre-compute event rendering data: exact-to-the-minute top and height (fraction of slot)
                                         let event_render_data_opt = if !events_in_slot.is_empty() {
                                             let max_lanes = events_in_slot.first().map(|e| e.num_lanes).unwrap_or(1);
@@ -2803,7 +2920,7 @@ fn ScheduleTimeline(
                                         } else {
                                             None
                                         };
-                                        
+
                                         // Join at this (slot, col_idx): horizontal line in cell; label in edit mode (positioned to-the-minute)
                                         let join_in_cell = join_lines_data.iter().find_map(|jl| {
                                             if jl.slot != slot { return None; }
@@ -2811,7 +2928,7 @@ fn ScheduleTimeline(
                                                 .find(|(c, _)| *c == col_idx)
                                                 .map(|(_, mid)| (jl.join.name.clone(), mid.clone(), jl.top_fraction))
                                         });
-                                        
+
                                         rsx! {
                                             if let Some(event_render_data) = event_render_data_opt {
                                                 div {
@@ -2959,39 +3076,54 @@ fn ScheduleTimeline(
 
 #[component]
 fn EditMatchModal(
-    tournament_url: String, 
-    match_id: String, 
+    tournament_url: String,
+    match_id: String,
     data: ScheduleSetupResponse,
-    on_close: EventHandler<()>, 
-    on_save: EventHandler<()>
+    on_close: EventHandler<()>,
+    on_save: EventHandler<()>,
 ) -> Element {
     let match_data = data.matches.iter().find(|m| m.uuid == match_id).cloned();
-    
+
     if match_data.is_none() {
         return rsx! { div { "Match not found" } };
     }
-    
+
     let m = match_data.unwrap();
-    
+
     // Original schedule type for edit: only allow transitions STATIC→SAFE/FAST, SAFE→FAST
     let original_schedule_type = m.schedule_type.as_deref().unwrap_or("STATIC");
-    
+
     let name = use_signal(|| m.name.clone());
     let mut field = use_signal(|| m.field.clone().unwrap_or_default());
     let schedule_type = use_signal(|| m.schedule_type.clone().unwrap_or("STATIC".to_string()));
     let mut length = use_signal(|| m.nominal_length.unwrap_or(60));
-    
+
     let start_time_init = if let Some(t) = &m.nominal_start_time {
         utc_iso_to_local_datetime_input(t).unwrap_or_else(|| t.chars().take(16).collect::<String>())
     } else {
         "".to_string()
     };
-    
+
     let start_time = use_signal(|| start_time_init);
     let mut previous_match_id = use_signal(|| m.previous_match.clone().unwrap_or_default());
-    let mut refs = use_signal(|| m.refs_initial.clone().or(m.refs.clone()).unwrap_or_default());
-    let mut team1 = use_signal(|| m.team1_initial.clone().or(m.team1.clone()).unwrap_or_default());
-    let mut team2 = use_signal(|| m.team2_initial.clone().or(m.team2.clone()).unwrap_or_default());
+    let mut refs = use_signal(|| {
+        m.refs_initial
+            .clone()
+            .or(m.refs.clone())
+            .unwrap_or_default()
+    });
+    let mut team1 = use_signal(|| {
+        m.team1_initial
+            .clone()
+            .or(m.team1.clone())
+            .unwrap_or_default()
+    });
+    let mut team2 = use_signal(|| {
+        m.team2_initial
+            .clone()
+            .or(m.team2.clone())
+            .unwrap_or_default()
+    });
     let mut set_type = use_signal(|| m.set_type.clone().unwrap_or("SETS".to_string()));
     let mut nsets = use_signal(|| m.nsets.unwrap_or(3));
     let mut stones_per_set = use_signal(|| m.stones_per_set.unwrap_or(100));
@@ -3008,7 +3140,11 @@ fn EditMatchModal(
     let match_id_effect = match_id.clone();
     let data_effect = data.clone();
     use_effect(move || {
-        if let Some(m) = data_effect.matches.iter().find(|x| x.uuid == match_id_effect) {
+        if let Some(m) = data_effect
+            .matches
+            .iter()
+            .find(|x| x.uuid == match_id_effect)
+        {
             field.set(m.field.clone().unwrap_or_default());
             previous_match_id.set(m.previous_match.clone().unwrap_or_default());
         }
@@ -3023,7 +3159,11 @@ fn EditMatchModal(
         field.set(new_field.clone());
         previous_match_id.set("".to_string());
         if !new_field.is_empty() {
-            let list = matches_on_field_sorted(&data_field_edit.matches, &new_field, Some(&match_id_for_field));
+            let list = matches_on_field_sorted(
+                &data_field_edit.matches,
+                &new_field,
+                Some(&match_id_for_field),
+            );
             if let Some(prev) = list.first() {
                 length.set(prev.nominal_length.unwrap_or(60));
                 set_type.set(prev.set_type.clone().unwrap_or_else(|| "SETS".to_string()));
@@ -3042,13 +3182,18 @@ fn EditMatchModal(
         if st == "BREAK" || st == "JOIN" || st == "FAST" || st == "SAFE" {
             let prev_id = previous_match_id().trim().to_string();
             if prev_id.is_empty() {
-                error.set(Some("Previous match is required for Break, Join, Fast, and Safe matches.".to_string()));
+                error.set(Some(
+                    "Previous match is required for Break, Join, Fast, and Safe matches."
+                        .to_string(),
+                ));
                 return;
             }
             let current_field = field();
             if let Some(prev_m) = data_save.matches.iter().find(|x| x.uuid == prev_id) {
                 if prev_m.field.as_deref() != Some(current_field.as_str()) {
-                    error.set(Some("Previous match must be on the same field.".to_string()));
+                    error.set(Some(
+                        "Previous match must be on the same field.".to_string(),
+                    ));
                     return;
                 }
             }
@@ -3059,7 +3204,9 @@ fn EditMatchModal(
         saving.set(true);
         error.set(None);
         spawn(async move {
-            if (schedule_type() == "SAFE" || schedule_type() == "FAST") && !skip_condition().trim().is_empty() {
+            if (schedule_type() == "SAFE" || schedule_type() == "FAST")
+                && !skip_condition().trim().is_empty()
+            {
                 if let Some(Err(msg)) = skip_condition_validity() {
                     error.set(Some(format!("Skip condition: {msg}")));
                     saving.set(false);
@@ -3068,13 +3215,22 @@ fn EditMatchModal(
                 match api::validate_dsl(&tournament_url, &skip_condition()).await {
                     Ok(res) => {
                         if !res.valid {
-                            error.set(Some(format!("Skip condition: {}", res.error.unwrap_or_else(|| "invalid".to_string()))));
+                            error.set(Some(format!(
+                                "Skip condition: {}",
+                                res.error.unwrap_or_else(|| "invalid".to_string())
+                            )));
                             saving.set(false);
                             return;
                         }
                         if !res.result_type.iter().any(|t| t == "BOOL") {
-                            let got = if res.result_type.is_empty() { "unknown".to_string() } else { res.result_type.join(" | ") };
-                            error.set(Some(format!("Skip condition must evaluate to BOOL, got {got}.")));
+                            let got = if res.result_type.is_empty() {
+                                "unknown".to_string()
+                            } else {
+                                res.result_type.join(" | ")
+                            };
+                            error.set(Some(format!(
+                                "Skip condition must evaluate to BOOL, got {got}."
+                            )));
                             saving.set(false);
                             return;
                         }
@@ -3086,7 +3242,11 @@ fn EditMatchModal(
                     }
                 }
             }
-            let refs_vec: Vec<String> = refs().split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+            let refs_vec: Vec<String> = refs()
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
             let len = if schedule_type() == "JOIN" {
                 Some(0u32)
             } else {
@@ -3117,8 +3277,14 @@ fn EditMatchModal(
                 skip_condition: Some(skip_condition()),
             };
             match api::update_match(&tournament_url, &match_id, &req).await {
-                Ok(_) => { saving.set(false); on_save.call(()); }
-                Err(e) => { error.set(Some(e)); saving.set(false); }
+                Ok(_) => {
+                    saving.set(false);
+                    on_save.call(());
+                }
+                Err(e) => {
+                    error.set(Some(e));
+                    saving.set(false);
+                }
             }
         });
     })));
@@ -3171,7 +3337,7 @@ fn EditMatchModal(
                         form {
                             onsubmit: onsubmit,
                             onkeydown: form_keydown,
-                            
+
                             div { class: "row",
                                 div { class: "col-md-6",
                                     div { class: "mb-3",
@@ -3194,7 +3360,7 @@ fn EditMatchModal(
                                     }
                                 }
                             }
-                            
+
                             div { class: "row",
                                 div { class: "col-md-6",
                                     div { class: "mb-3",
@@ -3226,7 +3392,7 @@ fn EditMatchModal(
                                     }
                                 }
                             }
-                            
+
                             if schedule_type() == "STATIC" {
                                 div { class: "mb-3",
                                     label { class: "form-label", "Start Time" }
@@ -3243,7 +3409,7 @@ fn EditMatchModal(
                                     }
                                 }
                             }
-                            
+
                             if schedule_type() == "STATIC" || schedule_type() == "SAFE" || schedule_type() == "FAST" {
                                 div { class: "row",
                                     div { class: "col-md-6",
@@ -3345,10 +3511,10 @@ fn EditMatchModal(
                                     }
                                 }
                             }
-                            
+
                             div { class: "modal-footer",
                                 button { class: "btn btn-secondary", "type": "button", onclick: move |_| on_close.call(()), "Cancel (Esc)" }
-                                button { class: "btn btn-danger", "type": "button", 
+                                button { class: "btn btn-danger", "type": "button",
                                     onclick: move |_| {
                                         // Delete match
                                         let u = url_sig();
@@ -3360,11 +3526,11 @@ fn EditMatchModal(
                                             }
                                         }
                                     },
-                                    "Delete" 
+                                    "Delete"
                                 }
                                 button { class: "btn btn-primary", "type": "submit", disabled: "{saving}",
                                     if saving() { span { class: "spinner-border spinner-border-sm me-2" } }
-                                    "Save (⇧↵)" 
+                                    "Save (⇧↵)"
                                 }
                             }
                         }
@@ -3413,7 +3579,12 @@ fn team_ref_display(raw: &str) -> (u8, String) {
     } else if raw.ends_with("::loser") {
         let name = raw.strip_suffix("::loser").unwrap_or(raw).trim();
         (2, format!("{} loser", name))
-    } else if raw.len() >= 5 && raw.get(..5).map(|s| s.eq_ignore_ascii_case("tag::")).unwrap_or(false) {
+    } else if raw.len() >= 5
+        && raw
+            .get(..5)
+            .map(|s| s.eq_ignore_ascii_case("tag::"))
+            .unwrap_or(false)
+    {
         (1, raw.get(5..).unwrap_or("").trim().to_string())
     } else {
         (0, raw.to_string())

@@ -93,18 +93,17 @@ consistency; it is recommended to instead use `(winner
 
 ## Lists
 
-You can construct a list using the `cons` function.
+All code is already a list, but it gets evaluated by default. To write
+a data list, you can use the `quote` function or the standard
+shorthand prefix `'`.
 
 ```
-(cons 1 2 3) -> the bare list 1 2 3
+(quote (1 2 3)) -> the data list 1 2 3
+'(1 2 3) -> also the data list 1 2 3
 (1 2 3) -> cannot call 1 as a function
 ```
 
-this works because you can think of the parenthesis surrounding a
-written list as if they were instructions to the parser to call the
-first item in the list. The list returned by `cons` doesn't have
-parenthesis around it, so it's fine (but you can't write these as a
-literal).
+Lists can have any (potentially mixed) data inside them. 
 
 Now here are some fun things you can do with lists:
 
@@ -119,7 +118,8 @@ Now here are some fun things you can do with lists:
 Now, lists are only really useful if you can loop through them, but we
 haven't introduced any form of looping yet. Since this is a functional
 language, we don't have the familiar concepts like for loops and while
-loops, but we do have `map`, `reduce`, and `lambda`.
+loops, but we do have `map`, `reduce`, and `lambda`. These may be
+familiar to you if you've used Google Sheets or Excel.
 
 First, `lambda` creates a function. The following expression is a
 function that takes two arguments, `a`, `b`, and `c`, and returns
@@ -150,7 +150,7 @@ and we get the correct answer of `15`. Or we can take the max of the list by usi
 (reduce (cons 1 2 5 3 4) (lambda (a b) (if (> a b) a b)))
 ```
 
-Some of these can be tedious to impelment, so i've included some builtins:
+Some of these can be tedious to implement, so i've included some builtins:
 
 - `(max LIST)` - get the max value
 - `(min LIST)` - get the min value
@@ -200,7 +200,7 @@ or the skip condition evaluates to `true` and it gets skipped.
 
 - `(if CONDITION IF_TRUE IF_FALSE)` - If condition is true, return IF_TRUE, otherwise return IF_FALSE  
 - `(lambda (*args) (output))` - Define a lambda function  
-- `(cons *_ )` - Create a list from the arguments  
+- `(quote VALUE)` - interpret VALUE as data, not code. Typically used for list literals
 - `(car LIST)` - Get the first element of a list  
 - `(cdr LIST)` - Get the rest of a list  
 - `(get INDEX LIST)` - Get the element at index  
@@ -216,5 +216,3 @@ or the skip condition evaluates to `true` and it gets skipped.
 - `(== 0 (losses [TeamName]))` - Skip if team has no losses  
 - `(> (wins [TeamA]) (wins [TeamB]))` - Skip if TeamA has more wins than TeamB  
 - `(== (winner {Match1}) [TeamName])` - Skip if TeamName won Match1  
-
-
