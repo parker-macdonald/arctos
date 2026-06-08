@@ -1283,6 +1283,9 @@ pub struct ValidateDslResponse {
     #[serde(default)]
     pub simplified: Option<String>,
     pub error: Option<String>,
+    /// Possible types of the simplified result, e.g. ["BOOL"], ["TEAM"], ["UNKNOWN"].
+    #[serde(default)]
+    pub result_type: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

@@ -1,8 +1,8 @@
 ?start: expression
 
-// same as lisp! everything is atom or list.
 ?expression: atom
            | list
+           | quoted
 
 // atoms are all the non-list types.
 // identifiers are like. variable names for lambdas.
@@ -16,6 +16,9 @@
 
 // Lists (S-expressions) - everything is a list!
 list: "(" (expression (expression)*)? ")"
+
+// 'EXPR is shorthand for (quote EXPR), as in standard Lisp.
+quoted: "'" expression
 
 // Data type literals
 INT: /-?\d+/
