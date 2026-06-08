@@ -1,39 +1,58 @@
 # Environment Variables
 
 This is a list of all environment variables that can be used to
-configure Arctos.
+configure Arctos. For local development, copy `.env.example` to `.env`
+and fill only the values you need.
 
 `SECRET_KEY`
-: the flask secret. generate randomly.
+: Flask session signing secret. Format: any long random string. Generate
+  one with `python -c "import os; print(os.urandom(32).hex())"`.
 
 `ARCTOS_CORS_DEV`
-: (default `0`) if `1`, sets cookies to allow CORS requests. needed for development
-  when we don't have a reverse proxy set up.
-  
+: (default `0`) Set to `1` when the frontend and backend run on
+  different local origins during development. Leave unset or `0` in
+  production.
+
 `ARCTOS_PORT`
-: (default `5006`) port to run the backend on. 
+: (default `5006`) Backend port when running `python run_app.py`.
 
 `SQLALCHEMY_DATABASE_URI`
-: fairly self explanatory. URI to db.
+: SQLAlchemy database URI. Format: `sqlite:///tournament.db` for a local
+  SQLite file, or any SQLAlchemy-supported database URI.
 
 `SCRIPT_NAME`
-: path prefix for subpath deployments. ngl i have no clue why I added
-  this so it may be removed
+: URL path prefix for subpath deployments. Format: leading slash, no
+  trailing slash; e.g. `/arctos`.
+
+`EXTERNAL_BASE_URL`
+: Public URL where this Arctos instance is reachable. Format: absolute
+  URL without a trailing slash; e.g. `https://arctos.example.org`.
+
+`ARCTOS_LOG_LEVEL`
+: (default `INFO`) Python logging level; e.g. `DEBUG`, `INFO`,
+  `WARNING`, `ERROR`.
 
 `MAX_CONTENT_LENGTH_BYTES`
-: max content length in a single request. a flask setting.
+: (default `104857600`) Max upload/request size in bytes.
 
 `SILLY_USERS`
-: colon-separated list of silly users.
+: Colon-separated account ids/usernames. These are the `Player.id` or
+  `Team.id` slug values used to log in, not display names and not
+  numeric database row ids; e.g. `alice:team-slug`.
 
 `RECORDING_ARTIFACTS_AFTER_UPLOAD`
-: (default: `delete`) what to do with footage after it's been uploaded. either `delete` or `s3` (upload to s3 bucket)
+: (default `delete`) What to do with footage after upload. Allowed
+  values: `delete` or `s3`.
 
 `ENABLE_MANUAL_FOOTAGE_UPLOADS`
-: (default: `false`) on `true`, show button to upload footage on tournament page.
+: (default `false`) Set to `true` to show manual footage upload
+  controls.
 
 `RETRY_FINALIZATION_USER_IDS`
-: colon-separated list of users that see the button to retry video finalization.
+: Colon-separated account ids/usernames that can see the retry video
+  finalization button. These are the `Player.id` or `Team.id` slug
+  values used to log in, not display names and not numeric database row
+  ids; e.g. `alice:team-slug`.
 
 
 ## Google Oauth2 info
@@ -41,10 +60,10 @@ configure Arctos.
 go to google cloud console for these
 
 `GOOGLE_CLIENT_ID`
-: client ID
+: OAuth client id from Google Cloud Console.
 
 `GOOGLE_CLIENT_SECRET`
-: client secret.
+: OAuth client secret from Google Cloud Console.
 
 Google OAuth callback URLs are derived from the incoming request host. If the
 same server is reachable on multiple public domains, add each domain's
@@ -55,18 +74,28 @@ Cloud Console.
 ## S3 Bucket Config
 
 `AWS_REGION`
+: AWS or S3-compatible region name; e.g. `us-east-1` or Backblaze B2
+  `us-west-002`.
 
 `AWS_ACCESS_KEY_ID`
+: S3-compatible access key id.
 
 `AWS_SECRET_ACCESS_KEY`
+: S3-compatible secret access key.
 
 `S3_ENDPOINT_URL`
+: Absolute S3-compatible endpoint URL. For Backblaze B2, this looks like
+  `https://s3.us-west-002.backblazeb2.com`.
 
 `S3_PRESIGNED_EXPIRY_SECONDS`
+: (default `3600`) Presigned URL lifetime in seconds.
 
 `S3_VIDEO_BUCKET`
+: Bucket name only, not an `s3://` URL.
 
 `S3_VIDEO_PREFIX`
+: Optional key prefix inside the bucket. Format: path-like string without
+  leading slash; e.g. `recordings/prod`.
 
 ## Youtube config
 
@@ -74,20 +103,22 @@ Cloud Console.
 : its literally just the youtube api key what explanation do you want
 
 `YOUTUBE_UPLOAD_CLIENT_ID`
-: client id for youtube
+: Optional OAuth client id for upload. If unset, Arctos uses
+  `GOOGLE_CLIENT_ID`.
 
 `YOUTUBE_UPLOAD_CLIENT_SECRET`
-: client secret for youtube
+: Optional OAuth client secret for upload. If unset, Arctos uses
+  `GOOGLE_CLIENT_SECRET`.
 
 `YOUTUBE_UPLOAD_REFRESH_TOKEN`
-: go to the google api playground and change the settings to 'use my
-  client ID and secret' or something in order to get this
+: OAuth refresh token for the upload account. Generate one with the
+  Google OAuth playground or your preferred OAuth flow using the upload
+  client id and secret.
 
 `YOUTUBE_UPLOAD_PRIVACY_STATUS`
-: (default `unlisted`) the privacy status to set youtube videos to.
+: (default `unlisted`) YouTube privacy status, usually `private`,
+  `unlisted`, or `public`.
 
 `YOUTUBE_UPLOAD_CATEGORY_ID`
-: (default 22) youtube category to upload to. probably should default
-to 17 since thats what its set to in prod rn.
-
-
+: (default `22`) Numeric YouTube category id. The local example uses
+  `17` for Sports.

@@ -211,7 +211,7 @@ def create_app(config: dict | None = None) -> Flask:
 
     # Initialize login manager
     login_manager.init_app(app)
-    login_manager.login_view = "_api.login_redirect"
+    login_manager.login_view = "auth.login_redirect"
 
     @login_manager.unauthorized_handler
     def unauthorized():
@@ -240,15 +240,23 @@ def create_app(config: dict | None = None) -> Flask:
     from app.routes.notes import bp as notes_bp
     from app.routes.registration import bp as registration_bp
     from app.routes.sidecomps import bp as sidecomps_bp
-    from app.routes._api import bp as _api_bp
+    from app.routes.content import bp as content_bp
+    from app.routes.leagues import bp as leagues_bp
+    from app.routes.penalty_types import bp as penalty_types_bp
+    from app.routes.players import bp as players_bp
+    from app.routes.teams import bp as teams_bp
 
-    app.register_blueprint(_api_bp)
     app.register_blueprint(auth_bp)
     app.register_blueprint(tournaments_bp)
     app.register_blueprint(matches_bp)
     app.register_blueprint(notes_bp)
     app.register_blueprint(registration_bp)
     app.register_blueprint(sidecomps_bp)
+    app.register_blueprint(content_bp)
+    app.register_blueprint(leagues_bp)
+    app.register_blueprint(penalty_types_bp)
+    app.register_blueprint(players_bp)
+    app.register_blueprint(teams_bp)
 
     # Register template filters
     from app import filters

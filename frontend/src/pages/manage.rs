@@ -1,5 +1,7 @@
 use crate::api;
-use crate::types::{PlayerListItem, RegisterPlayerAsToResponse, RegisterTeamAsToResponse, TeamListItem};
+use crate::types::{
+    PlayerListItem, RegisterPlayerAsToResponse, RegisterTeamAsToResponse, TeamListItem,
+};
 use crate::Route;
 use dioxus::prelude::*;
 use wasm_bindgen::JsCast;
@@ -44,7 +46,11 @@ pub fn Manage(url: String) -> Element {
         let s = submitted_search().clone();
         let t = submitted_type().clone();
         let _r = refresh();
-        async move { api::tournament_manage(&u, &s, &t).await.map_err(|e| e.to_string()) }
+        async move {
+            api::tournament_manage(&u, &s, &t)
+                .await
+                .map_err(|e| e.to_string())
+        }
     });
     let val = data.value();
 
@@ -868,8 +874,8 @@ pub fn Manage(url: String) -> Element {
                                                             r#type: "text",
                                                             class: "form-control",
                                                             id: "team_shortname",
-                                                            maxlength: "12",
-                                                            placeholder: "e.g. BCS",
+                                                            maxlength: "8",
+                                                            placeholder: "e.g. UWaoW",
                                                             value: "{team_shortname_input()}",
                                                             oninput: move |e| team_shortname_input.set(e.value()),
                                                         }

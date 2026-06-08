@@ -250,7 +250,9 @@ fn EditPlayerRegistrationContent(
             let (reg_res, teams_res) = match &ctx {
                 EditRegistrationContext::League { league_url } => (
                     api::get_my_player_registration_league(league_url).await,
-                    api::league_detail(league_url).await.map(|d| d.teams_with_counts),
+                    api::league_detail(league_url)
+                        .await
+                        .map(|d| d.teams_with_counts),
                 ),
                 EditRegistrationContext::Tournament { tournament_url } => (
                     api::get_my_player_registration(tournament_url).await,
@@ -274,14 +276,12 @@ fn EditPlayerRegistrationContent(
                         .set(res.waiver_legal_name_signature.unwrap_or_default());
 
                     if let Some(ref ct) = res.current_team {
-                        current_team_name.set(ct.pseudonym.clone().unwrap_or_else(|| ct.id.clone()));
+                        current_team_name
+                            .set(ct.pseudonym.clone().unwrap_or_else(|| ct.id.clone()));
                     }
                     let mut t_list = vec![];
                     for t in teams_list {
-                        t_list.push((
-                            t.team_id.clone(),
-                            t.pseudonym.unwrap_or(t.team_name),
-                        ));
+                        t_list.push((t.team_id.clone(), t.pseudonym.unwrap_or(t.team_name)));
                     }
                     teams.set(t_list);
                     let selected_team = res
@@ -536,7 +536,7 @@ fn EditTeamRegistrationContent(
                         class: "form-control",
                         "type": "text",
                         id: "shortname",
-                        maxlength: "12",
+                        maxlength: "8",
                         value: "{shortname}",
                         oninput: move |e| shortname.set(e.value()),
                     }

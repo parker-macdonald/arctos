@@ -13,7 +13,7 @@
      migrations. Delete this section if there's no schema impact.
 
      - Alembic revisions added: ###
-     - Run `make db-backup && make db-migrate` before deploy.
+     - Run `just db-backup && just db-migrate` before deploy.
      - Backfill needed?      Link the script.
      - Backwards compatible? If not, note what breaks and how to recover. -->
 
@@ -22,7 +22,8 @@
 <!-- What did you exercise? What's still untested?
      Don't just check the boxes; say what you actually ran. -->
 
-- [ ] `make test` passes locally
+- [ ] `just test` passes locally
+- [ ] `just coverage-check` passes locally, or CI coverage is sufficient
 - [ ] Manual verification:
   -
 
@@ -49,8 +50,8 @@ Refs   #
 - [ ] Title prefixed with one of `[Feature]`, `[Bugfix]`, `[Refactor]`, `[Documentation]`.
 - [ ] Branch name follows `category/name` (`feat/...`, `bugfix/...`, `refactor/...`).
 - [ ] Targeting `dev`, not `main` (unless this is a release PR).
-- [ ] `make lint` and `make format` are clean.
+- [ ] `just lint` and `just format` are clean.
 - [ ] Tests added or updated for the new behavior.
-- [ ] If a new module was added under `app/`: corresponding `app/<area>/README.md` and `docs/api/*.rst` are updated (per `CLAUDE.md`).
+- [ ] If a new module was added under `app/`: corresponding `app/<area>/README.md` and `docs/api/*.rst` are updated.
 - [ ] If developer workflow changes: `README.md`, `CONTRIBUTING.md`, or `TESTING.md` updated.
 - [ ] No merge conflicts with the base branch.

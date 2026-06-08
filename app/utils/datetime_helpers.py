@@ -108,3 +108,19 @@ def now_utc_naive() -> datetime:
         Naive ``datetime`` representing the current UTC moment.
     """
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def dt_iso(dt) -> str | None:
+    """Permissive ``str | None`` ISO formatter.
+
+    Returns ``None`` when *dt* is ``None``; otherwise calls ``isoformat()`` if
+    available and falls back to ``str(dt)`` for anything else. Distinct from
+    :func:`to_iso_z` (which wraps in :class:`~app.error_values.Option` and
+    forces a UTC ``Z`` suffix); both helpers exist because callers want
+    different semantics and migrating between them would be a behavior change.
+    """
+    if dt is None:
+        return None
+    if hasattr(dt, "isoformat"):
+        return dt.isoformat()
+    return str(dt)

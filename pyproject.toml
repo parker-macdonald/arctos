@@ -53,8 +53,12 @@ python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 addopts = "--verbose --tb=short --strict-markers --numprocesses=auto --color=yes --capture=no"
+# Console logging stays at WARNING so a normal test run isn't flooded with
+# app INFO messages. Bump to INFO/DEBUG on the CLI with
+# `--log-cli-level=DEBUG` when investigating a failure. The on-disk
+# pytest.log keeps INFO so post-hoc inspection is still possible.
 log_cli = true
-log_cli_level = "INFO"
+log_cli_level = "WARNING"
 log_format = "[%(name)s][%(asctime)s] %(levelname)s: %(message)s (%(filename)s:%(lineno)d)"
 log_date_format = "%Y-%m-%d %H:%M:%S"
 log_file_level = "INFO"
@@ -66,6 +70,33 @@ markers = [
     "integration: Integration tests",
     "slow: Slow running tests",
 ]
+
+[tool.coverage.run]
+source = ["app"]
+branch = true
+omit = [
+    "*/__pycache__/*",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+precision = 1
+# Soft floor. Current actual is ~33% with branch coverage on; this gate
+# catches significant regressions without blocking small fluctuations.
+# Bump it when coverage rises.
+fail_under = 30
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+    "@(abc\\.)?abstractmethod",
+    "\\.\\.\\.",
+]
+
+[tool.coverage.html]
+directory = "htmlcov"
 
 [tool.mypy]
 python_version = "3.12"

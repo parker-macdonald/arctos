@@ -16,6 +16,15 @@ fi
 
 . $CARGO_ENV_FILE
 
+# Bootstrap just on the deploy host if it isn't already on PATH.
+# Mirrors setup/setup-ubuntu.sh; idempotent so subsequent deploys skip.
+if ! command -v just &> /dev/null; then
+    mkdir -p "${HOME}/.local/bin"
+    curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh \
+        | bash -s -- --to "${HOME}/.local/bin"
+    export PATH="${HOME}/.local/bin:${PATH}"
+fi
+
 cd frontend
 dx bundle --web --release
 chmod -R a+rwX dist/public
@@ -24,16 +33,13 @@ cp -r dist/public $FRONTEND_SERVER_ROOT
 cd ..
 
 systemctl --user stop arctos
-make db-backup
-make db-migrate
+just db-migrate-safe
 systemctl --user start arctos
 
-cd docs
-
 if [ "$BUILD_DOCS" -eq 1 ]; then
-  make html
-  chmod -R a+rwX _build
-  cp -r _build/html $DOCS_SERVER_ROOT
+  just docs
+  chmod -R a+rwX docs/_build
+  cp -r docs/_build/html $DOCS_SERVER_ROOT
 fi
 
 set +e

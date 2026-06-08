@@ -6,8 +6,7 @@ blueprints by topic, but they all share the same URL prefix:
 
 Each file in this directory is a blueprint; its module-level docstring
 states the topic it covers. New endpoints should go into the most
-specific blueprint that fits; fall back to `_api.py` only if nothing
-else is appropriate.
+specific blueprint that fits; if none does, add a new one.
 
 ## What is a blueprint?
 
@@ -100,3 +99,43 @@ In production, nginx serves the SPA same-origin and CORS isn't needed.
 6. Write integration tests in [`tests/`](../../tests/README.md). The
    `client` fixture + `login_as(client, user)` from `tests/utils.py`
    covers most cases.
+
+## When to promote a blueprint to a package
+
+Default to a single file. Promote to a package only when one of these
+triggers fires:
+
+- The file crosses **~1,000 lines**.
+- The file develops **3+ genuinely distinct sub-topics** that don't share
+  state or helpers.
+- Recurring **merge conflicts** because two contributors are routinely
+  editing different parts of the same file.
+
+A single trigger is sufficient. Conversely, a 1,200-line file whose
+contents are tightly interrelated (one CRUD surface, shared helpers
+throughout) can stay a single file.
+
+### How to promote (mechanical)
+
+1. `mkdir app/routes/<topic>/`.
+2. `git mv app/routes/<topic>.py app/routes/<topic>/__init__.py`.
+3. In `__init__.py`, keep the `bp = Blueprint(...)` definition and any
+   helpers shared across submodules. Add
+   `from . import <submodule1>, <submodule2>, ...` at the bottom so
+   importing the package registers all handlers.
+4. Create submodule files. Each starts with `from . import bp` (no new
+   blueprint - they extend the existing one) and contains the routes
+   for one sub-topic.
+5. Run the test suite and confirm `app.url_map` is unchanged - the move
+   should be a no-op for the URL surface.
+6. No external caller updates needed - `from app.routes.<topic> import bp`
+   keeps working because `__init__.py` exposes it.
+
+### What NOT to do
+
+- Don't promote pre-emptively. A 200-line route file that *might* grow
+  is not a candidate.
+- Don't create new blueprints inside the package. Submodules share one
+  Blueprint object so URL endpoint names stay stable across moves.
+
+The :mod:`app.routes.tournaments` package is the canonical example.

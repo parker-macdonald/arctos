@@ -9,8 +9,8 @@
 ///
 /// * If `shortname` is `Some` with non-whitespace contents, the trimmed
 ///   value is returned.
-/// * Otherwise the full name is returned verbatim if it is at most 12
-///   Unicode codepoints long, or truncated to the first 11 codepoints
+/// * Otherwise the full name is returned verbatim if it is at most 8
+///   Unicode codepoints long, or truncated to the first 7 codepoints
 ///   plus `"..."`.
 pub fn short_or_truncate(full: &str, shortname: Option<&str>) -> String {
     if let Some(s) = shortname {
@@ -20,10 +20,10 @@ pub fn short_or_truncate(full: &str, shortname: Option<&str>) -> String {
         }
     }
     let count = full.chars().count();
-    if count <= 12 {
+    if count <= 8 {
         full.to_string()
     } else {
-        let prefix: String = full.chars().take(11).collect();
+        let prefix: String = full.chars().take(7).collect();
         format!("{prefix}...")
     }
 }
@@ -34,7 +34,10 @@ mod tests {
 
     #[test]
     fn returns_shortname_when_present() {
-        assert_eq!(short_or_truncate("Boston Common Stones", Some("BCS")), "BCS");
+        assert_eq!(
+            short_or_truncate("Boston Common Stones", Some("BCS")),
+            "BCS"
+        );
     }
 
     #[test]
@@ -51,14 +54,14 @@ mod tests {
     #[test]
     fn returns_full_name_when_short_enough() {
         assert_eq!(short_or_truncate("Short", None), "Short");
-        assert_eq!(short_or_truncate("Exactly12Chr", None), "Exactly12Chr");
+        assert_eq!(short_or_truncate("Exactly8", None), "Exactly8");
     }
 
     #[test]
     fn truncates_long_name_with_ellipsis() {
         assert_eq!(
             short_or_truncate("Boston Common Stones", None),
-            "Boston Comm..."
+            "Boston ..."
         );
     }
 
@@ -66,7 +69,7 @@ mod tests {
     fn counts_unicode_codepoints_not_bytes() {
         let full = "日本語チームXXXXXXXXXX";
         let out = short_or_truncate(full, None);
-        let prefix: String = full.chars().take(11).collect();
+        let prefix: String = full.chars().take(7).collect();
         assert_eq!(out, format!("{prefix}..."));
     }
 }

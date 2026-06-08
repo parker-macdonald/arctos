@@ -1,5 +1,10 @@
 # Arctos
 
+[![Tests](https://github.com/reid23/arctos/actions/workflows/test.yml/badge.svg)](https://github.com/reid23/arctos/actions/workflows/test.yml)
+[![Coverage floor](https://img.shields.io/badge/coverage%20floor-30%25-yellow)](TESTING.md#coverage)
+[![Python](https://img.shields.io/badge/python-3.12%2B-blue)](pyproject.toml)
+[![License: GPL v3](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE)
+
 Centralized online results and event management for Jugger.
 
 Or, *what the fog site always wanted to be*
@@ -69,7 +74,7 @@ their code.
 | [`tests/`](tests/README.md) | Pytest suite. See also [`TESTING.md`](TESTING.md). |
 | [`scripts/`](scripts/README.md) | Operational scripts (backups, data-quality checks). |
 | [`migrations/`](migrations/README.md) | Alembic migrations. |
-| [`setup/`](setup/README.md) | Per-OS bootstrap (`make setup` shells out to these). |
+| [`setup/`](setup/README.md) | Per-OS bootstrap (`just setup` shells out to these). |
 | [`build_system/`](build_system/README.md) | Dockerfile used to build the Sphinx user docs. |
 | [`docs/`](docs/README.md) | End-user / Sphinx documentation (deploy runbook, ASS reference). |
 | [`static/`](static/README.md) | Static assets served by Flask. |
@@ -80,17 +85,20 @@ Top-level files:
   production runs; `python run_app.py` runs the dev server.
 - `models.py` - re-exports `app.models.*` so both
   `from app.models import ...` and `from models import ...` work.
-- `Makefile` - the canonical command surface. Run `make` (or
-  `make help`) to see every target.
+- `justfile` - the canonical command surface. Run `just` (or
+  `just --list`) to see every recipe.
 - `pyproject.toml` - dependencies and tool config (ruff, mypy, pytest).
 - `alembic.ini` - Alembic config; the env file lives in
   `migrations/env.py`.
-- `init_db.py`, `reset_password.py`, `generate_permission_key.py` -
-  small CLI utilities.
+- `init_db.py`, `reset_password.py` - small CLI utilities (legacy;
+  prefer the factory-based flow for new code).
 
 ## Running the app
 
 ### Backend
+
+> Supported platforms: macOS on Apple Silicon and Ubuntu/Debian on
+> x86_64. Windows isn't supported directly; use WSL.
 
 1. Install [uv](https://docs.astral.sh/uv/).
 2. Set up your SSL certs. If you're using nginx you can do this there
@@ -104,13 +112,13 @@ openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem -sha256 -days 3
 or
 
 ```bash
-make certs
+just certs
 ```
 
    This writes `cert.pem` and `key.pem` to the repo root (valid for
    365 days, `CN=localhost`). Override with
-   `make certs CERT_DAYS=730 CERT_SUBJECT=/CN=arctos.example.com`,
-   and pass `FORCE=1` to overwrite existing certs.
+   `just cert_days=730 cert_subject=/CN=arctos.example.com certs`,
+   and pass `force=1` to overwrite existing certs.
 
 3. Create a `.env` file at the repo root with the variables you need:
 
@@ -142,7 +150,7 @@ python -c "import os; print(os.urandom(12).hex())"
 1. Start the app:
 
 ```bash
-make run
+just run
 ```
 
 This loads `.env`, runs `uv sync`, and starts gunicorn. The defaults
@@ -150,9 +158,9 @@ match the example above (5 workers, binding `0.0.0.0:8081`, using
 `cert.pem`/`key.pem`). Override any of them on the command line, e.g.:
 
 ```bash
-make run WORKERS=10 BIND=0.0.0.0:9000
-make run CERTFILE= KEYFILE=          # if you handle SSL elsewhere
-make run ENV_FILE=.env.prod          # use a different env file
+just workers=10 bind=0.0.0.0:9000 run
+just certfile= keyfile= run          # if you handle SSL elsewhere
+just env_file=.env.prod run          # use a different env file
 ```
 
 #### Video storage
@@ -181,7 +189,7 @@ cargo install dioxus-cli
 then (for development) serve the app:
 
 ```bash
-make frontend            # equivalent to `cd frontend && dx serve`
+just frontend            # equivalent to `cd frontend && dx serve`
 ```
 
 In production, you should run `dx bundle --release` and copy the
@@ -191,13 +199,18 @@ output files to somewhere that your reverse proxy can serve.
 
 | Goal | Command |
 |------|---------|
-| Run all tests | `make test` |
-| Lint | `make lint` |
-| Format | `make format` |
-| Apply migrations | `make db-backup && make db-migrate` |
-| Generate a migration | `make db-revision MSG="snake_case_message"` |
-| Start dev backend | `make dev` (HTTP, :5006) or `make run` (TLS, :8081) |
-| Start dev frontend | `make frontend` |
+| Run all tests | `just test` |
+| Lint | `just lint` |
+| Format | `just format` |
+| Apply migrations | `just db-migrate-safe` |
+| Generate a migration | `just db-revision "snake_case_message"` |
+| Start dev backend | `just dev` (HTTP, :5006) or `just run` (TLS, :8081) |
+| Start dev frontend | `just frontend` |
+
+Coverage is configured under `[tool.coverage.*]` in `pyproject.toml`
+with a soft `fail_under = 30` floor; current actual is around 33% with
+branch coverage on. See [`TESTING.md`](TESTING.md#coverage) for the
+HTML report path and how the threshold is meant to move.
 
 ## Conventions
 
