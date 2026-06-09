@@ -17,8 +17,10 @@ with relations as actual references like a graph. References are:
   direct dependencies should return an end time that is actually the
   start time of the match referenced in the `(skip-condition MATCH)`
   command.
-- the latest (by nominal start time) match on each field whose nominal
-  start time is before this match's nominal start time. 
+- the latest (by *scheduled* start time, which is just nominal start
+  time but it doesn't change when true match start/end times come in
+  to preserve ordering) match on each field whose nominal start time
+  is before this match's nominal start time.
 
 JOIN matches with the same name are stored as a single node, not
 multiple. They have the union of each one's dependencies.
