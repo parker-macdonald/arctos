@@ -256,41 +256,31 @@ class MatchGraph:
             dependent.dependencies.add(dep)
             dependency_node.dependents.add(dependent)
 
-    def topological_sort(self) -> List[str]:
-        """
-        Perform topological sort of match names.
+    def topological_sort(self) -> Tuple[List[Tuple[str, str]], Set[Tuple[str, str]]]:
+        """Topologically sort the graph, tolerating cycles.
 
         Returns:
-            List of match names in topological order (dependencies before dependents).
+            ``(order, cycle_keys)``:
 
-        Raises:
-            ValueError: If the graph contains cycles.
+            * ``order`` — keys placed in dependency order via Kahn's algorithm.
+            * ``cycle_keys`` — keys that couldn't be placed because they
+              participate in (or are downstream of) a cycle. Callers handle
+              these specially; we never raise.
         """
-        # Kahn's algorithm for topological sort
-        # Calculate in-degree for each node
         in_degree: Dict[MatchGraphNode, int] = {node: len(node.dependencies) for node in self.nodes_by_key.values()}
-
-        # Queue of nodes with no incoming edges
         queue: List[MatchGraphNode] = [node for node, degree in in_degree.items() if degree == 0]
-
         result: List[Tuple[str, str]] = []
 
         while queue:
             node = queue.pop(0)
             result.append(_node_key(node.name, node.field))
-
-            # For each dependent, reduce in-degree
             for dependent_node in node.dependents:
                 in_degree[dependent_node] -= 1
                 if in_degree[dependent_node] == 0:
                     queue.append(dependent_node)
 
-        # Check for cycles
-        if len(result) != len(self.nodes_by_key):
-            remaining = set(self.nodes_by_key.keys()) - set(result)
-            raise ValueError(f"Cycle detected in match dependencies. Remaining nodes: {remaining}")
-
-        return result
+        cycle_keys: Set[Tuple[str, str]] = set(self.nodes_by_key.keys()) - set(result)
+        return result, cycle_keys
 
     def get_all_nodes(self) -> List[MatchGraphNode]:
         """Get all nodes in the graph."""
@@ -348,6 +338,14 @@ def _match_participant_team_ids(match: Match) -> Set[str]:
             participants.add(str(team_id).strip())
     participants.update(_csv_tokens(getattr(match, "refs", None)))
     return participants
+
+
+def _scheduled_anchor(match: Match) -> Optional[datetime]:
+    """Return the time-based-dependency anchor for a match.
+
+    for determining which of two matches should come first, if they compete for resources and are on different fields.
+    """
+    return match.scheduled_start_time
 
 
 def build_match_graph(
@@ -514,14 +512,17 @@ def build_match_graph(
                 graph.add_dependency(dependent_key, prev_key)
 
         if match.schedule_type in (ScheduleType.SAFE, ScheduleType.FAST):
-            match_start = getattr(match, "nominal_start_time", None)
+            # Use scheduled_start_time (originally-scheduled anchor) so dependency edges
+            # don't drift around when nominal_start_time gets dynamically recomputed.
+            match_start = _scheduled_anchor(match)
             participants = _match_participant_team_ids(match)
             latest_shared_matches_by_field: Dict[str, Match] = {}
             if match_start and participants:
                 for field_name, field_matches in matches_by_field.items():
                     latest_shared_match = None
+                    latest_shared_anchor: Optional[datetime] = None
                     for candidate in field_matches:
-                        candidate_start = getattr(candidate, "nominal_start_time", None)
+                        candidate_start = _scheduled_anchor(candidate)
                         if candidate.uuid == match.uuid or candidate_start is None or candidate_start >= match_start:
                             continue
                         if not (participants & _match_participant_team_ids(candidate)):
@@ -531,11 +532,12 @@ def build_match_graph(
                             candidate.name,
                             candidate.uuid,
                         ) > (
-                            latest_shared_match.nominal_start_time,
+                            latest_shared_anchor,
                             latest_shared_match.name,
                             latest_shared_match.uuid,
                         ):
                             latest_shared_match = candidate
+                            latest_shared_anchor = candidate_start
                     if latest_shared_match is not None:
                         latest_shared_matches_by_field[field_name] = latest_shared_match
             for latest_shared_match in latest_shared_matches_by_field.values():

@@ -121,6 +121,16 @@ pub fn Schedule(url: String) -> Element {
     let mut selected_match_id = use_signal(|| "".to_string());
     let mut key_nav = use_signal(|| None::<String>);
     let refresh_trigger = use_signal(|| 0u32);
+
+    // Pull schedule warnings in parallel so we can surface a cycle banner at the top
+    // of the page. Re-runs whenever refresh_trigger bumps so the banner stays in sync
+    // with the schedule view. Errors (e.g. non-TO 403s) silently leave warnings empty.
+    let url_for_warnings = url.clone();
+    let warnings_resource = use_resource(move || {
+        let u = url_for_warnings.clone();
+        let _tick = refresh_trigger();
+        async move { api::fetch_schedule_warnings(&u).await }
+    });
     #[cfg(target_arch = "wasm32")]
     let schedule_refresh_interval = use_signal(|| None as Option<Interval>);
 
@@ -173,8 +183,10 @@ pub fn Schedule(url: String) -> Element {
     });
 
     let refresh = move || {
-        let mut setup_data = setup_data;
-        setup_data.restart();
+        // Bumping refresh_trigger restarts setup_data via the existing effect and
+        // causes the warnings resource to re-fetch (its closure reads the trigger).
+        let mut t = refresh_trigger;
+        t.set(t().wrapping_add(1));
     };
 
     let val = setup_data.value();
@@ -341,6 +353,38 @@ pub fn Schedule(url: String) -> Element {
                         }
                     }
 
+                    {
+                        let has_cycle = warnings_resource
+                            .value()
+                            .read()
+                            .as_ref()
+                            .and_then(|r| r.as_ref().ok())
+                            .map(|ws| ws.iter().any(|w| w.kind == "cycle"))
+                            .unwrap_or(false);
+                        if has_cycle {
+                            rsx! {
+                                div {
+                                    class: "alert alert-danger d-flex align-items-center mb-3",
+                                    role: "alert",
+                                    span { class: "me-2", "⚠" }
+                                    span { class: "flex-grow-1",
+                                        strong { "Schedule failed to solve: " }
+                                        "circular dependency detected. See "
+                                        button {
+                                            r#type: "button",
+                                            class: "btn btn-link p-0 align-baseline",
+                                            onclick: move |_| active_modal.set("schedule_warnings".to_string()),
+                                            "Warnings"
+                                        }
+                                        " for more info."
+                                    }
+                                }
+                            }
+                        } else {
+                            rsx! {}
+                        }
+                    }
+
                     div { class: "card mb-3 bg-light",
                         div { class: "card-body p-2",
                             div { class: "d-flex flex-wrap justify-content-between align-items-center gap-2",
@@ -429,6 +473,12 @@ pub fn Schedule(url: String) -> Element {
                                                     });
                                                 },
                                                 "Recompute Times"
+                                            }
+                                            button {
+                                                class: "btn btn-sm btn-outline-warning",
+                                                title: "Show schedule warnings (unknown teams, cycles, missing match refs, double-bookings)",
+                                                onclick: move |_| active_modal.set("schedule_warnings".to_string()),
+                                                "⚠ Warnings"
                                             }
                                         }
                                         div { class: "form-check form-switch mb-0 ms-1",
@@ -526,6 +576,12 @@ pub fn Schedule(url: String) -> Element {
                                 active_modal.set("none".to_string());
                                 refresh();
                             },
+                        }
+                    }
+                    if active_modal() == "schedule_warnings" {
+                        ScheduleWarningsModal {
+                            tournament_url: url.clone(),
+                            on_close: move |_| active_modal.set("none".to_string()),
                         }
                     }
                 }
@@ -1825,6 +1881,99 @@ fn TOMLImportModal(
 }
 
 #[component]
+fn ScheduleWarningsModal(tournament_url: String, on_close: EventHandler<()>) -> Element {
+    use crate::types::ScheduleWarning;
+    let mut warnings = use_signal(|| None::<Vec<ScheduleWarning>>);
+    let mut error = use_signal(|| None::<String>);
+    let mut loading = use_signal(|| true);
+
+    let url_for_load = tournament_url.clone();
+    use_hook(move || {
+        let url = url_for_load.clone();
+        spawn(async move {
+            match api::fetch_schedule_warnings(&url).await {
+                Ok(ws) => {
+                    warnings.set(Some(ws));
+                    loading.set(false);
+                }
+                Err(e) => {
+                    error.set(Some(e));
+                    loading.set(false);
+                }
+            }
+        });
+    });
+
+    fn kind_label(kind: &str) -> &'static str {
+        match kind {
+            "unknown_team" => "Unknown team",
+            "missing_team" => "Missing team",
+            "duplicate_team" => "Duplicate team",
+            "unknown_match_ref" => "Missing match",
+            "cycle" => "Cyclic dependency",
+            "double_booked" => "Double-booked teams",
+            _ => "Warning",
+        }
+    }
+
+    fn kind_class(kind: &str) -> &'static str {
+        match kind {
+            "cycle" => "list-group-item-danger",
+            _ => "list-group-item-warning",
+        }
+    }
+
+    rsx! {
+        div { class: "modal d-block", tabindex: "-1", style: "background: rgba(0,0,0,0.5)",
+            div { class: "modal-dialog modal-lg",
+                div { class: "modal-content",
+                    div { class: "modal-header",
+                        h5 { class: "modal-title", "Schedule Warnings" }
+                    }
+                    div { class: "modal-body",
+                        if loading() {
+                            div { class: "text-muted", "Checking schedule..." }
+                        } else if let Some(err) = error() {
+                            div { class: "alert alert-danger", "{err}" }
+                        } else {
+                            match warnings.read().as_ref() {
+                                Some(ws) if ws.is_empty() => rsx! {
+                                    div { class: "alert alert-success mb-0",
+                                        "No warnings — every match resolves cleanly."
+                                    }
+                                },
+                                Some(ws) => rsx! {
+                                    p { class: "text-muted small",
+                                        "These don't block creation or editing — fix them in any order."
+                                    }
+                                    ul { class: "list-group",
+                                        for (i, w) in ws.iter().enumerate() {
+                                            li { key: "{i}", class: "list-group-item {kind_class(&w.kind)}",
+                                                div { class: "fw-semibold", "{kind_label(&w.kind)}" }
+                                                div { "{w.message}" }
+                                                if !w.matches.is_empty() {
+                                                    div { class: "small text-muted mt-1",
+                                                        "Matches: {w.matches.join(\", \")}"
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                },
+                                None => rsx! {},
+                            }
+                        }
+                    }
+                    div { class: "modal-footer",
+                        button { class: "btn btn-secondary", onclick: move |_| on_close.call(()), "Close" }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[component]
 fn TagsModal(
     tournament_url: String,
     data: ScheduleSetupResponse,
@@ -2159,10 +2308,21 @@ fn TableView(
                                 }
                                 if edit_mode {
                                     td {
-                                        button {
-                                            class: "btn btn-sm btn-link",
-                                            onclick: move |_| on_edit_match.call(match_id.clone()),
-                                            "✎"
+                                        // Editing is locked once a match has started — surface a
+                                        // disabled pencil with a tooltip so the row layout doesn't shift.
+                                        if matches!(m.status.as_str(), "IN_PROGRESS" | "COMPLETED" | "SKIPPED") {
+                                            button {
+                                                class: "btn btn-sm btn-link text-muted",
+                                                disabled: true,
+                                                title: "Match has started — editing is disabled.",
+                                                "✎"
+                                            }
+                                        } else {
+                                            button {
+                                                class: "btn btn-sm btn-link",
+                                                onclick: move |_| on_edit_match.call(match_id.clone()),
+                                                "✎"
+                                            }
                                         }
                                     }
                                 }
@@ -2958,17 +3118,25 @@ fn ScheduleTimeline(
                                                                     (d.clone(), p.clone(), k, l)
                                                                 })
                                                                 .collect();
+                                                            let edit_locked = matches!(event.status.as_str(), "IN_PROGRESS" | "COMPLETED" | "SKIPPED");
+                                                            let timeline_title = if edit_mode && edit_locked {
+                                                                format!("{event_title} — match has started, editing disabled")
+                                                            } else {
+                                                                event_title.clone()
+                                                            };
                                                             rsx! {
                                                                 div {
                                                                     class: "{event_class}",
                                                                     style: "{event_style}",
-                                                                    title: "{event_title}",
-                                                                    cursor: if is_break && !edit_mode { "default" } else { "pointer" },
+                                                                    title: "{timeline_title}",
+                                                                    cursor: if (is_break && !edit_mode) || (edit_mode && edit_locked) { "default" } else { "pointer" },
                                                                     onclick: move |_| {
                                                                         if is_break && !edit_mode {
                                                                             // Break matches don't link anywhere
                                                                         } else if edit_mode {
-                                                                            on_edit_match.call(event_id_clone.clone());
+                                                                            if !edit_locked {
+                                                                                on_edit_match.call(event_id_clone.clone());
+                                                                            }
                                                                         } else {
                                                                             nav.push(Route::MatchPageById { url: url_clone.clone(), match_id: event_id_clone.clone() });
                                                                         }
@@ -3253,7 +3421,6 @@ fn EditMatchModal(
                 Some(length())
             };
             let req = UpdateMatchRequest {
-                name: Some(name()),
                 field: Some(field()),
                 schedule_type: Some(schedule_type()),
                 length: len,
@@ -3342,7 +3509,14 @@ fn EditMatchModal(
                                 div { class: "col-md-6",
                                     div { class: "mb-3",
                                         label { class: "form-label", "Match Name" }
-                                        input { class: "form-control", "type": "text", value: "{name}", oninput: move |e| { let mut name = name; name.set(e.value()); }, required: true }
+                                        input {
+                                            class: "form-control",
+                                            "type": "text",
+                                            value: "{name}",
+                                            disabled: true,
+                                            readonly: true,
+                                            title: "Match names are immutable once created.",
+                                        }
                                     }
                                 }
                                 div { class: "col-md-6",

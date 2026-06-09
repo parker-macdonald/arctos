@@ -54,6 +54,7 @@ from app.utils.match_ref_resolution import (
 from app.utils.scheduling import (
     compute_dynamic_match_nominal_start_time,
     validate_match_input,
+    validate_match_warnings,
     recompute_all_match_times,
 )
 from app.utils.datetime_helpers import now_utc_naive, parse_datetime_local_to_utc
@@ -82,13 +83,29 @@ from app.services.registration_resolver import (
 )
 from app.services.permission_service import PermissionService
 
-from . import bp, update_match_previous_link
+from . import bp, detach_match_from_chain, update_match_previous_link
 
 
 def _check_to(tournament_url):
     if not current_user.is_authenticated:
         return False
     return PermissionService.is_tournament_organizer(tournament_url, current_user)
+
+
+@bp.route("/<tournament_url>/schedule-warnings", methods=["GET"])
+@require_tournament_organizer("Only tournament organizers can access this page")
+def schedule_warnings(tournament_url):
+    """Soft-validation warnings for the entire schedule.
+
+    Covers nonexistent teams, cyclic dependencies, missing match references,
+    and double-booked teams. These are *not* enforced at create/edit time —
+    the operator can fix them in any order from the schedule edit toolbar.
+    """
+    try:
+        warnings = validate_match_warnings(tournament_url)
+        return jsonify({"success": True, "warnings": warnings}), 200
+    except Exception as e:
+        return jsonify({"success": False, "error": f"Schedule warnings failed: {e}"}), 500
 
 
 @bp.route("/<tournament_url>/recompute-schedule", methods=["POST"])
@@ -634,17 +651,12 @@ def update_match(tournament_url):
             # Update doubly linked list: insert this match after prev_match
             update_match_previous_link(match, prev_match_id, tournament_url, is_new=False)
         else:
-            # Clear previous_match and update old previous's next_match if needed
-            old_prev = match.previous_match
-            match.previous_match = None
-            if old_prev:
-                old_prev_m = Match.query.filter_by(uuid=old_prev, event=tournament_url).first()
-                if old_prev_m and old_prev_m.next_match == match.uuid:
-                    old_prev_m.next_match = None
+            # User cleared the previous-match selector: detach so the chain closes up.
+            detach_match_from_chain(match, tournament_url)
         match.nominal_start_time = compute_dynamic_match_nominal_start_time(match, tournament_url)
     else:
-        # Static matches can have manual start time
-        match.previous_match = None
+        # Static matches have no chain links — fully detach so neighbours close up.
+        detach_match_from_chain(match, tournament_url)
         # Prefer UTC ISO format from client conversion, fallback to datetime-local (assumed server-local)
         if request.form.get("start_time_utc"):
             # Client sent UTC ISO string
@@ -902,7 +914,7 @@ def validate_dsl(tournament_url):
                 "simplified": simplified,
                 "error": None,
                 "warnings": [],
-                "result_type": sorted(_infer_types(result))
+                "result_type": sorted(_infer_types(result)),
             }
         )
     except DSLValidationError as e:
@@ -916,7 +928,6 @@ def validate_dsl(tournament_url):
                 "error": f"Parse error: {str(e)}",
             }
         )
-
 
 
 @bp.route("/tournaments/<tournament_url>/start-match", methods=["GET"])
@@ -1260,21 +1271,9 @@ def force_start_match_api(tournament_url, match_id):
     match.nominal_start_time = now_utc_naive()
     match.status = MatchStatus.READY_TO_START
 
-    # Unlink previous/next
-    if match.previous_match:
-        old_prev = Match.query.filter_by(uuid=match.previous_match, event=tournament_url).first()
-        if old_prev and old_prev.next_match == match.uuid:
-            old_prev.next_match = match.next_match
-            if match.next_match:
-                old_next = Match.query.filter_by(uuid=match.next_match, event=tournament_url).first()
-                if old_next:
-                    old_next.previous_match = old_prev.uuid
-        elif match.next_match:
-            old_next = Match.query.filter_by(uuid=match.next_match, event=tournament_url).first()
-            if old_next:
-                old_next.previous_match = None
-    match.previous_match = None
-    match.next_match = None
+    # The match is being converted to STATIC and started — fully splice it out of
+    # its per-field chain so the surrounding nodes close up.
+    detach_match_from_chain(match, tournament_url)
     flag_modified(match, "previous_match")
     flag_modified(match, "next_match")
 

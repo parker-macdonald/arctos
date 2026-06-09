@@ -31,81 +31,72 @@ executor = Executor()
 bp = Blueprint("tournaments", __name__, url_prefix="/_api")
 
 
-def update_match_previous_link(match: Match, prev_match_id: str, tournament_url: str, is_new: bool = False) -> None:
+def _lookup_match_in(uid: str | None, tournament_url: str) -> Match | None:
+    """Fetch a match by uuid scoped to *tournament_url*, or ``None`` for empty/missing."""
+    if not uid:
+        return None
+    return Match.query.filter_by(uuid=uid, event=tournament_url).first()
+
+
+def detach_match_from_chain(match: Match, tournament_url: str) -> None:
+    """Remove *match* from its per-field doubly-linked chain.
+
+    Closes up the gap left behind: ``old_prev.next_match`` is rewritten to
+    ``match.next_match`` and ``old_next.previous_match`` to ``match.previous_match``,
+    each guarded by a back-link consistency check so we never overwrite a
+    pointer that wasn't actually aimed at *match*. Both of *match*'s own
+    pointers are then cleared.
     """
-    Update the previous_match link for a match, maintaining a doubly linked list structure.
+    old_prev_id = match.previous_match
+    old_next_id = match.next_match
+    old_prev = _lookup_match_in(old_prev_id, tournament_url)
+    old_next = _lookup_match_in(old_next_id, tournament_url)
+    if old_prev is not None and old_prev.next_match == match.uuid:
+        old_prev.next_match = old_next_id
+    if old_next is not None and old_next.previous_match == match.uuid:
+        old_next.previous_match = old_prev_id
+    match.previous_match = None
+    match.next_match = None
 
-    When inserting a match after prev_match, if prev_match already has a next_match:
-    1. Store the old next_match of prev_match
-    2. Set the current match's previous_match to prev_match
-    3. Set prev_match's next_match to the current match
-    4. Set the current match's next_match to the old next_match (if it existed)
-    5. Set the old next_match's previous_match to the current match (if it existed)
-    6. If updating (not new), handle cleanup of old previous_match's next_match
 
-    This properly inserts the match into the chain: ... -> prev_match -> match -> old_next_match -> ...
+def update_match_previous_link(match: Match, prev_match_id: str, tournament_url: str, is_new: bool = False) -> None:
+    """Insert *match* immediately after *prev_match_id* in the doubly-linked chain.
+
+    The chain is the per-field ``previous_match`` / ``next_match`` linkage. The
+    operation is two clean steps: (1) detach *match* from its current position
+    so the surrounding nodes close up, then (2) splice it in between
+    *prev_match* and *prev_match*'s current next.
+
+    A no-op if *prev_match_id* doesn't resolve or points at *match* itself.
 
     Args:
-        match: The match to update
-        prev_match_id: UUID of the match to set as previous_match
-        tournament_url: Tournament URL for validation
-        is_new: True if this is a new match, False if updating existing match
+        match: The match being moved (or, if ``is_new``, freshly created).
+        prev_match_id: UUID of the match that should sit immediately before *match*.
+        tournament_url: Tournament scope for the lookup.
+        is_new: ``True`` if *match* is brand-new and currently has no chain links;
+            skips the detach step.
     """
-    prev_match = Match.query.filter_by(uuid=prev_match_id, event=tournament_url).first()
+    if not prev_match_id or prev_match_id == match.uuid:
+        return
+    prev_match = _lookup_match_in(prev_match_id, tournament_url)
     if not prev_match:
         return
 
-    # Store old previous_match and next_match for cleanup (only for updates)
-    old_prev_id = match.previous_match if not is_new else None
-    old_next_id = match.next_match if not is_new else None
+    if not is_new:
+        detach_match_from_chain(match, tournament_url)
 
-    # Store the old next_match of prev_match (before we change it)
-    prev_match_old_next_id = prev_match.next_match
-
-    # Set the current match's previous_match to prev_match
-    match.previous_match = prev_match_id
-
-    # Set prev_match's next_match to this match
+    # Splice *match* between prev_match and whatever currently sits after prev_match.
+    new_next_id = prev_match.next_match
+    if new_next_id == match.uuid:
+        # Stale back-pointer guard.
+        new_next_id = None
+    match.previous_match = prev_match.uuid
+    match.next_match = new_next_id
     prev_match.next_match = match.uuid
-
-    # If prev_match had a next_match that isn't this match, link it to this match
-    if prev_match_old_next_id and prev_match_old_next_id != match.uuid:
-        prev_match_old_next = Match.query.filter_by(uuid=prev_match_old_next_id, event=tournament_url).first()
-        if prev_match_old_next:
-            # Set the current match's next_match to the old next_match
-            match.next_match = prev_match_old_next_id
-            # Set the old next_match's previous_match to this match
-            prev_match_old_next.previous_match = match.uuid
-    else:
-        # No old next_match from prev_match
-        # If updating an existing match, preserve its existing next_match if it's still valid
-        # (only clear if this is a new match or if we're explicitly changing the chain)
-        if is_new:
-            match.next_match = None
-        # For updates, preserve the existing next_match - it will be handled by cleanup logic below if needed
-
-    # If updating and had an old previous_match, handle cleanup
-    if old_prev_id and old_prev_id != prev_match_id:
-        old_prev_match = Match.query.filter_by(uuid=old_prev_id, event=tournament_url).first()
-        if old_prev_match:
-            # If old_prev_match's next_match pointed to this match, we need to update it
-            if old_prev_match.next_match == match.uuid:
-                # The old previous match's next should now point to this match's old next (if any)
-                old_prev_match.next_match = old_next_id if old_next_id != old_prev_id else None
-                # If we set old_prev_match.next_match to something, update that match's previous_match
-                if old_prev_match.next_match:
-                    old_next_of_old_prev = Match.query.filter_by(
-                        uuid=old_prev_match.next_match, event=tournament_url
-                    ).first()
-                    if old_next_of_old_prev:
-                        old_next_of_old_prev.previous_match = old_prev_id
-
-    # If updating and had an old next_match that we didn't preserve, handle cleanup
-    if old_next_id and old_next_id != match.next_match:
-        old_next_match = Match.query.filter_by(uuid=old_next_id, event=tournament_url).first()
-        if old_next_match and old_next_match.previous_match == match.uuid:
-            # This match's old next_match no longer has this match as its previous
-            old_next_match.previous_match = None
+    if new_next_id:
+        new_next = _lookup_match_in(new_next_id, tournament_url)
+        if new_next is not None:
+            new_next.previous_match = match.uuid
 
 
 # Register submodule handlers by importing them.

@@ -1116,7 +1116,7 @@ pub struct UpdateFieldRequest {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct UpdateMatchRequest {
-    pub name: Option<String>,
+    // `name` is intentionally absent: match names are immutable after creation.
     pub field: Option<String>,
     pub schedule_type: Option<String>,
     pub length: Option<u32>,
@@ -1220,6 +1220,7 @@ pub struct MatchSetupData {
     pub team1_initial: Option<String>,
     pub team2_initial: Option<String>,
     pub status: String,
+    pub scheduled_start_time: Option<String>,
     pub nominal_start_time: Option<String>,
     pub confirmed_start_time: Option<String>,
     pub completed_time: Option<String>,
@@ -1275,6 +1276,24 @@ pub struct CreateMatchRequest {
 pub struct CreateMatchResponse {
     pub success: bool,
     pub uuid: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ScheduleWarning {
+    /// One of "unknown_team", "unknown_match_ref", "cycle", "double_booked".
+    pub kind: String,
+    pub message: String,
+    #[serde(default)]
+    pub matches: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ScheduleWarningsResponse {
+    pub success: bool,
+    #[serde(default)]
+    pub warnings: Vec<ScheduleWarning>,
+    #[serde(default)]
+    pub error: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
