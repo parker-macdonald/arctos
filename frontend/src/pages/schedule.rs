@@ -102,6 +102,41 @@ fn format_time_local(iso: &str, tz_offset_minutes: i64) -> String {
     local.format("%H:%M").to_string()
 }
 
+/// Like `format_time_local` but includes the date so debug-mode tables show the full timestamp.
+fn format_datetime_local(iso: &str, tz_offset_minutes: i64) -> String {
+    let utc_dt = if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(iso) {
+        dt.naive_utc()
+    } else if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(iso, "%Y-%m-%dT%H:%M:%S%.f") {
+        dt
+    } else if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(iso, "%Y-%m-%dT%H:%M") {
+        dt
+    } else {
+        return iso.to_string();
+    };
+    let local = utc_dt + chrono::Duration::minutes(tz_offset_minutes);
+    local.format("%Y-%m-%d %H:%M").to_string()
+}
+
+/// Read the `debug` flag from `localStorage` (truthy when value is `"1"`).
+/// On non-wasm builds always returns `false`.
+fn read_debug_mode() -> bool {
+    #[cfg(target_arch = "wasm32")]
+    {
+        if let Some(window) = web_sys::window() {
+            if let Ok(Some(storage)) = window.local_storage() {
+                if let Ok(Some(val)) = storage.get_item("debug") {
+                    return val == "1";
+                }
+            }
+        }
+        false
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        false
+    }
+}
+
 #[component]
 pub fn Schedule(url: String) -> Element {
     let url_data = url.clone();
@@ -121,6 +156,9 @@ pub fn Schedule(url: String) -> Element {
     let mut selected_match_id = use_signal(|| "".to_string());
     let mut key_nav = use_signal(|| None::<String>);
     let refresh_trigger = use_signal(|| 0u32);
+    // Debug mode is opt-in via `localStorage.setItem("debug", "1")`. Read once at mount —
+    // toggling requires a refresh, which is fine for a developer-only switch.
+    let debug_mode = use_signal(read_debug_mode);
 
     // Pull schedule warnings in parallel so we can surface a cycle banner at the top
     // of the page. Re-runs whenever refresh_trigger bumps so the banner stays in sync
@@ -518,6 +556,7 @@ pub fn Schedule(url: String) -> Element {
                             selected_field: selected_field(),
                             highlight_team: highlight_team(),
                             edit_mode: edit_mode(),
+                            debug_mode: debug_mode(),
                             tournament_url: url.clone(),
                             on_edit_match: move |id: String| {
                                 selected_match_id.set(id);
@@ -2117,10 +2156,35 @@ fn TableView(
     selected_field: String,
     highlight_team: String,
     edit_mode: bool,
+    #[props(default = false)] debug_mode: bool,
     tournament_url: String,
     on_edit_match: EventHandler<String>,
 ) -> Element {
     let tz_offset = schedule_tz_offset_minutes();
+    // Lookup so debug rows can resolve previous_match / next_match uuids to match names
+    // without forcing a backend change. Borrowed strs are fine here because `data` outlives
+    // the rsx! children.
+    let uuid_to_name: std::collections::HashMap<&str, &str> = data
+        .matches
+        .iter()
+        .map(|m| (m.uuid.as_str(), m.name.as_str()))
+        .collect();
+    // Format helpers used by debug-mode cells. Closures capture `tz_offset` so each call
+    // site doesn't have to repeat it.
+    let fmt_dt = |opt: &Option<String>| -> String {
+        opt.as_ref()
+            .map(|s| format_datetime_local(s, tz_offset))
+            .unwrap_or_else(|| "-".to_string())
+    };
+    let fmt_uuid_as_name = |opt: &Option<String>| -> String {
+        opt.as_ref()
+            .and_then(|u| uuid_to_name.get(u.as_str()).map(|n| n.to_string()))
+            .unwrap_or_else(|| "-".to_string())
+    };
+    let fmt_str = |opt: &Option<String>| -> String { opt.clone().unwrap_or_else(|| "-".to_string()) };
+    let fmt_u32 = |opt: &Option<u32>| -> String {
+        opt.map(|n| n.to_string()).unwrap_or_else(|| "-".to_string())
+    };
     // ... existing filter logic ...
     let matches: Vec<&MatchSetupData> = data
         .matches
@@ -2161,6 +2225,26 @@ fn TableView(
                         th { "Team 1" }
                         th { "Team 2" }
                         th { "Refs" }
+                        if debug_mode {
+                            th { "UUID" }
+                            th { "Team 1 init" }
+                            th { "Team 2 init" }
+                            th { "Refs init" }
+                            th { "Scheduled" }
+                            th { "Nominal" }
+                            th { "Confirmed" }
+                            th { "Completed" }
+                            th { "Length" }
+                            th { "Set type" }
+                            th { "Nsets" }
+                            th { "Stones / set" }
+                            th { "Stones rem" }
+                            th { "Winner" }
+                            th { "Ribbon" }
+                            th { "Prev match" }
+                            th { "Next match" }
+                            th { "Skip cond" }
+                        }
                         if edit_mode { th { "Edit" } }
                     }
                 }
@@ -2305,6 +2389,26 @@ fn TableView(
                                             }
                                         }
                                     }
+                                }
+                                if debug_mode {
+                                    td { class: "small text-muted font-monospace", "{m.uuid}" }
+                                    td { class: "small", "{fmt_str(&m.team1_initial)}" }
+                                    td { class: "small", "{fmt_str(&m.team2_initial)}" }
+                                    td { class: "small", "{fmt_str(&m.refs_initial)}" }
+                                    td { class: "small", "{fmt_dt(&m.scheduled_start_time)}" }
+                                    td { class: "small", "{fmt_dt(&m.nominal_start_time)}" }
+                                    td { class: "small", "{fmt_dt(&m.confirmed_start_time)}" }
+                                    td { class: "small", "{fmt_dt(&m.completed_time)}" }
+                                    td { class: "small", "{fmt_u32(&m.nominal_length)}" }
+                                    td { class: "small", "{fmt_str(&m.set_type)}" }
+                                    td { class: "small", "{fmt_u32(&m.nsets)}" }
+                                    td { class: "small", "{fmt_u32(&m.stones_per_set)}" }
+                                    td { class: "small", "{fmt_u32(&m.stones_remaining)}" }
+                                    td { class: "small", "{fmt_str(&m.match_winner)}" }
+                                    td { class: "small", { if m.ribbon { "yes" } else { "no" } } }
+                                    td { class: "small", "{fmt_uuid_as_name(&m.previous_match)}" }
+                                    td { class: "small", "{fmt_uuid_as_name(&m.next_match)}" }
+                                    td { class: "small", "{fmt_str(&m.skip_condition)}" }
                                 }
                                 if edit_mode {
                                     td {
