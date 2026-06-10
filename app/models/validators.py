@@ -36,7 +36,6 @@ from sqlalchemy import String, event
 from sqlalchemy.orm import Mapper
 
 from app.exceptions import ValidationError
-from app.models.constants import URL_SLUG_LEN
 
 URL_SLUG_ALLOWED_HINT = "URL slugs may only contain letters, numbers, or -_~."
 _URL_SLUG_PATTERN = re.compile(r"^[A-Za-z0-9\.\_\~\-]+$")
