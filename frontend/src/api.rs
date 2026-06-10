@@ -2785,6 +2785,28 @@ pub async fn google_complete_profile(req: &GoogleCompleteProfileRequest) -> Resu
     }
 }
 
+pub async fn fetch_schedule_warnings(
+    tournament_url: &str,
+) -> Result<Vec<crate::types::ScheduleWarning>, String> {
+    let c = client();
+    let r = with_credentials(c.get(format!(
+        "{}/_api/{}/schedule-warnings",
+        base(),
+        tournament_url
+    )))
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    let data: crate::types::ScheduleWarningsResponse = response_json(r).await?;
+    if data.success {
+        Ok(data.warnings)
+    } else {
+        Err(data
+            .error
+            .unwrap_or_else(|| "Failed to fetch schedule warnings".to_string()))
+    }
+}
+
 pub async fn update_match(
     tournament_url: &str,
     match_id: &str,

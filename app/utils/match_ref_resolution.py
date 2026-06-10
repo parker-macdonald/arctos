@@ -8,7 +8,11 @@ display/user token in `refs_initial` (see force_start_match_api pattern).
 
 from __future__ import annotations
 
-from app.utils.helpers import resolve_tag_to_team, resolve_team_name_to_id
+from app.utils.helpers import (
+    resolve_match_winner_loser_ref,
+    resolve_tag_to_team,
+    resolve_team_name_to_id,
+)
 
 
 def is_explicit_team_id(val: str) -> bool:
@@ -55,6 +59,14 @@ def resolve_single_ref_slot(r_str: str, tournament_url: str) -> tuple[str, str]:
     if not r_str:
         return "", ""
 
+    # MatchName::winner / ::loser — resolves to a team id when the referenced
+    # match is already decided; otherwise stays empty and gets filled in later
+    # by apply_match_dependencies. The display token always preserves the
+    # user-typed reference text.
+    winner_loser = resolve_match_winner_loser_ref(r_str, tournament_url)
+    if winner_loser is not None or "::winner" in r_str.lower() or "::loser" in r_str.lower():
+        return (winner_loser or ""), r_str
+
     rid, rinit = resolve_team_name_to_id(r_str, tournament_url)
     # Preserve user/SPA token when registration resolves (rid, None).
     initial = rinit if rinit is not None else r_str
@@ -89,6 +101,16 @@ def resolve_team_slot(
     raw_str = str(raw).strip() if raw is not None else ""
     if not raw_str:
         return None, None
+
+    # Match::winner / ::loser — fill in the cached team id when the referenced
+    # match has a winner; otherwise leave the cache empty and let
+    # apply_match_dependencies fill it in later. Display token is always the
+    # original reference text.
+    winner_loser = resolve_match_winner_loser_ref(raw_str, tournament_url)
+    if winner_loser is not None:
+        return winner_loser, raw_str
+    if "::winner" in raw_str.lower() or "::loser" in raw_str.lower():
+        return None, raw_str
 
     team_id, _ = resolve_team_name_to_id(raw_str, tournament_url)
     if team_id:
