@@ -1982,9 +1982,6 @@ fn ScheduleWarningsModal(tournament_url: String, on_close: EventHandler<()>) -> 
                                     }
                                 },
                                 Some(ws) => rsx! {
-                                    p { class: "text-muted small",
-                                        "These don't block creation or editing — fix them in any order."
-                                    }
                                     ul { class: "list-group",
                                         for (i, w) in ws.iter().enumerate() {
                                             li { key: "{i}", class: "list-group-item {kind_class(&w.kind)}",
@@ -2181,9 +2178,11 @@ fn TableView(
             .and_then(|u| uuid_to_name.get(u.as_str()).map(|n| n.to_string()))
             .unwrap_or_else(|| "-".to_string())
     };
-    let fmt_str = |opt: &Option<String>| -> String { opt.clone().unwrap_or_else(|| "-".to_string()) };
+    let fmt_str =
+        |opt: &Option<String>| -> String { opt.clone().unwrap_or_else(|| "-".to_string()) };
     let fmt_u32 = |opt: &Option<u32>| -> String {
-        opt.map(|n| n.to_string()).unwrap_or_else(|| "-".to_string())
+        opt.map(|n| n.to_string())
+            .unwrap_or_else(|| "-".to_string())
     };
     // ... existing filter logic ...
     let matches: Vec<&MatchSetupData> = data
