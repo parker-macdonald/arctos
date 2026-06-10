@@ -48,11 +48,13 @@ class MatchGraphNode:
         status: MatchStatus,
         component_uuids: Optional[Set[str]] = None,
         field: Optional[str] = None,
+        scheduled_start_time: Optional[datetime] = None,
     ):
         self.name = name
         self.field = field or ""
         self.uuid = uuid
         self.nominal_start_time = nominal_start_time
+        self.scheduled_start_time = scheduled_start_time
         self.nominal_length = nominal_length
         self.confirmed_start_time = confirmed_start_time
         self.confirmed_end_time = confirmed_end_time
@@ -125,6 +127,24 @@ class MatchGraphNode:
                 latest_time = time_to_use
         return latest_time
 
+    def get_direct_deps_latest_scheduled_end_time(self) -> Optional[datetime]:
+        """
+        Latest end time from direct dependencies on the *planned* timeline.
+
+        Uses each dependency's scheduled time (scheduled_start_time, or
+        scheduled_start_time + nominal_length for end-of-match deps), ignoring
+        real/confirmed times and match status entirely. This is the "if
+        everything had gone to plan" timeline.
+        """
+        if not self.dependencies:
+            return None
+        latest_time: Optional[datetime] = None
+        for dep in self.dependencies:
+            time_to_use = dep.get_scheduled_time()
+            if time_to_use and (latest_time is None or time_to_use > latest_time):
+                latest_time = time_to_use
+        return latest_time
+
 
 def _node_start_time(node: MatchGraphNode) -> Optional[datetime]:
     """Effective start time of a node (confirmed or nominal)."""
@@ -141,6 +161,17 @@ def _node_end_time(node: MatchGraphNode) -> Optional[datetime]:
         return node.confirmed_start_time + timedelta(minutes=node.nominal_length)
     if node.nominal_start_time:
         return node.nominal_start_time + timedelta(minutes=node.nominal_length)
+    return None
+
+
+def _node_scheduled_end_time(node: MatchGraphNode) -> Optional[datetime]:
+    """Planned end time of a node: scheduled_start_time + nominal_length.
+
+    Ignores real/confirmed times and status entirely (the planned timeline
+    assumes every match runs on schedule for its full nominal length).
+    """
+    if node.scheduled_start_time and node.nominal_length is not None:
+        return node.scheduled_start_time + timedelta(minutes=node.nominal_length)
     return None
 
 
@@ -177,6 +208,11 @@ class Dependency(ABC):
         """Return the effective time for this dependency (start or end of the wrapped match)."""
         ...
 
+    @abstractmethod
+    def get_scheduled_time(self) -> Optional[datetime]:
+        """Return the planned-timeline time for this dependency (scheduled start or scheduled end)."""
+        ...
+
 
 class startOfMatchDep(Dependency):
     """
@@ -189,6 +225,9 @@ class startOfMatchDep(Dependency):
     def get_time(self) -> Optional[datetime]:
         return _node_start_time(self._node)
 
+    def get_scheduled_time(self) -> Optional[datetime]:
+        return self._node.scheduled_start_time
+
 
 class endOfMatchDep(Dependency):
     """
@@ -199,6 +238,9 @@ class endOfMatchDep(Dependency):
 
     def get_time(self) -> Optional[datetime]:
         return _node_end_time(self._node)
+
+    def get_scheduled_time(self) -> Optional[datetime]:
+        return _node_scheduled_end_time(self._node)
 
 
 class MatchGraph:
@@ -351,6 +393,8 @@ def _scheduled_anchor(match: Match) -> Optional[datetime]:
 def build_match_graph(
     tournament_url: str,
     all_matches: Optional[List[Match]] = None,
+    *,
+    include_resource_conflict_edges: bool = True,
 ) -> MatchGraph:
     """
     Build a MatchGraph from all matches in a tournament.
@@ -361,6 +405,13 @@ def build_match_graph(
     Args:
         tournament_url: The tournament URL to build the graph for
         all_matches: Optional pre-loaded list of Match rows; if None, queries DB
+        include_resource_conflict_edges: When True (the default, used by the
+            nominal solve), add cross-field same-team serialization edges so two
+            matches sharing a team on different fields don't run simultaneously.
+            When False (the planned/scheduled pass), omit them entirely so the
+            planned timeline is purely structural and free of the
+            scheduled-time-vs-edge fixed-point hazard. Double-bookings on the
+            planned timeline surface as warnings instead.
 
     Returns:
         MatchGraph containing all matches and their dependencies
@@ -402,6 +453,7 @@ def build_match_graph(
             name=representative.name,
             uuid=representative.uuid,
             nominal_start_time=representative.nominal_start_time,
+            scheduled_start_time=representative.scheduled_start_time,
             nominal_length=representative.nominal_length,
             confirmed_start_time=representative.confirmed_start_time,
             confirmed_end_time=representative.finalized_at,
@@ -421,6 +473,7 @@ def build_match_graph(
             name=match.name,
             uuid=match.uuid,
             nominal_start_time=match.nominal_start_time,
+            scheduled_start_time=match.scheduled_start_time,
             nominal_length=match.nominal_length,
             confirmed_start_time=match.confirmed_start_time,
             confirmed_end_time=match.finalized_at,
@@ -511,14 +564,20 @@ def build_match_graph(
                 prev_key = dep_key_for_match(prev_match)
                 graph.add_dependency(dependent_key, prev_key)
 
-        if match.schedule_type in (ScheduleType.SAFE, ScheduleType.FAST):
-            # Use scheduled_start_time (originally-scheduled anchor) so dependency edges
-            # don't drift around when nominal_start_time gets dynamically recomputed.
+        if include_resource_conflict_edges and match.schedule_type in (ScheduleType.SAFE, ScheduleType.FAST):
+            # Cross-field same-team serialization: a SAFE/FAST match depends on the
+            # latest match on *another* field that shares a team and is scheduled
+            # before it, so the two don't run simultaneously. Same-field ordering is
+            # already handled by the previous_match chain, so we skip the match's own
+            # field. The anchor is scheduled_start_time (computed in the planned pass
+            # without these edges), which is stable — so this ordering doesn't flip-flop.
             match_start = _scheduled_anchor(match)
             participants = _match_participant_team_ids(match)
             latest_shared_matches_by_field: Dict[str, Match] = {}
             if match_start and participants:
                 for field_name, field_matches in matches_by_field.items():
+                    if field_name == match_field:
+                        continue
                     latest_shared_match = None
                     latest_shared_anchor: Optional[datetime] = None
                     for candidate in field_matches:

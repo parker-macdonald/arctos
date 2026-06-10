@@ -347,6 +347,53 @@ def _procedure_for_cycle_node(
         node.nominal_start_time = end
 
 
+def _scheduled_procedure(node: MatchGraphNode) -> None:
+    """Planned-timeline placement: set scheduled_start_time from dependencies.
+
+    Propagates the "if everything had gone to plan" timeline: each dependency
+    contributes scheduled_start_time + nominal_length, ignoring real/confirmed
+    times and match status entirely. Never reads or writes status, and never
+    touches nominal_start_time.
+
+    STATIC matches keep their user-set scheduled_start_time anchor.
+    """
+    if node.schedule_type == ScheduleType.STATIC:
+        return
+    latest = node.get_direct_deps_latest_scheduled_end_time()
+    if latest is not None:
+        node.scheduled_start_time = latest
+
+
+def _scheduled_procedure_for_cycle_node(
+    node: MatchGraphNode,
+    graph: MatchGraph,
+    uuid_to_match: Dict[str, object],
+) -> None:
+    """Best-effort planned placement for a node caught in a dependency cycle.
+
+    Mirrors :func:`_procedure_for_cycle_node` but on the planned timeline: fall
+    back to the doubly-linked-list previous match's scheduled end time. STATIC
+    matches keep their anchor. No status is read or written.
+    """
+    from app.utils.MatchGraph import _node_scheduled_end_time
+
+    if node.schedule_type == ScheduleType.STATIC:
+        return
+    match_obj = uuid_to_match.get(node.uuid)
+    prev_uuid = getattr(match_obj, "previous_match", None) if match_obj is not None else None
+    if not prev_uuid:
+        return
+    prev_key = graph.uuid_to_key.get(prev_uuid)
+    if prev_key is None:
+        return
+    prev_node = graph.nodes_by_key.get(prev_key)
+    if prev_node is None:
+        return
+    end = _node_scheduled_end_time(prev_node)
+    if end is not None:
+        node.scheduled_start_time = end
+
+
 def _write_graph_to_db(graph: MatchGraph, uuid_to_match: Dict[str, object]) -> None:
     """Persist graph state to in-memory Match objects (no DB read). Caller commits once."""
     for node in graph.get_all_nodes():
@@ -358,10 +405,25 @@ def _write_graph_to_db(graph: MatchGraph, uuid_to_match: Dict[str, object]) -> N
                 m.status = node.status
 
 
-def run_scheduling(tournament_url: str) -> None:
+def _write_scheduled_to_db(graph: MatchGraph, uuid_to_match: Dict[str, object]) -> None:
+    """Persist only scheduled_start_time to in-memory Match objects. Caller commits once."""
+    for node in graph.get_all_nodes():
+        uuids_to_update = list(node.component_uuids) if node.component_uuids else [node.uuid]
+        for uid in uuids_to_update:
+            m = uuid_to_match.get(uid)
+            if m is not None:
+                m.scheduled_start_time = node.scheduled_start_time
+
+
+def run_scheduling(tournament_url: str, *, scheduled_pass: bool = False) -> None:
     """
     Single scheduling pass: load all matches, build graph, apply PROCEDURE, write back.
-    Same behavior on match create/edit and on match start/end.
+
+    With ``scheduled_pass=False`` (default) this is the normal solve: it writes
+    nominal_start_time and status using real/confirmed times. With
+    ``scheduled_pass=True`` it runs the planned-timeline solve, writing only
+    scheduled_start_time (scheduled_start_time + nominal_length per dependency,
+    ignoring real times and status).
     """
     from app.models.match import Match
     from app.models.tournament import Tag
@@ -377,20 +439,37 @@ def run_scheduling(tournament_url: str) -> None:
         for m in all_matches:
             if m.name not in name_to_match:
                 name_to_match[m.name] = m
-        graph = build_match_graph(tournament_url, all_matches)
+        # The planned (scheduled) pass omits cross-field same-team serialization edges:
+        # the planned timeline is purely structural, so scheduled_start_time can't depend
+        # on itself through a shifting resource-conflict edge. The nominal pass includes
+        # them, anchored on the now-stable scheduled times.
+        graph = build_match_graph(
+            tournament_url,
+            all_matches,
+            include_resource_conflict_edges=not scheduled_pass,
+        )
         order, cycle_keys = graph.topological_sort()
         for name, field in order:
             node = graph.get_node(name, field)
             if node:
-                _procedure_with_match(graph, node, tournament_url, name_to_match, tag_by_name)
+                if scheduled_pass:
+                    _scheduled_procedure(node)
+                else:
+                    _procedure_with_match(graph, node, tournament_url, name_to_match, tag_by_name)
         # Cycle-affected nodes can't be placed by topological order. Stable iteration
         # order is used so re-runs produce identical results even when the cycle
         # composition stays the same.
         for name, field in sorted(cycle_keys):
             node = graph.get_node(name, field)
             if node:
-                _procedure_for_cycle_node(node, graph, uuid_to_match)
-        _write_graph_to_db(graph, uuid_to_match)
+                if scheduled_pass:
+                    _scheduled_procedure_for_cycle_node(node, graph, uuid_to_match)
+                else:
+                    _procedure_for_cycle_node(node, graph, uuid_to_match)
+        if scheduled_pass:
+            _write_scheduled_to_db(graph, uuid_to_match)
+        else:
+            _write_graph_to_db(graph, uuid_to_match)
         db.session.commit()
     finally:
         lock.release()
@@ -399,6 +478,17 @@ def run_scheduling(tournament_url: str) -> None:
 def recompute_all_match_times(tournament_url: str) -> None:
     """Full recompute of nominal times and statuses. Same as run_scheduling."""
     run_scheduling(tournament_url)
+
+
+def recompute_scheduled_and_nominal_times(tournament_url: str) -> None:
+    """Recompute both the planned (scheduled_start_time) and dynamic (nominal_start_time) timelines.
+
+    Step 1 solves the planned timeline (scheduled_start_time), then step 2 runs
+    the normal solve (nominal_start_time + status). The planned pass runs first
+    so the normal pass's resource-conflict anchors see fresh scheduled times.
+    """
+    run_scheduling(tournament_url, scheduled_pass=True)
+    run_scheduling(tournament_url, scheduled_pass=False)
 
 
 def get_match_dependencies(match, tournament_url: str) -> List:
@@ -680,35 +770,24 @@ def validate_match_warnings(tournament_url: str) -> List[dict]:
             cycle_names,
         )
 
-    # Double-booked teams.
+    # Double-booked teams on the *planned* (scheduled) timeline. The nominal solve
+    # serializes cross-field same-team matches so they don't actually collide, which
+    # means the conflict only shows up on the planned timeline — that's the timeline
+    # we check here. Two matches sharing a team whose scheduled intervals overlap are
+    # double-booked, regardless of field or schedule type.
     for i, m in enumerate(matches):
         for other in matches[i + 1 :]:
             if not _matches_share_any_team(m, other):
                 continue
-            both_dynamic = m.schedule_type in (ScheduleType.SAFE, ScheduleType.FAST) and other.schedule_type in (
-                ScheduleType.SAFE,
-                ScheduleType.FAST,
-            )
-            if both_dynamic and m.nominal_start_time is not None and m.nominal_start_time == other.nominal_start_time:
-                add(
-                    "double_booked",
-                    f"Matches '{m.name}' and '{other.name}' share a team and have the same start time.",
-                    [m.name, other.name],
-                )
-                continue
-            if (
-                m.schedule_type == ScheduleType.STATIC
-                and other.schedule_type == ScheduleType.STATIC
-                and _intervals_overlap(
-                    m.nominal_start_time,
-                    m.nominal_length,
-                    other.nominal_start_time,
-                    other.nominal_length,
-                )
+            if _intervals_overlap(
+                m.scheduled_start_time,
+                m.nominal_length,
+                other.scheduled_start_time,
+                other.nominal_length,
             ):
                 add(
                     "double_booked",
-                    f"Matches '{m.name}' and '{other.name}' overlap in time while sharing a team.",
+                    f"Matches '{m.name}' and '{other.name}' share a team and overlap on the planned schedule.",
                     [m.name, other.name],
                 )
 

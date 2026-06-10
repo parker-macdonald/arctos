@@ -56,6 +56,7 @@ from app.utils.scheduling import (
     validate_match_input,
     validate_match_warnings,
     recompute_all_match_times,
+    recompute_scheduled_and_nominal_times,
 )
 from app.utils.datetime_helpers import now_utc_naive, parse_datetime_local_to_utc
 from app.utils.name_validation import match_name_char_error
@@ -113,7 +114,7 @@ def schedule_warnings(tournament_url):
 def recompute_schedule(tournament_url):
     """Force full recompute of match times as if a match were just edited (TO only)."""
     try:
-        recompute_all_match_times(tournament_url)
+        recompute_scheduled_and_nominal_times(tournament_url)
         return (
             jsonify({"success": True, "message": "Schedule recomputed successfully."}),
             200,
@@ -409,7 +410,7 @@ def add_match(tournament_url):
     db.session.commit()
 
     try:
-        recompute_all_match_times(tournament_url)
+        recompute_scheduled_and_nominal_times(tournament_url)
     except Exception:
         pass
 
@@ -685,7 +686,7 @@ def update_match(tournament_url):
     db.session.flush()  # Flush before updating sequence
 
     # Recompute all match times (for all dynamic matches that depend on this one)
-    recompute_all_match_times(tournament_url)
+    recompute_scheduled_and_nominal_times(tournament_url)
 
     db.session.commit()
     return jsonify({"success": True, "message": "Match updated successfully!"}), 200
@@ -1290,7 +1291,7 @@ def recompute_schedule_api(tournament_url):
     if not _check_to(tournament_url):
         return jsonify({"error": "Forbidden"}), 403
 
-    recompute_all_match_times(tournament_url)
+    recompute_scheduled_and_nominal_times(tournament_url)
     return jsonify({"success": True})
 
 
@@ -1408,7 +1409,7 @@ def import_schedule_api(tournament_url):
     from app.utils.result_helpers import json_from_result
 
     def _ok_payload(_):
-        recompute_all_match_times(tournament_url)
+        recompute_scheduled_and_nominal_times(tournament_url)
         return {}
 
     res = ScheduleImportExportService.import_schedule(tournament_url, toml_content)

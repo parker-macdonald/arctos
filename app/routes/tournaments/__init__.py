@@ -21,7 +21,16 @@ ffmpeg already parallelises internally.
 from flask import Blueprint
 from flask_executor import Executor
 
-from models import Match
+from models import (
+    Camera,
+    CameraTimepoint,
+    Match,
+    MatchNote,
+    MatchPlayer,
+    MatchReferee,
+    Point,
+    db,
+)
 
 # for finalizing recordings which calls ffmpeg
 # only one worker bc ffmpeg does its own parallelism
@@ -97,6 +106,37 @@ def update_match_previous_link(match: Match, prev_match_id: str, tournament_url:
         new_next = _lookup_match_in(new_next_id, tournament_url)
         if new_next is not None:
             new_next.previous_match = match.uuid
+
+
+def delete_matches_with_children(match_uuids: list[str]) -> None:
+    """Hard-delete matches and every row that references them.
+
+    Deletes child rows (points, notes, referee/player join rows, cameras and
+    their timepoints) and clears the self-referential chain links before
+    deleting the matches themselves, so foreign-key constraints don't block the
+    delete. Does not commit; the caller owns the transaction.
+    """
+    if not match_uuids:
+        return
+
+    camera_uuids = [c.uuid for c in Camera.query.filter(Camera.match_uuid.in_(match_uuids)).all()]
+    if camera_uuids:
+        CameraTimepoint.query.filter(CameraTimepoint.camera_uuid.in_(camera_uuids)).delete(synchronize_session=False)
+    Camera.query.filter(Camera.match_uuid.in_(match_uuids)).delete(synchronize_session=False)
+
+    Point.query.filter(Point.match.in_(match_uuids)).delete(synchronize_session=False)
+    MatchNote.query.filter(MatchNote.match.in_(match_uuids)).delete(synchronize_session=False)
+    MatchReferee.query.filter(MatchReferee.match_uuid.in_(match_uuids)).delete(synchronize_session=False)
+    MatchPlayer.query.filter(MatchPlayer.match_uuid.in_(match_uuids)).delete(synchronize_session=False)
+
+    # Clear self-referential chain links so deleting the matches doesn't trip the
+    # previous_match / next_match FKs (covers references from outside the batch).
+    Match.query.filter(Match.previous_match.in_(match_uuids)).update(
+        {"previous_match": None}, synchronize_session=False
+    )
+    Match.query.filter(Match.next_match.in_(match_uuids)).update({"next_match": None}, synchronize_session=False)
+
+    Match.query.filter(Match.uuid.in_(match_uuids)).delete(synchronize_session=False)
 
 
 # Register submodule handlers by importing them.

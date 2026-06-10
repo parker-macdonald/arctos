@@ -27,7 +27,6 @@ from models import (
     db,
     RegistrableConfig,
     Player,
-    MatchNote,
     HeadRef,
     SideComp,
     SideCompRegistration,
@@ -48,7 +47,7 @@ from app.utils.camera_helpers import (
 
 from app.services.permission_service import PermissionService
 
-from . import bp
+from . import bp, delete_matches_with_children
 
 
 @bp.route("/create-tournament", methods=["POST"])
@@ -297,12 +296,8 @@ def delete_tournament(tournament_url):
 
     SideComp.query.filter_by(event=tournament_url).delete(synchronize_session=False)
 
-    matches = Match.query.filter_by(event=tournament_url).all()
-    match_uuids = [m.uuid for m in matches]
-    if match_uuids:
-        Point.query.filter(Point.match.in_(match_uuids)).delete(synchronize_session=False)
-        MatchNote.query.filter(MatchNote.match.in_(match_uuids)).delete(synchronize_session=False)
-    Match.query.filter_by(event=tournament_url).delete(synchronize_session=False)
+    match_uuids = [m.uuid for m in Match.query.filter_by(event=tournament_url).all()]
+    delete_matches_with_children(match_uuids)
     # PenaltyType after MatchNote (notes reference penalty_type_id)
     # Only delete event-level penalty types; league events use league's penalty types
     if not tournament.league_id:

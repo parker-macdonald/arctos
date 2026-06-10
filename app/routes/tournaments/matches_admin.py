@@ -32,19 +32,23 @@ from app.utils.helpers import (
 from app.utils.name_validation import match_name_char_error
 from app.utils.scheduling import (
     compute_dynamic_match_nominal_start_time,
-    recompute_all_match_times,
+    recompute_scheduled_and_nominal_times,
     validate_match_input,
 )
 from models import (
     Field,
     Match,
-    MatchNote,
     Point,
     Tag,
     db,
 )
 
-from . import bp, detach_match_from_chain, update_match_previous_link
+from . import (
+    bp,
+    delete_matches_with_children,
+    detach_match_from_chain,
+    update_match_previous_link,
+)
 
 
 def _check_to(tournament_url):
@@ -342,7 +346,7 @@ def update_match_api(tournament_url, match_id):
     db.session.commit()
 
     # Recompute all times
-    recompute_all_match_times(tournament_url)
+    recompute_scheduled_and_nominal_times(tournament_url)
 
     return jsonify({"success": True})
 
@@ -654,7 +658,7 @@ def create_match_api(tournament_url):
     db.session.commit()
 
     # Recompute
-    recompute_all_match_times(tournament_url)
+    recompute_scheduled_and_nominal_times(tournament_url)
 
     return jsonify({"success": True, "uuid": match.uuid})
 
@@ -667,16 +671,14 @@ def delete_match_api(tournament_url, match_id):
 
     match = Match.query.filter_by(uuid=match_id, event=tournament_url).first_or_404()
 
-    # Splice this match out of its per-field chain so its neighbours remain linked.
+    # Splice this match out of its per-field chain so its neighbours remain linked,
+    # then flush so the reconnection persists before we hard-delete the row.
     detach_match_from_chain(match, tournament_url)
+    db.session.flush()
 
-    # Delete match notes and points first (they reference match)
-    MatchNote.query.filter_by(match=match_id).delete(synchronize_session=False)
-    Point.query.filter_by(match=match_id).delete(synchronize_session=False)
-
-    db.session.delete(match)
+    delete_matches_with_children([match_id])
     db.session.commit()
-    recompute_all_match_times(tournament_url)
+    recompute_scheduled_and_nominal_times(tournament_url)
 
     return jsonify({"success": True})
 
