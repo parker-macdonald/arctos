@@ -1,17 +1,19 @@
+use crate::Route;
 use crate::api;
-use crate::components::{all_tokens_known, resolve_value_to_team_ids, PenaltyDisplay};
+use crate::components::{PenaltyDisplay, all_tokens_known, resolve_value_to_team_ids};
 use crate::display::short_or_truncate;
 use crate::pages::TeamSelectionField;
-use crate::time_format::format_match_display_local;
-use crate::Route;
 use crate::stones_filter::BayesianOffsetFilter;
-use crate::types::{ConflictingMatchInfo, ForceStartMatchRequest, MatchDetailData, PointData, PointTimestamp};
-use dioxus::prelude::*;
-use serde_json::Value;
-#[cfg(target_arch = "wasm32")]
-use gloo_timers::callback::Interval;
+use crate::time_format::format_match_display_local;
+use crate::types::{
+    ConflictingMatchInfo, ForceStartMatchRequest, MatchDetailData, PointData, PointTimestamp,
+};
 #[cfg(target_arch = "wasm32")]
 use chrono;
+use dioxus::prelude::*;
+#[cfg(target_arch = "wasm32")]
+use gloo_timers::callback::Interval;
+use serde_json::Value;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::JsCast;
 
@@ -61,9 +63,16 @@ fn point_note_display(
         .player_display
         .as_deref()
         .or(note.player_name.as_deref())
-        .unwrap_or(if note.target == "match" { "Point" } else { note.target.as_str() })
+        .unwrap_or(if note.target == "match" {
+            "Point"
+        } else {
+            note.target.as_str()
+        })
         .to_string();
-    let (border_color, display_text, desc) = match note.penalty_type_id.and_then(|id| penalty_types.iter().find(|t| t.id == id)) {
+    let (border_color, display_text, desc) = match note
+        .penalty_type_id
+        .and_then(|id| penalty_types.iter().find(|t| t.id == id))
+    {
         Some(pt) => (
             pt.color.clone(),
             pt.name.clone(),
@@ -71,12 +80,22 @@ fn point_note_display(
         ),
         None => (
             "808080".to_string(),
-            if note.text.is_empty() { "Other".to_string() } else { note.text.clone() },
+            if note.text.is_empty() {
+                "Other".to_string()
+            } else {
+                note.text.clone()
+            },
             None,
         ),
     };
     let target_profile_id = note.player_id.clone();
-    (target_display, border_color, display_text, desc, target_profile_id)
+    (
+        target_display,
+        border_color,
+        display_text,
+        desc,
+        target_profile_id,
+    )
 }
 
 fn get_query_param(name: &str) -> Option<String> {
@@ -87,11 +106,11 @@ fn get_query_param(name: &str) -> Option<String> {
         let params = web_sys::UrlSearchParams::new_with_str(&search).ok()?;
         params.get(name)
     }
-#[cfg(not(target_arch = "wasm32"))]
-{
-    let _ = name;
-    None
-}
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = name;
+        None
+    }
 }
 
 /// Seek the local video player to the given time in seconds (wasm only).
@@ -211,7 +230,13 @@ fn youtube_seek_seconds(point_stamp: Option<&str>, stream_start_time: Option<&st
         .ok()?;
     let diff = point_parsed.signed_duration_since(stream_parsed);
     let secs = diff.num_milliseconds() as f64 / 1000.0;
-    web_sys::console::log_1(&format!("point_parsed: {:?}, stream_parsed: {:?}, diff: {:?}, secs: {:?}", point_parsed, stream_parsed, diff, secs).into());
+    web_sys::console::log_1(
+        &format!(
+            "point_parsed: {:?}, stream_parsed: {:?}, diff: {:?}, secs: {:?}",
+            point_parsed, stream_parsed, diff, secs
+        )
+        .into(),
+    );
     Some(secs.max(0.0))
 }
 
@@ -250,10 +275,7 @@ fn in_video_start_for_world_stamp_interpolated(
     }
 
     // Parse boundaries to seconds since epoch.
-    let tw_secs: Option<Vec<f64>> = tw
-        .iter()
-        .map(|s| parse_iso_to_secs(s))
-        .collect();
+    let tw_secs: Option<Vec<f64>> = tw.iter().map(|s| parse_iso_to_secs(s)).collect();
     let tw_secs = tw_secs?;
 
     // Find segment for interpolation / extrapolation.
@@ -289,12 +311,15 @@ fn parse_iso_to_secs(s: &str) -> Option<f64> {
         .ok()
         .map(|dt| dt.timestamp_millis() as f64 / 1000.0)
         .or_else(|| {
-            let with_z = if s.ends_with('Z') || s.contains('+') || (s.contains('-') && s.len() > 10) {
+            let with_z = if s.ends_with('Z') || s.contains('+') || (s.contains('-') && s.len() > 10)
+            {
                 s.to_string()
             } else {
                 format!("{}Z", s.trim_end_matches('z').trim_end_matches('Z'))
             };
-            chrono::DateTime::parse_from_rfc3339(&with_z).ok().map(|dt| dt.timestamp_millis() as f64 / 1000.0)
+            chrono::DateTime::parse_from_rfc3339(&with_z)
+                .ok()
+                .map(|dt| dt.timestamp_millis() as f64 / 1000.0)
         })
         .or_else(|| {
             let without_tz = s.trim_end_matches('z').trim_end_matches('Z').trim();
@@ -348,10 +373,10 @@ fn compute_stones_remaining(
     if points.is_empty() {
         return "??".to_string();
     }
-    
+
     // Find the last point
     let last_point = points[points.len() - 1];
-    
+
     // If last point is ongoing (no end_stamp), compute from it
     let last_point_is_ongoing = last_point.end_stamp.is_none();
     if last_point_is_ongoing {
@@ -365,13 +390,14 @@ fn compute_stones_remaining(
             }
         }
     }
-    
+
     // Last point is completed, find the last completed point with stones_at_start
     for pt in points.iter().rev() {
         if pt.end_stamp.is_some() {
             if let Some(stones_at_start) = pt.stones_at_start {
                 if let (Some(start_stamp), Some(end_stamp)) = (&pt.stamp, &pt.end_stamp) {
-                    let elapsed_str = compute_stones_elapsed(Some(start_stamp), Some(end_stamp), filter);
+                    let elapsed_str =
+                        compute_stones_elapsed(Some(start_stamp), Some(end_stamp), filter);
                     if let Ok(elapsed) = elapsed_str.parse::<u32>() {
                         let remaining = stones_at_start.saturating_sub(elapsed);
                         return remaining.to_string();
@@ -380,7 +406,7 @@ fn compute_stones_remaining(
             }
         }
     }
-    
+
     "??".to_string()
 }
 
@@ -479,27 +505,46 @@ fn ForceStartModal(
         let r = refs().trim().to_string();
 
         #[cfg(target_arch = "wasm32")]
-        web_sys::console::log_1(&format!("[ForceStart] validation memo run t1={:?} t2={:?} refs={:?}", t1, t2, r).into());
+        web_sys::console::log_1(
+            &format!(
+                "[ForceStart] validation memo run t1={:?} t2={:?} refs={:?}",
+                t1, t2, r
+            )
+            .into(),
+        );
 
         if t1.is_empty() || t2.is_empty() {
             return (false, Some("Team 1 and Team 2 are required.".to_string()));
         }
         let all_known = all_tokens_known(&t1, false, &data.team_options, &data.tags, &data.matches)
             && all_tokens_known(&t2, false, &data.team_options, &data.tags, &data.matches)
-            && (r.is_empty() || all_tokens_known(&r, true, &data.team_options, &data.tags, &data.matches));
+            && (r.is_empty()
+                || all_tokens_known(&r, true, &data.team_options, &data.tags, &data.matches));
 
         #[cfg(target_arch = "wasm32")]
-        web_sys::console::log_1(&format!("[ForceStart] all_known={} (t1={:?} t2={:?} refs={:?})", all_known, t1, t2, r).into());
+        web_sys::console::log_1(
+            &format!(
+                "[ForceStart] all_known={} (t1={:?} t2={:?} refs={:?})",
+                all_known, t1, t2, r
+            )
+            .into(),
+        );
 
         if !all_known {
-            return (false, Some("All participating teams must be known.".to_string()));
+            return (
+                false,
+                Some("All participating teams must be known.".to_string()),
+            );
         }
         if has_conflict {
             let act = conflicting_action();
             if act.is_none() {
                 return (
                     false,
-                    Some("Another match is in progress on this field. Choose SKIP or COMPLETE.".to_string()),
+                    Some(
+                        "Another match is in progress on this field. Choose SKIP or COMPLETE."
+                            .to_string(),
+                    ),
                 );
             }
             if act.as_deref() == Some("COMPLETE") && conflicting_winner().is_none() {
@@ -514,7 +559,13 @@ fn ForceStartModal(
     let (can_submit, validation_message) = validation();
 
     #[cfg(target_arch = "wasm32")]
-    web_sys::console::log_1(&format!("[ForceStart] render can_submit={} msg={:?}", can_submit, validation_message).into());
+    web_sys::console::log_1(
+        &format!(
+            "[ForceStart] render can_submit={} msg={:?}",
+            can_submit, validation_message
+        )
+        .into(),
+    );
 
     use_effect(move || {
         let trigger = submit_trigger();
@@ -549,7 +600,13 @@ fn ForceStartModal(
             }
         };
         let r = refs_submit().trim().to_string();
-        let team1_ids = match resolve_value_to_team_ids(&t1, false, &data.team_options, &data.tags, &data.matches) {
+        let team1_ids = match resolve_value_to_team_ids(
+            &t1,
+            false,
+            &data.team_options,
+            &data.tags,
+            &data.matches,
+        ) {
             Some(ids) => ids,
             None => {
                 error.set(Some("Could not resolve Team 1 to a team ID.".to_string()));
@@ -557,7 +614,13 @@ fn ForceStartModal(
                 return;
             }
         };
-        let team2_ids = match resolve_value_to_team_ids(&t2, false, &data.team_options, &data.tags, &data.matches) {
+        let team2_ids = match resolve_value_to_team_ids(
+            &t2,
+            false,
+            &data.team_options,
+            &data.tags,
+            &data.matches,
+        ) {
             Some(ids) => ids,
             None => {
                 error.set(Some("Could not resolve Team 2 to a team ID.".to_string()));
@@ -568,7 +631,8 @@ fn ForceStartModal(
         let refs_ids = if r.is_empty() {
             Vec::new()
         } else {
-            match resolve_value_to_team_ids(&r, true, &data.team_options, &data.tags, &data.matches) {
+            match resolve_value_to_team_ids(&r, true, &data.team_options, &data.tags, &data.matches)
+            {
                 Some(ids_str) => ids_str
                     .split(',')
                     .map(|s| s.trim().to_string())
@@ -771,7 +835,7 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
     let url_for_resource = url.clone();
     let id_for_resource = match_id.clone();
     let name_for_resource = match_name.clone();
-    
+
     // Main match data
     let data = use_resource(move || {
         let u = url_for_resource.clone();
@@ -787,12 +851,12 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
             }
         }
     });
-    
+
     // Polling for live match state updates
     let poll_tick = use_signal(|| 0u32);
     let url_for_poll = url.clone();
     let match_id_for_poll = match_id.clone();
-    
+
     #[cfg(target_arch = "wasm32")]
     let poll_interval = use_signal(|| None as Option<Interval>);
     #[cfg(target_arch = "wasm32")]
@@ -816,7 +880,7 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
             }
         });
     }
-    
+
     // Match state from polling
     let state_signal = use_signal(|| None as Option<Result<Value, String>>);
     use_effect(move || {
@@ -855,19 +919,19 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
     });
 
     // User info for permissions
-    let user_info = use_resource(move || async move {
-        api::me().await.ok()
-    });
+    let user_info = use_resource(move || async move { api::me().await.ok() });
 
     // Bayesian filter for server time sync (for stones elapsed calculation)
     #[cfg(target_arch = "wasm32")]
     let time_filter = use_signal(|| BayesianOffsetFilter::default());
-    
+
     #[cfg(target_arch = "wasm32")]
     {
         use_effect(move || {
             if let Some(Ok(d)) = data.value().read().as_ref() {
-                if d.match_data.status == "IN_PROGRESS" && d.match_data.set_type.as_deref() == Some("STONES") {
+                if d.match_data.status == "IN_PROGRESS"
+                    && d.match_data.set_type.as_deref() == Some("STONES")
+                {
                     let mut filter = time_filter;
                     spawn(async move {
                         loop {
@@ -885,7 +949,7 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
             }
         });
     }
-    
+
     // Stones elapsed update interval (for ongoing points)
     #[cfg(target_arch = "wasm32")]
     let stones_update_tick = use_signal(|| 0u32);
@@ -897,7 +961,9 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
         let mut stones_update_interval = stones_update_interval;
         use_effect(move || {
             if let Some(Ok(d)) = data.value().read().as_ref() {
-                if d.match_data.status == "IN_PROGRESS" && d.match_data.set_type.as_deref() == Some("STONES") {
+                if d.match_data.status == "IN_PROGRESS"
+                    && d.match_data.set_type.as_deref() == Some("STONES")
+                {
                     if stones_update_interval.read().is_none() {
                         let handle = Interval::new(100, move || {
                             stones_update_tick.set(stones_update_tick() + 1);
@@ -912,7 +978,7 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
             }
         });
     }
-    
+
     let val = data.value();
     let base_url = api::base_url();
     let navigator = use_navigator();
@@ -957,7 +1023,11 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
     }
 
     use_effect(move || {
-        let _ = (val.read().as_ref(), selected_camera_idx(), live_points_signal());
+        let _ = (
+            val.read().as_ref(),
+            selected_camera_idx(),
+            live_points_signal(),
+        );
         if let Some(Ok(d)) = val.read().as_ref() {
             let idx = selected_camera_idx().min(d.available_cameras.len().saturating_sub(1));
             if let Some(cam) = d.available_cameras.get(idx) {
@@ -966,7 +1036,10 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                 point_timestamps_for_keys.set(Vec::new());
             }
             n_cameras_for_keys.set(d.available_cameras.len());
-            let n_pts = live_points_signal().as_ref().map(|p| p.len()).unwrap_or(d.points.len());
+            let n_pts = live_points_signal()
+                .as_ref()
+                .map(|p| p.len())
+                .unwrap_or(d.points.len());
             n_points_for_keys.set(n_pts);
         } else {
             point_timestamps_for_keys.set(Vec::new());
@@ -983,7 +1056,9 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
         let mut fetched_stream_starts = fetched_stream_starts;
         let mut stream_starts_fetched_for_match = stream_starts_fetched_for_match;
         use_effect(move || {
-            let match_uuid = val_fetch.read().as_ref()
+            let match_uuid = val_fetch
+                .read()
+                .as_ref()
                 .and_then(|r| r.as_ref().ok())
                 .map(|d| d.match_data.uuid.clone());
             let Some(match_uuid) = match_uuid else { return };
@@ -991,7 +1066,9 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                 return;
             }
             stream_starts_fetched_for_match.set(Some(match_uuid.clone()));
-            let cameras = val_fetch.read().as_ref()
+            let cameras = val_fetch
+                .read()
+                .as_ref()
                 .and_then(|r| r.as_ref().ok())
                 .map(|d| d.available_cameras.clone());
             let Some(cameras) = cameras else { return };
@@ -1055,11 +1132,12 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
         use_effect(move || {
             let _ = selected_camera_idx();
             let binding = val_yt.read();
-                    let camera_url: Option<String> = binding
+            let camera_url: Option<String> = binding
                 .as_ref()
                 .and_then(|r| r.as_ref().ok())
                 .and_then(|d| {
-                    let idx = selected_camera_idx().min(d.available_cameras.len().saturating_sub(1));
+                    let idx =
+                        selected_camera_idx().min(d.available_cameras.len().saturating_sub(1));
                     let cam = d.available_cameras.get(idx)?;
                     if cam.status.as_deref() == Some("SUCCESS") {
                         cam.url.clone()
@@ -1068,7 +1146,10 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                     }
                 });
             if let Some(url) = camera_url {
-                let url_escaped = url.replace('\\', "\\\\").replace('\'', "\\'").replace('\n', " ");
+                let url_escaped = url
+                    .replace('\\', "\\\\")
+                    .replace('\'', "\\'")
+                    .replace('\n', " ");
                 let script = format!(
                     r#"
 (function() {{
@@ -1175,7 +1256,9 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                     .stream_start_time
                     .clone()
                     .or_else(|| fetched_stream_starts().get(idx).cloned().flatten());
-                let Some(stream_start) = stream_start else { return };
+                let Some(stream_start) = stream_start else {
+                    return;
+                };
                 spawn(async move {
                     gloo_timers::future::TimeoutFuture::new(3000).await;
                     let now_iso = chrono::Utc::now().to_rfc3339();
@@ -1201,18 +1284,26 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                     let match_id_str = match_id_for_effect.clone();
                     let url_str = url_for_effect.clone();
                     spawn(async move {
-
                         // Initialize video player (placeholder - full implementation requires YouTube IFrame API)
-                        let cameras_json = serde_json::to_string(&cameras).unwrap_or_else(|_| "[]".to_string());
-                        let points_json = serde_json::to_string(&points.iter().map(|p| serde_json::json!({
-                            "uuid": p.uuid,
-                            "stamp": p.stamp,
-                            "end_stamp": p.end_stamp,
-                            "stones_at_start": p.stones_at_start,
-                        })).collect::<Vec<_>>()).unwrap_or_else(|_| "[]".to_string());
+                        let cameras_json =
+                            serde_json::to_string(&cameras).unwrap_or_else(|_| "[]".to_string());
+                        let points_json = serde_json::to_string(
+                            &points
+                                .iter()
+                                .map(|p| {
+                                    serde_json::json!({
+                                        "uuid": p.uuid,
+                                        "stamp": p.stamp,
+                                        "end_stamp": p.end_stamp,
+                                        "stones_at_start": p.stones_at_start,
+                                    })
+                                })
+                                .collect::<Vec<_>>(),
+                        )
+                        .unwrap_or_else(|_| "[]".to_string());
                         let match_id_val = match_id_str.as_ref().map(|s| s.as_str()).unwrap_or("");
                         let url_val = url_str.as_str();
-                        
+
                         let js_init = format!(
                             r#"
                             console.log('Match page video player initialized ' + JSON.stringify({{ matchId: '{}', tournamentUrl: '{}', availableCameras: {}, pointsData: {} }}));
@@ -1250,7 +1341,8 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                 ev.prevent_default();
                 if let Some(Ok(d)) = val.read().as_ref() {
                     let pi = selected_point_index().min(d.points.len().saturating_sub(1));
-                    let idx = selected_camera_idx().min(d.available_cameras.len().saturating_sub(1));
+                    let idx =
+                        selected_camera_idx().min(d.available_cameras.len().saturating_sub(1));
                     let cam = d.available_cameras.get(idx);
                     if let Some(cam) = cam {
                         if cam.status.as_deref() != Some("SUCCESS") {
@@ -1277,7 +1369,8 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                 let new_idx = selected_point_index().saturating_sub(1);
                 selected_point_index.set(new_idx);
                 if let Some(Ok(d)) = val.read().as_ref() {
-                    let idx = selected_camera_idx().min(d.available_cameras.len().saturating_sub(1));
+                    let idx =
+                        selected_camera_idx().min(d.available_cameras.len().saturating_sub(1));
                     let cam = d.available_cameras.get(idx);
                     if let Some(cam) = cam {
                         if cam.status.as_deref() != Some("SUCCESS") {
@@ -1305,7 +1398,8 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                 let new_idx = (selected_point_index() + 1).min(n.saturating_sub(1));
                 selected_point_index.set(new_idx);
                 if let Some(Ok(d)) = val.read().as_ref() {
-                    let idx = selected_camera_idx().min(d.available_cameras.len().saturating_sub(1));
+                    let idx =
+                        selected_camera_idx().min(d.available_cameras.len().saturating_sub(1));
                     let cam = d.available_cameras.get(idx);
                     if let Some(cam) = cam {
                         if cam.status.as_deref() != Some("SUCCESS") {
@@ -2271,7 +2365,7 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
 
                     // YouTube IFrame API (script from youtube.com; use host: youtube-nocookie.com when creating player)
                         script { src: "https://www.youtube.com/iframe_api" }
-                        script { src: "https://polyfill.io/v3/polyfill.min.js?features=es6" }
+                        script { src: "https://cdnjs.cloudflare.com/polyfill/v3/polyfill.min.js?features=es6" }
 
                         {
                             {

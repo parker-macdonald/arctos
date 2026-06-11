@@ -49,6 +49,9 @@ class Match(db.Model):
         team1_initial: ASS expression or label for team1 before resolution.
         team2_initial: ASS expression or label for team2 before resolution.
         field: Name of the field (court) where the match takes place.
+        scheduled_start_time: Originally-scheduled start time. Stable across
+            dynamic recomputation, so time-based dependency edges between
+            matches don't drift as :attr:`nominal_start_time` is updated.
         nominal_start_time: Scheduled start time (may be updated dynamically).
         confirmed_start_time: Actual start time once the match begins.
         completed_time: Time the match ended.
@@ -106,6 +109,7 @@ class Match(db.Model):
     team1_initial = db.Column(db.String(LONG_NAME_LEN))
     team2_initial = db.Column(db.String(LONG_NAME_LEN))
     field = db.Column(db.String(SHORT_NAME_LEN))
+    scheduled_start_time = db.Column(db.DateTime)
     nominal_start_time = db.Column(db.DateTime)
     confirmed_start_time = db.Column(db.DateTime)
     completed_time = db.Column(db.DateTime)

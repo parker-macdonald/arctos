@@ -147,30 +147,37 @@ def can_head_ref_match(tournament_url: str, player_id: str, match=None) -> bool:
 
 def resolve_team_name_to_id(team_name, tournament_url):
     """Resolve a team name/pseudonym to (team_id, initial_display) for a tournament.
-    Only resolves to a team ID when that team has a CONFIRMED registration for the event.
-    Match refs (MatchName::winner/loser) and tag refs (tag::Name) are not resolved here and
-    are stored as initial display text. Returns (id, None) when found; (None, team_name) otherwise.
-    """
-    from models import TeamRegistration, Team
 
-    # Try exact match on team ID - only accept if team is registered (CONFIRMED) for this event
+    Routes through :func:`app.services.registration_resolver.team_registration_for_tournament`
+    so the lookup honours both standalone tournaments (event-scoped registrations)
+    and league tournaments (league-scoped registrations). Without this delegation,
+    league-event matches see their teams as "not registered" because the raw
+    ``event=tournament_url`` filter never matches league rows.
+
+    Match refs (MatchName::winner/loser) and tag refs (tag::Name) are not resolved
+    here. Returns ``(id, None)`` when found; ``(None, team_name)`` otherwise.
+    """
+    from models import Team, Tournament
+    from app.services.registration_resolver import (
+        team_registration_for_tournament,
+        team_registrations_for_tournament,
+    )
+
+    tournament = Tournament.query.filter_by(url=tournament_url).first()
+    if tournament is None:
+        return (None, team_name)
+
+    # Try exact team-id match first; only accept if registered for this scope.
     team = Team.query.filter_by(id=team_name).first()
-    if team:
-        reg = TeamRegistration.query.filter_by(
-            event=tournament_url, team=team.id, status=RegistrationStatus.CONFIRMED
-        ).first()
-        if reg:
+    if team is not None:
+        if team_registration_for_tournament(tournament, team.id) is not None:
             return (team.id, None)
         return (None, team_name)
 
-    # Try pseudonym in tournament - only CONFIRMED registrations
-    reg = TeamRegistration.query.filter_by(
-        event=tournament_url,
-        pseudonym=team_name,
-        status=RegistrationStatus.CONFIRMED,
-    ).first()
-    if reg:
-        return (reg.team, None)
+    # Pseudonym lookup against this scope's confirmed registrations.
+    for reg in team_registrations_for_tournament(tournament):
+        if reg.pseudonym == team_name:
+            return (reg.team, None)
 
     return (None, team_name)
 
@@ -229,6 +236,42 @@ def resolve_tag_to_team(tag_ref: str, tournament_url: str) -> str | None:
     tag = Tag.query.filter_by(event=tournament_url, name=tag_name).first()
     if tag and tag.team:
         return tag.team
+    return None
+
+
+def resolve_match_winner_loser_ref(initial: str, tournament_url: str) -> str | None:
+    """Resolve ``MatchName::winner`` / ``MatchName::loser`` to a team id.
+
+    Returns the winner/loser team id of the referenced match if and only if the
+    match's outcome is already decided. Returns ``None`` for anything else —
+    not a winner/loser reference, the named match doesn't exist in this
+    tournament, or the match hasn't been finalised yet (in which case the
+    cache fill-in happens later via ``apply_match_dependencies``).
+
+    Args:
+        initial: A team-slot ``_initial`` token, e.g. ``"Final::winner"``.
+        tournament_url: Tournament URL slug for the lookup.
+
+    Returns:
+        Resolved team id, or ``None`` when not currently resolvable.
+    """
+    from app.models.match import Match
+
+    if not initial:
+        return None
+    initial = initial.strip()
+    if not initial:
+        return None
+    lower = initial.lower()
+    for suffix, qualifier in (("::winner", "winner"), ("::loser", "loser")):
+        if lower.endswith(suffix):
+            base = initial[: -len(suffix)].strip()
+            if not base:
+                return None
+            ref = Match.query.filter_by(name=base, event=tournament_url).first()
+            if ref is None:
+                return None
+            return ref.winner_team_id if qualifier == "winner" else ref.loser_team_id
     return None
 
 

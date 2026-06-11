@@ -346,11 +346,11 @@ def create_app(config: dict | None = None) -> Flask:
         with app.app_context():
             from datetime import datetime, timezone
             from models import Tournament
-            from app.utils.scheduling import recompute_all_match_times
+            from app.utils.scheduling import recompute_scheduled_and_nominal_times
 
             now = datetime.now(timezone.utc)
             # Materialise the (url, end_date) pairs up front so iteration is
-            # decoupled from the session: recompute_all_match_times commits in
+            # decoupled from the session: recompute_scheduled_and_nominal_times commits in
             # the global session, which expires every still-pending ORM row in
             # the iterator and would otherwise raise DetachedInstanceError on
             # the next access.
@@ -364,9 +364,9 @@ def create_app(config: dict | None = None) -> Flask:
                     not_complete = end_utc >= now
                 if not_complete:
                     try:
-                        recompute_all_match_times(url)
+                        recompute_scheduled_and_nominal_times(url)
                     except Exception:
-                        logger.exception("recompute_all_match_times failed for tournament %s", url)
+                        logger.exception("recompute_scheduled_and_nominal_times failed for tournament %s", url)
     except Exception:
         logger.exception("Tournament boot-time recompute pass failed")
 

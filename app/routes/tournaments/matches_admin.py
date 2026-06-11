@@ -13,7 +13,7 @@ from flask import jsonify, request
 from flask_login import current_user, login_required
 from sqlalchemy.orm.attributes import flag_modified
 
-from app.domain.enums import ScheduleType, SetType
+from app.domain.enums import MatchStatus, ScheduleType, SetType
 from app.services.dual_write import (
     clear_match_referees,
     get_match_ref_initials,
@@ -25,25 +25,30 @@ from app.utils.match_ref_resolution import (
     resolve_refs_slots,
 )
 from app.utils.helpers import (
+    resolve_match_winner_loser_ref,
     resolve_team_name_to_id,
     resolve_tag_to_team,
 )
 from app.utils.name_validation import match_name_char_error
 from app.utils.scheduling import (
     compute_dynamic_match_nominal_start_time,
-    recompute_all_match_times,
+    recompute_scheduled_and_nominal_times,
     validate_match_input,
 )
 from models import (
     Field,
     Match,
-    MatchNote,
     Point,
     Tag,
     db,
 )
 
-from . import bp, update_match_previous_link
+from . import (
+    bp,
+    delete_matches_with_children,
+    detach_match_from_chain,
+    update_match_previous_link,
+)
 
 
 def _check_to(tournament_url):
@@ -68,6 +73,50 @@ def _tag_usage(tournament_url, tag_name):
     return used
 
 
+# Statuses where a match has already started and is no longer editable.
+_LOCKED_STATUSES = (MatchStatus.IN_PROGRESS, MatchStatus.COMPLETED, MatchStatus.SKIPPED)
+
+
+def _is_explicit_team_id(val: str) -> bool:
+    """True if *val* looks like a literal team id (not a tag:: or Match::winner ref)."""
+    if not val or not val.strip():
+        return False
+    val = val.strip()
+    if val.lower().startswith("tag::"):
+        return False
+    lower = val.lower()
+    if "::winner" in lower or "::loser" in lower:
+        return False
+    return True
+
+
+def _resolve_initial_to_cached_team(initial: str, tournament_url: str) -> str | None:
+    """Resolve a team-slot ``_initial`` token to a concrete team id, if possible.
+
+    Tries, in order: ``MatchName::winner`` / ``::loser`` (when the referenced
+    match's outcome is already decided), ``tag::Foo``, registered name /
+    pseudonym, and bare team id. Returns ``None`` for anything not currently
+    resolvable — for unfinished match refs, the cache is filled in later by
+    ``apply_match_dependencies`` when the source match completes.
+    """
+    if not initial:
+        return None
+    initial = initial.strip()
+    if not initial:
+        return None
+    winner_loser = resolve_match_winner_loser_ref(initial, tournament_url)
+    if winner_loser is not None:
+        return winner_loser
+    if initial.lower().startswith("tag::"):
+        return resolve_tag_to_team(initial, tournament_url)
+    team_id, _ = resolve_team_name_to_id(initial, tournament_url)
+    if team_id:
+        return team_id
+    if _is_explicit_team_id(initial):
+        return initial
+    return None
+
+
 @bp.route("/tournaments/<tournament_url>/matches/<match_id>", methods=["PUT"])
 @login_required
 def update_match_api(tournament_url, match_id):
@@ -75,6 +124,11 @@ def update_match_api(tournament_url, match_id):
         return jsonify({"error": "Forbidden"}), 403
 
     match = Match.query.filter_by(uuid=match_id, event=tournament_url).first_or_404()
+    if match.status in _LOCKED_STATUSES:
+        return (
+            jsonify({"error": (f"Match cannot be edited once it has started (current status: {match.status.value}).")}),
+            409,
+        )
     data = request.get_json()
     if not data:
         return jsonify({"error": "Invalid JSON"}), 400
@@ -92,8 +146,8 @@ def update_match_api(tournament_url, match_id):
         ScheduleType.JOIN: (ScheduleType.JOIN,),
     }
 
-    # Extract fields
-    name = data.get("name")
+    # Extract fields. `name` is intentionally not extracted — match names are immutable
+    # after creation; pretend any client-supplied `name` doesn't exist.
     field = data.get("field")
     schedule_type_str = data.get("schedule_type")  # STATIC, SAFE, FAST, BREAK, JOIN
     length = data.get("length")
@@ -129,48 +183,30 @@ def update_match_api(tournament_url, match_id):
             pass  # Ignore invalid enum
 
     # Validate inputs
-    if name:
-        mn_err = match_name_char_error(name.strip())
-        if mn_err:
-            return jsonify({"error": mn_err}), 400
-        match.name = name
     if field is not None:  # field can be empty string/null
         match.field = field
 
-    # Match name uniqueness: for BREAK/JOIN only within same field; for others globally in tournament
-    if name is not None or field is not None:
+    # Match-name uniqueness check (still useful when only `field` changes for BREAK/JOIN,
+    # since BREAK/JOIN match names are unique per field).
+    if field is not None:
         effective_name = (match.name or "").strip()
         effective_field = (match.field or "").strip()
-        if effective_name:
-            if match.schedule_type in (ScheduleType.BREAK, ScheduleType.JOIN):
-                existing_name = (
-                    Match.query.filter_by(
-                        event=tournament_url,
-                        name=effective_name,
-                        field=effective_field,
-                        schedule_type=match.schedule_type,
-                    )
-                    .filter(Match.uuid != match.uuid)
-                    .first()
+        if effective_name and match.schedule_type in (ScheduleType.BREAK, ScheduleType.JOIN):
+            existing_name = (
+                Match.query.filter_by(
+                    event=tournament_url,
+                    name=effective_name,
+                    field=effective_field,
+                    schedule_type=match.schedule_type,
                 )
-            else:
-                existing_name = (
-                    Match.query.filter_by(event=tournament_url, name=effective_name)
-                    .filter(Match.uuid != match.uuid)
-                    .first()
-                )
+                .filter(Match.uuid != match.uuid)
+                .first()
+            )
             if existing_name:
-                if match.schedule_type in (ScheduleType.BREAK, ScheduleType.JOIN):
-                    return (
-                        jsonify(
-                            {
-                                "error": f"A {match.schedule_type.value} match with this name already exists on this field."
-                            }
-                        ),
-                        400,
-                    )
                 return (
-                    jsonify({"error": "A match with this name already exists in this tournament."}),
+                    jsonify(
+                        {"error": f"A {match.schedule_type.value} match with this name already exists on this field."}
+                    ),
                     400,
                 )
 
@@ -182,60 +218,22 @@ def update_match_api(tournament_url, match_id):
         match.team2_initial = None
         clear_match_referees(match)
     else:
-        # Helper to check if a value is an explicit team ID (not a tag or match reference)
-        def is_explicit_team_id(val: str) -> bool:
-            if not val or not val.strip():
-                return False
-            val = val.strip()
-            # Not a tag reference
-            if val.lower().startswith("tag::"):
-                return False
-            # Not a match reference (contains ::winner or ::loser)
-            if "::winner" in val.lower() or "::loser" in val.lower():
-                return False
-            # Must be an explicit team ID
-            return True
-
-        # Teams (helper takes team_name first, then tournament_url)
+        # When _initial fields change, write through to the resolved team cache
+        # (team1 / team2). _resolve_initial_to_cached_team returns None for
+        # unresolvable forms (e.g. MatchName::winner before that match finishes).
         if team1_input is not None:
             team1_name = str(team1_input).strip()
-            if not team1_name:
-                match.team1 = None
-                match.team1_initial = None
-            else:
-                t1_id, _ = resolve_team_name_to_id(team1_name, tournament_url)
-                final_team1 = None
-                if t1_id:
-                    final_team1 = t1_id
-                elif is_explicit_team_id(team1_name):
-                    final_team1 = team1_name
-                else:
-                    resolved_team = resolve_tag_to_team(team1_name, tournament_url)
-                    if resolved_team:
-                        final_team1 = resolved_team
-                match.team1 = final_team1
-                match.team1_initial = team1_name
+            match.team1_initial = team1_name or None
+            match.team1 = _resolve_initial_to_cached_team(team1_name, tournament_url)
 
         if team2_input is not None:
             team2_name = str(team2_input).strip()
-            if not team2_name:
-                match.team2 = None
-                match.team2_initial = None
-            else:
-                t2_id, _ = resolve_team_name_to_id(team2_name, tournament_url)
-                final_team2 = None
-                if t2_id:
-                    final_team2 = t2_id
-                elif is_explicit_team_id(team2_name):
-                    final_team2 = team2_name
-                else:
-                    resolved_team = resolve_tag_to_team(team2_name, tournament_url)
-                    if resolved_team:
-                        final_team2 = resolved_team
-                match.team2 = final_team2
-                match.team2_initial = team2_name
+            match.team2_initial = team2_name or None
+            match.team2 = _resolve_initial_to_cached_team(team2_name, tournament_url)
 
-        # Refs: parallel refs / refs_initial (same slot count)
+        # Refs: parallel refs / refs_initial (same slot count). resolve_refs_slots
+        # already handles the cached-resolution side, so the join-table writer
+        # both updates _initial and the resolved team_id together.
         if refs is not None:
             if isinstance(refs, list):
                 r_csv, i_csv = resolve_refs_slots(refs, tournament_url)
@@ -316,37 +314,28 @@ def update_match_api(tournament_url, match_id):
                 if dt.tzinfo:
                     dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
                 match.nominal_start_time = dt
+                # User explicitly chose a start time — keep scheduled anchor in sync.
+                match.scheduled_start_time = dt
             except ValueError:
                 pass
 
-        # STATIC matches have no previous_match: always clear and unlink (ignore previous_match_id)
-        if match.previous_match:
-            old_prev = Match.query.filter_by(uuid=match.previous_match, event=tournament_url).first()
-            if old_prev and old_prev.next_match == match.uuid:
-                old_prev.next_match = match.next_match
-                if match.next_match:
-                    old_next = Match.query.filter_by(uuid=match.next_match, event=tournament_url).first()
-                    if old_next:
-                        old_next.previous_match = old_prev.uuid
-            elif match.next_match:
-                old_next = Match.query.filter_by(uuid=match.next_match, event=tournament_url).first()
-                if old_next:
-                    old_next.previous_match = None
-        match.previous_match = None  # Always set for STATIC so it persists
+        # STATIC matches have no chain links — fully detach so neighbours close up.
+        detach_match_from_chain(match, tournament_url)
         flag_modified(match, "previous_match")
+        flag_modified(match, "next_match")
     else:
         # Dynamic (BREAK, JOIN, FAST, SAFE)
         match.nominal_start_time = compute_dynamic_match_nominal_start_time(match, tournament_url)
-        if match.schedule_type in (
-            ScheduleType.BREAK,
-            ScheduleType.JOIN,
-            ScheduleType.FAST,
-            ScheduleType.SAFE,
-        ):
-            if previous_match_id:
-                update_match_previous_link(match, previous_match_id, tournament_url)
+        # If we don't yet have a scheduled anchor, seed it from the freshly-computed
+        # nominal so subsequent recomputations don't drag dependency edges around.
+        if match.scheduled_start_time is None and match.nominal_start_time is not None:
+            match.scheduled_start_time = match.nominal_start_time
+        if previous_match_id:
+            update_match_previous_link(match, previous_match_id, tournament_url)
         else:
-            match.previous_match = None
+            # User cleared the previous-match selector: detach so the chain closes up
+            # rather than leaving stale pointers in either direction.
+            detach_match_from_chain(match, tournament_url)
 
     ok, err = validate_match_input(match, tournament_url)
     if not ok:
@@ -357,7 +346,7 @@ def update_match_api(tournament_url, match_id):
     db.session.commit()
 
     # Recompute all times
-    recompute_all_match_times(tournament_url)
+    recompute_scheduled_and_nominal_times(tournament_url)
 
     return jsonify({"success": True})
 
@@ -590,63 +579,20 @@ def create_match_api(tournament_url):
                 if dt.tzinfo:
                     dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
                 match.nominal_start_time = dt
+                match.scheduled_start_time = dt
             except ValueError:
                 pass
-
-    # Helper to check if a value is an explicit team ID (not a tag or match reference)
-    def is_explicit_team_id(val: str) -> bool:
-        if not val or not val.strip():
-            return False
-        val = val.strip()
-        # Not a tag reference
-        if val.lower().startswith("tag::"):
-            return False
-        # Not a match reference (contains ::winner or ::loser)
-        if "::winner" in val.lower() or "::loser" in val.lower():
-            return False
-        # Must be an explicit team ID
-        return True
 
     # Team handling
     team1_input = data.get("team1") or ""
     team2_input = data.get("team2") or ""
     if match.schedule_type not in (ScheduleType.BREAK, ScheduleType.JOIN):
-        # Normalize whitespace
         team1_name = str(team1_input).strip()
         team2_name = str(team2_input).strip()
-
-        # Resolve via registrations (team ID or pseudonym) first
-        team1_id, _ = resolve_team_name_to_id(team1_name, tournament_url) if team1_name else (None, None)
-        team2_id, _ = resolve_team_name_to_id(team2_name, tournament_url) if team2_name else (None, None)
-
-        # Derive final team1 from explicit IDs or tags when not resolved by registration
-        final_team1 = None
-        if team1_id:
-            final_team1 = team1_id
-        elif team1_name:
-            if is_explicit_team_id(team1_name):
-                final_team1 = team1_name
-            else:
-                resolved_team = resolve_tag_to_team(team1_name, tournament_url)
-                if resolved_team:
-                    final_team1 = resolved_team
-
-        # Derive final team2 from explicit IDs or tags when not resolved by registration
-        final_team2 = None
-        if team2_id:
-            final_team2 = team2_id
-        elif team2_name:
-            if is_explicit_team_id(team2_name):
-                final_team2 = team2_name
-            else:
-                resolved_team = resolve_tag_to_team(team2_name, tournament_url)
-                if resolved_team:
-                    final_team2 = resolved_team
-
-        match.team1 = final_team1
-        match.team2 = final_team2
         match.team1_initial = team1_name or None
         match.team2_initial = team2_name or None
+        match.team1 = _resolve_initial_to_cached_team(team1_name, tournament_url)
+        match.team2 = _resolve_initial_to_cached_team(team2_name, tournament_url)
 
     # Refs: parallel refs / refs_initial (same slot count). Resolved here but
     # written below after the flush so the match has a uuid the join-table
@@ -699,6 +645,10 @@ def create_match_api(tournament_url):
     # Dynamic time compute
     if match.schedule_type != ScheduleType.STATIC:
         match.nominal_start_time = compute_dynamic_match_nominal_start_time(match, tournament_url)
+        # Seed the scheduled anchor from the freshly-computed nominal so future
+        # recomputations of nominal don't drag time-based dependency edges around.
+        if match.nominal_start_time is not None and match.scheduled_start_time is None:
+            match.scheduled_start_time = match.nominal_start_time
 
     ok, err = validate_match_input(match, tournament_url)
     if not ok:
@@ -708,7 +658,7 @@ def create_match_api(tournament_url):
     db.session.commit()
 
     # Recompute
-    recompute_all_match_times(tournament_url)
+    recompute_scheduled_and_nominal_times(tournament_url)
 
     return jsonify({"success": True, "uuid": match.uuid})
 
@@ -721,23 +671,14 @@ def delete_match_api(tournament_url, match_id):
 
     match = Match.query.filter_by(uuid=match_id, event=tournament_url).first_or_404()
 
-    # Update doubly linked list: unlink this match from prev and next
-    if match.previous_match:
-        prev = Match.query.filter_by(uuid=match.previous_match, event=tournament_url).first()
-        if prev and prev.next_match == match.uuid:
-            prev.next_match = match.next_match
-    if match.next_match:
-        nxt = Match.query.filter_by(uuid=match.next_match, event=tournament_url).first()
-        if nxt and nxt.previous_match == match.uuid:
-            nxt.previous_match = match.previous_match
+    # Splice this match out of its per-field chain so its neighbours remain linked,
+    # then flush so the reconnection persists before we hard-delete the row.
+    detach_match_from_chain(match, tournament_url)
+    db.session.flush()
 
-    # Delete match notes and points first (they reference match)
-    MatchNote.query.filter_by(match=match_id).delete(synchronize_session=False)
-    Point.query.filter_by(match=match_id).delete(synchronize_session=False)
-
-    db.session.delete(match)
+    delete_matches_with_children([match_id])
     db.session.commit()
-    recompute_all_match_times(tournament_url)
+    recompute_scheduled_and_nominal_times(tournament_url)
 
     return jsonify({"success": True})
 

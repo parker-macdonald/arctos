@@ -20,7 +20,10 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from app.domain.enums import MatchStatus
-from app.utils.scheduling import recompute_all_match_times
+from app.utils.scheduling import (
+    recompute_all_match_times,
+    recompute_scheduled_and_nominal_times,
+)
 from models import Match, db
 
 
@@ -388,3 +391,163 @@ class TestDynamicScheduling:
             db.session.commit()
 
             recompute_all_match_times(tournament_url)
+
+
+class TestScheduledVsNominalTimeline:
+    """scheduled_start_time is the planned timeline; nominal_start_time tracks reality."""
+
+    @pytest.mark.unit
+    def test_scheduled_tracks_plan_nominal_tracks_reality(self, app, test_db, tournament):
+        """scheduled_start_time follows the on-plan timeline (anchor + cumulative
+        nominal_length); nominal_start_time follows actual finish times."""
+        tournament_url = tournament.url
+        with app.app_context():
+            base = datetime.now(timezone.utc).replace(tzinfo=None)
+
+            anchor = Match(
+                name="Anchor",
+                event=tournament_url,
+                field="Field 1",
+                nominal_start_time=base,
+                scheduled_start_time=base,
+                schedule_type="STATIC",
+                nominal_length=60,
+                status=MatchStatus.COMPLETED,
+            )
+            # Anchor ran 30 min long (finished at base + 90, not the planned base + 60).
+            anchor.finalized_at = base + timedelta(minutes=90)
+            m2 = Match(
+                name="M2",
+                event=tournament_url,
+                field="Field 1",
+                nominal_start_time=base + timedelta(minutes=60),
+                schedule_type="SAFE",
+                nominal_length=60,
+                status="NOT_STARTED",
+            )
+            m3 = Match(
+                name="M3",
+                event=tournament_url,
+                field="Field 1",
+                nominal_start_time=base + timedelta(minutes=120),
+                schedule_type="SAFE",
+                nominal_length=60,
+                status="NOT_STARTED",
+            )
+            db.session.add_all([anchor, m2, m3])
+            db.session.flush()
+            _link_chain([anchor, m2, m3])
+            db.session.commit()
+
+            recompute_scheduled_and_nominal_times(tournament_url)
+
+            db.session.refresh(anchor)
+            db.session.refresh(m2)
+            db.session.refresh(m3)
+
+            # Planned timeline: anchor unchanged, then +60 per match, ignoring reality.
+            assert _aware_utc(anchor.scheduled_start_time) == _aware_utc(base)
+            assert _aware_utc(m2.scheduled_start_time) == _aware_utc(base + timedelta(minutes=60))
+            assert _aware_utc(m3.scheduled_start_time) == _aware_utc(base + timedelta(minutes=120))
+
+            # Dynamic timeline: m2 starts when anchor actually finished (base + 90),
+            # m3 follows m2's nominal end (base + 90 + 60).
+            assert (
+                abs((_aware_utc(m2.nominal_start_time) - _aware_utc(base + timedelta(minutes=90))).total_seconds()) < 2
+            )
+            assert (
+                abs((_aware_utc(m3.nominal_start_time) - _aware_utc(base + timedelta(minutes=150))).total_seconds()) < 2
+            )
+
+    @pytest.mark.unit
+    def test_normal_pass_leaves_scheduled_untouched(self, app, test_db, tournament):
+        """recompute_all_match_times (normal pass) updates nominal but never scheduled."""
+        tournament_url = tournament.url
+        with app.app_context():
+            base = datetime.now(timezone.utc).replace(tzinfo=None)
+
+            anchor = Match(
+                name="Anchor",
+                event=tournament_url,
+                field="Field 1",
+                nominal_start_time=base,
+                scheduled_start_time=base,
+                schedule_type="STATIC",
+                nominal_length=60,
+                status=MatchStatus.COMPLETED,
+            )
+            anchor.finalized_at = base + timedelta(minutes=90)
+            m2 = Match(
+                name="M2",
+                event=tournament_url,
+                field="Field 1",
+                nominal_start_time=base + timedelta(minutes=60),
+                scheduled_start_time=base + timedelta(minutes=60),
+                schedule_type="SAFE",
+                nominal_length=60,
+                status="NOT_STARTED",
+            )
+            db.session.add_all([anchor, m2])
+            db.session.flush()
+            _link_chain([anchor, m2])
+            db.session.commit()
+
+            recompute_all_match_times(tournament_url)
+
+            db.session.refresh(m2)
+            # scheduled untouched by the normal pass...
+            assert _aware_utc(m2.scheduled_start_time) == _aware_utc(base + timedelta(minutes=60))
+            # ...while nominal tracks the late finish.
+            assert (
+                abs((_aware_utc(m2.nominal_start_time) - _aware_utc(base + timedelta(minutes=90))).total_seconds()) < 2
+            )
+
+    @pytest.mark.unit
+    def test_scheduled_pass_ignores_skip(self, app, test_db, tournament):
+        """A SKIPPED match still contributes its full nominal_length to the planned timeline."""
+        tournament_url = tournament.url
+        with app.app_context():
+            base = datetime.now(timezone.utc).replace(tzinfo=None)
+
+            anchor = Match(
+                name="Anchor",
+                event=tournament_url,
+                field="Field 1",
+                nominal_start_time=base,
+                scheduled_start_time=base,
+                schedule_type="STATIC",
+                nominal_length=60,
+                status=MatchStatus.COMPLETED,
+            )
+            anchor.finalized_at = base + timedelta(minutes=60)
+            skipped = Match(
+                name="Skipped",
+                event=tournament_url,
+                field="Field 1",
+                nominal_start_time=base + timedelta(minutes=60),
+                schedule_type="SAFE",
+                nominal_length=45,
+                status=MatchStatus.SKIPPED,
+            )
+            after = Match(
+                name="After",
+                event=tournament_url,
+                field="Field 1",
+                nominal_start_time=base + timedelta(minutes=120),
+                schedule_type="SAFE",
+                nominal_length=60,
+                status="NOT_STARTED",
+            )
+            db.session.add_all([anchor, skipped, after])
+            db.session.flush()
+            _link_chain([anchor, skipped, after])
+            db.session.commit()
+
+            recompute_scheduled_and_nominal_times(tournament_url)
+
+            db.session.refresh(skipped)
+            db.session.refresh(after)
+
+            # Planned timeline treats the skipped match as if it ran for its full 45 min.
+            assert _aware_utc(skipped.scheduled_start_time) == _aware_utc(base + timedelta(minutes=60))
+            assert _aware_utc(after.scheduled_start_time) == _aware_utc(base + timedelta(minutes=105))

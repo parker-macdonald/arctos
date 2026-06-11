@@ -1,5 +1,6 @@
 //! Reusable UI components.
 
+mod ass_entry;
 mod change_password_card;
 mod edit_registration_modal;
 mod event_about;
@@ -11,6 +12,7 @@ mod league_registration_buttons;
 mod penalty_display;
 mod team_token_input;
 
+pub use ass_entry::AssEntry;
 pub use change_password_card::ChangePasswordCard;
 pub use edit_registration_modal::{EditRegistrationContext, EditRegistrationModal};
 pub use event_about::EventAbout;

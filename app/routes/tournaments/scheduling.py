@@ -54,7 +54,9 @@ from app.utils.match_ref_resolution import (
 from app.utils.scheduling import (
     compute_dynamic_match_nominal_start_time,
     validate_match_input,
+    validate_match_warnings,
     recompute_all_match_times,
+    recompute_scheduled_and_nominal_times,
 )
 from app.utils.datetime_helpers import now_utc_naive, parse_datetime_local_to_utc
 from app.utils.name_validation import match_name_char_error
@@ -82,7 +84,7 @@ from app.services.registration_resolver import (
 )
 from app.services.permission_service import PermissionService
 
-from . import bp, update_match_previous_link
+from . import bp, detach_match_from_chain, update_match_previous_link
 
 
 def _check_to(tournament_url):
@@ -91,12 +93,28 @@ def _check_to(tournament_url):
     return PermissionService.is_tournament_organizer(tournament_url, current_user)
 
 
+@bp.route("/<tournament_url>/schedule-warnings", methods=["GET"])
+@require_tournament_organizer("Only tournament organizers can access this page")
+def schedule_warnings(tournament_url):
+    """Soft-validation warnings for the entire schedule.
+
+    Covers nonexistent teams, cyclic dependencies, missing match references,
+    and double-booked teams. These are *not* enforced at create/edit time —
+    the operator can fix them in any order from the schedule edit toolbar.
+    """
+    try:
+        warnings = validate_match_warnings(tournament_url)
+        return jsonify({"success": True, "warnings": warnings}), 200
+    except Exception as e:
+        return jsonify({"success": False, "error": f"Schedule warnings failed: {e}"}), 500
+
+
 @bp.route("/<tournament_url>/recompute-schedule", methods=["POST"])
 @require_tournament_organizer("Only tournament organizers can access this page")
 def recompute_schedule(tournament_url):
     """Force full recompute of match times as if a match were just edited (TO only)."""
     try:
-        recompute_all_match_times(tournament_url)
+        recompute_scheduled_and_nominal_times(tournament_url)
         return (
             jsonify({"success": True, "message": "Schedule recomputed successfully."}),
             200,
@@ -392,7 +410,7 @@ def add_match(tournament_url):
     db.session.commit()
 
     try:
-        recompute_all_match_times(tournament_url)
+        recompute_scheduled_and_nominal_times(tournament_url)
     except Exception:
         pass
 
@@ -634,17 +652,12 @@ def update_match(tournament_url):
             # Update doubly linked list: insert this match after prev_match
             update_match_previous_link(match, prev_match_id, tournament_url, is_new=False)
         else:
-            # Clear previous_match and update old previous's next_match if needed
-            old_prev = match.previous_match
-            match.previous_match = None
-            if old_prev:
-                old_prev_m = Match.query.filter_by(uuid=old_prev, event=tournament_url).first()
-                if old_prev_m and old_prev_m.next_match == match.uuid:
-                    old_prev_m.next_match = None
+            # User cleared the previous-match selector: detach so the chain closes up.
+            detach_match_from_chain(match, tournament_url)
         match.nominal_start_time = compute_dynamic_match_nominal_start_time(match, tournament_url)
     else:
-        # Static matches can have manual start time
-        match.previous_match = None
+        # Static matches have no chain links — fully detach so neighbours close up.
+        detach_match_from_chain(match, tournament_url)
         # Prefer UTC ISO format from client conversion, fallback to datetime-local (assumed server-local)
         if request.form.get("start_time_utc"):
             # Client sent UTC ISO string
@@ -673,7 +686,7 @@ def update_match(tournament_url):
     db.session.flush()  # Flush before updating sequence
 
     # Recompute all match times (for all dynamic matches that depend on this one)
-    recompute_all_match_times(tournament_url)
+    recompute_scheduled_and_nominal_times(tournament_url)
 
     db.session.commit()
     return jsonify({"success": True, "message": "Match updated successfully!"}), 200
@@ -822,8 +835,7 @@ def validate_dsl(tournament_url):
     """Validate and simplify a DSL expression.
     Returns JSON with: valid (bool), value (the full interpreted value), simplified (str representation), error (str or None)
     """
-    # Kept inline: app.utils.parser exports `Team` and `Match` names that
-    # would shadow `models.Team`/`models.Match` if hoisted to module top.
+    from flask import jsonify
     from app.utils.parser import (
         get_parser,
         DSLValidationError,
@@ -832,14 +844,18 @@ def validate_dsl(tournament_url):
         SymbolicTeam,
         SymbolicMatch,
         Lambda,
+        Nil,
+        _format_dsl_value,
+        _infer_types,
     )
 
     def serialize_value(value):
         """Convert the interpreted value to a JSON-serializable format."""
-        if isinstance(value, (int, bool, type(None))):
+        if isinstance(value, Nil):
+            return None
+        if isinstance(value, (int, bool)):
             return value
         elif isinstance(value, list):
-            # Recursively serialize list elements
             return [serialize_value(item) for item in value]
         elif isinstance(value, Team):
             # Return team ID
@@ -860,33 +876,6 @@ def validate_dsl(tournament_url):
             # Fallback to string representation
             return str(value)
 
-    def value_to_string(value):
-        """Convert the interpreted value to a readable string representation."""
-        if isinstance(value, (int, bool, type(None))):
-            return str(value)
-        elif isinstance(value, list):
-            # Format as Lisp-like expression
-            if len(value) > 0 and isinstance(value[0], str):
-                # Preserved expression - format as s-expression
-                return "(" + " ".join(value_to_string(item) for item in value) + ")"
-            else:
-                # Data list
-                return "[" + ", ".join(value_to_string(item) for item in value) + "]"
-        elif isinstance(value, Team):
-            return f"[{value.obj.id}]"
-        elif isinstance(value, Match):
-            return f"{{{value.obj.name}}}"
-        elif isinstance(value, SymbolicTeam):
-            return f"[{value.literal}]"
-        elif isinstance(value, SymbolicMatch):
-            return f"{{{value.literal}}}"
-        elif isinstance(value, Lambda):
-            # Lambda objects shouldn't appear in final results, but handle gracefully
-            params_str = " ".join(value.params) if value.params else ""
-            return f"(lambda ({params_str}) ...)"
-        else:
-            return str(value)
-
     data = request.get_json()
     expression = data.get("expression", "").strip()
 
@@ -895,16 +884,29 @@ def validate_dsl(tournament_url):
 
     try:
         parser = get_parser(tournament_url)
+        warnings = parser.static_check(expression)
         result = parser.parse(expression)
 
         # Serialize the full value for JSON response
         serialized_value = serialize_value(result)
 
-        # Create string representation
-        simplified_str = value_to_string(result)
+        # Create string representation. We always send it back so the frontend can render
+        # the simplified form (with chips). Suppressing on equality hid useful previews
+        # for expressions whose literal text already happens to be in canonical form
+        # (e.g. anything containing an unset [tag::Foo] that stays symbolic).
+        simplified = _format_dsl_value(result)
 
-        # Only include simplified if it's different from the input
-        simplified = simplified_str if simplified_str != expression else None
+        # Treat unresolvable team/match references as errors so the user notices typos.
+        if warnings:
+            return jsonify(
+                {
+                    "valid": False,
+                    "value": None,
+                    "simplified": None,
+                    "error": "; ".join(warnings),
+                    "warnings": warnings,
+                }
+            )
 
         return jsonify(
             {
@@ -912,6 +914,8 @@ def validate_dsl(tournament_url):
                 "value": serialized_value,
                 "simplified": simplified,
                 "error": None,
+                "warnings": [],
+                "result_type": sorted(_infer_types(result)),
             }
         )
     except DSLValidationError as e:
@@ -1268,21 +1272,9 @@ def force_start_match_api(tournament_url, match_id):
     match.nominal_start_time = now_utc_naive()
     match.status = MatchStatus.READY_TO_START
 
-    # Unlink previous/next
-    if match.previous_match:
-        old_prev = Match.query.filter_by(uuid=match.previous_match, event=tournament_url).first()
-        if old_prev and old_prev.next_match == match.uuid:
-            old_prev.next_match = match.next_match
-            if match.next_match:
-                old_next = Match.query.filter_by(uuid=match.next_match, event=tournament_url).first()
-                if old_next:
-                    old_next.previous_match = old_prev.uuid
-        elif match.next_match:
-            old_next = Match.query.filter_by(uuid=match.next_match, event=tournament_url).first()
-            if old_next:
-                old_next.previous_match = None
-    match.previous_match = None
-    match.next_match = None
+    # The match is being converted to STATIC and started — fully splice it out of
+    # its per-field chain so the surrounding nodes close up.
+    detach_match_from_chain(match, tournament_url)
     flag_modified(match, "previous_match")
     flag_modified(match, "next_match")
 
@@ -1299,7 +1291,7 @@ def recompute_schedule_api(tournament_url):
     if not _check_to(tournament_url):
         return jsonify({"error": "Forbidden"}), 403
 
-    recompute_all_match_times(tournament_url)
+    recompute_scheduled_and_nominal_times(tournament_url)
     return jsonify({"success": True})
 
 
@@ -1417,7 +1409,7 @@ def import_schedule_api(tournament_url):
     from app.utils.result_helpers import json_from_result
 
     def _ok_payload(_):
-        recompute_all_match_times(tournament_url)
+        recompute_scheduled_and_nominal_times(tournament_url)
         return {}
 
     res = ScheduleImportExportService.import_schedule(tournament_url, toml_content)
