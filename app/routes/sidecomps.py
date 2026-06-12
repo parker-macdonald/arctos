@@ -46,6 +46,7 @@ def list_for_event(tournament_url: str):
 
 
 def _detail_payload(sc, registrants):
+    entry_numbers = SideCompService.entry_numbers_for_tournament(sc.event)
     viewer_is_to = False
     viewer_can_register = False
     viewer_is_registered_in_comp = False
@@ -69,7 +70,7 @@ def _detail_payload(sc, registrants):
             {
                 "player_id": reg.player,
                 "player_name": (player.name if player else reg.player),
-                "entry_number": reg.entry_number,
+                "entry_number": entry_numbers.get(reg.player),
                 "registered_at": reg.registered_at.isoformat() if reg.registered_at else None,
                 "registered_by_to": bool(reg.registered_by_to),
             }
@@ -205,13 +206,15 @@ def register_player_as_to(comp_id: int):
     )
 
     def _checkin_payload(reg):
-        from models import Player
+        from models import Player, SideComp
 
         player = Player.query.get(reg.player)
+        sc = SideComp.query.get(reg.comp)
+        entry_number = SideCompService.entry_number_for(sc.event, reg.player) if sc else None
         return {
             "player_id": reg.player,
             "player_name": player.name if player else reg.player,
-            "entry_number": reg.entry_number,
+            "entry_number": entry_number,
             "registered_at": reg.registered_at.isoformat() if reg.registered_at else None,
         }
 
@@ -264,6 +267,7 @@ def eligible_players(comp_id: int):
     tournament = Tournament.query.get(sc.event)
 
     sidecomp_regs = {r.player: r for r in SideCompRegistration.query.filter_by(comp=comp_id).all()}
+    entry_numbers = SideCompService.entry_numbers_for_tournament(sc.event)
 
     event_regs = player_registrations_for_tournament(tournament, statuses=[RegistrationStatus.CONFIRMED])
 
@@ -288,7 +292,7 @@ def eligible_players(comp_id: int):
             "team_shortname": team_shortnames.get(er.team) if er.team else None,
             "jersey_name": er.jersey_name,
             "sidecomp_registered": er.player in sidecomp_regs,
-            "entry_number": sidecomp_regs[er.player].entry_number if er.player in sidecomp_regs else None,
+            "entry_number": entry_numbers.get(er.player) if er.player in sidecomp_regs else None,
         }
         for er in event_regs
     ]

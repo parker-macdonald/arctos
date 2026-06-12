@@ -10,7 +10,6 @@ from app.services.sidecomp_service import SideCompService
 from models import (
     PlayerRegistration,
     SideComp,
-    SideCompRegistration,
     Tournament,
     Player,
     db,
@@ -47,28 +46,32 @@ def comp_setup(test_db):
 
 @pytest.mark.integration
 def test_register_player_retries_on_entry_number_collision(comp_setup):
-    """If _next_entry_number returns the same value twice in a row, the
-    second register_player call retries internally and succeeds with a
-    fresh number."""
+    """If _next_tournament_entry_number returns an already-taken value, the
+    second registration retries internally and succeeds with a fresh number.
+
+    This simulates the concurrent first-time assignment race that the
+    uq_sidecomp_entry_numbers_tournament_entry_number constraint catches.
+    """
     comp_id = comp_setup["comp_id"]
     p0, p1 = comp_setup["players"]
 
     res0 = SideCompService.register_player(comp_id, player_id=p0.id)
     assert isinstance(res0, Ok), repr(res0)
 
-    # Force _next_entry_number to return 1 (collides) then a fresh 2.
-    sequence = iter([1, 2])
-    real_next = SideCompService._next_entry_number
+    # Force the candidate to collide with p0's number (1) once, then fall back
+    # to the real computation (which yields a fresh 2) on retry.
+    sequence = iter([1])
+    real_next = SideCompService._next_tournament_entry_number
 
-    def fake_next(comp):
+    def fake_next(tournament_url):
         try:
             return next(sequence)
         except StopIteration:
-            return real_next(comp)
+            return real_next(tournament_url)
 
-    with patch.object(SideCompService, "_next_entry_number", side_effect=fake_next):
+    with patch.object(SideCompService, "_next_tournament_entry_number", side_effect=fake_next):
         res1 = SideCompService.register_player(comp_id, player_id=p1.id)
     assert isinstance(res1, Ok), repr(res1)
 
-    rows = SideCompRegistration.query.filter_by(comp=comp_id).order_by(SideCompRegistration.entry_number).all()
-    assert [r.entry_number for r in rows] == [1, 2]
+    assert SideCompService.entry_number_for("evt", p0.id) == 1
+    assert SideCompService.entry_number_for("evt", p1.id) == 2

@@ -29,6 +29,7 @@ from models import (
     Player,
     HeadRef,
     SideComp,
+    SideCompEntryNumber,
     SideCompRegistration,
     SideCompResult,
     PenaltyType,
@@ -295,6 +296,8 @@ def delete_tournament(tournament_url):
         )
 
     SideComp.query.filter_by(event=tournament_url).delete(synchronize_session=False)
+
+    SideCompEntryNumber.query.filter_by(tournament_url=tournament_url).delete(synchronize_session=False)
 
     match_uuids = [m.uuid for m in Match.query.filter_by(event=tournament_url).all()]
     delete_matches_with_children(match_uuids)

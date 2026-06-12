@@ -51,56 +51,98 @@ class SideCompService:
         return get_tournament_or_err(tournament_url)
 
     @staticmethod
-    def _next_entry_number(comp_id: int) -> int:
-        """Return the next 1-indexed ``entry_number`` for *comp_id*.
+    def _assign_entry_number(tournament_url: str, player_id: str) -> int:
+        """Return *player_id*'s entry number for *tournament_url*, assigning one
+        if this is their first side competition in the tournament.
 
-        Returns one more than the current max ``entry_number`` for the comp,
-        or ``1`` if the comp has no registrations. Numbers are not reused
-        when a registrant is removed.
-        """
-        from sqlalchemy import func
-
-        from models import SideCompRegistration, db
-
-        current_max = db.session.query(func.max(SideCompRegistration.entry_number)).filter_by(comp=comp_id).scalar()
-        return (current_max or 0) + 1
-
-    @staticmethod
-    def _insert_registration_with_entry_number(
-        *,
-        comp_id: int,
-        player_id: str,
-        registered_by_to: bool,
-    ) -> "SideCompRegistration":
-        """Insert a SideCompRegistration with a fresh entry_number.
-
-        Retries once on IntegrityError to handle entry_number collision
-        under concurrent inserts (uq_sidecomp_registrations_comp_entry_number).
-        Caller is responsible for any pre-insert validation.
+        The number is scoped to the tournament, not the individual side
+        competition, so a player carries the same number across every side
+        competition they enter. The first assignment takes one more than the
+        current max for the tournament; numbers are not reused after a
+        deregistration. Retries once on IntegrityError to absorb a concurrent
+        first-time assignment for two players
+        (uq_sidecomp_entry_numbers_tournament_entry_number).
         """
         from sqlalchemy.exc import IntegrityError
 
-        from models import SideCompRegistration, db
+        from models import SideCompEntryNumber, db
 
         last_exc: Exception | None = None
         for _ in range(2):
-            entry_number = SideCompService._next_entry_number(comp_id)
-            reg = SideCompRegistration(
-                comp=comp_id,
+            existing = SideCompEntryNumber.query.filter_by(tournament_url=tournament_url, player=player_id).first()
+            if existing:
+                return existing.entry_number
+
+            row = SideCompEntryNumber(
+                tournament_url=tournament_url,
                 player=player_id,
-                entry_number=entry_number,
-                registered_by_to=registered_by_to,
+                entry_number=SideCompService._next_tournament_entry_number(tournament_url),
             )
-            db.session.add(reg)
+            db.session.add(row)
             try:
                 db.session.commit()
-                return reg
+                return row.entry_number
             except IntegrityError as exc:
                 db.session.rollback()
                 last_exc = exc
                 continue
         assert last_exc is not None
         raise last_exc
+
+    @staticmethod
+    def _next_tournament_entry_number(tournament_url: str) -> int:
+        """Return one more than the current max entry number in *tournament_url*."""
+        from sqlalchemy import func
+
+        from models import SideCompEntryNumber, db
+
+        current_max = (
+            db.session.query(func.max(SideCompEntryNumber.entry_number))
+            .filter_by(tournament_url=tournament_url)
+            .scalar()
+        )
+        return (current_max or 0) + 1
+
+    @staticmethod
+    def entry_number_for(tournament_url: str, player_id: str) -> Optional[int]:
+        """Return *player_id*'s tournament entry number, or ``None`` if unassigned."""
+        from models import SideCompEntryNumber
+
+        row = SideCompEntryNumber.query.filter_by(tournament_url=tournament_url, player=player_id).first()
+        return row.entry_number if row else None
+
+    @staticmethod
+    def entry_numbers_for_tournament(tournament_url: str) -> dict[str, int]:
+        """Return a ``{player_id: entry_number}`` map for *tournament_url*."""
+        from models import SideCompEntryNumber
+
+        return {
+            row.player: row.entry_number
+            for row in SideCompEntryNumber.query.filter_by(tournament_url=tournament_url).all()
+        }
+
+    @staticmethod
+    def _insert_registration(
+        *,
+        tournament_url: str,
+        comp_id: int,
+        player_id: str,
+        registered_by_to: bool,
+    ) -> "SideCompRegistration":
+        """Insert a SideCompRegistration, ensuring the player has a tournament
+        entry number first. Caller is responsible for any pre-insert validation.
+        """
+        from models import SideCompRegistration, db
+
+        SideCompService._assign_entry_number(tournament_url, player_id)
+        reg = SideCompRegistration(
+            comp=comp_id,
+            player=player_id,
+            registered_by_to=registered_by_to,
+        )
+        db.session.add(reg)
+        db.session.commit()
+        return reg
 
     @staticmethod
     def _require_to(tournament_url: str, actor_user_id: str, actor_user_type: str) -> Result[None, ArctosError]:
@@ -363,7 +405,8 @@ class SideCompService:
         if existing:
             return Err(ValidationError("You are already registered for this side competition"))
 
-        reg = SideCompService._insert_registration_with_entry_number(
+        reg = SideCompService._insert_registration(
+            tournament_url=sc.event,
             comp_id=comp_id,
             player_id=player_id,
             registered_by_to=False,
@@ -423,7 +466,8 @@ class SideCompService:
         if existing:
             return Err(ValidationError("Player is already registered for this side competition"))
 
-        reg = SideCompService._insert_registration_with_entry_number(
+        reg = SideCompService._insert_registration(
+            tournament_url=sc.event,
             comp_id=comp_id,
             player_id=player_id,
             registered_by_to=True,

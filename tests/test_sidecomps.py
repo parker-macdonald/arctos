@@ -9,9 +9,11 @@ from models import (
     Player,
     PlayerRegistration,
     SideComp,
+    SideCompEntryNumber,
     SideCompRegistration,
     SideCompResult,
     TO,
+    Tournament,
     db,
 )
 from tests.utils import login_as
@@ -116,9 +118,9 @@ def test_sidecomp_registration_unique_per_player(test_db, tournament):
     sc = SideComp(event=tournament.url, name="Chain", type="CHAIN_BREAKING")
     db.session.add(sc)
     db.session.flush()
-    db.session.add(SideCompRegistration(comp=sc.id, player=p.id, entry_number=1))
+    db.session.add(SideCompRegistration(comp=sc.id, player=p.id))
     db.session.commit()
-    db.session.add(SideCompRegistration(comp=sc.id, player=p.id, entry_number=2))
+    db.session.add(SideCompRegistration(comp=sc.id, player=p.id))
     with pytest.raises(IntegrityError):
         db.session.commit()
     db.session.rollback()
@@ -217,7 +219,7 @@ def test_sidecomp_get_with_registrants(test_db, tournament):
     sc = SideComp(event=tournament.url, name="C", type="CHAIN_BREAKING")
     db.session.add(sc)
     db.session.flush()
-    db.session.add(SideCompRegistration(comp=sc.id, player=p.id, entry_number=1))
+    db.session.add(SideCompRegistration(comp=sc.id, player=p.id))
     db.session.commit()
 
     from app.services.sidecomp_service import SideCompService
@@ -308,7 +310,7 @@ def test_sidecomp_delete_cascades(test_db, tournament):
     sc = SideComp(event=tournament.url, name="Z", type="DUELING")
     db.session.add(sc)
     db.session.flush()
-    db.session.add(SideCompRegistration(comp=sc.id, player=other.id, entry_number=1))
+    db.session.add(SideCompRegistration(comp=sc.id, player=other.id))
     db.session.add(SideCompResult(comp=sc.id, player=other.id))
     db.session.commit()
     comp_id = sc.id
@@ -417,7 +419,7 @@ def test_deregister_player_removes_row(test_db, tournament):
     sc = SideComp(event=tournament.url, name="A", type="DUELING")
     db.session.add(sc)
     db.session.flush()
-    db.session.add(SideCompRegistration(comp=sc.id, player=p.id, entry_number=1))
+    db.session.add(SideCompRegistration(comp=sc.id, player=p.id))
     db.session.commit()
 
     from app.services.sidecomp_service import SideCompService
@@ -614,7 +616,7 @@ def test_register_player_assigns_entry_number_one(test_db, tournament):
 
     res = SideCompService.register_player(sc.id, player_id=p.id)
     assert isinstance(res, Ok)
-    assert res.unwrap().entry_number == 1
+    assert SideCompService.entry_number_for(tournament.url, p.id) == 1
 
 
 def test_register_player_assigns_sequential_entry_numbers(test_db, tournament):
@@ -628,10 +630,10 @@ def test_register_player_assigns_sequential_entry_numbers(test_db, tournament):
 
     from app.services.sidecomp_service import SideCompService
 
-    r1 = SideCompService.register_player(sc.id, player_id=p1.id).unwrap()
-    r2 = SideCompService.register_player(sc.id, player_id=p2.id).unwrap()
-    assert r1.entry_number == 1
-    assert r2.entry_number == 2
+    SideCompService.register_player(sc.id, player_id=p1.id).unwrap()
+    SideCompService.register_player(sc.id, player_id=p2.id).unwrap()
+    assert SideCompService.entry_number_for(tournament.url, p1.id) == 1
+    assert SideCompService.entry_number_for(tournament.url, p2.id) == 2
 
 
 def test_entry_numbers_do_not_reuse_after_deregister(test_db, tournament):
@@ -647,20 +649,24 @@ def test_entry_numbers_do_not_reuse_after_deregister(test_db, tournament):
 
     from app.services.sidecomp_service import SideCompService
 
-    r1 = SideCompService.register_player(sc.id, player_id=p1.id).unwrap()
-    r2 = SideCompService.register_player(sc.id, player_id=p2.id).unwrap()
-    assert r1.entry_number == 1
-    assert r2.entry_number == 2
+    SideCompService.register_player(sc.id, player_id=p1.id).unwrap()
+    SideCompService.register_player(sc.id, player_id=p2.id).unwrap()
+    assert SideCompService.entry_number_for(tournament.url, p1.id) == 1
+    assert SideCompService.entry_number_for(tournament.url, p2.id) == 2
 
     SideCompService.deregister_player(sc.id, player_id=p1.id)
 
-    r3 = SideCompService.register_player(sc.id, player_id=p3.id).unwrap()
-    assert r3.entry_number == 3
+    SideCompService.register_player(sc.id, player_id=p3.id).unwrap()
+    assert SideCompService.entry_number_for(tournament.url, p3.id) == 3
 
 
-def test_entry_numbers_independent_per_comp(test_db, tournament):
-    p = _make_player()
-    _confirm_event_registration(tournament.url, p.id)
+def test_entry_number_consistent_across_comps(test_db, tournament):
+    """A player carries the same entry number across every side competition
+    they enter within a tournament."""
+    p1 = _make_player("p1", "P1")
+    p2 = _make_player("p2", "P2")
+    _confirm_event_registration(tournament.url, p1.id)
+    _confirm_event_registration(tournament.url, p2.id)
     sc1 = SideComp(event=tournament.url, name="A", type="DUELING", registration_open=True)
     sc2 = SideComp(event=tournament.url, name="B", type="OTHER", registration_open=True)
     db.session.add_all([sc1, sc2])
@@ -668,10 +674,48 @@ def test_entry_numbers_independent_per_comp(test_db, tournament):
 
     from app.services.sidecomp_service import SideCompService
 
-    r1 = SideCompService.register_player(sc1.id, player_id=p.id).unwrap()
-    r2 = SideCompService.register_player(sc2.id, player_id=p.id).unwrap()
-    assert r1.entry_number == 1
-    assert r2.entry_number == 1
+    # p1 enters sc1 first (number 1), then p2 enters sc1 (number 2).
+    SideCompService.register_player(sc1.id, player_id=p1.id).unwrap()
+    SideCompService.register_player(sc1.id, player_id=p2.id).unwrap()
+    # Both join sc2 in the opposite order; their numbers must not change.
+    SideCompService.register_player(sc2.id, player_id=p2.id).unwrap()
+    SideCompService.register_player(sc2.id, player_id=p1.id).unwrap()
+
+    assert SideCompService.entry_number_for(tournament.url, p1.id) == 1
+    assert SideCompService.entry_number_for(tournament.url, p2.id) == 2
+
+
+def test_entry_numbers_scoped_per_tournament(test_db, tournament):
+    """Entry numbering restarts in a different tournament."""
+    from datetime import datetime, timezone
+
+    from tests.utils import make_registrable_config
+
+    rc = make_registrable_config()
+    other = Tournament(
+        url="other-evt",
+        name="Other",
+        registrable_config_id=rc.id,
+        start_date=datetime.now(timezone.utc),
+    )
+    db.session.add(other)
+    db.session.commit()
+
+    p = _make_player()
+    _confirm_event_registration(tournament.url, p.id)
+    _confirm_event_registration(other.url, p.id)
+    sc_a = SideComp(event=tournament.url, name="A", type="DUELING", registration_open=True)
+    sc_b = SideComp(event=other.url, name="B", type="DUELING", registration_open=True)
+    db.session.add_all([sc_a, sc_b])
+    db.session.commit()
+
+    from app.services.sidecomp_service import SideCompService
+
+    SideCompService.register_player(sc_a.id, player_id=p.id).unwrap()
+    SideCompService.register_player(sc_b.id, player_id=p.id).unwrap()
+
+    assert SideCompService.entry_number_for(tournament.url, p.id) == 1
+    assert SideCompService.entry_number_for(other.url, p.id) == 1
 
 
 def test_register_player_as_to_assigns_entry_number(test_db, tournament):
@@ -692,18 +736,25 @@ def test_register_player_as_to_assigns_entry_number(test_db, tournament):
         player_id=target.id,
     )
     assert isinstance(res, Ok)
-    assert res.unwrap().entry_number == 1
+    assert SideCompService.entry_number_for(tournament.url, target.id) == 1
 
 
-def test_entry_number_unique_constraint_enforced(test_db, tournament):
+def test_entry_number_unique_per_tournament_player(test_db, tournament):
+    p = _make_player()
+    db.session.add(SideCompEntryNumber(tournament_url=tournament.url, player=p.id, entry_number=1))
+    db.session.commit()
+    db.session.add(SideCompEntryNumber(tournament_url=tournament.url, player=p.id, entry_number=2))
+    with pytest.raises(IntegrityError):
+        db.session.commit()
+    db.session.rollback()
+
+
+def test_entry_number_unique_per_tournament(test_db, tournament):
     p1 = _make_player("p1", "P1")
     p2 = _make_player("p2", "P2")
-    sc = SideComp(event=tournament.url, name="A", type="DUELING")
-    db.session.add(sc)
-    db.session.flush()
-    db.session.add(SideCompRegistration(comp=sc.id, player=p1.id, entry_number=1))
+    db.session.add(SideCompEntryNumber(tournament_url=tournament.url, player=p1.id, entry_number=1))
     db.session.commit()
-    db.session.add(SideCompRegistration(comp=sc.id, player=p2.id, entry_number=1))
+    db.session.add(SideCompEntryNumber(tournament_url=tournament.url, player=p2.id, entry_number=1))
     with pytest.raises(IntegrityError):
         db.session.commit()
     db.session.rollback()
@@ -791,9 +842,9 @@ def test_cancel_player_registrations_in_event_removes_only_matching(test_db, tou
     sc2 = SideComp(event=tournament.url, name="B", type="OTHER")
     db.session.add_all([sc1, sc2])
     db.session.flush()
-    db.session.add(SideCompRegistration(comp=sc1.id, player=p1.id, entry_number=1))
-    db.session.add(SideCompRegistration(comp=sc2.id, player=p1.id, entry_number=1))
-    db.session.add(SideCompRegistration(comp=sc1.id, player=p2.id, entry_number=2))
+    db.session.add(SideCompRegistration(comp=sc1.id, player=p1.id))
+    db.session.add(SideCompRegistration(comp=sc2.id, player=p1.id))
+    db.session.add(SideCompRegistration(comp=sc1.id, player=p2.id))
     db.session.commit()
 
     from app.services.sidecomp_service import SideCompService
@@ -814,7 +865,7 @@ def test_player_self_deregister_from_event_cascades(app, client, tournament):
         sc = SideComp(event=tournament.url, name="A", type="DUELING")
         db.session.add(sc)
         db.session.flush()
-        db.session.add(SideCompRegistration(comp=sc.id, player=p.id, entry_number=1))
+        db.session.add(SideCompRegistration(comp=sc.id, player=p.id))
         db.session.commit()
         login_as(client, p)
 
@@ -841,7 +892,7 @@ def test_route_detail_public_with_registrants(client, tournament):
     sc = SideComp(event=tournament.url, name="A", type="DUELING")
     db.session.add(sc)
     db.session.flush()
-    db.session.add(SideCompRegistration(comp=sc.id, player=p.id, entry_number=1))
+    db.session.add(SideCompRegistration(comp=sc.id, player=p.id))
     db.session.commit()
 
     resp = client.get(f"/_api/sidecomps/{sc.id}")
@@ -918,7 +969,7 @@ def test_route_detail_viewer_flags_already_registered(app, client, tournament):
         sc = SideComp(event=tournament.url, name="A", type="DUELING")
         db.session.add(sc)
         db.session.flush()
-        db.session.add(SideCompRegistration(comp=sc.id, player=p.id, entry_number=1))
+        db.session.add(SideCompRegistration(comp=sc.id, player=p.id))
         db.session.commit()
         comp_id = sc.id
         login_as(client, p)
@@ -1130,7 +1181,7 @@ def test_route_player_deregister_succeeds(app, client, tournament):
         sc = SideComp(event=tournament.url, name="A", type="DUELING")
         db.session.add(sc)
         db.session.flush()
-        db.session.add(SideCompRegistration(comp=sc.id, player=p.id, entry_number=1))
+        db.session.add(SideCompRegistration(comp=sc.id, player=p.id))
         db.session.commit()
         comp_id = sc.id
         login_as(client, p)
@@ -1182,7 +1233,7 @@ def test_delete_tournament_cascades_sidecomp_registrations(app, client, tourname
         sc = SideComp(event=tournament.url, name="A", type="DUELING")
         db.session.add(sc)
         db.session.flush()
-        db.session.add(SideCompRegistration(comp=sc.id, player=target.id, entry_number=1))
+        db.session.add(SideCompRegistration(comp=sc.id, player=target.id))
         db.session.commit()
         comp_id = sc.id
         tournament_url = tournament.url
@@ -1211,7 +1262,8 @@ def test_route_eligible_players_marks_sidecomp_registered_players(app, client, t
         sc = SideComp(event=tournament.url, name="A", type="DUELING")
         db.session.add(sc)
         db.session.flush()
-        db.session.add(SideCompRegistration(comp=sc.id, player=p1.id, entry_number=1))
+        db.session.add(SideCompRegistration(comp=sc.id, player=p1.id))
+        db.session.add(SideCompEntryNumber(tournament_url=tournament.url, player=p1.id, entry_number=1))
         db.session.commit()
         comp_id = sc.id
         login_as(client, to_user)
