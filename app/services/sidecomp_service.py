@@ -17,10 +17,11 @@ from app.exceptions import (
     UnauthorizedError,
     ValidationError,
 )
+from app.models.constants import SHORT_NAME_LEN
 
 if TYPE_CHECKING:  # pragma: no cover
     from app.domain.enums import SideCompType
-    from models import SideComp, SideCompRegistration, Tournament
+    from models import SideComp, SideCompCategory, SideCompRegistration, Tournament
 
 
 def _parse_type(value: object) -> Optional["SideCompType"]:
@@ -128,6 +129,7 @@ class SideCompService:
         comp_id: int,
         player_id: str,
         registered_by_to: bool,
+        category_id: Optional[int] = None,
     ) -> "SideCompRegistration":
         """Insert a SideCompRegistration, ensuring the player has a tournament
         entry number first. Caller is responsible for any pre-insert validation.
@@ -138,6 +140,7 @@ class SideCompService:
         reg = SideCompRegistration(
             comp=comp_id,
             player=player_id,
+            category=category_id,
             registered_by_to=registered_by_to,
         )
         db.session.add(reg)
@@ -180,6 +183,7 @@ class SideCompService:
         name: str,
         type: str,
         description: Optional[str] = None,
+        categories: Optional[list[str]] = None,
     ) -> Result["SideComp", ArctosError]:
         """Create a new side competition for *tournament_url*.
 
@@ -191,14 +195,18 @@ class SideCompService:
             type: One of the :class:`~app.domain.enums.SideCompType` values.
             description: Optional free-form description. Empty/whitespace
                 strings are treated as ``None``.
+            categories: Optional list of category names to create alongside the
+                comp. Blank entries are dropped; duplicates are rejected.
 
         Returns:
             :class:`~app.error_values.Ok` wrapping the persisted
             :class:`~app.models.sidecomp.SideComp`, or an :class:`~app.error_values.Err`
             describing the failure (tournament not found, actor not a TO,
-            invalid name, or invalid type).
+            invalid name, invalid type, or duplicate category names).
         """
-        from models import SideComp, db
+        from sqlalchemy.exc import IntegrityError
+
+        from models import SideComp, SideCompCategory, db
 
         SideCompService._get_tournament(tournament_url).Q()
         SideCompService._require_to(tournament_url, actor_user_id, actor_user_type).Q()
@@ -216,6 +224,10 @@ class SideCompService:
             stripped = description.strip()
             description_value = stripped if stripped else None
 
+        category_names = [n.strip() for n in (categories or []) if n and n.strip()]
+        if len(set(category_names)) != len(category_names):
+            return Err(ValidationError("Duplicate category names"))
+
         sc = SideComp(
             event=tournament_url,
             name=name_value,
@@ -223,7 +235,14 @@ class SideCompService:
             description=description_value,
         )
         db.session.add(sc)
-        db.session.commit()
+        db.session.flush()
+        for category_name in category_names:
+            db.session.add(SideCompCategory(comp=sc.id, name=category_name))
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            return Err(ValidationError("Duplicate category names"))
         return Ok(sc)
 
     @staticmethod
@@ -267,6 +286,189 @@ class SideCompService:
         players_by_id = {p.id: p for p in Player.query.filter(Player.id.in_(player_ids)).all()} if player_ids else {}
         registrants = [(r, players_by_id.get(r.player)) for r in rows]
         return Ok((sc, registrants))
+
+    @staticmethod
+    def list_categories(comp_id: int) -> Result[list, ArctosError]:
+        """Return a side competition's categories, oldest first.
+
+        Returns :class:`~app.error_values.Err` with a
+        :class:`~app.exceptions.NotFoundError` if the comp does not exist.
+        """
+        from models import SideComp, SideCompCategory
+
+        sc = SideComp.query.get(comp_id)
+        if sc is None:
+            return Err(NotFoundError("Side competition not found"))
+
+        cats = (
+            SideCompCategory.query.filter_by(comp=comp_id)
+            .order_by(SideCompCategory.created_at.asc(), SideCompCategory.id.asc())
+            .all()
+        )
+        return Ok(cats)
+
+    @staticmethod
+    @allow_Q
+    def create_category(
+        comp_id: int,
+        *,
+        actor_user_id: str,
+        actor_user_type: str,
+        name: str,
+    ) -> Result["SideCompCategory", ArctosError]:
+        """Create a category under side competition *comp_id* (TO only)."""
+        from sqlalchemy.exc import IntegrityError
+
+        from models import SideComp, SideCompCategory, db
+
+        sc = SideComp.query.get(comp_id)
+        if sc is None:
+            return Err(NotFoundError("Side competition not found"))
+
+        SideCompService._require_to(sc.event, actor_user_id, actor_user_type).Q()
+
+        name_value = (name or "").strip()
+        if not name_value:
+            return Err(ValidationError("Category name is required"))
+        if len(name_value) > SHORT_NAME_LEN:
+            return Err(ValidationError("Category name is too long"))
+
+        if SideCompCategory.query.filter_by(comp=comp_id, name=name_value).first():
+            return Err(ValidationError("A category with that name already exists"))
+
+        cat = SideCompCategory(comp=comp_id, name=name_value)
+        db.session.add(cat)
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            return Err(ValidationError("A category with that name already exists"))
+        return Ok(cat)
+
+    @staticmethod
+    @allow_Q
+    def rename_category(
+        category_id: int,
+        *,
+        actor_user_id: str,
+        actor_user_type: str,
+        name: str,
+    ) -> Result["SideCompCategory", ArctosError]:
+        """Rename a category (TO only)."""
+        from sqlalchemy.exc import IntegrityError
+
+        from models import SideComp, SideCompCategory, db
+
+        cat = SideCompCategory.query.get(category_id)
+        if cat is None:
+            return Err(NotFoundError("Category not found"))
+
+        sc = SideComp.query.get(cat.comp)
+        SideCompService._require_to(sc.event, actor_user_id, actor_user_type).Q()
+
+        name_value = (name or "").strip()
+        if not name_value:
+            return Err(ValidationError("Category name is required"))
+        if len(name_value) > SHORT_NAME_LEN:
+            return Err(ValidationError("Category name is too long"))
+
+        collision = (
+            SideCompCategory.query.filter_by(comp=cat.comp, name=name_value)
+            .filter(SideCompCategory.id != category_id)
+            .first()
+        )
+        if collision:
+            return Err(ValidationError("A category with that name already exists"))
+
+        cat.name = name_value
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            return Err(ValidationError("A category with that name already exists"))
+        return Ok(cat)
+
+    @staticmethod
+    @allow_Q
+    def delete_category(
+        category_id: int,
+        *,
+        actor_user_id: str,
+        actor_user_type: str,
+        mode: Optional[str] = None,
+        target_category_id: Optional[int] = None,
+    ) -> Result[None, ArctosError]:
+        """Delete a category, resolving any players registered under it (TO only).
+
+        If the category has no registered players, it is deleted directly and
+        *mode* is ignored. Otherwise *mode* must be:
+
+        * ``"deregister"`` — remove the affected players from the side
+          competition (their tournament entry numbers are not reused).
+        * ``"move"`` — reassign the affected players to *target_category_id*,
+          which must be another category of the same comp.
+        """
+        from sqlalchemy.exc import IntegrityError
+
+        from models import SideComp, SideCompCategory, SideCompRegistration, db
+
+        cat = SideCompCategory.query.get(category_id)
+        if cat is None:
+            return Err(NotFoundError("Category not found"))
+
+        sc = SideComp.query.get(cat.comp)
+        SideCompService._require_to(sc.event, actor_user_id, actor_user_type).Q()
+
+        affected = SideCompRegistration.query.filter_by(comp=cat.comp, category=category_id)
+
+        if affected.count() == 0:
+            db.session.delete(cat)
+            db.session.commit()
+            return Ok(None)
+
+        if mode not in ("deregister", "move"):
+            return Err(ValidationError("A resolution mode is required for a category with registered players"))
+
+        if mode == "move":
+            if target_category_id is None:
+                return Err(ValidationError("Target category is required to move players"))
+            if target_category_id == category_id:
+                return Err(ValidationError("Cannot move players into the category being deleted"))
+            target = SideCompCategory.query.get(target_category_id)
+            if target is None:
+                return Err(ValidationError("Target category not found"))
+            if target.comp != cat.comp:
+                return Err(ValidationError("Target category belongs to a different side competition"))
+            affected.update({"category": target_category_id}, synchronize_session=False)
+        else:
+            affected.delete(synchronize_session=False)
+
+        db.session.delete(cat)
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            return Err(ValidationError("Could not delete the category"))
+        return Ok(None)
+
+    @staticmethod
+    def _resolve_registration_category(comp_id: int, category_id: Optional[int]) -> Result[Optional[int], ArctosError]:
+        """Validate *category_id* against *comp_id*'s categories.
+
+        Returns ``Ok(None)`` when the comp has no categories (the passed value is
+        ignored), ``Ok(category_id)`` when valid, or ``Err`` when a category is
+        required but missing/invalid.
+        """
+        from models import SideCompCategory
+
+        cats = SideCompCategory.query.filter_by(comp=comp_id).all()
+        if not cats:
+            return Ok(None)
+        if category_id is None:
+            return Err(ValidationError("You must choose a category"))
+        if category_id not in {c.id for c in cats}:
+            return Err(ValidationError("Invalid category for this side competition"))
+        return Ok(category_id)
 
     @staticmethod
     @allow_Q
@@ -351,7 +553,7 @@ class SideCompService:
             :class:`~app.error_values.Err` describing the failure (comp not
             found or actor not a TO).
         """
-        from models import SideComp, SideCompRegistration, SideCompResult, db
+        from models import SideComp, SideCompCategory, SideCompRegistration, SideCompResult, db
 
         sc = SideComp.query.get(comp_id)
         if sc is None:
@@ -361,6 +563,7 @@ class SideCompService:
 
         SideCompRegistration.query.filter_by(comp=comp_id).delete(synchronize_session=False)
         SideCompResult.query.filter_by(comp=comp_id).delete(synchronize_session=False)
+        SideCompCategory.query.filter_by(comp=comp_id).delete(synchronize_session=False)
         db.session.delete(sc)
         db.session.commit()
         return Ok(None)
@@ -371,19 +574,22 @@ class SideCompService:
         comp_id: int,
         *,
         player_id: str,
+        category_id: Optional[int] = None,
     ) -> Result["SideCompRegistration", ArctosError]:
         """Register *player_id* for side competition *comp_id* (self-registration).
 
         Args:
             comp_id: Primary key of the :class:`~app.models.sidecomp.SideComp`.
             player_id: ID of the player registering themselves.
+            category_id: Chosen category. Required when the comp has categories,
+                ignored when it has none.
 
         Returns:
             :class:`~app.error_values.Ok` wrapping the persisted
             :class:`~app.models.sidecomp.SideCompRegistration`, or an
             :class:`~app.error_values.Err` describing the failure (comp not
-            found, player not registered for the parent event, or duplicate
-            registration).
+            found, player not registered for the parent event, missing/invalid
+            category, or duplicate registration).
         """
         from models import (
             SideComp,
@@ -405,11 +611,14 @@ class SideCompService:
         if existing:
             return Err(ValidationError("You are already registered for this side competition"))
 
+        resolved_category = SideCompService._resolve_registration_category(comp_id, category_id).Q()
+
         reg = SideCompService._insert_registration(
             tournament_url=sc.event,
             comp_id=comp_id,
             player_id=player_id,
             registered_by_to=False,
+            category_id=resolved_category,
         )
         return Ok(reg)
 
@@ -421,6 +630,7 @@ class SideCompService:
         actor_user_id: str,
         actor_user_type: str,
         player_id: str,
+        category_id: Optional[int] = None,
     ) -> Result["SideCompRegistration", ArctosError]:
         """Register *player_id* for side competition *comp_id* via TO-driven registration.
 
@@ -434,13 +644,16 @@ class SideCompService:
                 Must be a TO of the parent event.
             actor_user_type: ``"player"`` or ``"team"``.
             player_id: ID of the player being registered on their behalf.
+            category_id: Chosen category. Required when the comp has categories,
+                ignored when it has none.
 
         Returns:
             :class:`~app.error_values.Ok` wrapping the persisted
             :class:`~app.models.sidecomp.SideCompRegistration`, or an
             :class:`~app.error_values.Err` describing the failure (comp not
             found, actor not a TO, target player not found, target not
-            registered for the parent event, or duplicate registration).
+            registered for the parent event, missing/invalid category, or
+            duplicate registration).
         """
         from models import (
             Player,
@@ -466,11 +679,14 @@ class SideCompService:
         if existing:
             return Err(ValidationError("Player is already registered for this side competition"))
 
+        resolved_category = SideCompService._resolve_registration_category(comp_id, category_id).Q()
+
         reg = SideCompService._insert_registration(
             tournament_url=sc.event,
             comp_id=comp_id,
             player_id=player_id,
             registered_by_to=True,
+            category_id=resolved_category,
         )
         return Ok(reg)
 

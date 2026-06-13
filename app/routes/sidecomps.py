@@ -46,7 +46,24 @@ def list_for_event(tournament_url: str):
 
 
 def _detail_payload(sc, registrants):
+    from sqlalchemy import func
+    from models import SideCompCategory, SideCompRegistration, db
+
     entry_numbers = SideCompService.entry_numbers_for_tournament(sc.event)
+
+    cats = (
+        SideCompCategory.query.filter_by(comp=sc.id)
+        .order_by(SideCompCategory.created_at.asc(), SideCompCategory.id.asc())
+        .all()
+    )
+    category_name_by_id = {c.id: c.name for c in cats}
+    counts = dict(
+        db.session.query(SideCompRegistration.category, func.count(SideCompRegistration.id))
+        .filter(SideCompRegistration.comp == sc.id)
+        .group_by(SideCompRegistration.category)
+        .all()
+    )
+
     viewer_is_to = False
     viewer_can_register = False
     viewer_is_registered_in_comp = False
@@ -66,11 +83,15 @@ def _detail_payload(sc, registrants):
         "description": sc.description,
         "registration_open": bool(sc.registration_open),
         "created_at": sc.created_at.isoformat() if sc.created_at else None,
+        "has_categories": bool(cats),
+        "categories": [{"id": c.id, "name": c.name, "registrant_count": counts.get(c.id, 0)} for c in cats],
         "registrants": [
             {
                 "player_id": reg.player,
                 "player_name": (player.name if player else reg.player),
                 "entry_number": entry_numbers.get(reg.player),
+                "category_id": reg.category,
+                "category_name": category_name_by_id.get(reg.category),
                 "registered_at": reg.registered_at.isoformat() if reg.registered_at else None,
                 "registered_by_to": bool(reg.registered_by_to),
             }
@@ -103,6 +124,7 @@ def create(tournament_url: str):
         name=data.get("name", ""),
         type=data.get("type", ""),
         description=data.get("description"),
+        categories=data.get("categories"),
     )
     return json_from_result(
         res,
@@ -159,14 +181,90 @@ def delete(comp_id: int):
     return json_from_result(res, ok_to_payload=lambda _: {})
 
 
+def _category_payload(cat):
+    return {"id": cat.id, "name": cat.name}
+
+
+@bp.route("/sidecomps/<int:comp_id>/categories", methods=["GET"])
+def list_categories(comp_id: int):
+    """Public: list a side competition's categories with registrant counts."""
+    from sqlalchemy import func
+    from models import SideCompRegistration, db
+
+    res = SideCompService.list_categories(comp_id)
+
+    def _payload(cats):
+        counts = dict(
+            db.session.query(SideCompRegistration.category, func.count(SideCompRegistration.id))
+            .filter(SideCompRegistration.comp == comp_id)
+            .group_by(SideCompRegistration.category)
+            .all()
+        )
+        return {"categories": [{"id": c.id, "name": c.name, "registrant_count": counts.get(c.id, 0)} for c in cats]}
+
+    return json_from_result(res, ok_to_payload=_payload)
+
+
+@bp.route("/sidecomps/<int:comp_id>/categories", methods=["POST"])
+@login_required
+@require_json_body()
+def create_category(comp_id: int):
+    """TO-only: create a category in a side competition."""
+    res = SideCompService.create_category(
+        comp_id,
+        actor_user_id=current_user.id,
+        actor_user_type=current_user_type(),
+        name=g.json_body.get("name", ""),
+    )
+    return json_from_result(res, ok_to_payload=_category_payload)
+
+
+@bp.route("/sidecomp-categories/<int:category_id>", methods=["PATCH"])
+@login_required
+@require_json_body()
+def rename_category(category_id: int):
+    """TO-only: rename a category."""
+    res = SideCompService.rename_category(
+        category_id,
+        actor_user_id=current_user.id,
+        actor_user_type=current_user_type(),
+        name=g.json_body.get("name", ""),
+    )
+    return json_from_result(res, ok_to_payload=_category_payload)
+
+
+@bp.route("/sidecomp-categories/<int:category_id>/delete", methods=["POST"])
+@login_required
+@require_json_body()
+def delete_category(category_id: int):
+    """TO-only: delete a category, resolving any registered players.
+
+    Body: ``{"mode": "deregister"|"move", "target_category_id"?: int}``. Mode is
+    only required when the category has registered players.
+    """
+    res = SideCompService.delete_category(
+        category_id,
+        actor_user_id=current_user.id,
+        actor_user_type=current_user_type(),
+        mode=g.json_body.get("mode"),
+        target_category_id=g.json_body.get("target_category_id"),
+    )
+    return json_from_result(res, ok_to_payload=lambda _: {})
+
+
 @bp.route("/sidecomps/<int:comp_id>/register", methods=["POST"])
 @login_required
+@require_json_body()
 def player_register(comp_id: int):
     """Player self-registration for a side competition."""
     if not is_player(current_user):
         return jsonify({"success": False, "error": "Only players can register"}), 403
 
-    res = SideCompService.register_player(comp_id, player_id=current_user.id)
+    res = SideCompService.register_player(
+        comp_id,
+        player_id=current_user.id,
+        category_id=g.json_body.get("category_id"),
+    )
     return json_from_result(
         res,
         ok_to_payload=lambda reg: {
@@ -203,6 +301,7 @@ def register_player_as_to(comp_id: int):
         actor_user_id=current_user.id,
         actor_user_type=current_user_type(),
         player_id=player_id,
+        category_id=data.get("category_id"),
     )
 
     def _checkin_payload(reg):
@@ -215,6 +314,7 @@ def register_player_as_to(comp_id: int):
             "player_id": reg.player,
             "player_name": player.name if player else reg.player,
             "entry_number": entry_number,
+            "category_id": reg.category,
             "registered_at": reg.registered_at.isoformat() if reg.registered_at else None,
         }
 

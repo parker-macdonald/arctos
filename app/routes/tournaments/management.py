@@ -29,6 +29,7 @@ from models import (
     Player,
     HeadRef,
     SideComp,
+    SideCompCategory,
     SideCompEntryNumber,
     SideCompRegistration,
     SideCompResult,
@@ -294,6 +295,7 @@ def delete_tournament(tournament_url):
         SideCompRegistration.query.filter(SideCompRegistration.comp.in_(side_comp_ids)).delete(
             synchronize_session=False
         )
+        SideCompCategory.query.filter(SideCompCategory.comp.in_(side_comp_ids)).delete(synchronize_session=False)
 
     SideComp.query.filter_by(event=tournament_url).delete(synchronize_session=False)
 

@@ -1,11 +1,12 @@
 use crate::api;
-use crate::types::{EligiblePlayer, SideCompRegisterPlayerResponse};
+use crate::types::{EligiblePlayer, SideCompCategory, SideCompRegisterPlayerResponse};
 use crate::Route;
 use dioxus::prelude::*;
 
 #[component]
 pub fn SideCompRegisterAsTo(url: String, comp_id: i32) -> Element {
     let mut eligible = use_signal(Vec::<EligiblePlayer>::new);
+    let mut categories = use_signal(Vec::<SideCompCategory>::new);
     let mut filter = use_signal(String::new);
     let mut error = use_signal(|| None::<String>);
 
@@ -14,6 +15,11 @@ pub fn SideCompRegisterAsTo(url: String, comp_id: i32) -> Element {
             match api::sidecomp_eligible_players(comp_id).await {
                 Ok(rows) => eligible.set(rows),
                 Err(e) => error.set(Some(e)),
+            }
+        });
+        spawn(async move {
+            if let Ok(cats) = api::sidecomp_categories(comp_id).await {
+                categories.set(cats);
             }
         });
     });
@@ -45,6 +51,8 @@ pub fn SideCompRegisterAsTo(url: String, comp_id: i32) -> Element {
                         .into_iter()
                         .filter(|p| q.is_empty() || p.player_name.to_lowercase().contains(&q))
                         .collect();
+                    let cats = categories();
+                    let has_categories = !cats.is_empty();
                     rsx! {
                         if rows.is_empty() {
                             p { class: "text-muted", "No players found." }
@@ -55,6 +63,8 @@ pub fn SideCompRegisterAsTo(url: String, comp_id: i32) -> Element {
                                         key: "{p.player_id}",
                                         p: p.clone(),
                                         comp_id,
+                                        categories: cats.clone(),
+                                        has_categories,
                                         on_registered: move |registered: SideCompRegisterPlayerResponse| {
                                             let player_id = registered.player_id.clone();
                                             if let Some(row) = eligible.write().iter_mut().find(|x| x.player_id == player_id) {
@@ -78,12 +88,16 @@ pub fn SideCompRegisterAsTo(url: String, comp_id: i32) -> Element {
 fn EligibleRow(
     p: EligiblePlayer,
     comp_id: i32,
+    categories: Vec<SideCompCategory>,
+    has_categories: bool,
     on_registered: EventHandler<SideCompRegisterPlayerResponse>,
     on_error: EventHandler<String>,
 ) -> Element {
     let mut busy = use_signal(|| false);
+    let mut selected_category = use_signal(|| None as Option<i32>);
     let p_render = p.clone();
     let p_click = p.clone();
+    let register_disabled = busy() || (has_categories && selected_category().is_none());
 
     rsx! {
         li { class: "list-group-item d-flex justify-content-between align-items-center",
@@ -103,21 +117,35 @@ fn EligibleRow(
                     }
                 }
             } else {
-                button {
-                    class: "btn btn-sm btn-primary",
-                    disabled: busy(),
-                    onclick: move |_| {
-                        let pid = p_click.player_id.clone();
-                        busy.set(true);
-                        spawn(async move {
-                            match api::sidecomp_to_register_player_as_to(comp_id, &pid).await {
-                                Ok(registered) => on_registered.call(registered),
-                                Err(e) => on_error.call(e),
+                div { class: "d-flex gap-2 align-items-center",
+                    if has_categories {
+                        select {
+                            class: "form-select form-select-sm w-auto",
+                            value: selected_category().map(|v| v.to_string()).unwrap_or_default(),
+                            onchange: move |evt| selected_category.set(evt.value().parse::<i32>().ok()),
+                            option { value: "", "Choose category..." }
+                            for c in categories.iter() {
+                                option { value: "{c.id}", "{c.name}" }
                             }
-                            busy.set(false);
-                        });
-                    },
-                    if busy() { "Registering..." } else { "Quick Register" }
+                        }
+                    }
+                    button {
+                        class: "btn btn-sm btn-primary",
+                        disabled: register_disabled,
+                        onclick: move |_| {
+                            let pid = p_click.player_id.clone();
+                            let cat = selected_category();
+                            busy.set(true);
+                            spawn(async move {
+                                match api::sidecomp_to_register_player_as_to(comp_id, &pid, cat).await {
+                                    Ok(registered) => on_registered.call(registered),
+                                    Err(e) => on_error.call(e),
+                                }
+                                busy.set(false);
+                            });
+                        },
+                        if busy() { "Registering..." } else { "Quick Register" }
+                    }
                 }
             }
         }

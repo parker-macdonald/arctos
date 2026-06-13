@@ -1,4 +1,5 @@
 use crate::api;
+use crate::components::CategoriesLiveEditor;
 use crate::Route;
 use dioxus::prelude::*;
 
@@ -6,6 +7,7 @@ use dioxus::prelude::*;
 pub fn SideCompEdit(url: String, comp_id: i32) -> Element {
     let navigator = use_navigator();
     let detail = use_resource(move || async move { api::sidecomp_detail(comp_id).await });
+    let mut categories = use_resource(move || async move { api::sidecomp_categories(comp_id).await });
 
     let mut name = use_signal(String::new);
     let mut type_ = use_signal(String::new);
@@ -114,6 +116,19 @@ pub fn SideCompEdit(url: String, comp_id: i32) -> Element {
                         div { class: "alert alert-danger", "{err}" }
                     }
                     button { class: "btn btn-primary", r#type: "submit", "Save" }
+                }
+                hr {}
+                h2 { class: "h5", "Categories" }
+                match categories.read().as_ref() {
+                    Some(Ok(cats)) => rsx! {
+                        CategoriesLiveEditor {
+                            comp_id,
+                            categories: cats.clone(),
+                            on_refresh: move |_| categories.restart(),
+                        }
+                    },
+                    Some(Err(e)) => rsx! { div { class: "alert alert-danger", "Error: {e}" } },
+                    None => rsx! { div { class: "spinner-border" } },
                 }
                 hr {}
                 button {

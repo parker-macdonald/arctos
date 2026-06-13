@@ -42,6 +42,34 @@ class SideComp(db.Model):
     )
 
 
+class SideCompCategory(db.Model):
+    """A TO-defined category within a side competition.
+
+    A side competition may have zero or more categories (e.g. "Novice", "Pro").
+    When a comp has categories, a player must choose one at registration; when it
+    has none, registration is uncategorized and everyone competes as one group.
+
+    Attributes:
+        id: Auto-increment primary key.
+        comp: FK to the parent :class:`SideComp`.
+        name: Display name of the category, unique within the comp.
+        created_at: Timestamp when the category was created.
+    """
+
+    __tablename__ = "sidecomp_categories"
+
+    id = db.Column(db.Integer, primary_key=True)
+    comp = db.Column(db.Integer, db.ForeignKey("sidecomps.id"), nullable=False)
+    name = db.Column(db.String(SHORT_NAME_LEN), nullable=False)
+    created_at = db.Column(
+        db.DateTime,
+        default=now_utc_naive,
+        nullable=False,
+    )
+
+    __table_args__ = (db.UniqueConstraint("comp", "name", name="uq_sidecomp_categories_comp_name"),)
+
+
 class SideCompEntryNumber(db.Model):
     """A player's tournament-stable side competition entry number.
 
@@ -89,6 +117,8 @@ class SideCompRegistration(db.Model):
         id: Auto-increment primary key.
         comp: FK to the parent :class:`SideComp`.
         player: FK to the registering player.
+        category: FK to the chosen :class:`SideCompCategory`, or ``None`` when the
+            comp has no categories (or for rows predating categories).
         registered_at: Timestamp when the registration was created.
         registered_by_to: ``True`` when the row was created via TO registration,
             ``False`` for player self-registration.
@@ -99,6 +129,7 @@ class SideCompRegistration(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     comp = db.Column(db.Integer, db.ForeignKey("sidecomps.id"), nullable=False)
     player = db.Column(db.String(USER_ID_LEN), db.ForeignKey("players.id"), nullable=False)
+    category = db.Column(db.Integer, db.ForeignKey("sidecomp_categories.id"), nullable=True)
     registered_at = db.Column(
         db.DateTime,
         default=now_utc_naive,

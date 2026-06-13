@@ -3575,15 +3575,78 @@ pub async fn sidecomp_create(
     name: &str,
     type_: &str,
     description: Option<&str>,
+    categories: &[String],
 ) -> Result<Value, String> {
     let c = client();
     let body = serde_json::json!({
         "name": name,
         "type": type_,
         "description": description.unwrap_or(""),
+        "categories": categories,
     });
     let r = with_credentials(
         c.post(format!("{}/_api/{}/sidecomps", base(), tournament_url))
+            .json(&body),
+    )
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    response_json(r).await
+}
+
+#[derive(serde::Deserialize)]
+struct SideCompCategoriesResponse {
+    categories: Vec<SideCompCategory>,
+}
+
+pub async fn sidecomp_categories(comp_id: i32) -> Result<Vec<SideCompCategory>, String> {
+    let c = client();
+    let r = with_credentials(c.get(format!("{}/_api/sidecomps/{}/categories", base(), comp_id)))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    let parsed: SideCompCategoriesResponse = response_json(r).await?;
+    Ok(parsed.categories)
+}
+
+pub async fn sidecomp_create_category(comp_id: i32, name: &str) -> Result<SideCompCategory, String> {
+    let c = client();
+    let body = serde_json::json!({"name": name});
+    let r = with_credentials(
+        c.post(format!("{}/_api/sidecomps/{}/categories", base(), comp_id))
+            .json(&body),
+    )
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    response_json(r).await
+}
+
+pub async fn sidecomp_rename_category(category_id: i32, name: &str) -> Result<SideCompCategory, String> {
+    let c = client();
+    let body = serde_json::json!({"name": name});
+    let r = with_credentials(
+        c.patch(format!("{}/_api/sidecomp-categories/{}", base(), category_id))
+            .json(&body),
+    )
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    response_json(r).await
+}
+
+pub async fn sidecomp_delete_category(
+    category_id: i32,
+    mode: &str,
+    target_category_id: Option<i32>,
+) -> Result<Value, String> {
+    let c = client();
+    let body = serde_json::json!({
+        "mode": mode,
+        "target_category_id": target_category_id,
+    });
+    let r = with_credentials(
+        c.post(format!("{}/_api/sidecomp-categories/{}/delete", base(), category_id))
             .json(&body),
     )
     .send()
@@ -3632,13 +3695,13 @@ pub async fn sidecomp_delete(comp_id: i32) -> Result<Value, String> {
     response_json(r).await
 }
 
-pub async fn sidecomp_register(comp_id: i32) -> Result<Value, String> {
+pub async fn sidecomp_register(comp_id: i32, category_id: Option<i32>) -> Result<Value, String> {
     let c = client();
-    let r = with_credentials(c.post(format!(
-        "{}/_api/sidecomps/{}/register",
-        base(),
-        comp_id
-    )))
+    let body = serde_json::json!({"category_id": category_id});
+    let r = with_credentials(
+        c.post(format!("{}/_api/sidecomps/{}/register", base(), comp_id))
+            .json(&body),
+    )
     .send()
     .await
     .map_err(|e| e.to_string())?;
@@ -3661,9 +3724,10 @@ pub async fn sidecomp_deregister(comp_id: i32) -> Result<Value, String> {
 pub async fn sidecomp_to_register_player_as_to(
     comp_id: i32,
     player_id: &str,
+    category_id: Option<i32>,
 ) -> Result<SideCompRegisterPlayerResponse, String> {
     let c = client();
-    let body = serde_json::json!({"player_id": player_id});
+    let body = serde_json::json!({"player_id": player_id, "category_id": category_id});
     let r = with_credentials(
         c.post(format!("{}/_api/sidecomps/{}/register-player-as-to", base(), comp_id))
             .json(&body),

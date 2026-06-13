@@ -1,4 +1,5 @@
 use crate::api;
+use crate::types::SideCompCategory;
 use crate::Route;
 use dioxus::prelude::*;
 
@@ -27,6 +28,8 @@ pub fn SideCompDetail(url: String, comp_id: i32) -> Element {
                         let viewer_is_registered_in_comp = d.viewer_is_registered_in_comp;
                         let registration_open = d.registration_open;
                         let description = d.description.clone();
+                        let categories = d.categories.clone();
+                        let has_categories = d.has_categories;
                         rsx! {
                             h1 { "{d.name}" }
                             p {
@@ -61,18 +64,29 @@ pub fn SideCompDetail(url: String, comp_id: i32) -> Element {
                                 action_error,
                                 show_register: viewer_can_register,
                                 show_deregister: viewer_is_registered_in_comp,
+                                categories: categories.clone(),
+                                has_categories,
                             }
                             h2 { "Registrants ({registrants.len()})" }
                             if registrants.is_empty() {
                                 p { class: "text-muted", "No registrants yet." }
                             } else {
                                 table { class: "table",
-                                    thead { tr { th { "#" } th { "Player" } th { "Registered" } th { "Source" } } }
+                                    thead { tr {
+                                        th { "#" }
+                                        th { "Player" }
+                                        if has_categories { th { "Category" } }
+                                        th { "Registered" }
+                                        th { "Source" }
+                                    } }
                                     tbody {
                                         for r in registrants.iter() {
                                             tr {
                                                 td { "{r.entry_number}" }
                                                 td { "{r.player_name}" }
+                                                if has_categories {
+                                                    td { "{r.category_name.clone().unwrap_or_default()}" }
+                                                }
                                                 td { "{r.registered_at.clone().unwrap_or_default()}" }
                                                 td { if r.registered_by_to { "TO" } else { "Self" } }
                                             }
@@ -99,22 +113,38 @@ fn SelfRegisterControls(
     action_error: Signal<Option<String>>,
     show_register: bool,
     show_deregister: bool,
+    categories: Vec<SideCompCategory>,
+    has_categories: bool,
 ) -> Element {
     let mut busy = use_signal(|| false);
+    let mut selected_category = use_signal(|| None as Option<i32>);
     if !show_register && !show_deregister {
         return rsx! {};
     }
+    let register_disabled = busy() || (has_categories && selected_category().is_none());
     rsx! {
-        div { class: "mb-3 d-flex gap-2",
+        div { class: "mb-3 d-flex gap-2 align-items-center",
             if show_register {
+                if has_categories {
+                    select {
+                        class: "form-select w-auto",
+                        value: selected_category().map(|v| v.to_string()).unwrap_or_default(),
+                        onchange: move |evt| selected_category.set(evt.value().parse::<i32>().ok()),
+                        option { value: "", "Choose a category..." }
+                        for c in categories.iter() {
+                            option { value: "{c.id}", "{c.name}" }
+                        }
+                    }
+                }
                 button {
                     class: "btn btn-success",
-                    disabled: busy(),
+                    disabled: register_disabled,
                     onclick: move |_| {
                         busy.set(true);
                         let mut err = action_error;
+                        let cat = selected_category();
                         spawn(async move {
-                            match api::sidecomp_register(comp_id).await {
+                            match api::sidecomp_register(comp_id, cat).await {
                                 Ok(_) => {
                                     if let Some(win) = web_sys::window() {
                                         let _ = win.location().reload();

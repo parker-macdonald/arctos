@@ -1411,11 +1411,23 @@ pub struct SideCompSummary {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SideCompCategory {
+    pub id: i32,
+    pub name: String,
+    #[serde(default)]
+    pub registrant_count: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SideCompRegistrant {
     pub player_id: String,
     pub player_name: String,
     #[serde(default)]
     pub entry_number: i32,
+    #[serde(default)]
+    pub category_id: Option<i32>,
+    #[serde(default)]
+    pub category_name: Option<String>,
     pub registered_at: Option<String>,
     pub registered_by_to: bool,
 }
@@ -1433,6 +1445,10 @@ pub struct SideCompDetail {
     pub registration_open: bool,
     pub created_at: Option<String>,
     pub registrants: Vec<SideCompRegistrant>,
+    #[serde(default)]
+    pub has_categories: bool,
+    #[serde(default)]
+    pub categories: Vec<SideCompCategory>,
     #[serde(default)]
     pub viewer_is_to: bool,
     #[serde(default)]

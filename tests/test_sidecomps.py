@@ -9,6 +9,7 @@ from models import (
     Player,
     PlayerRegistration,
     SideComp,
+    SideCompCategory,
     SideCompEntryNumber,
     SideCompRegistration,
     SideCompResult,
@@ -310,7 +311,10 @@ def test_sidecomp_delete_cascades(test_db, tournament):
     sc = SideComp(event=tournament.url, name="Z", type="DUELING")
     db.session.add(sc)
     db.session.flush()
-    db.session.add(SideCompRegistration(comp=sc.id, player=other.id))
+    cat = SideCompCategory(comp=sc.id, name="Open")
+    db.session.add(cat)
+    db.session.flush()
+    db.session.add(SideCompRegistration(comp=sc.id, player=other.id, category=cat.id))
     db.session.add(SideCompResult(comp=sc.id, player=other.id))
     db.session.commit()
     comp_id = sc.id
@@ -322,6 +326,7 @@ def test_sidecomp_delete_cascades(test_db, tournament):
     assert SideComp.query.get(comp_id) is None
     assert SideCompRegistration.query.filter_by(comp=comp_id).count() == 0
     assert SideCompResult.query.filter_by(comp=comp_id).count() == 0
+    assert SideCompCategory.query.filter_by(comp=comp_id).count() == 0
 
 
 def test_register_player_succeeds_when_event_registered(test_db, tournament):
@@ -1148,7 +1153,7 @@ def test_route_player_register_succeeds(app, client, tournament):
         comp_id = sc.id
         login_as(client, p)
 
-    resp = client.post(f"/_api/sidecomps/{comp_id}/register")
+    resp = client.post(f"/_api/sidecomps/{comp_id}/register", json={})
     assert resp.status_code == 200
 
     with app.app_context():
@@ -1170,7 +1175,7 @@ def test_route_player_register_requires_player_account(app, client, tournament):
         comp_id = sc.id
         login_as(client, t)
 
-    resp = client.post(f"/_api/sidecomps/{comp_id}/register")
+    resp = client.post(f"/_api/sidecomps/{comp_id}/register", json={})
     assert resp.status_code == 403
 
 
@@ -1233,7 +1238,10 @@ def test_delete_tournament_cascades_sidecomp_registrations(app, client, tourname
         sc = SideComp(event=tournament.url, name="A", type="DUELING")
         db.session.add(sc)
         db.session.flush()
-        db.session.add(SideCompRegistration(comp=sc.id, player=target.id))
+        cat = SideCompCategory(comp=sc.id, name="Open")
+        db.session.add(cat)
+        db.session.flush()
+        db.session.add(SideCompRegistration(comp=sc.id, player=target.id, category=cat.id))
         db.session.commit()
         comp_id = sc.id
         tournament_url = tournament.url
@@ -1249,6 +1257,7 @@ def test_delete_tournament_cascades_sidecomp_registrations(app, client, tourname
     with app.app_context():
         assert SideComp.query.get(comp_id) is None
         assert SideCompRegistration.query.filter_by(comp=comp_id).count() == 0
+        assert SideCompCategory.query.filter_by(comp=comp_id).count() == 0
 
 
 def test_route_eligible_players_marks_sidecomp_registered_players(app, client, tournament):
@@ -1347,3 +1356,470 @@ def test_route_eligible_players_returns_league_scoped_registrations(app, client,
     rows = resp.get_json()
     assert [row["player_id"] for row in rows] == ["lg_p1"]
     assert rows[0]["team_pseudonym"] == "LG Pseudonym"
+
+
+# ---------------------------------------------------------------------------
+# Categories
+# ---------------------------------------------------------------------------
+
+
+def _open_comp(tournament_url, name="A"):
+    sc = SideComp(event=tournament_url, name=name, type="DUELING", registration_open=True)
+    db.session.add(sc)
+    db.session.commit()
+    return sc
+
+
+def test_create_category_succeeds(test_db, tournament):
+    to_user = _make_player("to_user", "TO User")
+    _make_to(tournament.url, to_user.id)
+    sc = _open_comp(tournament.url)
+
+    from app.services.sidecomp_service import SideCompService
+
+    res = SideCompService.create_category(sc.id, actor_user_id=to_user.id, actor_user_type="player", name="  Novice  ")
+    assert isinstance(res, Ok)
+    assert res.unwrap().name == "Novice"
+
+
+def test_create_category_non_to_forbidden(test_db, tournament):
+    p = _make_player("not_to", "Non TO")
+    sc = _open_comp(tournament.url)
+
+    from app.services.sidecomp_service import SideCompService
+
+    res = SideCompService.create_category(sc.id, actor_user_id=p.id, actor_user_type="player", name="Novice")
+    assert isinstance(res, Err)
+    assert res.unwrap_err().status_code == 403
+
+
+def test_create_category_empty_name(test_db, tournament):
+    to_user = _make_player("to_user", "TO User")
+    _make_to(tournament.url, to_user.id)
+    sc = _open_comp(tournament.url)
+
+    from app.services.sidecomp_service import SideCompService
+
+    res = SideCompService.create_category(sc.id, actor_user_id=to_user.id, actor_user_type="player", name="   ")
+    assert isinstance(res, Err)
+    assert res.unwrap_err().status_code == 400
+
+
+def test_create_category_duplicate(test_db, tournament):
+    to_user = _make_player("to_user", "TO User")
+    _make_to(tournament.url, to_user.id)
+    sc = _open_comp(tournament.url)
+
+    from app.services.sidecomp_service import SideCompService
+
+    SideCompService.create_category(sc.id, actor_user_id=to_user.id, actor_user_type="player", name="Novice")
+    res = SideCompService.create_category(sc.id, actor_user_id=to_user.id, actor_user_type="player", name="Novice")
+    assert isinstance(res, Err)
+    assert res.unwrap_err().status_code == 400
+
+
+def test_rename_category_succeeds(test_db, tournament):
+    to_user = _make_player("to_user", "TO User")
+    _make_to(tournament.url, to_user.id)
+    sc = _open_comp(tournament.url)
+    cat = SideCompCategory(comp=sc.id, name="Novice")
+    db.session.add(cat)
+    db.session.commit()
+
+    from app.services.sidecomp_service import SideCompService
+
+    res = SideCompService.rename_category(cat.id, actor_user_id=to_user.id, actor_user_type="player", name="Beginner")
+    assert isinstance(res, Ok)
+    assert SideCompCategory.query.get(cat.id).name == "Beginner"
+
+
+def test_rename_category_collision(test_db, tournament):
+    to_user = _make_player("to_user", "TO User")
+    _make_to(tournament.url, to_user.id)
+    sc = _open_comp(tournament.url)
+    c1 = SideCompCategory(comp=sc.id, name="Novice")
+    c2 = SideCompCategory(comp=sc.id, name="Pro")
+    db.session.add_all([c1, c2])
+    db.session.commit()
+
+    from app.services.sidecomp_service import SideCompService
+
+    res = SideCompService.rename_category(c2.id, actor_user_id=to_user.id, actor_user_type="player", name="Novice")
+    assert isinstance(res, Err)
+    assert res.unwrap_err().status_code == 400
+
+
+def test_list_categories_ordered(test_db, tournament):
+    sc = _open_comp(tournament.url)
+    db.session.add_all([SideCompCategory(comp=sc.id, name="First"), SideCompCategory(comp=sc.id, name="Second")])
+    db.session.commit()
+
+    from app.services.sidecomp_service import SideCompService
+
+    res = SideCompService.list_categories(sc.id)
+    assert isinstance(res, Ok)
+    assert [c.name for c in res.unwrap()] == ["First", "Second"]
+
+
+def test_create_comp_with_categories(test_db, tournament):
+    to_user = _make_player("to_user", "TO User")
+    _make_to(tournament.url, to_user.id)
+
+    from app.services.sidecomp_service import SideCompService
+
+    res = SideCompService.create(
+        tournament.url,
+        actor_user_id=to_user.id,
+        actor_user_type="player",
+        name="Dueling",
+        type="DUELING",
+        categories=["Novice", "  ", "Pro"],
+    )
+    assert isinstance(res, Ok)
+    names = {c.name for c in SideCompCategory.query.filter_by(comp=res.unwrap().id).all()}
+    assert names == {"Novice", "Pro"}
+
+
+def test_create_comp_with_duplicate_categories(test_db, tournament):
+    to_user = _make_player("to_user", "TO User")
+    _make_to(tournament.url, to_user.id)
+
+    from app.services.sidecomp_service import SideCompService
+
+    res = SideCompService.create(
+        tournament.url,
+        actor_user_id=to_user.id,
+        actor_user_type="player",
+        name="Dueling",
+        type="DUELING",
+        categories=["Novice", "Novice"],
+    )
+    assert isinstance(res, Err)
+    assert res.unwrap_err().status_code == 400
+
+
+def test_register_requires_category_when_categories_exist(test_db, tournament):
+    p = _make_player()
+    _confirm_event_registration(tournament.url, p.id)
+    sc = _open_comp(tournament.url)
+    db.session.add(SideCompCategory(comp=sc.id, name="Novice"))
+    db.session.commit()
+
+    from app.services.sidecomp_service import SideCompService
+
+    res = SideCompService.register_player(sc.id, player_id=p.id)
+    assert isinstance(res, Err)
+    assert res.unwrap_err().status_code == 400
+
+
+def test_register_rejects_foreign_category(test_db, tournament):
+    p = _make_player()
+    _confirm_event_registration(tournament.url, p.id)
+    sc = _open_comp(tournament.url, "A")
+    other = _open_comp(tournament.url, "B")
+    foreign = SideCompCategory(comp=other.id, name="Pro")
+    own = SideCompCategory(comp=sc.id, name="Novice")
+    db.session.add_all([foreign, own])
+    db.session.commit()
+
+    from app.services.sidecomp_service import SideCompService
+
+    res = SideCompService.register_player(sc.id, player_id=p.id, category_id=foreign.id)
+    assert isinstance(res, Err)
+    assert res.unwrap_err().status_code == 400
+
+
+def test_register_stores_category(test_db, tournament):
+    p = _make_player()
+    _confirm_event_registration(tournament.url, p.id)
+    sc = _open_comp(tournament.url)
+    cat = SideCompCategory(comp=sc.id, name="Novice")
+    db.session.add(cat)
+    db.session.commit()
+
+    from app.services.sidecomp_service import SideCompService
+
+    res = SideCompService.register_player(sc.id, player_id=p.id, category_id=cat.id)
+    assert isinstance(res, Ok)
+    assert res.unwrap().category == cat.id
+
+
+def test_register_ignores_category_when_none_exist(test_db, tournament):
+    p = _make_player()
+    _confirm_event_registration(tournament.url, p.id)
+    sc = _open_comp(tournament.url)
+
+    from app.services.sidecomp_service import SideCompService
+
+    res = SideCompService.register_player(sc.id, player_id=p.id, category_id=999)
+    assert isinstance(res, Ok)
+    assert res.unwrap().category is None
+
+
+def test_register_as_to_requires_category(test_db, tournament):
+    to_user = _make_player("to_user", "TO User")
+    target = _make_player("p_other", "Other")
+    _make_to(tournament.url, to_user.id)
+    _confirm_event_registration(tournament.url, target.id)
+    sc = _open_comp(tournament.url)
+    db.session.add(SideCompCategory(comp=sc.id, name="Novice"))
+    db.session.commit()
+
+    from app.services.sidecomp_service import SideCompService
+
+    res = SideCompService.register_player_as_to(
+        sc.id, actor_user_id=to_user.id, actor_user_type="player", player_id=target.id
+    )
+    assert isinstance(res, Err)
+    assert res.unwrap_err().status_code == 400
+
+
+def test_register_as_to_stores_category(test_db, tournament):
+    to_user = _make_player("to_user", "TO User")
+    target = _make_player("p_other", "Other")
+    _make_to(tournament.url, to_user.id)
+    _confirm_event_registration(tournament.url, target.id)
+    sc = _open_comp(tournament.url)
+    cat = SideCompCategory(comp=sc.id, name="Novice")
+    db.session.add(cat)
+    db.session.commit()
+
+    from app.services.sidecomp_service import SideCompService
+
+    res = SideCompService.register_player_as_to(
+        sc.id, actor_user_id=to_user.id, actor_user_type="player", player_id=target.id, category_id=cat.id
+    )
+    assert isinstance(res, Ok)
+    assert res.unwrap().category == cat.id
+
+
+def _category_with_player(tournament, comp_name="A", cat_name="Novice", player_id="p_cat"):
+    """Create an open comp with one category and one registered player in it."""
+    p = _make_player(player_id, player_id.upper())
+    _confirm_event_registration(tournament.url, p.id)
+    sc = _open_comp(tournament.url, comp_name)
+    cat = SideCompCategory(comp=sc.id, name=cat_name)
+    db.session.add(cat)
+    db.session.commit()
+
+    from app.services.sidecomp_service import SideCompService
+
+    SideCompService.register_player(sc.id, player_id=p.id, category_id=cat.id).unwrap()
+    return sc, cat, p
+
+
+def test_delete_category_empty_just_deletes(test_db, tournament):
+    to_user = _make_player("to_user", "TO User")
+    _make_to(tournament.url, to_user.id)
+    sc = _open_comp(tournament.url)
+    cat = SideCompCategory(comp=sc.id, name="Novice")
+    db.session.add(cat)
+    db.session.commit()
+
+    from app.services.sidecomp_service import SideCompService
+
+    # No players: mode is irrelevant.
+    res = SideCompService.delete_category(cat.id, actor_user_id=to_user.id, actor_user_type="player")
+    assert isinstance(res, Ok)
+    assert SideCompCategory.query.get(cat.id) is None
+
+
+def test_delete_category_deregister_mode(test_db, tournament):
+    to_user = _make_player("to_user", "TO User")
+    _make_to(tournament.url, to_user.id)
+    sc, cat, p = _category_with_player(tournament)
+
+    from app.services.sidecomp_service import SideCompService
+
+    res = SideCompService.delete_category(cat.id, actor_user_id=to_user.id, actor_user_type="player", mode="deregister")
+    assert isinstance(res, Ok)
+    assert SideCompCategory.query.get(cat.id) is None
+    assert SideCompRegistration.query.filter_by(comp=sc.id, player=p.id).count() == 0
+    # Entry numbers are tournament-scoped and not reused: the row must persist.
+    assert SideCompEntryNumber.query.filter_by(tournament_url=tournament.url, player=p.id).count() == 1
+
+
+def test_delete_category_move_mode(test_db, tournament):
+    to_user = _make_player("to_user", "TO User")
+    _make_to(tournament.url, to_user.id)
+    sc, cat, p = _category_with_player(tournament)
+    target = SideCompCategory(comp=sc.id, name="Pro")
+    db.session.add(target)
+    db.session.commit()
+
+    from app.services.sidecomp_service import SideCompService
+
+    res = SideCompService.delete_category(
+        cat.id, actor_user_id=to_user.id, actor_user_type="player", mode="move", target_category_id=target.id
+    )
+    assert isinstance(res, Ok)
+    assert SideCompCategory.query.get(cat.id) is None
+    reg = SideCompRegistration.query.filter_by(comp=sc.id, player=p.id).first()
+    assert reg is not None
+    assert reg.category == target.id
+
+
+def test_delete_category_move_requires_target(test_db, tournament):
+    to_user = _make_player("to_user", "TO User")
+    _make_to(tournament.url, to_user.id)
+    sc, cat, p = _category_with_player(tournament)
+
+    from app.services.sidecomp_service import SideCompService
+
+    res = SideCompService.delete_category(cat.id, actor_user_id=to_user.id, actor_user_type="player", mode="move")
+    assert isinstance(res, Err)
+    assert res.unwrap_err().status_code == 400
+
+
+def test_delete_category_move_target_is_self(test_db, tournament):
+    to_user = _make_player("to_user", "TO User")
+    _make_to(tournament.url, to_user.id)
+    sc, cat, p = _category_with_player(tournament)
+
+    from app.services.sidecomp_service import SideCompService
+
+    res = SideCompService.delete_category(
+        cat.id, actor_user_id=to_user.id, actor_user_type="player", mode="move", target_category_id=cat.id
+    )
+    assert isinstance(res, Err)
+    assert res.unwrap_err().status_code == 400
+
+
+def test_delete_category_move_target_other_comp(test_db, tournament):
+    to_user = _make_player("to_user", "TO User")
+    _make_to(tournament.url, to_user.id)
+    sc, cat, p = _category_with_player(tournament)
+    other = _open_comp(tournament.url, "B")
+    other_cat = SideCompCategory(comp=other.id, name="Pro")
+    db.session.add(other_cat)
+    db.session.commit()
+
+    from app.services.sidecomp_service import SideCompService
+
+    res = SideCompService.delete_category(
+        cat.id, actor_user_id=to_user.id, actor_user_type="player", mode="move", target_category_id=other_cat.id
+    )
+    assert isinstance(res, Err)
+    assert res.unwrap_err().status_code == 400
+
+
+def test_delete_category_invalid_mode(test_db, tournament):
+    to_user = _make_player("to_user", "TO User")
+    _make_to(tournament.url, to_user.id)
+    sc, cat, p = _category_with_player(tournament)
+
+    from app.services.sidecomp_service import SideCompService
+
+    res = SideCompService.delete_category(cat.id, actor_user_id=to_user.id, actor_user_type="player", mode="bogus")
+    assert isinstance(res, Err)
+    assert res.unwrap_err().status_code == 400
+
+
+def test_route_create_category(app, client, tournament):
+    with app.app_context():
+        to_user = _make_player("to_user", "TO User")
+        _make_to(tournament.url, to_user.id)
+        sc = _open_comp(tournament.url)
+        comp_id = sc.id
+        login_as(client, to_user)
+
+    resp = client.post(f"/_api/sidecomps/{comp_id}/categories", json={"name": "Novice"})
+    assert resp.status_code == 200
+    assert resp.get_json()["name"] == "Novice"
+
+
+def test_route_create_category_non_to_403(app, client, tournament):
+    with app.app_context():
+        p = _make_player("not_to", "Non TO")
+        sc = _open_comp(tournament.url)
+        comp_id = sc.id
+        login_as(client, p)
+
+    resp = client.post(f"/_api/sidecomps/{comp_id}/categories", json={"name": "Novice"})
+    assert resp.status_code == 403
+
+
+def test_route_rename_category(app, client, tournament):
+    with app.app_context():
+        to_user = _make_player("to_user", "TO User")
+        _make_to(tournament.url, to_user.id)
+        sc = _open_comp(tournament.url)
+        cat = SideCompCategory(comp=sc.id, name="Novice")
+        db.session.add(cat)
+        db.session.commit()
+        cat_id = cat.id
+        login_as(client, to_user)
+
+    resp = client.patch(f"/_api/sidecomp-categories/{cat_id}", json={"name": "Beginner"})
+    assert resp.status_code == 200
+    assert resp.get_json()["name"] == "Beginner"
+
+
+def test_route_delete_category_with_move(app, client, tournament):
+    with app.app_context():
+        to_user = _make_player("to_user", "TO User")
+        _make_to(tournament.url, to_user.id)
+        sc, cat, p = _category_with_player(tournament)
+        target = SideCompCategory(comp=sc.id, name="Pro")
+        db.session.add(target)
+        db.session.commit()
+        cat_id, target_id, comp_id, pid = cat.id, target.id, sc.id, p.id
+        login_as(client, to_user)
+
+    resp = client.post(
+        f"/_api/sidecomp-categories/{cat_id}/delete",
+        json={"mode": "move", "target_category_id": target_id},
+    )
+    assert resp.status_code == 200
+
+    with app.app_context():
+        assert SideCompCategory.query.get(cat_id) is None
+        reg = SideCompRegistration.query.filter_by(comp=comp_id, player=pid).first()
+        assert reg.category == target_id
+
+
+def test_route_detail_includes_categories(app, client, tournament):
+    with app.app_context():
+        sc, cat, p = _category_with_player(tournament)
+        comp_id, cat_id = sc.id, cat.id
+
+    resp = client.get(f"/_api/sidecomps/{comp_id}")
+    assert resp.status_code == 200
+    payload = resp.get_json()
+    assert payload["has_categories"] is True
+    assert payload["categories"] == [{"id": cat_id, "name": "Novice", "registrant_count": 1}]
+    assert payload["registrants"][0]["category_id"] == cat_id
+    assert payload["registrants"][0]["category_name"] == "Novice"
+
+
+def test_route_player_register_with_category(app, client, tournament):
+    with app.app_context():
+        p = _make_player()
+        _confirm_event_registration(tournament.url, p.id)
+        sc = _open_comp(tournament.url)
+        cat = SideCompCategory(comp=sc.id, name="Novice")
+        db.session.add(cat)
+        db.session.commit()
+        comp_id, cat_id, pid = sc.id, cat.id, p.id
+        login_as(client, p)
+
+    resp = client.post(f"/_api/sidecomps/{comp_id}/register", json={"category_id": cat_id})
+    assert resp.status_code == 200
+
+    with app.app_context():
+        reg = SideCompRegistration.query.filter_by(comp=comp_id, player=pid).first()
+        assert reg.category == cat_id
+
+
+def test_route_player_register_missing_category_400(app, client, tournament):
+    with app.app_context():
+        p = _make_player()
+        _confirm_event_registration(tournament.url, p.id)
+        sc = _open_comp(tournament.url)
+        db.session.add(SideCompCategory(comp=sc.id, name="Novice"))
+        db.session.commit()
+        comp_id = sc.id
+        login_as(client, p)
+
+    resp = client.post(f"/_api/sidecomps/{comp_id}/register", json={})
+    assert resp.status_code == 400

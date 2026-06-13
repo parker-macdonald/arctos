@@ -19,7 +19,13 @@ from app.models.registration import TeamRegistration, PlayerRegistration
 from app.models.match import Match, Point, MatchNote
 from app.models.penalty_type import PenaltyType
 from app.models.records import Injury, HeadRef
-from app.models.sidecomp import SideComp, SideCompEntryNumber, SideCompRegistration, SideCompResult
+from app.models.sidecomp import (
+    SideComp,
+    SideCompCategory,
+    SideCompEntryNumber,
+    SideCompRegistration,
+    SideCompResult,
+)
 from app.models.camera import Camera
 from app.models.normalised import (
     CameraTimepoint,
@@ -49,6 +55,7 @@ __all__ = [
     "Injury",
     "HeadRef",
     "SideComp",
+    "SideCompCategory",
     "SideCompEntryNumber",
     "SideCompRegistration",
     "SideCompResult",
