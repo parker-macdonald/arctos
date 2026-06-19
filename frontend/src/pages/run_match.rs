@@ -1,11 +1,11 @@
+use crate::Route;
 use crate::api;
 use crate::components::PenaltyDisplay;
-use crate::Route;
 use crate::stones_filter::BayesianOffsetFilter;
 use dioxus::prelude::*;
-use serde_json::Value;
 #[cfg(target_arch = "wasm32")]
 use gloo_timers::callback::Interval;
+use serde_json::Value;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::JsCast;
 
@@ -17,12 +17,15 @@ fn parse_iso_epoch(s: &str) -> Option<i64> {
         .ok()
         .map(|dt| dt.timestamp())
         .or_else(|| {
-            let with_z = if s.ends_with('Z') || s.contains('+') || (s.contains('-') && s.len() > 10) {
+            let with_z = if s.ends_with('Z') || s.contains('+') || (s.contains('-') && s.len() > 10)
+            {
                 s.to_string()
             } else {
                 format!("{}Z", s.trim_end_matches('z').trim_end_matches('Z'))
             };
-            chrono::DateTime::parse_from_rfc3339(&with_z).ok().map(|dt| dt.timestamp())
+            chrono::DateTime::parse_from_rfc3339(&with_z)
+                .ok()
+                .map(|dt| dt.timestamp())
         })
         .or_else(|| {
             // Naive ISO from Python isoformat() (no Z), possibly with fractional seconds
@@ -72,7 +75,11 @@ fn point_button_feedback(is_end_point: bool) {
             let _ = ctx.resume();
             if let (Ok(osc), Ok(gain)) = (ctx.create_oscillator(), ctx.create_gain()) {
                 gain.gain().set_value(0.4);
-                let (freq, duration) = if is_end_point { (440.0, 0.2) } else { (880.0, 0.25) };
+                let (freq, duration) = if is_end_point {
+                    (440.0, 0.2)
+                } else {
+                    (880.0, 0.25)
+                };
                 osc.set_type(web_sys::OscillatorType::Sine);
                 osc.frequency().set_value(freq);
                 let _ = osc.connect_with_audio_node(&gain);
@@ -85,13 +92,39 @@ fn point_button_feedback(is_end_point: bool) {
     }
 }
 
+/// Play five fast beeps to warn that 15 stones remain in a stones match.
+#[cfg(target_arch = "wasm32")]
+fn play_stones_warning_beeps() {
+    if let Ok(ctx) = web_sys::AudioContext::new() {
+        let _ = ctx.resume();
+        let start = ctx.current_time();
+        let beep = 0.08;
+        let gap = 0.12;
+        for i in 0..5 {
+            if let (Ok(osc), Ok(gain)) = (ctx.create_oscillator(), ctx.create_gain()) {
+                gain.gain().set_value(0.4);
+                osc.set_type(web_sys::OscillatorType::Square);
+                osc.frequency().set_value(1000.0);
+                let _ = osc.connect_with_audio_node(&gain);
+                let _ = gain.connect_with_audio_node(&ctx.destination());
+                let at = start + (i as f64) * gap;
+                let _ = osc.start_with_when(at);
+                let _ = osc.stop_with_when(at + beep);
+            }
+        }
+    }
+}
+
 /// Compute scores_by_set from points array (client-authoritative; same logic as server).
 fn scores_by_set_from_points(points: &[&Value]) -> Vec<(String, u64, u64)> {
     let mut by_set: std::collections::BTreeMap<u64, (u64, u64)> = std::collections::BTreeMap::new();
     for pt in points {
         let set_num = pt.get("set_number").and_then(|n| n.as_u64()).unwrap_or(1);
         let winner = pt.get("winner").and_then(|w| w.as_str()).unwrap_or("none");
-        let rerolled = pt.get("rerolled").and_then(|r| r.as_bool()).unwrap_or(false);
+        let rerolled = pt
+            .get("rerolled")
+            .and_then(|r| r.as_bool())
+            .unwrap_or(false);
         if rerolled {
             continue;
         }
@@ -111,9 +144,7 @@ fn scores_by_set_from_points(points: &[&Value]) -> Vec<(String, u64, u64)> {
 /// Stones elapsed = number of global 1.5s beat boundaries crossed (so counters tick in sync with global clock).
 fn stones_elapsed_beats(stamp_opt: Option<&str>, end_opt: Option<&str>) -> u32 {
     const BEAT: f64 = 1.5;
-    let start = stamp_opt
-        .and_then(parse_iso_epoch)
-        .unwrap_or(0) as f64;
+    let start = stamp_opt.and_then(parse_iso_epoch).unwrap_or(0) as f64;
     let end = end_opt
         .and_then(parse_iso_epoch)
         .map(|t| t as f64)
@@ -240,7 +271,9 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
             let guard = binding.try_read();
             let Ok(ref g) = guard else { return };
             let Some(Ok(d)) = g.as_ref() else { return };
-            if d.match_data.set_type.as_deref() == Some("STONES") && d.match_data.status == "IN_PROGRESS" {
+            if d.match_data.set_type.as_deref() == Some("STONES")
+                && d.match_data.status == "IN_PROGRESS"
+            {
                 server_time_loop_started.set(true);
                 let mut filter = time_filter;
                 spawn(async move {
@@ -279,11 +312,13 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                     Ok(v) if !v.is_undefined() && !v.is_null() => v,
                     _ => return,
                 };
-                let request_js =
-                    match js_sys::Reflect::get(&wake_lock_js, &wasm_bindgen::JsValue::from_str("request")) {
-                        Ok(v) if v.is_function() => v,
-                        _ => return,
-                    };
+                let request_js = match js_sys::Reflect::get(
+                    &wake_lock_js,
+                    &wasm_bindgen::JsValue::from_str("request"),
+                ) {
+                    Ok(v) if v.is_function() => v,
+                    _ => return,
+                };
 
                 let request_fn = match request_js.dyn_ref::<js_sys::Function>() {
                     Some(f) => f,
@@ -312,9 +347,10 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
         use_drop(move || {
             if let Some(sentinel) = wake_lock_for_drop() {
                 let release_js =
-                    js_sys::Reflect::get(&sentinel, &wasm_bindgen::JsValue::from_str("release")).ok();
-                if let Some(release_fn) = release_js
-                    .and_then(|f| f.dyn_ref::<js_sys::Function>().map(|f| f.clone()))
+                    js_sys::Reflect::get(&sentinel, &wasm_bindgen::JsValue::from_str("release"))
+                        .ok();
+                if let Some(release_fn) =
+                    release_js.and_then(|f| f.dyn_ref::<js_sys::Function>().map(|f| f.clone()))
                 {
                     let _ = release_fn.call0(&sentinel);
                 }
@@ -358,7 +394,8 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
     let mut penalties_other_text = use_signal(|| String::new());
     let mut penalties_other_selected = use_signal(|| false);
     /// (player_id, penalties) after fetching for selected player.
-    let mut penalty_history_signal = use_signal(|| None as Option<(String, Vec<crate::types::PlayerPenaltyHistoryItem>)>);
+    let mut penalty_history_signal =
+        use_signal(|| None as Option<(String, Vec<crate::types::PlayerPenaltyHistoryItem>)>);
     /// Display name of the player currently selected in the penalties modal (step 2).
     let mut penalties_selected_player_display = use_signal(|| String::new());
     let mut point_notes_map_signal =
@@ -370,6 +407,9 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
     // When true, stones input shows stones_edit_value so we don't overwrite typing with display_stones.
     let mut stones_input_focused = use_signal(|| false);
     let mut stones_edit_value = use_signal(|| String::new());
+    // Previous live stone count, for detecting a tick-down to the 15-stone warning threshold.
+    #[cfg(target_arch = "wasm32")]
+    let mut prev_stones_for_beep = use_signal(|| None as Option<u32>);
     // Time elapsed (seconds) from match confirmed start (UTC); correct after reload.
     let mut time_elapsed_secs = use_signal(|| 0u64);
 
@@ -378,8 +418,12 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
             return;
         }
         let binding = detail.value();
-        let Ok(guard) = binding.try_read() else { return };
-        let Some(Ok(ref d)) = guard.as_ref() else { return };
+        let Ok(guard) = binding.try_read() else {
+            return;
+        };
+        let Some(Ok(ref d)) = guard.as_ref() else {
+            return;
+        };
         point_notes_seeded.set(true);
         let mut map = point_notes_map_signal();
         for (pid, notes) in &d.point_notes_map {
@@ -397,16 +441,15 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
             Some(Ok(d)) => {
                 let m = &d.match_data;
                 let set_type_stones = m.set_type.as_deref() == Some("STONES");
-                let initial_stones = m
-                    .stones_remaining
-                    .or(m.stones_per_set)
-                    .unwrap_or(100);
+                let initial_stones = m.stones_remaining.or(m.stones_per_set).unwrap_or(100);
                 // Initialize stones once from match
                 if stones_remaining() == 100 && initial_stones != 100 {
                     stones_remaining.set(initial_stones);
                 }
                 let team1 = m.team1_name.as_str();
                 let team2 = m.team2_name.as_str();
+                let team1_short = m.team1_shortname.as_deref().filter(|s| !s.is_empty()).unwrap_or(team1);
+                let team2_short = m.team2_shortname.as_deref().filter(|s| !s.is_empty()).unwrap_or(team2);
                 let team1_photo = m.team1_photo.clone();
                 let team2_photo = m.team2_photo.clone();
                 let base_url = api::base_url();
@@ -464,6 +507,7 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                     .unwrap_or(1) as u32;
 
                 struct PointRow {
+                    index: usize,
                     point_id: String,
                     set_num: u32,
                     winner: String,
@@ -472,18 +516,38 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                 }
                 let point_rows: Vec<PointRow> = points
                     .iter()
-                    .map(|pt| {
-                        let point_id = pt.get("uuid").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                        let set_num = pt.get("set_number").and_then(|v| v.as_u64()).unwrap_or(1) as u32;
-                        let winner = pt.get("winner").and_then(|v| v.as_str()).unwrap_or("none").to_string();
-                        let rerolled = pt.get("rerolled").and_then(|v| v.as_bool()).unwrap_or(false);
+                    .enumerate()
+                    .map(|(index, pt)| {
+                        let point_id = pt
+                            .get("uuid")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let set_num =
+                            pt.get("set_number").and_then(|v| v.as_u64()).unwrap_or(1) as u32;
+                        let winner = pt
+                            .get("winner")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("none")
+                            .to_string();
+                        let rerolled = pt
+                            .get("rerolled")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
                         let stamp = pt.get("stamp").and_then(|s| s.as_str());
                         let end_stamp = pt.get("end_stamp").and_then(|e| e.as_str());
                         #[cfg(target_arch = "wasm32")]
                         let elapsed = stones_elapsed_with_filter(stamp, end_stamp, &time_filter);
                         #[cfg(not(target_arch = "wasm32"))]
                         let elapsed = stones_elapsed_beats(stamp, end_stamp);
-                        PointRow { point_id, set_num, winner, rerolled, elapsed }
+                        PointRow {
+                            index: index + 1,
+                            point_id,
+                            set_num,
+                            winner,
+                            rerolled,
+                            elapsed,
+                        }
                     })
                     .collect();
 
@@ -494,10 +558,12 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                             .iter()
                             .find(|p| p.get("uuid").and_then(|u| u.as_str()) == Some(cp.as_str()))
                             .and_then(|pt| {
-                                let at_start = pt.get("stones_at_start").and_then(|s| s.as_u64())?;
+                                let at_start =
+                                    pt.get("stones_at_start").and_then(|s| s.as_u64())?;
                                 let stamp = pt.get("stamp").and_then(|s| s.as_str());
                                 #[cfg(target_arch = "wasm32")]
-                                let elapsed = stones_elapsed_with_filter(stamp, None, &time_filter) as u64;
+                                let elapsed =
+                                    stones_elapsed_with_filter(stamp, None, &time_filter) as u64;
                                 #[cfg(not(target_arch = "wasm32"))]
                                 let elapsed = stones_elapsed_beats(stamp, None) as u64;
                                 Some((at_start.saturating_sub(elapsed)) as u32)
@@ -509,6 +575,28 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                 } else {
                     stones_remaining()
                 };
+                // Warn with five fast beeps when the live countdown ticks down to 15 stones.
+                // Only during an active point (the countdown path) and not while the operator is
+                // editing the count, so manually typing 15 doesn't beep; re-arms above 15.
+                #[cfg(target_arch = "wasm32")]
+                {
+                    let is_counting_down =
+                        set_type_stones && current_point().is_some() && !stones_input_focused();
+                    let prev = prev_stones_for_beep();
+                    if is_counting_down {
+                        if prev.map(|p| p > 15).unwrap_or(false) && display_stones == 15 {
+                            spawn(async move {
+                                gloo_timers::future::TimeoutFuture::new(0).await;
+                                play_stones_warning_beeps();
+                            });
+                        }
+                        if prev != Some(display_stones) {
+                            prev_stones_for_beep.set(Some(display_stones));
+                        }
+                    } else if prev.is_some() {
+                        prev_stones_for_beep.set(None);
+                    }
+                }
                 let stones_input_value = if stones_input_focused() {
                     stones_edit_value().clone()
                 } else {
@@ -554,15 +642,27 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                             let mut final_stones_for_api: Option<u32> = None;
                             if let Some(Ok(ref state)) = prev.clone() {
                                 let mut state = state.clone();
-                                if let Some(points) = state.get_mut("points").and_then(|p| p.as_array_mut()) {
+                                if let Some(points) =
+                                    state.get_mut("points").and_then(|p| p.as_array_mut())
+                                {
                                     for p in points.iter_mut() {
-                                        if p.get("uuid").and_then(|v| v.as_str()) == Some(point_id.as_str()) {
+                                        if p.get("uuid").and_then(|v| v.as_str())
+                                            == Some(point_id.as_str())
+                                        {
                                             p["end_stamp"] = serde_json::json!(end_iso);
                                             if set_type_stones {
-                                                let at_start = p.get("stones_at_start").and_then(|s| s.as_u64()).unwrap_or(0);
+                                                let at_start = p
+                                                    .get("stones_at_start")
+                                                    .and_then(|s| s.as_u64())
+                                                    .unwrap_or(0);
                                                 let stamp = p.get("stamp").and_then(|s| s.as_str());
-                                                let elapsed = stones_elapsed_beats_ms(stamp, Some(end_iso.as_str())) as u64;
-                                                let remaining = (at_start.saturating_sub(elapsed)) as u32;
+                                                let elapsed = stones_elapsed_beats_ms(
+                                                    stamp,
+                                                    Some(end_iso.as_str()),
+                                                )
+                                                    as u64;
+                                                let remaining =
+                                                    (at_start.saturating_sub(elapsed)) as u32;
                                                 stones_remaining.set(remaining);
                                                 final_stones_for_api = Some(remaining);
                                             }
@@ -574,12 +674,15 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                             }
                             current_point.set(None);
                             err_out.set(None);
-                            let body = serde_json::json!({ "point_id": point_id, "end_stamp": end_iso });
+                            let body =
+                                serde_json::json!({ "point_id": point_id, "end_stamp": end_iso });
                             match api::update_point(&u_for_stones, &point_id, &body).await {
                                 Ok(_) => {
                                     err_out.set(None);
                                     if let Some(n) = final_stones_for_api {
-                                        let _ = api::update_stones(&u_for_stones, &id_for_stones, n).await;
+                                        let _ =
+                                            api::update_stones(&u_for_stones, &id_for_stones, n)
+                                                .await;
                                     }
                                 }
                                 Err(e) => {
@@ -591,7 +694,8 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                         });
                     } else {
                         // Start new point — optimistic: add pending point, set current_point
-                        let pending_id = format!("pending-{}", chrono::Utc::now().timestamp_millis());
+                        let pending_id =
+                            format!("pending-{}", chrono::Utc::now().timestamp_millis());
                         let stamp_iso = chrono::Utc::now().to_rfc3339();
                         let new_point = serde_json::json!({
                             "uuid": pending_id,
@@ -605,24 +709,47 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                         let prev = state_signal().clone();
                         if let Some(Ok(ref state)) = prev.clone() {
                             let mut state = state.clone();
-                            if let Some(points) = state.get_mut("points").and_then(|p| p.as_array_mut()) {
+                            if let Some(points) =
+                                state.get_mut("points").and_then(|p| p.as_array_mut())
+                            {
                                 points.push(new_point);
                             }
                             state_signal.set(Some(Ok(state)));
                         }
                         current_point.set(Some(pending_id.clone()));
-                        let stones_at_start = if set_type_stones { Some(stones_val) } else { None };
+                        let stones_at_start = if set_type_stones {
+                            Some(stones_val)
+                        } else {
+                            None
+                        };
                         spawn(async move {
                             err_out.set(None);
-                            match api::add_point(&u, &id, default_set, Some(chrono::Utc::now().timestamp_millis() as u64), stones_at_start).await {
+                            match api::add_point(
+                                &u,
+                                &id,
+                                default_set,
+                                Some(chrono::Utc::now().timestamp_millis() as u64),
+                                stones_at_start,
+                            )
+                            .await
+                            {
                                 Ok(resp) => {
-                                    let real_id = resp.get("point_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                                    let real_id = resp
+                                        .get("point_id")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("")
+                                        .to_string();
                                     if !real_id.is_empty() {
                                         if let Some(Ok(ref state)) = state_signal() {
                                             let mut state = state.clone();
-                                            if let Some(points) = state.get_mut("points").and_then(|p| p.as_array_mut()) {
+                                            if let Some(points) = state
+                                                .get_mut("points")
+                                                .and_then(|p| p.as_array_mut())
+                                            {
                                                 for p in points.iter_mut() {
-                                                    if p.get("uuid").and_then(|v| v.as_str()) == Some(pending_id.as_str()) {
+                                                    if p.get("uuid").and_then(|v| v.as_str())
+                                                        == Some(pending_id.as_str())
+                                                    {
                                                         p["uuid"] = serde_json::json!(real_id);
                                                         break;
                                                     }
@@ -679,15 +806,27 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                             let mut final_stones_for_api: Option<u32> = None;
                             if let Some(Ok(ref state)) = prev.clone() {
                                 let mut state = state.clone();
-                                if let Some(points) = state.get_mut("points").and_then(|p| p.as_array_mut()) {
+                                if let Some(points) =
+                                    state.get_mut("points").and_then(|p| p.as_array_mut())
+                                {
                                     for p in points.iter_mut() {
-                                        if p.get("uuid").and_then(|v| v.as_str()) == Some(point_id.as_str()) {
+                                        if p.get("uuid").and_then(|v| v.as_str())
+                                            == Some(point_id.as_str())
+                                        {
                                             p["end_stamp"] = serde_json::json!(end_iso);
                                             if set_type_stones {
-                                                let at_start = p.get("stones_at_start").and_then(|s| s.as_u64()).unwrap_or(0);
+                                                let at_start = p
+                                                    .get("stones_at_start")
+                                                    .and_then(|s| s.as_u64())
+                                                    .unwrap_or(0);
                                                 let stamp = p.get("stamp").and_then(|s| s.as_str());
-                                                let elapsed = stones_elapsed_beats_ms(stamp, Some(end_iso.as_str())) as u64;
-                                                let remaining = (at_start.saturating_sub(elapsed)) as u32;
+                                                let elapsed = stones_elapsed_beats_ms(
+                                                    stamp,
+                                                    Some(end_iso.as_str()),
+                                                )
+                                                    as u64;
+                                                let remaining =
+                                                    (at_start.saturating_sub(elapsed)) as u32;
                                                 stones_remaining.set(remaining);
                                                 final_stones_for_api = Some(remaining);
                                             }
@@ -699,12 +838,15 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                             }
                             current_point.set(None);
                             err_out.set(None);
-                            let body = serde_json::json!({ "point_id": point_id, "end_stamp": end_iso });
+                            let body =
+                                serde_json::json!({ "point_id": point_id, "end_stamp": end_iso });
                             match api::update_point(&u_for_stones, &point_id, &body).await {
                                 Ok(_) => {
                                     err_out.set(None);
                                     if let Some(n) = final_stones_for_api {
-                                        let _ = api::update_stones(&u_for_stones, &id_for_stones, n).await;
+                                        let _ =
+                                            api::update_stones(&u_for_stones, &id_for_stones, n)
+                                                .await;
                                     }
                                 }
                                 Err(e) => {
@@ -715,7 +857,8 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                             }
                         });
                     } else {
-                        let pending_id = format!("pending-{}", chrono::Utc::now().timestamp_millis());
+                        let pending_id =
+                            format!("pending-{}", chrono::Utc::now().timestamp_millis());
                         let stamp_iso = chrono::Utc::now().to_rfc3339();
                         let new_point = serde_json::json!({
                             "uuid": pending_id,
@@ -729,24 +872,47 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                         let prev = state_signal().clone();
                         if let Some(Ok(ref state)) = prev.clone() {
                             let mut state = state.clone();
-                            if let Some(points) = state.get_mut("points").and_then(|p| p.as_array_mut()) {
+                            if let Some(points) =
+                                state.get_mut("points").and_then(|p| p.as_array_mut())
+                            {
                                 points.push(new_point);
                             }
                             state_signal.set(Some(Ok(state)));
                         }
                         current_point.set(Some(pending_id.clone()));
-                        let stones_at_start = if set_type_stones { Some(stones_val) } else { None };
+                        let stones_at_start = if set_type_stones {
+                            Some(stones_val)
+                        } else {
+                            None
+                        };
                         spawn(async move {
                             err_out.set(None);
-                            match api::add_point(&u, &id, default_set, Some(chrono::Utc::now().timestamp_millis() as u64), stones_at_start).await {
+                            match api::add_point(
+                                &u,
+                                &id,
+                                default_set,
+                                Some(chrono::Utc::now().timestamp_millis() as u64),
+                                stones_at_start,
+                            )
+                            .await
+                            {
                                 Ok(resp) => {
-                                    let real_id = resp.get("point_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                                    let real_id = resp
+                                        .get("point_id")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("")
+                                        .to_string();
                                     if !real_id.is_empty() {
                                         if let Some(Ok(ref state)) = state_signal() {
                                             let mut state = state.clone();
-                                            if let Some(points) = state.get_mut("points").and_then(|p| p.as_array_mut()) {
+                                            if let Some(points) = state
+                                                .get_mut("points")
+                                                .and_then(|p| p.as_array_mut())
+                                            {
                                                 for p in points.iter_mut() {
-                                                    if p.get("uuid").and_then(|v| v.as_str()) == Some(pending_id.as_str()) {
+                                                    if p.get("uuid").and_then(|v| v.as_str())
+                                                        == Some(pending_id.as_str())
+                                                    {
                                                         p["uuid"] = serde_json::json!(real_id);
                                                         break;
                                                     }
@@ -785,9 +951,10 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                     "btn btn-success btn-lg w-100 mobile-sticky-button"
                 };
 
-                let run_match_css = ".set-number-controls{display:flex;flex-direction:column;align-items:center;gap:2px;width:40px}\
-                    .set-number-controls .set-number-display{font-size:1rem;font-weight:600;text-align:center;min-width:30px;padding:4px 0}\
-                    .set-number-controls button{width:28px;height:24px;padding:0;font-size:14px}\
+                let run_match_css = ".set-number-controls{display:flex;flex-direction:column;align-items:center;gap:0;width:40px}\
+                    .set-number-controls .set-number-display{font-size:1rem;font-weight:600;text-align:center;min-width:30px;padding:0}\
+                    .set-number-controls button.set-step-btn{width:32px;height:26px;padding:0;font-size:13px;line-height:1;border:none;background:transparent;color:#6c757d;cursor:pointer;touch-action:manipulation}\
+                    .set-number-controls button.set-step-btn:hover{color:#212529}\
                     .delete-point-btn{background:#dc3545;color:white;border:none;width:28px;height:28px;padding:0;border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:16px;line-height:1;cursor:pointer}\
                     .delete-point-btn:hover{background:#c82333}\
                     .winner-cell{display:flex;flex-wrap:wrap;align-items:center;min-width:0}\
@@ -798,8 +965,17 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                     .winner-option .winner-avatar{width:26px;height:26px;border-radius:50%;object-fit:cover;flex-shrink:0}\
                     .winner-option .winner-name{min-width:3ch;max-width:12em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}\
                     @media (max-width:768px){.mobile-button-wrapper{position:fixed;bottom:0;left:0;right:0;z-index:1000;background:white;padding:0;margin:0;box-shadow:0 -2px 10px rgba(0,0,0,0.1);display:flex;flex-direction:row}\
-                    .mobile-button-wrapper .btn{border-radius:0;margin:0;flex:1}\
-                    .container .mobile-sticky-button,.container #finalize-match-btn{display:none}}";
+                    .mobile-button-wrapper .btn{border-radius:0;margin:0;flex:1;min-height:96px}\
+                    .container .mobile-sticky-button,.container #finalize-match-btn{display:none}\
+                    #score-stones-card .card-body{padding:0.5rem}\
+                    #score-stones-card h4{font-size:1rem;margin-bottom:0.1rem!important}\
+                    #score-stones-card #stones-remaining{font-size:2rem!important;height:40px!important;line-height:1!important}\
+                    #score-stones-card #time-elapsed{font-size:1.75rem}\
+                    #score-stones-card .col-md-6.mb-4{margin-bottom:0.5rem!important}\
+                    #score-by-set .row{margin-bottom:0!important}\
+                    #score-by-set h4{font-size:1rem}\
+                    #score-by-set strong{font-size:0.95rem}\
+                    #score-by-set small{font-size:0.75rem}}";
                 let mut state_signal = state_signal;
                 let mut action_error = action_error;
                 let set_type_stones_reroll = set_type_stones;
@@ -808,6 +984,7 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                     .iter()
                     .map(|r| {
                         let pt_id = r.point_id.as_str();
+                        let point_index = r.index;
                         let set_num = r.set_num;
                         let winner_val = r.winner.as_str();
                         let rerolled = r.rerolled;
@@ -827,23 +1004,24 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                         let pid_reroll = pid.clone();
                         let pid_del = pid.clone();
                         let pid_list = pid.clone();
-                        let team1 = team1.to_string();
-                        let team2 = team2.to_string();
+                        let team1_short = team1_short.to_string();
+                        let team2_short = team2_short.to_string();
                         let team1_photo = team1_photo.clone();
                         let team2_photo = team2_photo.clone();
                         let base_url_winner = base_url.clone();
-                        let pid_none = pid_winner.clone();
-                        let u_none = u_winner.clone();
                         let pid_t1 = pid_winner.clone();
                         let u_t1 = u_winner.clone();
                         let pid_t2 = pid_winner.clone();
                         let u_t2 = u_winner.clone();
+                        let winner_is_t1 = winner_val == "TEAM1";
+                        let winner_is_t2 = winner_val == "TEAM2";
                         rsx! {
                             tr { key: "{pt_id}", id: "point-row-{pt_id}",
+                                td { class: "text-muted text-center", "{point_index}" }
                                 td {
                                     div { class: "set-number-controls",
                                         button {
-                                            class: "btn btn-sm btn-outline-secondary",
+                                            class: "set-step-btn",
                                             r#type: "button",
                                             onclick: move |_| {
                                                 let new_set = (set_num + 1).max(1);
@@ -876,7 +1054,7 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                                         }
                                         span { class: "set-number-display", id: "set-display-{pt_id}", "{set_num}" }
                                         button {
-                                            class: "btn btn-sm btn-outline-secondary",
+                                            class: "set-step-btn",
                                             r#type: "button",
                                             onclick: move |_| {
                                                 let new_set = (set_num as i64 - 1).max(1) as u32;
@@ -914,42 +1092,10 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                                     div { class: "winner-cell",
                                         div { class: "winner-options-group",
                                         button {
-                                            class: format!("winner-option{}", if winner_val == "none" { " active" } else { "" }),
-                                            r#type: "button",
-                                            onclick: move |_| {
-                                                let val = "none";
-                                                let prev = state_signal().clone();
-                                                if let Some(Ok(ref state)) = prev.clone() {
-                                                    let mut state = state.clone();
-                                                    if let Some(points) = state.get_mut("points").and_then(|p| p.as_array_mut()) {
-                                                        for p in points.iter_mut() {
-                                                            if p.get("uuid").and_then(|v| v.as_str()) == Some(pid_none.as_str()) {
-                                                                p["winner"] = serde_json::json!(val);
-                                                                break;
-                                                            }
-                                                        }
-                                                    }
-                                                    state_signal.set(Some(Ok(state)));
-                                                }
-                                                let u = u_none.clone();
-                                                let p = pid_none.clone();
-                                                let mut state_signal = state_signal;
-                                                let mut action_error = action_error;
-                                                spawn(async move {
-                                                    let body = serde_json::json!({ "point_id": p, "winner": val });
-                                                    match api::update_point(&u, &p, &body).await {
-                                                        Ok(_) => { action_error.set(None); }
-                                                        Err(e) => { action_error.set(Some(e)); state_signal.set(prev); }
-                                                    }
-                                                });
-                                            },
-                                            "None"
-                                        }
-                                        button {
                                             class: format!("winner-option{}", if winner_val == "TEAM1" { " active" } else { "" }),
                                             r#type: "button",
                                             onclick: move |_| {
-                                                let val = "TEAM1";
+                                                let val = if winner_is_t1 { "none" } else { "TEAM1" };
                                                 let prev = state_signal().clone();
                                                 if let Some(Ok(ref state)) = prev.clone() {
                                                     let mut state = state.clone();
@@ -978,13 +1124,13 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                                             if let Some(ref ph) = team1_photo {
                                                 img { class: "winner-avatar", src: "{base_url_winner}/static/{ph}", alt: "" }
                                             }
-                                            span { class: "winner-name", "{team1}" }
+                                            span { class: "winner-name", "{team1_short}" }
                                         }
                                         button {
                                             class: format!("winner-option{}", if winner_val == "TEAM2" { " active" } else { "" }),
                                             r#type: "button",
                                             onclick: move |_| {
-                                                let val = "TEAM2";
+                                                let val = if winner_is_t2 { "none" } else { "TEAM2" };
                                                 let prev = state_signal().clone();
                                                 if let Some(Ok(ref state)) = prev.clone() {
                                                     let mut state = state.clone();
@@ -1013,7 +1159,7 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                                             if let Some(ref ph) = team2_photo {
                                                 img { class: "winner-avatar", src: "{base_url_winner}/static/{ph}", alt: "" }
                                             }
-                                            span { class: "winner-name", "{team2}" }
+                                            span { class: "winner-name", "{team2_short}" }
                                         }
                                         }
                                     }
@@ -1201,6 +1347,15 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                                         class: "delete-point-btn",
                                         title: "Delete",
                                         onclick: move |_| {
+                                            #[cfg(target_arch = "wasm32")]
+                                            {
+                                                let confirmed = web_sys::window()
+                                                    .and_then(|w| w.confirm_with_message("Delete this point?").ok())
+                                                    .unwrap_or(false);
+                                                if !confirmed {
+                                                    return;
+                                                }
+                                            }
                                             let prev = state_signal().clone();
                                             if let Some(Ok(ref state)) = prev.clone() {
                                                 let mut state = state.clone();
@@ -1284,16 +1439,11 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
 
                         div { class: "row mb-4",
                             div { class: "col-md-12",
-                                div { class: "card",
+                                div { class: "card", id: "score-stones-card",
                                     div { class: "card-body",
                                         div { class: "row",
                                             div { class: "col-md-6 mb-4 mb-md-0",
                                                 div { id: "score-by-set",
-                                                    div { class: "row mb-1",
-                                                        div { class: "col-12 text-center mb-1",
-                                                            h4 { class: "mb-0", "Score" }
-                                                        }
-                                                    }
                                                     div { class: "row mb-1",
                                                         div { class: "col-5 text-center",
                                                             small { class: "text-muted", "{team1}" }
@@ -1403,6 +1553,7 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                                             table { class: "table table-sm", id: "points-table",
                                                 thead {
                                                     tr {
+                                                        th { "#" }
                                                         th { "Set" }
                                                         th { "🪨" }
                                                         th { "Winner" }
@@ -1412,7 +1563,7 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                                                     }
                                                 }
                                                 tbody { id: "points-table-body",
-                                                    for node in point_table_rows.iter() {
+                                                    for node in point_table_rows.iter().rev() {
                                                         {node.clone()}
                                                     }
                                                 }
