@@ -403,7 +403,8 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
     let mut point_notes_seeded = use_signal(|| false);
     let mut penalty_desc_modal = use_signal(|| None::<String>);
     // Local stones remaining (for STONES set type); synced from match/state when not ticking.
-    let mut stones_remaining = use_signal(|| 100u32);
+    // None means the count is not yet known (neither stones_remaining nor stones_per_set is set).
+    let mut stones_remaining = use_signal(|| None as Option<u32>);
     // When true, stones input shows stones_edit_value so we don't overwrite typing with display_stones.
     let mut stones_input_focused = use_signal(|| false);
     let mut stones_edit_value = use_signal(|| String::new());
@@ -441,10 +442,13 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
             Some(Ok(d)) => {
                 let m = &d.match_data;
                 let set_type_stones = m.set_type.as_deref() == Some("STONES");
-                let initial_stones = m.stones_remaining.or(m.stones_per_set).unwrap_or(100);
-                // Initialize stones once from match
-                if stones_remaining() == 100 && initial_stones != 100 {
-                    stones_remaining.set(initial_stones);
+                // Initialize the local count from the match's stored value the first time it
+                // becomes known. None stays None until there's a real value, so user edits and
+                // tick-downs are never clobbered, and an unconfigured count surfaces as unknown.
+                if stones_remaining().is_none() {
+                    if let Some(known) = m.stones_remaining.or(m.stones_per_set) {
+                        stones_remaining.set(Some(known));
+                    }
                 }
                 let team1 = m.team1_name.as_str();
                 let team2 = m.team2_name.as_str();
@@ -552,7 +556,7 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                     .collect();
 
                 // Stones display: during an active point show stones_at_start - elapsed (ticks down); otherwise show stones_remaining.
-                let display_stones = if set_type_stones {
+                let display_stones: Option<u32> = if set_type_stones {
                     if let Some(ref cp) = current_point() {
                         points
                             .iter()
@@ -568,7 +572,7 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                                 let elapsed = stones_elapsed_beats(stamp, None) as u64;
                                 Some((at_start.saturating_sub(elapsed)) as u32)
                             })
-                            .unwrap_or(stones_remaining())
+                            .or(stones_remaining())
                     } else {
                         stones_remaining()
                     }
@@ -584,14 +588,14 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                         set_type_stones && current_point().is_some() && !stones_input_focused();
                     let prev = prev_stones_for_beep();
                     if is_counting_down {
-                        if prev.map(|p| p > 15).unwrap_or(false) && display_stones == 15 {
+                        if prev.map(|p| p > 15).unwrap_or(false) && display_stones == Some(15) {
                             spawn(async move {
                                 gloo_timers::future::TimeoutFuture::new(0).await;
                                 play_stones_warning_beeps();
                             });
                         }
-                        if prev != Some(display_stones) {
-                            prev_stones_for_beep.set(Some(display_stones));
+                        if prev != display_stones {
+                            prev_stones_for_beep.set(display_stones);
                         }
                     } else if prev.is_some() {
                         prev_stones_for_beep.set(None);
@@ -600,8 +604,9 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                 let stones_input_value = if stones_input_focused() {
                     stones_edit_value().clone()
                 } else {
-                    display_stones.to_string()
+                    display_stones.map(|n| n.to_string()).unwrap_or_default()
                 };
+                let stones_known = display_stones.is_some();
                 let url_stones_blur = url.clone();
                 let id_stones_blur = match_id.clone();
 
@@ -663,7 +668,7 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                                                     as u64;
                                                 let remaining =
                                                     (at_start.saturating_sub(elapsed)) as u32;
-                                                stones_remaining.set(remaining);
+                                                stones_remaining.set(Some(remaining));
                                                 final_stones_for_api = Some(remaining);
                                             }
                                             break;
@@ -717,11 +722,7 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                             state_signal.set(Some(Ok(state)));
                         }
                         current_point.set(Some(pending_id.clone()));
-                        let stones_at_start = if set_type_stones {
-                            Some(stones_val)
-                        } else {
-                            None
-                        };
+                        let stones_at_start = if set_type_stones { stones_val } else { None };
                         spawn(async move {
                             err_out.set(None);
                             match api::add_point(
@@ -827,7 +828,7 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                                                     as u64;
                                                 let remaining =
                                                     (at_start.saturating_sub(elapsed)) as u32;
-                                                stones_remaining.set(remaining);
+                                                stones_remaining.set(Some(remaining));
                                                 final_stones_for_api = Some(remaining);
                                             }
                                             break;
@@ -880,11 +881,7 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                             state_signal.set(Some(Ok(state)));
                         }
                         current_point.set(Some(pending_id.clone()));
-                        let stones_at_start = if set_type_stones {
-                            Some(stones_val)
-                        } else {
-                            None
-                        };
+                        let stones_at_start = if set_type_stones { stones_val } else { None };
                         spawn(async move {
                             err_out.set(None);
                             match api::add_point(
@@ -949,6 +946,14 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                     "btn btn-danger btn-lg w-100 mobile-sticky-button"
                 } else {
                     "btn btn-success btn-lg w-100 mobile-sticky-button"
+                };
+                // Block starting a point until the stone count is known (can't record stones_at_start otherwise).
+                let needs_stone_count = set_type_stones && !stones_known && !has_in_progress;
+                let point_button_disabled = finalized || needs_stone_count;
+                let point_button_text = if needs_stone_count {
+                    "Set stone count to start"
+                } else {
+                    point_button_text
                 };
 
                 let run_match_css = ".set-number-controls{display:flex;flex-direction:column;align-items:center;gap:0;width:40px}\
@@ -1185,18 +1190,20 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                                                     }
                                                     state_signal.set(Some(Ok(state)));
                                                 }
-                                                // Adjust stone counter: rerun = add this point's stones back, un-rerun = subtract
+                                                // Adjust stone counter: rerun = add this point's stones back, un-rerun = subtract.
+                                                // Only when the count is known; otherwise just toggle the rerolled flag.
                                                 let prev_stones = stones_remaining_reroll();
-                                                let (stones_to_send, stones_prev) = if set_type_stones_reroll {
-                                                    let new_val = if checked {
-                                                        prev_stones + elapsed
-                                                    } else {
-                                                        prev_stones.saturating_sub(elapsed)
-                                                    };
-                                                    stones_remaining_reroll.set(new_val);
-                                                    (Some(new_val), prev_stones)
-                                                } else {
-                                                    (None, prev_stones)
+                                                let (stones_to_send, stones_prev) = match (set_type_stones_reroll, prev_stones) {
+                                                    (true, Some(prev)) => {
+                                                        let new_val = if checked {
+                                                            prev + elapsed
+                                                        } else {
+                                                            prev.saturating_sub(elapsed)
+                                                        };
+                                                        stones_remaining_reroll.set(Some(new_val));
+                                                        (Some(new_val), prev_stones)
+                                                    }
+                                                    _ => (None, prev_stones),
                                                 };
                                                 let u = u_reroll.clone();
                                                 let id_reroll = id_reroll_match.clone();
@@ -1486,12 +1493,12 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                                                                 value: "{stones_input_value}",
                                                                 onfocus: move |_| {
                                                                     stones_input_focused.set(true);
-                                                                    stones_edit_value.set(display_stones.to_string());
+                                                                    stones_edit_value.set(display_stones.map(|n| n.to_string()).unwrap_or_default());
                                                                 },
                                                                 onblur: move |_| {
                                                                     let s = stones_edit_value();
                                                                     if let Ok(n) = s.parse::<u32>() {
-                                                                        stones_remaining.set(n);
+                                                                        stones_remaining.set(Some(n));
                                                                         let u = url_stones_blur.clone();
                                                                         let id = id_stones_blur.clone();
                                                                         spawn(async move {
@@ -1504,7 +1511,7 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                                                                     let s = ev.value();
                                                                     stones_edit_value.set(s.clone());
                                                                     if let Ok(n) = s.parse::<u32>() {
-                                                                        stones_remaining.set(n);
+                                                                        stones_remaining.set(Some(n));
                                                                         let u = url.clone();
                                                                         let id = match_id.clone();
                                                                         spawn(async move {
@@ -1526,7 +1533,7 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                                                             id: "point-button",
                                                             class: "{point_button_class}",
                                                             onclick: on_start_end_point,
-                                                            disabled: finalized,
+                                                            disabled: point_button_disabled,
                                                             "{point_button_text}"
                                                         }
                                                     }
@@ -1612,7 +1619,7 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                         button {
                             class: "{point_button_class}",
                             onclick: on_start_end_point_mobile,
-                            disabled: finalized,
+                            disabled: point_button_disabled,
                             "{point_button_text}"
                         }
                     }
