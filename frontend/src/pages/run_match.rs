@@ -198,6 +198,24 @@ fn stones_elapsed_with_filter(
     (end_beat - start_beat).max(0) as u32
 }
 
+/// Max length of a team shortname (mirrors SHORTNAME_LEN in app/models/constants.py).
+const SHORTNAME_LEN: usize = 8;
+
+/// Team label for the winner buttons: the shortname if set, otherwise the name truncated to
+/// SHORTNAME_LEN-1 chars ending in "…" (never the full name).
+fn team_short_label(shortname: Option<&str>, name: &str) -> String {
+    if let Some(s) = shortname.filter(|s| !s.is_empty()) {
+        return s.to_string();
+    }
+    let max_len = SHORTNAME_LEN - 1;
+    if name.chars().count() <= max_len {
+        name.to_string()
+    } else {
+        let head: String = name.chars().take(max_len - 1).collect();
+        format!("{head}…")
+    }
+}
+
 #[component]
 pub fn RunMatch(url: String, match_id: String) -> Element {
     let navigator = use_navigator();
@@ -452,8 +470,8 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                 }
                 let team1 = m.team1_name.as_str();
                 let team2 = m.team2_name.as_str();
-                let team1_short = m.team1_shortname.as_deref().filter(|s| !s.is_empty()).unwrap_or(team1);
-                let team2_short = m.team2_shortname.as_deref().filter(|s| !s.is_empty()).unwrap_or(team2);
+                let team1_short = team_short_label(m.team1_shortname.as_deref(), team1);
+                let team2_short = team_short_label(m.team2_shortname.as_deref(), team2);
                 let team1_photo = m.team1_photo.clone();
                 let team2_photo = m.team2_photo.clone();
                 let base_url = api::base_url();
@@ -975,11 +993,10 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                     #score-stones-card .card-body{padding:0.5rem}\
                     #score-stones-card h4{font-size:1rem;margin-bottom:0.1rem!important}\
                     #score-stones-card #stones-remaining{font-size:2rem!important;height:40px!important;line-height:1!important}\
-                    #score-stones-card #time-elapsed{font-size:1.75rem}\
                     #score-stones-card .col-md-6.mb-4{margin-bottom:0.5rem!important}\
                     #score-by-set .row{margin-bottom:0!important}\
                     #score-by-set h4{font-size:1rem}\
-                    #score-by-set strong{font-size:0.95rem}\
+                    #score-by-set strong,#score-by-set #time-elapsed{font-size:0.95rem}\
                     #score-by-set small{font-size:0.75rem}}";
                 let mut state_signal = state_signal;
                 let mut action_error = action_error;
@@ -1020,9 +1037,10 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                         let u_t2 = u_winner.clone();
                         let winner_is_t1 = winner_val == "TEAM1";
                         let winner_is_t2 = winner_val == "TEAM2";
+                        let notes_for_point = point_notes_map_signal().get(&pid_list).cloned().unwrap_or_default();
                         rsx! {
                             tr { key: "{pt_id}", id: "point-row-{pt_id}",
-                                td { class: "text-muted text-center", "{point_index}" }
+                                td { class: "text-muted text-center align-middle", "{point_index}" }
                                 td {
                                     div { class: "set-number-controls",
                                         button {
@@ -1092,7 +1110,7 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                                         }
                                     }
                                 }
-                                td { id: "stones-{pt_id}", "{elapsed}" }
+                                td { class: "align-middle", id: "stones-{pt_id}", "{elapsed}" }
                                 td {
                                     div { class: "winner-cell",
                                         div { class: "winner-options-group",
@@ -1169,7 +1187,7 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                                         }
                                     }
                                 }
-                                td {
+                                td { class: "align-middle",
                                     div { class: "form-check",
                                         input {
                                             class: "form-check-input",
@@ -1233,8 +1251,8 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                                         }
                                     }
                                 }
-                                td {
-                                    div { class: "d-flex gap-1",
+                                td { class: "align-middle",
+                                    div { class: "d-flex flex-column gap-1",
                                         {
                                             let pid_notes = pid.clone();
                                             let pid_penalties = pid.clone();
@@ -1310,46 +1328,8 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                                             }
                                         }
                                     }
-                                    div { class: "mt-1",
-                                        for note_val in point_notes_map_signal().get(&pid_list).cloned().unwrap_or_default().iter() {
-                                            {
-                                                let note_text = note_val.get("text").and_then(|t| t.as_str()).unwrap_or("");
-                                                let target = note_val.get("target").and_then(|t| t.as_str()).unwrap_or("match");
-                                                let target_display = note_val.get("player_display").and_then(|p| p.as_str())
-                                                    .or_else(|| note_val.get("player_name").and_then(|p| p.as_str()))
-                                                    .unwrap_or(if target == "match" { "Point" } else { target })
-                                                    .to_string();
-                                                let target_profile_id = note_val.get("player_id").and_then(|v| v.as_str()).map(String::from);
-                                                let pt_id = note_val.get("penalty_type_id").and_then(|v| v.as_i64()).map(|v| v as i32);
-                                                let penalty_info = if let Some(id) = pt_id {
-                                                    d.penalty_types.iter().find(|t| t.id == id)
-                                                } else {
-                                                    None
-                                                };
-                                                let (border_color, display_text) = if let Some(pt) = penalty_info {
-                                                    (pt.color.clone(), pt.name.clone())
-                                                } else {
-                                                    ("808080".to_string(), if note_text.is_empty() { "Other".to_string() } else { note_text.to_string() })
-                                                };
-                                                let description = penalty_info
-                                                    .and_then(|pt| pt.desc.clone())
-                                                    .filter(|s| !s.is_empty());
-
-                                                rsx! {
-                                                    PenaltyDisplay {
-                                                        border_color,
-                                                        display_text,
-                                                        description,
-                                                        target_display: Some(target_display),
-                                                        target_profile_id,
-                                                        on_description_click: move |d: Option<String>| penalty_desc_modal.set(d),
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
                                 }
-                                td {
+                                td { class: "align-middle",
                                     button {
                                         class: "delete-point-btn",
                                         title: "Delete",
@@ -1389,6 +1369,50 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                                     }
                                 }
                             }
+                            if !notes_for_point.is_empty() {
+                                tr { key: "{pt_id}-notes",
+                                    td { colspan: "7", class: "pt-0 pb-2 border-0",
+                                        div { class: "d-flex flex-wrap gap-1",
+                                            for note_val in notes_for_point.iter() {
+                                                {
+                                                    let note_text = note_val.get("text").and_then(|t| t.as_str()).unwrap_or("");
+                                                    let target = note_val.get("target").and_then(|t| t.as_str()).unwrap_or("match");
+                                                    let target_display = note_val.get("player_display").and_then(|p| p.as_str())
+                                                        .or_else(|| note_val.get("player_name").and_then(|p| p.as_str()))
+                                                        .unwrap_or(if target == "match" { "Point" } else { target })
+                                                        .to_string();
+                                                    let target_profile_id = note_val.get("player_id").and_then(|v| v.as_str()).map(String::from);
+                                                    let pt_id = note_val.get("penalty_type_id").and_then(|v| v.as_i64()).map(|v| v as i32);
+                                                    let penalty_info = if let Some(id) = pt_id {
+                                                        d.penalty_types.iter().find(|t| t.id == id)
+                                                    } else {
+                                                        None
+                                                    };
+                                                    let (border_color, display_text) = if let Some(pt) = penalty_info {
+                                                        (pt.color.clone(), pt.name.clone())
+                                                    } else {
+                                                        ("808080".to_string(), if note_text.is_empty() { "Other".to_string() } else { note_text.to_string() })
+                                                    };
+                                                    let description = penalty_info
+                                                        .and_then(|pt| pt.desc.clone())
+                                                        .filter(|s| !s.is_empty());
+
+                                                    rsx! {
+                                                        PenaltyDisplay {
+                                                            border_color,
+                                                            display_text,
+                                                            description,
+                                                            target_display: Some(target_display),
+                                                            target_profile_id,
+                                                            on_description_click: move |d: Option<String>| penalty_desc_modal.set(d),
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     })
                     .collect();
@@ -1398,9 +1422,6 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                         div { class: "row",
                             div { class: "col-md-12",
                                 h2 { "Run Match: {m.name}" }
-                                p { class: "small text-muted mb-1",
-                                    "Note: although there's a delay when clicking start/end point, the stone count is done correctly (it's computed from when you first click it)."
-                                }
                                 div { class: "row d-none d-md-flex",
                                     div { class: "col-md-4",
                                         p { class: "mb-0",
@@ -1432,8 +1453,7 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                                 div { class: "row d-md-none",
                                     div { class: "col-12",
                                         p { class: "small mb-0",
-                                            "{team1} vs {team2}"
-                                            " | Refs: {refs_display}"
+                                            "Refs: {refs_display}"
                                             if let Some(len) = m.nominal_length {
                                                 " | {len}m"
                                             }
@@ -1451,11 +1471,13 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                                         div { class: "row",
                                             div { class: "col-md-6 mb-4 mb-md-0",
                                                 div { id: "score-by-set",
-                                                    div { class: "row mb-1",
+                                                    div { class: "row mb-1 align-items-center",
                                                         div { class: "col-5 text-center",
                                                             small { class: "text-muted", "{team1}" }
                                                         }
-                                                        div { class: "col-2" }
+                                                        div { class: "col-2 text-center",
+                                                            span { id: "time-elapsed", "{time_elapsed_str}" }
+                                                        }
                                                         div { class: "col-5 text-center",
                                                             small { class: "text-muted", "{team2}" }
                                                         }
@@ -1480,51 +1502,47 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                                                 }
                                             }
                                             div { class: "col-md-6",
-                                                div { class: "row",
-                                                    if set_type_stones {
-                                                        div { class: "col-6 text-center d-flex flex-column align-items-center",
-                                                            h4 { class: "mb-1", "Stone Count" }
-                                                            p { class: "small mb-0", "(click to edit)" }
-                                                            input {
-                                                                r#type: "number",
-                                                                class: "form-control-plaintext text-center display-4 m-0 p-0",
-                                                                id: "stones-remaining",
-                                                                style: "width: 6ch; line-height: 1; font-size: 3rem; height: 64px; min-width: 6ch;",
-                                                                value: "{stones_input_value}",
-                                                                onfocus: move |_| {
-                                                                    stones_input_focused.set(true);
-                                                                    stones_edit_value.set(display_stones.map(|n| n.to_string()).unwrap_or_default());
-                                                                },
-                                                                onblur: move |_| {
-                                                                    let s = stones_edit_value();
-                                                                    if let Ok(n) = s.parse::<u32>() {
-                                                                        stones_remaining.set(Some(n));
-                                                                        let u = url_stones_blur.clone();
-                                                                        let id = id_stones_blur.clone();
-                                                                        spawn(async move {
-                                                                            let _ = api::update_stones(&u, &id, n).await;
-                                                                        });
-                                                                    }
-                                                                    stones_input_focused.set(false);
-                                                                },
-                                                                oninput: move |ev| {
-                                                                    let s = ev.value();
-                                                                    stones_edit_value.set(s.clone());
-                                                                    if let Ok(n) = s.parse::<u32>() {
-                                                                        stones_remaining.set(Some(n));
-                                                                        let u = url.clone();
-                                                                        let id = match_id.clone();
-                                                                        spawn(async move {
-                                                                            let _ = api::update_stones(&u, &id, n).await;
-                                                                        });
-                                                                    }
-                                                                },
-                                                            }
+                                                if set_type_stones {
+                                                    div { class: "d-flex align-items-center justify-content-center gap-3",
+                                                        div { class: "text-start",
+                                                            h4 { class: "mb-0", "Stone Count" }
+                                                            p { class: "small text-muted mb-0", "(click to edit)" }
                                                         }
-                                                    }
-                                                    div { class: if set_type_stones { "col-6 text-center" } else { "col-12 text-center" },
-                                                        h4 { class: "mb-1", "Time Elapsed" }
-                                                        h2 { id: "time-elapsed", class: "mb-0", "{time_elapsed_str}" }
+                                                        input {
+                                                            r#type: "number",
+                                                            class: "form-control-plaintext text-center display-4 m-0 p-0",
+                                                            id: "stones-remaining",
+                                                            style: "width: 6ch; line-height: 1; font-size: 3rem; height: 64px; min-width: 6ch;",
+                                                            value: "{stones_input_value}",
+                                                            onfocus: move |_| {
+                                                                stones_input_focused.set(true);
+                                                                stones_edit_value.set(display_stones.map(|n| n.to_string()).unwrap_or_default());
+                                                            },
+                                                            onblur: move |_| {
+                                                                let s = stones_edit_value();
+                                                                if let Ok(n) = s.parse::<u32>() {
+                                                                    stones_remaining.set(Some(n));
+                                                                    let u = url_stones_blur.clone();
+                                                                    let id = id_stones_blur.clone();
+                                                                    spawn(async move {
+                                                                        let _ = api::update_stones(&u, &id, n).await;
+                                                                    });
+                                                                }
+                                                                stones_input_focused.set(false);
+                                                            },
+                                                            oninput: move |ev| {
+                                                                let s = ev.value();
+                                                                stones_edit_value.set(s.clone());
+                                                                if let Ok(n) = s.parse::<u32>() {
+                                                                    stones_remaining.set(Some(n));
+                                                                    let u = url.clone();
+                                                                    let id = match_id.clone();
+                                                                    spawn(async move {
+                                                                        let _ = api::update_stones(&u, &id, n).await;
+                                                                    });
+                                                                }
+                                                            },
+                                                        }
                                                     }
                                                 }
                                                 div { class: "row mt-3",
