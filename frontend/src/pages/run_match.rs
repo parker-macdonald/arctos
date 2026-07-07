@@ -115,6 +115,52 @@ fn play_stones_warning_beeps() {
     }
 }
 
+/// Play five beeps spread across ~2 seconds to signal a quick timer reaching zero.
+#[cfg(target_arch = "wasm32")]
+fn play_timer_end_beeps() {
+    if let Ok(ctx) = web_sys::AudioContext::new() {
+        let _ = ctx.resume();
+        let start = ctx.current_time();
+        let beep = 0.12;
+        let gap = 0.5; // 5 beeps at 0.0, 0.5, 1.0, 1.5, 2.0s.
+        for i in 0..5 {
+            if let (Ok(osc), Ok(gain)) = (ctx.create_oscillator(), ctx.create_gain()) {
+                gain.gain().set_value(0.4);
+                osc.set_type(web_sys::OscillatorType::Square);
+                osc.frequency().set_value(660.0);
+                let _ = osc.connect_with_audio_node(&gain);
+                let _ = gain.connect_with_audio_node(&ctx.destination());
+                let at = start + (i as f64) * gap;
+                let _ = osc.start_with_when(at);
+                let _ = osc.stop_with_when(at + beep);
+            }
+        }
+    }
+}
+
+/// Capture the given pointer on the quick-timer element so drag move/up events
+/// keep arriving even after the cursor leaves the small element's bounds.
+#[cfg(target_arch = "wasm32")]
+fn capture_quick_timer_pointer(pointer_id: i32) {
+    if let Some(el) = web_sys::window()
+        .and_then(|w| w.document())
+        .and_then(|d| d.get_element_by_id("quick-timer"))
+    {
+        let _ = el.set_pointer_capture(pointer_id);
+    }
+}
+
+/// State of the ref-only quick timer beside the stone counter.
+#[derive(Clone, PartialEq)]
+enum QuickTimer {
+    /// Showing the ⏱ icon.
+    Idle,
+    /// Finger down; previewing a value derived from drag magnitude.
+    Dragging { start_stones: u32 },
+    /// Counting down from start_stones since start_time (server unix seconds).
+    Running { start_time: f64, start_stones: u32 },
+}
+
 /// Compute scores_by_set from points array (client-authoritative; same logic as server).
 fn scores_by_set_from_points(points: &[&Value]) -> Vec<(String, u64, u64)> {
     let mut by_set: std::collections::BTreeMap<u64, (u64, u64)> = std::collections::BTreeMap::new();
@@ -168,6 +214,27 @@ fn stones_elapsed_beats_ms(stamp_opt: Option<&str>, end_opt: Option<&str>) -> u3
     let start_beat = (start / BEAT).floor() as i64;
     let end_beat = (end / BEAT).floor() as i64;
     (end_beat - start_beat).max(0) as u32
+}
+
+/// Px of drag magnitude per 5 stones when arming the quick timer.
+const PX_PER_5: f64 = 12.0;
+/// Global beat length (seconds) for the quick timer countdown.
+const QUICK_TIMER_BEAT: f64 = 1.5;
+
+/// Radial drag magnitude (px) -> stones, snapped to the nearest multiple of 5.
+fn drag_magnitude_to_stones(dx: f64, dy: f64) -> u32 {
+    let magnitude = (dx * dx + dy * dy).sqrt();
+    let steps = (magnitude / PX_PER_5).round();
+    (steps.max(0.0) as u32) * 5
+}
+
+/// Stones remaining for a running quick timer: start_stones minus the number of
+/// global 1.5s beat boundaries crossed between start_time and now_server (both
+/// server-synced unix seconds). Can go negative (-1 signals "return to idle").
+fn quick_timer_current(start_time: f64, start_stones: u32, now_server: f64) -> i64 {
+    let start_beat = (start_time / QUICK_TIMER_BEAT).floor() as i64;
+    let now_beat = (now_server / QUICK_TIMER_BEAT).floor() as i64;
+    start_stones as i64 - (now_beat - start_beat).max(0)
 }
 
 /// Stones elapsed = global 1.5s beat boundaries crossed. Uses Bayesian filter for server time when end is None (ongoing point).
@@ -272,6 +339,16 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
         }
     }
 
+    // Ref-only quick timer beside the stone counter (local, not persisted).
+    // Declared before the server-time sync effect so that effect can react to it.
+    let mut quick_timer = use_signal(|| QuickTimer::Idle);
+    // Page coordinates captured at pointerdown, for computing drag magnitude.
+    #[cfg(target_arch = "wasm32")]
+    let mut quick_drag_start = use_signal(|| None as Option<(f64, f64)>);
+    // Edge latch so the end tone fires once when the countdown reaches zero.
+    #[cfg(target_arch = "wasm32")]
+    let mut quick_timer_fired_zero = use_signal(|| false);
+
     // Bayesian filter for server time sync (stones elapsed during ongoing point).
     #[cfg(target_arch = "wasm32")]
     let time_filter = use_signal(|| BayesianOffsetFilter::default());
@@ -289,8 +366,10 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
             let guard = binding.try_read();
             let Ok(ref g) = guard else { return };
             let Some(Ok(d)) = g.as_ref() else { return };
-            if d.match_data.set_type.as_deref() == Some("STONES")
-                && d.match_data.status == "IN_PROGRESS"
+            let quick_timer_running = matches!(quick_timer(), QuickTimer::Running { .. });
+            if quick_timer_running
+                || (d.match_data.set_type.as_deref() == Some("STONES")
+                    && d.match_data.status == "IN_PROGRESS")
             {
                 server_time_loop_started.set(true);
                 let mut filter = time_filter;
@@ -987,7 +1066,14 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                     .winner-option.active{background:#0d6efd;color:#fff;border-color:#0d6efd}\
                     .winner-option .winner-avatar{width:26px;height:26px;border-radius:50%;object-fit:cover;flex-shrink:0}\
                     .winner-option .winner-name{min-width:3ch;max-width:12em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}\
+                    #quick-timer{position:relative;flex:0 0 auto;min-width:3.5rem;padding:0 0.75rem;font-size:1.75rem;line-height:1;cursor:pointer;touch-action:none;border:1px solid #dee2e6;border-radius:0.375rem;background:#fff;color:#212529}\
+                    #quick-timer:hover{background:#f8f9fa}\
+                    #quick-timer.qt-dragging{z-index:2001;background:#fff;box-shadow:0 0 0 4px rgba(13,110,253,0.5)}\
+                    #quick-timer-scrim{position:fixed;inset:0;z-index:2000;background:rgba(0,0,0,0.6);pointer-events:none;display:flex;align-items:flex-start;justify-content:center}\
+                    #quick-timer-scrim .qt-scrim-text{margin-top:20vh;color:#fff;text-align:center;font-size:1.5rem;line-height:1.5}\
+                    #quick-timer-scrim .qt-scrim-title{font-size:2rem;font-weight:600}\
                     @media (max-width:768px){.mobile-button-wrapper{position:fixed;bottom:0;left:0;right:0;z-index:1000;background:white;padding:0;margin:0;box-shadow:0 -2px 10px rgba(0,0,0,0.1);display:flex;flex-direction:row}\
+                    #quick-timer{position:fixed;top:64px;right:8px;z-index:1030;min-width:3rem;height:3rem;padding:0 0.5rem;font-size:1.5rem;box-shadow:0 2px 6px rgba(0,0,0,0.2)}\
                     .mobile-button-wrapper .btn{border-radius:0;margin:0;flex:1;min-height:96px}\
                     .container .mobile-sticky-button,.container #finalize-match-btn{display:none}\
                     #score-stones-card .card-body{padding:0.5rem}\
@@ -1416,9 +1502,111 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                         }
                     })
                     .collect();
+
+                // Quick timer: derive display + drive end-tone/transitions each tick.
+                let _ = live_tick();
+                let quick_timer_label: Option<String> = match quick_timer() {
+                    QuickTimer::Idle => None,
+                    QuickTimer::Dragging { start_stones } => Some(start_stones.to_string()),
+                    QuickTimer::Running { start_time, start_stones } => {
+                        #[cfg(target_arch = "wasm32")]
+                        let now_server = js_sys::Date::now() / 1000.0 + time_filter.read().get_mean();
+                        #[cfg(not(target_arch = "wasm32"))]
+                        let now_server = now_epoch_secs();
+                        let current = quick_timer_current(start_time, start_stones, now_server);
+                        if current <= -1 {
+                            quick_timer.set(QuickTimer::Idle);
+                            #[cfg(target_arch = "wasm32")]
+                            quick_timer_fired_zero.set(false);
+                            None
+                        } else {
+                            #[cfg(target_arch = "wasm32")]
+                            {
+                                if current == 0 && !quick_timer_fired_zero() {
+                                    quick_timer_fired_zero.set(true);
+                                    spawn(async move {
+                                        gloo_timers::future::TimeoutFuture::new(0).await;
+                                        play_timer_end_beeps();
+                                    });
+                                }
+                            }
+                            Some(current.max(0).to_string())
+                        }
+                    }
+                };
+                let quick_timer_is_idle = quick_timer_label.is_none();
+                let quick_timer_dragging = matches!(quick_timer(), QuickTimer::Dragging { .. });
+                // Single quick-timer element; CSS positions it (right of the Start Point button on
+                // wide screens, fixed top-right corner on narrow). Rendered for all match types.
+                // While dragging it gets `qt-dragging` to lift above the full-screen scrim.
+                #[cfg(target_arch = "wasm32")]
+                let quick_timer_el = rsx! {
+                    div {
+                        id: "quick-timer",
+                        class: if quick_timer_dragging { "d-flex align-items-center justify-content-center user-select-none qt-dragging" } else { "d-flex align-items-center justify-content-center user-select-none" },
+                        title: "Quick timer: drag to set",
+                        onpointerdown: move |ev: Event<PointerData>| {
+                            // Capture the pointer so move/up events keep arriving after the cursor
+                            // leaves this small element; otherwise the drag stalls and never releases.
+                            capture_quick_timer_pointer(ev.pointer_id());
+                            let p = ev.page_coordinates();
+                            quick_drag_start.set(Some((p.x, p.y)));
+                            quick_timer.set(QuickTimer::Dragging { start_stones: 0 });
+                        },
+                        onpointermove: move |ev: Event<PointerData>| {
+                            if let Some((sx, sy)) = quick_drag_start() {
+                                let p = ev.page_coordinates();
+                                let stones = drag_magnitude_to_stones(p.x - sx, p.y - sy);
+                                quick_timer.set(QuickTimer::Dragging { start_stones: stones });
+                            }
+                        },
+                        onpointerup: move |_| {
+                            if quick_drag_start().is_some() {
+                                quick_drag_start.set(None);
+                                if let QuickTimer::Dragging { start_stones } = quick_timer() {
+                                    if start_stones == 0 {
+                                        quick_timer.set(QuickTimer::Idle);
+                                    } else {
+                                        let now_server = js_sys::Date::now() / 1000.0 + time_filter.read().get_mean();
+                                        quick_timer_fired_zero.set(false);
+                                        quick_timer.set(QuickTimer::Running { start_time: now_server, start_stones });
+                                    }
+                                }
+                            }
+                        },
+                        onpointercancel: move |_| {
+                            // Browser cancelled the gesture (e.g. scroll): abandon the in-progress
+                            // drag without arming a timer, and clear the stale start point.
+                            if quick_drag_start().is_some() {
+                                quick_drag_start.set(None);
+                                if matches!(quick_timer(), QuickTimer::Dragging { .. }) {
+                                    quick_timer.set(QuickTimer::Idle);
+                                }
+                            }
+                        },
+                        if quick_timer_is_idle {
+                            "⏱"
+                        } else {
+                            "{quick_timer_label.clone().unwrap_or_default()}"
+                        }
+                    }
+                };
+                #[cfg(not(target_arch = "wasm32"))]
+                let quick_timer_el = rsx! {
+                    div { id: "quick-timer", "⏱" }
+                };
+
                 rsx! {
                     div { class: "container mt-4",
                         style { "{run_match_css}" }
+                        if quick_timer_dragging {
+                            div { id: "quick-timer-scrim",
+                                div { class: "qt-scrim-text",
+                                    div { class: "qt-scrim-title", "Stone Timer Utility" }
+                                    div { "drag to set time" }
+                                }
+                            }
+                        }
                         div { class: "row",
                             div { class: "col-md-12",
                                 h2 { "Run Match: {m.name}" }
@@ -1546,14 +1734,17 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                                                     }
                                                 }
                                                 div { class: "row mt-3",
-                                                    div { class: "col-12",
-                                                        button {
-                                                            id: "point-button",
-                                                            class: "{point_button_class}",
-                                                            onclick: on_start_end_point,
-                                                            disabled: point_button_disabled,
-                                                            "{point_button_text}"
+                                                    div { class: "col-12 d-flex align-items-stretch gap-2",
+                                                        div { class: "flex-grow-1",
+                                                            button {
+                                                                id: "point-button",
+                                                                class: "{point_button_class}",
+                                                                onclick: on_start_end_point,
+                                                                disabled: point_button_disabled,
+                                                                "{point_button_text}"
+                                                            }
                                                         }
+                                                        {quick_timer_el}
                                                     }
                                                 }
                                             }
@@ -2167,4 +2358,43 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
         Err(_) => rsx! { p { "Loading…" } },
     };
     rsx! { {detail_view} }
+}
+
+#[cfg(test)]
+mod quick_timer_tests {
+    use super::{drag_magnitude_to_stones, quick_timer_current};
+
+    #[test]
+    fn magnitude_snaps_to_multiples_of_five() {
+        assert_eq!(drag_magnitude_to_stones(0.0, 0.0), 0);
+        // 12px per 5 stones; ~6px (half step) rounds to 5.
+        assert_eq!(drag_magnitude_to_stones(6.5, 0.0), 5);
+        // 24px -> 10, direction-independent (use y, and negatives).
+        assert_eq!(drag_magnitude_to_stones(0.0, -24.0), 10);
+        // 3-4-5 triangle: magnitude 60px -> 25 stones.
+        assert_eq!(drag_magnitude_to_stones(36.0, 48.0), 25);
+        // Small jitter below half a step stays 0 (tap cancel).
+        assert_eq!(drag_magnitude_to_stones(3.0, 0.0), 0);
+    }
+
+    #[test]
+    fn current_counts_down_on_beat_boundaries() {
+        // start at t=0.0 with 20 stones.
+        assert_eq!(quick_timer_current(0.0, 20, 0.0), 20);
+        // just before first beat boundary (1.5s) -> still 20.
+        assert_eq!(quick_timer_current(0.0, 20, 1.49), 20);
+        // crossed one boundary -> 19.
+        assert_eq!(quick_timer_current(0.0, 20, 1.5), 19);
+        // 30s -> 20 boundaries -> 0.
+        assert_eq!(quick_timer_current(0.0, 20, 30.0), 0);
+        // one more beat past zero -> -1.
+        assert_eq!(quick_timer_current(0.0, 20, 31.5), -1);
+    }
+
+    #[test]
+    fn current_uses_floor_of_both_endpoints() {
+        // start mid-beat: flooring both endpoints means elapsed counts
+        // global boundaries crossed, not raw elapsed / 1.5.
+        assert_eq!(quick_timer_current(0.4, 5, 1.6), 4);
+    }
 }
