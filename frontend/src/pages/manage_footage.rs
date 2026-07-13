@@ -1,13 +1,13 @@
 use crate::api;
-use crate::types::UserUploadedCameraRow;
+use crate::types::FootageCameraRow;
 use crate::Route;
 use dioxus::prelude::*;
 
 #[component]
-pub fn ManageUserUploads(url: String) -> Element {
+pub fn ManageFootage(url: String) -> Element {
     let mut query = use_signal(|| String::new());
-    let mut refresh = use_signal(|| 0u32);
-    let mut delete_error = use_signal(|| None::<String>);
+    let refresh = use_signal(|| 0u32);
+    let delete_error = use_signal(|| None::<String>);
 
     let url_for_data = url.clone();
     let data = use_resource(move || {
@@ -15,10 +15,8 @@ pub fn ManageUserUploads(url: String) -> Element {
         let _ = refresh();
         async move {
             let tournament = api::tournament_detail(&u).await.map_err(|e| e.to_string())?;
-            let cams = api::user_uploaded_cameras_list(&u)
-                .await
-                .map_err(|e| e.to_string())?;
-            Ok::<(String, Vec<UserUploadedCameraRow>), String>((tournament.tournament.name, cams.cameras))
+            let cams = api::list_event_footage(&u).await.map_err(|e| e.to_string())?;
+            Ok::<(String, Vec<FootageCameraRow>), String>((tournament.tournament.name, cams.cameras))
         }
     });
     let val = data.value();
@@ -27,11 +25,11 @@ pub fn ManageUserUploads(url: String) -> Element {
         if let Some(Ok((tournament_name, cameras))) = val.read().as_ref() {
             div { class: "row",
                 div { class: "col-12",
-                    h1 { "{tournament_name} - Manage User Uploaded Videos" }
+                    h1 { "{tournament_name} - Manage Footage" }
                     nav { aria_label: "breadcrumb",
                         ol { class: "breadcrumb",
                             li { class: "breadcrumb-item", Link { to: Route::TournamentHome { url: url.clone() }, "{tournament_name}" } }
-                            li { class: "breadcrumb-item active", "Manage User Uploaded Videos" }
+                            li { class: "breadcrumb-item active", "Manage Footage" }
                         }
                     }
                 }
@@ -67,6 +65,7 @@ pub fn ManageUserUploads(url: String) -> Element {
                                             th { "Status" }
                                             th { "User" }
                                             th { "World Start Timestamp" }
+                                            th { "Link" }
                                             th { "" }
                                         }
                                     }
@@ -77,14 +76,13 @@ pub fn ManageUserUploads(url: String) -> Element {
                                                 return true;
                                             }
                                             let hay = format!(
-                                                "{} {} {} {} {} {} {}",
+                                                "{} {} {} {} {} {}",
                                                 cam.match_name,
                                                 cam.field_name,
                                                 cam.camera_name,
                                                 cam.status,
                                                 cam.user.clone().unwrap_or_default(),
                                                 cam.world_start_timestamp.clone().unwrap_or_default(),
-                                                cam.error.clone().unwrap_or_default(),
                                             )
                                             .to_lowercase();
                                             hay.contains(&q)
@@ -93,41 +91,39 @@ pub fn ManageUserUploads(url: String) -> Element {
                                                 td { "{cam.match_name}" }
                                                 td { "{cam.field_name}" }
                                                 td { "{cam.camera_name}" }
-                                                td {
-                                                    div { "{cam.status}" }
-                                                    if let Some(err) = &cam.error {
-                                                        div { class: "text-danger small", "{err}" }
-                                                    }
-                                                }
+                                                td { "{cam.status}" }
                                                 td { "{cam.user.clone().unwrap_or_else(|| \"-\".to_string())}" }
                                                 td { "{cam.world_start_timestamp.clone().unwrap_or_else(|| \"-\".to_string())}" }
                                                 td {
-                                                    if cam.manifest_only.unwrap_or(false) {
-                                                        span { class: "text-muted small", "Pending batch" }
+                                                    if let Some(link) = &cam.link {
+                                                        a { href: "{link}", target: "_blank", rel: "noopener noreferrer", "Open" }
                                                     } else {
-                                                        button {
-                                                            class: "btn btn-sm btn-outline-danger",
-                                                            onclick: {
-                                                                let u = url.clone();
-                                                                let uuid = cam.uuid.clone();
-                                                                let mut delete_error_sig = delete_error;
-                                                                let mut refresh_sig = refresh;
-                                                                move |_| {
-                                                                    delete_error_sig.set(None);
-                                                                    let u = u.clone();
-                                                                    let uuid = uuid.clone();
-                                                                    let mut delete_error_sig = delete_error_sig;
-                                                                    let mut refresh_sig = refresh_sig;
-                                                                    spawn(async move {
-                                                                        match api::delete_user_uploaded_camera(&u, &uuid).await {
-                                                                            Ok(()) => refresh_sig.set(refresh_sig() + 1),
-                                                                            Err(e) => delete_error_sig.set(Some(e)),
-                                                                        }
-                                                                    });
-                                                                }
-                                                            },
-                                                            "Delete"
-                                                        }
+                                                        span { class: "text-muted", "-" }
+                                                    }
+                                                }
+                                                td {
+                                                    button {
+                                                        class: "btn btn-sm btn-outline-danger",
+                                                        onclick: {
+                                                            let u = url.clone();
+                                                            let match_uuid = cam.match_uuid.clone();
+                                                            let uuid = cam.uuid.clone();
+                                                            let mut delete_error_sig = delete_error;
+                                                            let mut refresh_sig = refresh;
+                                                            move |_| {
+                                                                delete_error_sig.set(None);
+                                                                let u = u.clone();
+                                                                let match_uuid = match_uuid.clone();
+                                                                let uuid = uuid.clone();
+                                                                spawn(async move {
+                                                                    match api::delete_match_footage(&u, &match_uuid, &uuid).await {
+                                                                        Ok(()) => refresh_sig.set(refresh_sig() + 1),
+                                                                        Err(e) => delete_error_sig.set(Some(e)),
+                                                                    }
+                                                                });
+                                                            }
+                                                        },
+                                                        "Delete"
                                                     }
                                                 }
                                             }
