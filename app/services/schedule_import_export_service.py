@@ -187,7 +187,7 @@ class ScheduleImportExportService:
             base, sep, suffix = tok.partition("::")
             if not sep:
                 # Plain explicit team id
-                # probably should check that theres a team with this name
+                # probably should check that there's a team with this name
                 # registered for the tournament,
                 # but in normal match creation there's no such constraint
                 # so we'll fail silently for now :thumbsup_all: lmao
@@ -486,7 +486,6 @@ class ScheduleImportExportService:
                     field = Field.query.filter_by(id=field_dict["id"], event=tournament_url).first()
                     if field:
                         field.name = field_dict["name"]
-                        field.camera = field_dict["camera"]
                         fields_updated += 1
                     else:
                         # ID doesn't exist, create new (don't include id in creation)

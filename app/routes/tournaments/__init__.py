@@ -144,9 +144,9 @@ def delete_matches_with_children(match_uuids: list[str]) -> None:
 # when submodules import them via `from . import bp`.
 from app.routes.tournaments import (  # noqa: E402, F401
     brackets,
+    footage,
     management,
     matches_admin,
     read,
-    recordings,
     scheduling,
 )
